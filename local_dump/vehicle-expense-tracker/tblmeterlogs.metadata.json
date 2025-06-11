@@ -1,0 +1,1 @@
+{"indexes":[{"v":{"$numberInt":"2"},"key":{"_id":{"$numberInt":"1"}},"name":"_id_"}],"uuid":"8c5bea6c1f1f4621a14331b7505ed6fc","collectionName":"tblmeterlogs","type":"collection"}
