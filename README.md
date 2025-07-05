@@ -1,36 +1,61 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+Fleet Management System
+A robust Fleet Management System built with Next.js and MongoDB to help efficiently manage vehicles, track expenses, monitor fuel usage, and schedule maintenance reminders — all within a clean, responsive interface.
 
-## Getting Started
+Features
+Comprehensive vehicle management (add, edit, delete, view)
 
-First, run the development server:
+Detailed expense tracking with categories and descriptions
 
-```bash
+Fuel log recording with volume, cost, and odometer readings
+
+Maintenance reminders with service schedules and notifications
+
+Interactive dashboard with summary statistics and charts
+
+Responsive design using Tailwind CSS and Lucide icons
+
+Real-time updates and inline editing for seamless data management
+
+Technology Stack
+Frontend & Backend: Next.js (React) with API routes
+
+Database: MongoDB for persistent data storage
+
+Styling: Tailwind CSS
+
+Icons: Lucide Icons
+
+Notifications: Sonner Toast
+
+Getting Started
+Prerequisites
+Node.js (v16+)
+
+MongoDB instance (local or cloud)
+
+Installation
+bash
+Copy
+Edit
+git clone https://github.com/fredtinotenda3/Fleet.git
+cd Fleet
+npm install
+Environment Setup
+Create a .env.local file in the project root and add your MongoDB connection string:
+
+env
+Copy
+Edit
+MONGODB_URI=your_mongodb_connection_string_here
+Run the Development Server
+bash
+Copy
+Edit
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+Open http://localhost:3000 in your browser to view the app.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Deployment
+Deploy effortlessly on Vercel, the platform built for Next.js apps. Refer to the Next.js deployment guide for detailed instructions.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Contributing
+Contributions are welcome! Please open issues and submit pull requests for improvements or new features.
