@@ -1,5 +1,6 @@
 "use client";
 
+import { CostPerKmCard } from "./CostPerKmCard";
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -326,6 +327,13 @@ export default function VehicleDetailSection({
           description="Active service reminders"
           colorKey="service"
         />
+        {/* Add this card inside the stats grid (after the Services StatCard) */}
+      <CostPerKmCard
+        expenses={expenses}
+        fuelLogs={fuelLogs}
+        meterLogs={meterLogs}
+        loading={loading}
+      />
         <StatCard
           loading={loading}
           icon={<GaugeIcon className="h-5 w-5" />}

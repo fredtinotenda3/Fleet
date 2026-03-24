@@ -22,7 +22,8 @@ interface Vehicle {
   vehicle_type: string;
   purchase_date: string;
   fuel_type: string;
-  status?: "active" | "inactive" | "maintenance"; // Added status field
+  color?: string;
+  status?: "active" | "inactive" | "maintenance";
 }
 
 interface VehicleFormProps {
@@ -31,7 +32,6 @@ interface VehicleFormProps {
   vehicle?: Vehicle | null;
 }
 
-// Status options for dropdown
 const statusOptions = [
   { value: "active", label: "Active" },
   { value: "inactive", label: "Inactive" },
@@ -47,7 +47,8 @@ const VehicleForm = ({ closeModal, refresh, vehicle }: VehicleFormProps) => {
     vehicle_type: "",
     purchase_date: "",
     fuel_type: "",
-    status: "active", // Default status
+    color: "#3b82f6",
+    status: "active",
   });
 
   const [loading, setLoading] = useState(false);
@@ -56,7 +57,8 @@ const VehicleForm = ({ closeModal, refresh, vehicle }: VehicleFormProps) => {
     if (vehicle) {
       setFormData({
         ...vehicle,
-        status: vehicle.status || "active", // Ensure status exists
+        color: vehicle.color || "#3b82f6",
+        status: vehicle.status || "active",
       });
     }
   }, [vehicle]);
@@ -72,7 +74,7 @@ const VehicleForm = ({ closeModal, refresh, vehicle }: VehicleFormProps) => {
   const handleStatusChange = (value: string) => {
     setFormData((prev) => ({
       ...prev,
-      status: value as Vehicle["status"], // Cast to correct type
+      status: value as Vehicle["status"],
     }));
   };
 
@@ -80,27 +82,26 @@ const VehicleForm = ({ closeModal, refresh, vehicle }: VehicleFormProps) => {
     setLoading(true);
     try {
       const method = vehicle?._id ? "PUT" : "POST";
-      const endpoint = "/api/vehicles";
 
-      const res = await fetch(endpoint, {
+      const res = await fetch("/api/vehicles", {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
-          vehicle?._id ? { ...formData, id: vehicle._id } : formData
+          vehicle?._id ? { ...formData, _id: vehicle._id } : formData
         ),
       });
 
-      if (!res.ok) throw new Error("Failed to save vehicle");
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to save vehicle");
+      }
 
-      toast.success(
-        `Vehicle ${vehicle?._id ? "updated" : "added"} successfully`
-      );
+      toast.success(`Vehicle ${vehicle?._id ? "updated" : "added"} successfully`);
       refresh();
       closeModal();
     } catch (error) {
       toast.error("Failed to save vehicle", {
-        description:
-          error instanceof Error ? error.message : "Unexpected error",
+        description: error instanceof Error ? error.message : "Unexpected error",
       });
     } finally {
       setLoading(false);
@@ -196,7 +197,29 @@ const VehicleForm = ({ closeModal, refresh, vehicle }: VehicleFormProps) => {
         />
       </div>
 
-      {/* Added Status Dropdown */}
+      {/* #7 — Color picker */}
+      <div>
+        <Label htmlFor="color">Vehicle Color</Label>
+        <div className="flex items-center gap-3 mt-1">
+          <input
+            id="color"
+            name="color"
+            type="color"
+            value={formData.color || "#3b82f6"}
+            onChange={handleChange}
+            className="h-10 w-16 cursor-pointer rounded border border-input p-0.5 bg-transparent"
+            title="Pick vehicle color"
+          />
+          <span className="text-sm text-muted-foreground font-mono">
+            {formData.color || "#3b82f6"}
+          </span>
+          <div
+            className="h-6 w-6 rounded-full border shadow-sm"
+            style={{ backgroundColor: formData.color || "#3b82f6" }}
+          />
+        </div>
+      </div>
+
       <div>
         <Label htmlFor="status">Status</Label>
         <Select value={formData.status} onValueChange={handleStatusChange}>

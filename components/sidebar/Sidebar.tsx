@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Menu, X, LogOut } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
+import ThemeToggle from "./ThemeToggle";
 
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
@@ -54,16 +55,22 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      {/* Logout button — pinned to bottom */}
-      <button
-        onClick={() => signOut({ callbackUrl: "/auth/login" })}
-        className={`flex items-center gap-3 px-3 py-2 rounded-md transition-all duration-200 mt-4
-          text-gray-300 hover:bg-red-700 hover:text-white w-full`}
-        aria-label="Log out"
-      >
-        <LogOut size={20} className="shrink-0" />
-        {!collapsed && <span className="whitespace-nowrap">Log out</span>}
-      </button>
+      {/* Bottom actions */}
+      <div className="flex flex-col gap-1 mt-4 border-t border-gray-700 pt-4">
+        {/* #4 Dark mode toggle — hidden when collapsed */}
+        {!collapsed && <ThemeToggle />}
+
+        {/* Logout */}
+        <button
+          onClick={() => signOut({ callbackUrl: "/auth/login" })}
+          className="flex items-center gap-3 px-3 py-2 rounded-md transition-all duration-200
+            text-gray-300 hover:bg-red-700 hover:text-white w-full"
+          aria-label="Log out"
+        >
+          <LogOut size={20} className="shrink-0" />
+          {!collapsed && <span className="whitespace-nowrap">Log out</span>}
+        </button>
+      </div>
     </aside>
   );
 }
