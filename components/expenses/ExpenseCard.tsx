@@ -1,6 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
-// components/expenses/ExpenseCard.tsx
-
 "use client";
 
 import { useState } from "react";
@@ -12,7 +9,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import ExpenseForm from "./ExpenseForm";
-import { toast } from "react-toastify";
+import { toast } from "sonner"; // FIX: was react-toastify
 
 interface ExpenseType {
   _id: string;
@@ -45,10 +42,8 @@ const ExpenseCard = ({ expense, refresh }: Props) => {
   const handleDelete = async () => {
     setIsDeleting(true);
     try {
-      const res = await fetch("/api/expenses", {
+      const res = await fetch(`/api/expenses/${expense._id}`, {
         method: "DELETE",
-        body: JSON.stringify({ id: expense._id }),
-        headers: { "Content-Type": "application/json" },
       });
 
       if (res.ok) {
@@ -58,7 +53,7 @@ const ExpenseCard = ({ expense, refresh }: Props) => {
       } else {
         toast.error("Failed to delete expense.");
       }
-    } catch (err) {
+    } catch {
       toast.error("Error deleting expense.");
     } finally {
       setIsDeleting(false);
@@ -66,12 +61,11 @@ const ExpenseCard = ({ expense, refresh }: Props) => {
   };
 
   const formatDate = (date: string) => {
-    const options: Intl.DateTimeFormatOptions = {
+    return new Intl.DateTimeFormat("en-US", {
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
-    };
-    return new Date(date).toLocaleDateString("en-US", options);
+    }).format(new Date(date));
   };
 
   return (

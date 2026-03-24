@@ -37,6 +37,7 @@ export const FuelLogForm = ({
         name="fuel_volume"
         type="number"
         step="0.01"
+        min="0"
         required
         defaultValue={editLog?.fuel_volume}
       />
@@ -46,13 +47,15 @@ export const FuelLogForm = ({
       <Label>Unit</Label>
       <select
         name="unit_id"
-        className="w-full p-2 border rounded"
+        className="w-full p-2 border rounded text-sm"
         required
-        defaultValue={editLog?.unit_id || ""}
+        // FIX: default value must be unit_id string, not _id
+        defaultValue={editLog?.unit_id || units[0]?.unit_id || ""}
       >
         <option value="">Select Unit</option>
         {units.map((unit) => (
-          <option key={unit._id} value={unit.unit_id}>
+          // FIX: value must be unit.unit_id, not unit._id
+          <option key={unit.unit_id} value={unit.unit_id}>
             {unit.name} ({unit.symbol})
           </option>
         ))}
@@ -65,6 +68,7 @@ export const FuelLogForm = ({
         name="cost"
         type="number"
         step="0.01"
+        min="0"
         required
         defaultValue={editLog?.cost}
       />
@@ -75,6 +79,7 @@ export const FuelLogForm = ({
       <Input
         name="odometer"
         type="number"
+        min="0"
         required
         defaultValue={editLog?.odometer}
       />

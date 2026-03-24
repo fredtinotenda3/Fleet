@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 import { useEffect, useState } from "react";
 import {
@@ -36,14 +35,13 @@ export default function ServiceForm({
   const [formData, setFormData] = useState<Partial<ServiceReminder>>({
     title: "",
     due_date: new Date().toISOString().split("T")[0],
-    status: "due",
+    status: "pending",
     notes: "",
     license_plate: vehicle.license_plate,
   });
 
   useEffect(() => {
     if (editService) {
-      // Properly format the date for the input field
       const dueDate = editService.due_date
         ? new Date(editService.due_date).toISOString().split("T")[0]
         : new Date().toISOString().split("T")[0];
@@ -57,14 +55,12 @@ export default function ServiceForm({
     }
   }, [editService, vehicle.license_plate]);
 
-  // Reset form when dialog closes
   useEffect(() => {
     if (!open) {
-      // Reset form data when dialog closes
       setFormData({
         title: "",
         due_date: new Date().toISOString().split("T")[0],
-        status: "due",
+        status: "pending",
         notes: "",
         license_plate: vehicle.license_plate,
       });
@@ -76,18 +72,18 @@ export default function ServiceForm({
     setLoading(true);
 
     try {
-      const url = editService
-        ? `/api/reminders?id=${editService._id}`
-        : "/api/reminders";
-      const method = editService ? "PUT" : "POST";
+      const isEdit = Boolean(editService?._id);
 
+      // FIX: Always POST to /api/reminders.
+      // For edits, include _id in the body — the PUT handler reads from req.json(), not query params.
       const payload = {
         ...formData,
         due_date: new Date(formData.due_date!).toISOString(),
+        ...(isEdit && { _id: editService!._id }),
       };
 
-      const res = await fetch(url, {
-        method,
+      const res = await fetch("/api/reminders", {
+        method: isEdit ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
@@ -98,7 +94,7 @@ export default function ServiceForm({
       }
 
       toast.success(
-        `Service reminder ${editService ? "updated" : "created"} successfully`
+        `Service reminder ${isEdit ? "updated" : "created"} successfully`
       );
 
       setOpen(false);
@@ -160,17 +156,17 @@ export default function ServiceForm({
               <Select
                 value={formData.status}
                 onValueChange={(value) =>
-                  setFormData({ ...formData, status: value as any })
+                  setFormData({
+                    ...formData,
+                    status: value as ServiceReminder["status"],
+                  })
                 }
-                required
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select status" />
                 </SelectTrigger>
-
                 <SelectContent>
                   <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="due">Due</SelectItem>
                   <SelectItem value="completed">Completed</SelectItem>
                   <SelectItem value="overdue">Overdue</SelectItem>
                 </SelectContent>

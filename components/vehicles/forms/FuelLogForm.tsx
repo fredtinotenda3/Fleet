@@ -3,7 +3,7 @@ import { Unit, FuelLog } from "@/types";
 
 interface FuelLogFormProps {
   initialData?: FuelLog;
-  license_plate: string; // always required, from parent component
+  license_plate: string;
   units: Unit[];
   onSubmit: (data: {
     date: string;
@@ -33,8 +33,9 @@ export function FuelLogForm({
   const [odometer, setOdometer] = useState(
     initialData?.odometer.toString() || ""
   );
+  // FIX: default to unit_id (the custom string), not _id (MongoDB ObjectId)
   const [unitId, setUnitId] = useState(
-    initialData?.unit_id || units[0]?._id || ""
+    initialData?.unit_id || units[0]?.unit_id || ""
   );
   const [error, setError] = useState<string | null>(null);
 
@@ -44,13 +45,13 @@ export function FuelLogForm({
       setFuelVolume(initialData.fuel_volume.toString());
       setCost(initialData.cost.toString());
       setOdometer(initialData.odometer.toString());
-      setUnitId(initialData.unit_id || units[0]?._id || "");
+      setUnitId(initialData.unit_id || units[0]?.unit_id || "");
     } else {
       setDate("");
       setFuelVolume("");
       setCost("");
       setOdometer("");
-      setUnitId(units[0]?._id || "");
+      setUnitId(units[0]?.unit_id || "");
       setError(null);
     }
   }, [initialData, units]);
@@ -79,21 +80,23 @@ export function FuelLogForm({
       return;
     }
 
+    setError(null);
     onSubmit({
       date,
       fuel_volume: fuelVolumeNum,
       cost: costNum,
       odometer: odometerNum,
-      unit_id: unitId,
+      unit_id: unitId,          // ← always the unit_id string, e.g. "L" or "gal"
       license_plate: license_plate.toUpperCase(),
     });
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      {error && <p className="text-red-600">{error}</p>}
+      {error && <p className="text-red-600 text-sm">{error}</p>}
+
       <div>
-        <label htmlFor="date" className="block font-medium">
+        <label htmlFor="date" className="block font-medium text-sm mb-1">
           Date
         </label>
         <input
@@ -101,13 +104,13 @@ export function FuelLogForm({
           type="date"
           value={date}
           onChange={(e) => setDate(e.target.value)}
-          className="mt-1 block w-full border rounded px-2 py-1"
+          className="block w-full border rounded px-3 py-2 text-sm"
           required
         />
       </div>
 
       <div>
-        <label htmlFor="fuelVolume" className="block font-medium">
+        <label htmlFor="fuelVolume" className="block font-medium text-sm mb-1">
           Fuel Volume
         </label>
         <input
@@ -117,13 +120,34 @@ export function FuelLogForm({
           step="any"
           value={fuelVolume}
           onChange={(e) => setFuelVolume(e.target.value)}
-          className="mt-1 block w-full border rounded px-2 py-1"
+          className="block w-full border rounded px-3 py-2 text-sm"
           required
         />
       </div>
 
       <div>
-        <label htmlFor="cost" className="block font-medium">
+        <label htmlFor="unit" className="block font-medium text-sm mb-1">
+          Unit
+        </label>
+        <select
+          id="unit"
+          value={unitId}
+          onChange={(e) => setUnitId(e.target.value)}
+          className="block w-full border rounded px-3 py-2 text-sm"
+          required
+        >
+          <option value="">Select unit</option>
+          {units.map((unit) => (
+            // FIX: value must be unit.unit_id, not unit._id
+            <option key={unit.unit_id} value={unit.unit_id}>
+              {unit.name} ({unit.symbol})
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label htmlFor="cost" className="block font-medium text-sm mb-1">
           Cost
         </label>
         <input
@@ -133,13 +157,13 @@ export function FuelLogForm({
           step="any"
           value={cost}
           onChange={(e) => setCost(e.target.value)}
-          className="mt-1 block w-full border rounded px-2 py-1"
+          className="block w-full border rounded px-3 py-2 text-sm"
           required
         />
       </div>
 
       <div>
-        <label htmlFor="odometer" className="block font-medium">
+        <label htmlFor="odometer" className="block font-medium text-sm mb-1">
           Odometer
         </label>
         <input
@@ -149,41 +173,22 @@ export function FuelLogForm({
           step="any"
           value={odometer}
           onChange={(e) => setOdometer(e.target.value)}
-          className="mt-1 block w-full border rounded px-2 py-1"
+          className="block w-full border rounded px-3 py-2 text-sm"
           required
         />
       </div>
 
-      <div>
-        <label htmlFor="unit" className="block font-medium">
-          Unit
-        </label>
-        <select
-          id="unit"
-          value={unitId}
-          onChange={(e) => setUnitId(e.target.value)}
-          className="mt-1 block w-full border rounded px-2 py-1"
-          required
-        >
-          {units.map((unit) => (
-            <option key={unit._id} value={unit._id}>
-              {unit.name}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="flex justify-end gap-2">
+      <div className="flex justify-end gap-2 pt-2">
         <button
           type="button"
           onClick={onCancel}
-          className="px-4 py-2 border rounded hover:bg-gray-100"
+          className="px-4 py-2 border rounded text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
         >
           Cancel
         </button>
         <button
           type="submit"
-          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          className="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
         >
           Save
         </button>

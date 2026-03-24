@@ -1,10 +1,9 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-/* eslint-disable @typescript-eslint/no-unused-vars */
+"use client";
+
 import { useEffect, useState, useCallback } from "react";
 import { FuelLog, Unit } from "@/types";
 import { FuelCharts } from "./fuel/FuelCharts";
 import { FuelStats } from "./fuel/FuelStats";
-import { FuelLogForm } from "./fuel/FuelLogForm";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -24,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Trash2, Edit } from "lucide-react";
 import { toast } from "sonner";
 import { useTheme } from "next-themes";
+import { FuelLogForm } from "../forms/FuelLogForm";
 
 interface ChartData {
   timeData: { date: string; volume: number }[];
@@ -32,12 +32,11 @@ interface ChartData {
 }
 
 const formatDate = (dateString: string | Date) => {
-  const date = new Date(dateString);
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "2-digit",
     year: "numeric",
-  }).format(date);
+  }).format(new Date(dateString));
 };
 
 export default function FuelLogSection({
@@ -50,7 +49,7 @@ export default function FuelLogSection({
   const [units, setUnits] = useState<Unit[]>([]);
   const [open, setOpen] = useState(false);
   const [editLog, setEditLog] = useState<FuelLog | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [, setLoading] = useState(false);
   const [chartData, setChartData] = useState<ChartData>({
     timeData: [],
     costData: [],
@@ -66,7 +65,8 @@ export default function FuelLogSection({
       setLogs(data);
 
       const sortedLogs = [...data].sort(
-        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+        (a: FuelLog, b: FuelLog) =>
+          new Date(a.date).getTime() - new Date(b.date).getTime()
       );
 
       const timeMap = new Map<string, number>();
@@ -77,12 +77,10 @@ export default function FuelLogSection({
         const current = sortedLogs[i];
         const previous = sortedLogs[i - 1];
         const distance = current.odometer - previous.odometer;
-
         if (current.fuel_volume > 0) {
-          const efficiency = distance / current.fuel_volume;
           efficiencyData.push({
             date: formatDate(current.date),
-            efficiency: Number(efficiency.toFixed(2)),
+            efficiency: Number((distance / current.fuel_volume).toFixed(2)),
           });
         }
       }
@@ -98,7 +96,7 @@ export default function FuelLogSection({
         costData: Array.from(costMap, ([date, cost]) => ({ date, cost })),
         efficiencyData,
       });
-    } catch (error) {
+    } catch {
       toast.error("Failed to load fuel logs");
     }
   }, [vehicle.license_plate]);
@@ -108,7 +106,7 @@ export default function FuelLogSection({
       const res = await fetch("/api/units?type=volume");
       const data = await res.json();
       setUnits(data);
-    } catch (error) {
+    } catch {
       toast.error("Failed to load units");
     }
   }, []);
@@ -118,19 +116,17 @@ export default function FuelLogSection({
     fetchUnits();
   }, [fetchFuelLogs, fetchUnits]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // FIX: use controlled state via FuelLogForm's onSubmit callback
+  // instead of reading FormData from e.currentTarget
+  const handleSubmit = async (logData: {
+    date: string;
+    fuel_volume: number;
+    cost: number;
+    odometer: number;
+    unit_id: string;
+    license_plate: string;
+  }) => {
     setLoading(true);
-    const formData = new FormData(e.currentTarget as HTMLFormElement);
-    const logData = {
-      license_plate: vehicle.license_plate,
-      fuel_volume: Number(formData.get("fuel_volume")),
-      unit_id: formData.get("unit_id") as string,
-      cost: Number(formData.get("cost")),
-      date: formData.get("date") as string,
-      odometer: Number(formData.get("odometer")),
-    };
-
     try {
       const url = editLog ? `/api/fuellogs?id=${editLog._id}` : "/api/fuellogs";
       const method = editLog ? "PUT" : "POST";
@@ -140,14 +136,17 @@ export default function FuelLogSection({
         body: JSON.stringify(logData),
       });
 
-      if (!res.ok) throw new Error("Failed to save fuel log");
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to save fuel log");
+      }
 
       toast.success(`Fuel log ${editLog ? "updated" : "added"} successfully`);
       fetchFuelLogs();
       setOpen(false);
       setEditLog(null);
-    } catch (error: any) {
-      toast.error(error.message);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to save");
     } finally {
       setLoading(false);
     }
@@ -165,15 +164,14 @@ export default function FuelLogSection({
             if (!res.ok) throw new Error("Failed to delete fuel log");
             toast.success("Fuel log deleted successfully");
             fetchFuelLogs();
-          } catch (error: any) {
-            toast.error(error.message);
+          } catch (error) {
+            toast.error(
+              error instanceof Error ? error.message : "Delete failed"
+            );
           }
         },
       },
-      cancel: {
-        label: "Cancel",
-        onClick: () => {},
-      },
+      cancel: { label: "Cancel", onClick: () => {} },
     });
   };
 
@@ -181,20 +179,15 @@ export default function FuelLogSection({
   const totalCost = logs.reduce((sum, log) => sum + log.cost, 0);
   const averageCostPerUnit = totalFuel > 0 ? totalCost / totalFuel : 0;
 
-  // Get the most common unit for stats display
   const getPrimaryUnit = () => {
     if (logs.length === 0) return null;
-
     const unitCounts: Record<string, number> = {};
     logs.forEach((log) => {
-      const unitId = log.unit_id;
-      unitCounts[unitId] = (unitCounts[unitId] || 0) + 1;
+      unitCounts[log.unit_id] = (unitCounts[log.unit_id] || 0) + 1;
     });
-
     const primaryUnitId = Object.entries(unitCounts).sort(
       (a, b) => b[1] - a[1]
     )[0][0];
-
     return units.find((u) => u.unit_id === primaryUnitId);
   };
 
@@ -206,6 +199,7 @@ export default function FuelLogSection({
         <h3 className="text-lg font-semibold">Fuel Logs</h3>
         <Button onClick={() => setOpen(true)}>Add Fuel Log</Button>
       </div>
+
       <FuelStats
         totalFuel={totalFuel}
         totalCost={totalCost}
@@ -213,6 +207,7 @@ export default function FuelLogSection({
         logCount={logs.length}
         unitSymbol={primaryUnit?.symbol || ""}
       />
+
       <FuelCharts
         consumptionData={chartData.timeData}
         costData={chartData.costData}
@@ -274,9 +269,9 @@ export default function FuelLogSection({
 
       <Dialog
         open={open}
-        onOpenChange={(open) => {
-          if (!open) setEditLog(null);
-          setOpen(open);
+        onOpenChange={(isOpen) => {
+          if (!isOpen) setEditLog(null);
+          setOpen(isOpen);
         }}
       >
         <DialogContent>
@@ -286,11 +281,14 @@ export default function FuelLogSection({
             </DialogTitle>
           </DialogHeader>
           <FuelLogForm
+            initialData={editLog ?? undefined}
+            license_plate={vehicle.license_plate}
             units={units}
-            editLog={editLog}
-            loading={loading}
             onSubmit={handleSubmit}
-            onCancel={() => setOpen(false)}
+            onCancel={() => {
+              setOpen(false);
+              setEditLog(null);
+            }}
           />
         </DialogContent>
       </Dialog>

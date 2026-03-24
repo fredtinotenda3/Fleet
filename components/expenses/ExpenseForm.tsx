@@ -1,12 +1,10 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
-/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { toast } from "react-toastify";
+import { toast } from "sonner"; // FIX: was react-toastify
 
 interface ExpenseType {
   _id: string;
@@ -28,6 +26,7 @@ interface Expense {
 interface ExpenseFormProps {
   closeModal: () => void;
   refresh: () => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   expense?: any;
 }
 
@@ -53,8 +52,8 @@ const ExpenseForm = ({ closeModal, refresh, expense }: ExpenseFormProps) => {
         const res = await fetch("/api/expense-types");
         const data = await res.json();
         setExpenseTypes(data);
-      } catch (error) {
-        console.error("Failed to fetch expense types:", error);
+      } catch {
+        console.error("Failed to fetch expense types");
       }
     };
 
@@ -62,10 +61,11 @@ const ExpenseForm = ({ closeModal, refresh, expense }: ExpenseFormProps) => {
       try {
         const res = await fetch("/api/vehicles");
         const data = await res.json();
-        const plates = data.map((v: any) => v.license_plate);
-        setLicensePlates(plates);
-      } catch (error) {
-        console.error("Failed to fetch license plates:", error);
+        // API returns either an array or a paginated object depending on params
+        const vehicles = Array.isArray(data) ? data : (data.data ?? []);
+        setLicensePlates(vehicles.map((v: { license_plate: string }) => v.license_plate));
+      } catch {
+        console.error("Failed to fetch license plates");
       }
     };
 
@@ -119,7 +119,7 @@ const ExpenseForm = ({ closeModal, refresh, expense }: ExpenseFormProps) => {
       } else {
         setError(result.error || "Something went wrong.");
       }
-    } catch (err) {
+    } catch {
       setError("Server error. Please try again.");
     } finally {
       setLoading(false);

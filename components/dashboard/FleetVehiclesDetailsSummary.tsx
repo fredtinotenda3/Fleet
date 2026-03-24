@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-// src/components/dashboard/FleetSummaryCard.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -13,14 +11,16 @@ interface FleetSummary {
   totalVehicles: number;
   activeVehicles: number;
   maintenanceVehicles: number;
+  inactiveVehicles: number;
 }
 
 interface StatCardProps {
-  icon: React.ReactElement<any>; // <- fixed
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  icon: React.ReactElement<any>;
   title: string;
   value: React.ReactNode;
   description?: string;
-  colorKey: "service" | "specifications" | "info";
+  colorKey: "service" | "specifications" | "info" | "danger";
   loading?: boolean;
   iconSize?: string;
 }
@@ -38,6 +38,10 @@ const iconColors = {
     bg: "bg-purple-100 dark:bg-purple-900/20",
     text: "text-purple-600 dark:text-purple-400",
   },
+  danger: {
+    bg: "bg-red-100 dark:bg-red-900/20",
+    text: "text-red-600 dark:text-red-400",
+  },
 };
 
 export default function FleetVehiclesDetailsSummary() {
@@ -51,27 +55,21 @@ export default function FleetVehiclesDetailsSummary() {
       try {
         setLoading(true);
 
-        const res = await fetch("/api/vehicles?limit=0", {
+        // FIX: Use /api/vehicles/stats which is purpose-built for counts.
+        // Avoids the limit=0 bug (parsed as 0, API falls back to 10).
+        const res = await fetch("/api/vehicles/stats", {
           signal: abortController.signal,
         });
 
-        if (!res.ok) throw new Error("Failed to fetch vehicles");
+        if (!res.ok) throw new Error("Failed to fetch vehicle stats");
 
-        const response = await res.json();
-        const vehicles = response.data || [];
-
-        const activeVehicles = vehicles.filter(
-          (v: any) => v.status === "active"
-        ).length;
-
-        const maintenanceVehicles = vehicles.filter(
-          (v: any) => v.status === "maintenance"
-        ).length;
+        const stats = await res.json();
 
         setSummary({
-          totalVehicles: response.pagination?.total || 0,
-          activeVehicles,
-          maintenanceVehicles,
+          totalVehicles: stats.total ?? 0,
+          activeVehicles: stats.active ?? 0,
+          maintenanceVehicles: stats.maintenance ?? 0,
+          inactiveVehicles: stats.inactive ?? 0,
         });
       } catch (error) {
         if (error instanceof Error && error.name !== "AbortError") {
@@ -93,31 +91,37 @@ export default function FleetVehiclesDetailsSummary() {
         StanleyVerse Fleet Vehicles Details Summary
       </h2>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <StatCard
           loading={loading}
           icon={<Car className="h-5 w-5" />}
           title="Total Vehicles"
-          value={summary?.totalVehicles.toLocaleString() || "0"}
+          value={summary?.totalVehicles.toLocaleString() ?? "0"}
           colorKey="specifications"
         />
-
         <StatCard
           loading={loading}
           icon={<Car className="h-5 w-5" />}
           title="Active Vehicles"
-          value={summary?.activeVehicles.toLocaleString() || "0"}
+          value={summary?.activeVehicles.toLocaleString() ?? "0"}
           description="Currently in operation"
           colorKey="specifications"
         />
-
         <StatCard
           loading={loading}
           icon={<Wrench className="h-5 w-5" />}
           title="In Maintenance"
-          value={summary?.maintenanceVehicles.toLocaleString() || "0"}
+          value={summary?.maintenanceVehicles.toLocaleString() ?? "0"}
           description="Undergoing service"
           colorKey="service"
+        />
+        <StatCard
+          loading={loading}
+          icon={<Car className="h-5 w-5" />}
+          title="Inactive"
+          value={summary?.inactiveVehicles.toLocaleString() ?? "0"}
+          description="Not in operation"
+          colorKey="danger"
         />
       </div>
     </div>

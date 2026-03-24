@@ -1,8 +1,6 @@
-// types.ts
+// types/index.ts — single source of truth for all app types
 
 export type Vehicle = {
-  color: string;
-  vin: string;
   _id?: string;
   license_plate: string;
   make: string;
@@ -11,13 +9,22 @@ export type Vehicle = {
   vehicle_type: string;
   purchase_date: string;
   fuel_type: string;
-  status?: "active" | "inactive" | "maintenance"; // Add status field
+  color?: string;
+  vin?: string;
+  status?: "active" | "inactive" | "maintenance";
   registration_expiry?: string;
   insurance_provider?: string;
   last_service_date?: string;
   service_interval?: number;
   odometer?: number;
   createdAt?: Date;
+};
+
+export type ExpenseType = {
+  _id?: string;
+  name: string;
+  category: string;
+  description?: string;
 };
 
 export type Expense = {
@@ -32,13 +39,6 @@ export type Expense = {
   expense_type?: ExpenseType;
 };
 
-export type ExpenseType = {
-  _id?: string;
-  name: string;
-  category: string;
-  description?: string;
-};
-
 export type FuelLog = {
   _id?: string;
   license_plate: string;
@@ -50,6 +50,7 @@ export type FuelLog = {
   unit?: {
     name: string;
     symbol: string;
+    unit_id: string;
   };
 };
 
@@ -62,17 +63,19 @@ export type MeterLog = {
   unit_id: string;
 };
 
+// Reminder status aligned with DB values and app usage
+export type ReminderStatus = "pending" | "due" | "completed" | "overdue";
+
 export type Reminder = {
-  completion_date: string;
-  cost: boolean;
   _id?: string;
   license_plate: string;
   title: string;
   due_date: string;
   notes?: string;
-  status: "pending" | "due" | "completed" | "overdue";
-  priority: "high" | "medium" | "low";
-  service_type: string;
+  status: ReminderStatus;
+  completion_date?: string;
+  priority?: "high" | "medium" | "low";
+  service_type?: string;
   recurrence_interval?: string;
   next_due_odometer?: number;
 };
@@ -99,9 +102,9 @@ export type ApiFilter = {
 };
 
 export type Unit = {
-  type: string;
-  _id: string;
+  _id?: string;
+  unit_id: string;
   name: string;
   symbol: string;
-  unit_id: string;
+  type: string;
 };
