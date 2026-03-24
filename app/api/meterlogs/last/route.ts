@@ -1,24 +1,22 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 import { NextResponse } from "next/server";
 import connectToDatabase from "@/lib/mongodb";
-import { ObjectId } from "mongodb";
+import { requireAuth } from "@/lib/requireAuth";
 
 const COLLECTION = "tblmeterlogs";
 
 export async function GET(req: Request) {
+  const unauth = await requireAuth();
+  if (unauth) return unauth;
+
   try {
     const { searchParams } = new URL(req.url);
     const license_plate = searchParams.get("license_plate");
 
     if (!license_plate) {
-      return NextResponse.json(
-        { error: "license_plate is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "license_plate is required" }, { status: 400 });
     }
 
     const db = await connectToDatabase();
-
     const lastLog = await db
       .collection(COLLECTION)
       .find({ license_plate: license_plate.toUpperCase() })
@@ -27,20 +25,12 @@ export async function GET(req: Request) {
       .toArray();
 
     if (!lastLog.length) {
-      return NextResponse.json({
-        message: "No previous logs found",
-        odometer: 0,
-      });
+      return NextResponse.json({ message: "No previous logs found", odometer: 0 });
     }
 
-    const { odometer } = lastLog[0];
-
-    return NextResponse.json({ odometer });
+    return NextResponse.json({ odometer: lastLog[0].odometer });
   } catch (error) {
     console.error("Error fetching last odometer:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch last odometer" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to fetch last odometer" }, { status: 500 });
   }
 }

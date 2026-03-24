@@ -2,10 +2,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import connectToDatabase from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
+import { requireAuth } from "@/lib/requireAuth";
 
 const COLLECTION = "tblvehicles";
 
 export async function GET(req: NextRequest) {
+  const unauth = await requireAuth();
+  if (unauth) return unauth;
+
   try {
     const { searchParams } = new URL(req.url);
     const db = await connectToDatabase();
@@ -66,6 +70,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: Request) {
+  const unauth = await requireAuth();
+  if (unauth) return unauth;
+
   try {
     const vehicleData = await req.json();
     const requiredFields = [
@@ -122,6 +129,9 @@ export async function POST(req: Request) {
 }
 
 export async function PUT(req: Request) {
+  const unauth = await requireAuth();
+  if (unauth) return unauth;
+
   try {
     const { _id, ...updateData } = await req.json();
 
@@ -155,6 +165,9 @@ export async function PUT(req: Request) {
 }
 
 export async function DELETE(req: Request) {
+  const unauth = await requireAuth();
+  if (unauth) return unauth;
+
   try {
     const { id } = await req.json();
     if (!id)

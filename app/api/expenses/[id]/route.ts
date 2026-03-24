@@ -1,20 +1,20 @@
 import { NextResponse } from "next/server";
 import connectToDatabase from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
+import { requireAuth } from "@/lib/requireAuth";
 
 const COLLECTION = "tblexpenses";
 
-// DELETE: Soft delete an expense
 export async function DELETE(req: Request) {
+  const unauth = await requireAuth();
+  if (unauth) return unauth;
+
   try {
     const pathSegments = new URL(req.url).pathname.split("/");
     const id = pathSegments[pathSegments.length - 1];
 
     if (!id || !ObjectId.isValid(id)) {
-      return NextResponse.json(
-        { error: "Invalid or missing ID" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid or missing ID" }, { status: 400 });
     }
 
     const db = await connectToDatabase();
@@ -39,10 +39,7 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ message: "Expense deleted successfully" });
   } catch (error) {
     return NextResponse.json(
-      {
-        error: "Failed to delete expense",
-        details: (error as Error).message,
-      },
+      { error: "Failed to delete expense", details: (error as Error).message },
       { status: 500 }
     );
   }

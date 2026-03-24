@@ -2,21 +2,21 @@
 import { NextResponse } from "next/server";
 import connectToDatabase from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
+import { requireAuth } from "@/lib/requireAuth";
 
 const COLLECTION = "tblexpenses";
 
 export async function GET(req: Request) {
+  const unauth = await requireAuth();
+  if (unauth) return unauth;
+
   try {
     const { searchParams } = new URL(req.url);
     const db = await connectToDatabase();
     const licensePlate = searchParams.get("license_plate");
 
     const aggregationPipeline: any[] = [
-      {
-        $match: {
-          isDeleted: { $ne: true },
-        },
-      },
+      { $match: { isDeleted: { $ne: true } } },
       {
         $lookup: {
           from: "tblvehicles",
@@ -25,14 +25,13 @@ export async function GET(req: Request) {
             {
               $match: {
                 $expr: { $eq: ["$license_plate", "$$expenseLicense"] },
-                isDeleted: { $ne: true }, // CRITICAL: Only include non-deleted vehicles
+                isDeleted: { $ne: true },
               },
             },
           ],
           as: "vehicle_info",
         },
       },
-      // Filter out expenses from deleted vehicles
       { $match: { "vehicle_info.0": { $exists: true } } },
       {
         $lookup: {
@@ -46,7 +45,6 @@ export async function GET(req: Request) {
       { $sort: { date: -1 } },
     ];
 
-    // Add license plate filter if provided
     if (licensePlate) {
       aggregationPipeline[0].$match.license_plate = licensePlate.toUpperCase();
     }
@@ -66,18 +64,13 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const unauth = await requireAuth();
+  if (unauth) return unauth;
+
   try {
     const db = await connectToDatabase();
     const body = await req.json();
-    const {
-      license_plate,
-      amount,
-      date,
-      description,
-      jobTrip,
-      notes,
-      expense_type_id,
-    } = body;
+    const { license_plate, amount, date, description, jobTrip, notes, expense_type_id } = body;
 
     if (
       !license_plate ||
@@ -88,24 +81,15 @@ export async function POST(req: Request) {
       !expense_type_id ||
       !ObjectId.isValid(expense_type_id)
     ) {
-      return NextResponse.json(
-        { error: "Missing or invalid fields" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Missing or invalid fields" }, { status: 400 });
     }
 
     if (Number(amount) <= 0) {
-      return NextResponse.json(
-        { error: "Amount must be positive" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Amount must be positive" }, { status: 400 });
     }
 
     if (new Date(date) > new Date()) {
-      return NextResponse.json(
-        { error: "Date cannot be in the future" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Date cannot be in the future" }, { status: 400 });
     }
 
     const vehicleExists = await db.collection("tblvehicles").findOne({
@@ -123,10 +107,7 @@ export async function POST(req: Request) {
     });
 
     if (!typeExists) {
-      return NextResponse.json(
-        { error: "Invalid expense type ID" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid expense type ID" }, { status: 400 });
     }
 
     const doc = {
@@ -141,11 +122,7 @@ export async function POST(req: Request) {
     };
 
     const result = await db.collection(COLLECTION).insertOne(doc);
-
-    return NextResponse.json(
-      { insertedId: result.insertedId },
-      { status: 201 }
-    );
+    return NextResponse.json({ insertedId: result.insertedId }, { status: 201 });
   } catch (error) {
     return NextResponse.json(
       { error: "Failed to create expense", details: (error as Error).message },
@@ -155,25 +132,16 @@ export async function POST(req: Request) {
 }
 
 export async function PUT(req: Request) {
+  const unauth = await requireAuth();
+  if (unauth) return unauth;
+
   try {
     const db = await connectToDatabase();
     const body = await req.json();
-    const {
-      id,
-      license_plate,
-      amount,
-      date,
-      description,
-      jobTrip,
-      notes,
-      expense_type_id,
-    } = body;
+    const { id, license_plate, amount, date, description, jobTrip, notes, expense_type_id } = body;
 
     if (!id || !ObjectId.isValid(id)) {
-      return NextResponse.json(
-        { error: "Invalid or missing ID" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid or missing ID" }, { status: 400 });
     }
 
     const updateFields: any = {};
@@ -183,23 +151,15 @@ export async function PUT(req: Request) {
         license_plate: license_plate.toUpperCase(),
         isDeleted: { $ne: true },
       });
-
       if (!vehicleExists) {
-        return NextResponse.json(
-          { error: "Vehicle not found" },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: "Vehicle not found" }, { status: 400 });
       }
-
       updateFields.license_plate = license_plate.toUpperCase();
     }
 
     if (amount !== undefined) {
       if (isNaN(amount) || Number(amount) <= 0) {
-        return NextResponse.json(
-          { error: "Amount must be positive" },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: "Amount must be positive" }, { status: 400 });
       }
       updateFields.amount = Number(amount);
     }
@@ -207,10 +167,7 @@ export async function PUT(req: Request) {
     if (date) {
       const newDate = new Date(date);
       if (newDate > new Date()) {
-        return NextResponse.json(
-          { error: "Date cannot be in the future" },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: "Date cannot be in the future" }, { status: 400 });
       }
       updateFields.date = newDate;
     }
@@ -221,32 +178,20 @@ export async function PUT(req: Request) {
 
     if (expense_type_id) {
       if (!ObjectId.isValid(expense_type_id)) {
-        return NextResponse.json(
-          { error: "Invalid expense type ID" },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: "Invalid expense type ID" }, { status: 400 });
       }
-
       const typeExists = await db.collection("tblexpense_types").findOne({
         _id: new ObjectId(expense_type_id),
         isDeleted: { $ne: true },
       });
-
       if (!typeExists) {
-        return NextResponse.json(
-          { error: "Expense type not found" },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: "Expense type not found" }, { status: 400 });
       }
-
       updateFields.expense_type_id = new ObjectId(expense_type_id);
     }
 
     const result = await db.collection(COLLECTION).updateOne(
-      {
-        _id: new ObjectId(id),
-        isDeleted: { $ne: true },
-      },
+      { _id: new ObjectId(id), isDeleted: { $ne: true } },
       { $set: updateFields }
     );
 
