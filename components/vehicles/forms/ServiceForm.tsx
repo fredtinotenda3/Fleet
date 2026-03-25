@@ -25,6 +25,16 @@ interface ServiceFormProps {
   editService?: ServiceReminder;
 }
 
+const RECURRENCE_OPTIONS = [
+  { value: "", label: "No recurrence" },
+  { value: "7d", label: "Every week" },
+  { value: "14d", label: "Every 2 weeks" },
+  { value: "30d", label: "Every month" },
+  { value: "90d", label: "Every 3 months" },
+  { value: "180d", label: "Every 6 months" },
+  { value: "1y", label: "Every year" },
+];
+
 export default function ServiceForm({
   vehicle,
   onSuccess,
@@ -37,18 +47,18 @@ export default function ServiceForm({
     due_date: new Date().toISOString().split("T")[0],
     status: "pending",
     notes: "",
+    recurrence_interval: "",
     license_plate: vehicle.license_plate,
   });
 
   useEffect(() => {
     if (editService) {
-      const dueDate = editService.due_date
-        ? new Date(editService.due_date).toISOString().split("T")[0]
-        : new Date().toISOString().split("T")[0];
-
       setFormData({
         ...editService,
-        due_date: dueDate,
+        due_date: editService.due_date
+          ? new Date(editService.due_date).toISOString().split("T")[0]
+          : new Date().toISOString().split("T")[0],
+        recurrence_interval: editService.recurrence_interval || "",
         license_plate: vehicle.license_plate,
       });
       setOpen(true);
@@ -62,6 +72,7 @@ export default function ServiceForm({
         due_date: new Date().toISOString().split("T")[0],
         status: "pending",
         notes: "",
+        recurrence_interval: "",
         license_plate: vehicle.license_plate,
       });
     }
@@ -74,11 +85,11 @@ export default function ServiceForm({
     try {
       const isEdit = Boolean(editService?._id);
 
-      // FIX: Always POST to /api/reminders.
-      // For edits, include _id in the body — the PUT handler reads from req.json(), not query params.
       const payload = {
         ...formData,
         due_date: new Date(formData.due_date!).toISOString(),
+        // Strip empty recurrence so it's not stored as ""
+        recurrence_interval: formData.recurrence_interval || undefined,
         ...(isEdit && { _id: editService!._id }),
       };
 
@@ -135,6 +146,7 @@ export default function ServiceForm({
                 onChange={(e) =>
                   setFormData({ ...formData, title: e.target.value })
                 }
+                placeholder="e.g. Oil change, Tyre rotation"
                 required
               />
             </div>
@@ -173,6 +185,33 @@ export default function ServiceForm({
               </Select>
             </div>
 
+            {/* #14 — Recurrence interval */}
+            <div>
+              <Label>Recurrence</Label>
+              <Select
+                value={formData.recurrence_interval || ""}
+                onValueChange={(value) =>
+                  setFormData({ ...formData, recurrence_interval: value })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="No recurrence" />
+                </SelectTrigger>
+                <SelectContent>
+                  {RECURRENCE_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value || "none"} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {formData.recurrence_interval && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  When marked complete, the next reminder will be created automatically.
+                </p>
+              )}
+            </div>
+
             <div>
               <Label>Notes</Label>
               <Input
@@ -180,6 +219,7 @@ export default function ServiceForm({
                 onChange={(e) =>
                   setFormData({ ...formData, notes: e.target.value })
                 }
+                placeholder="Optional notes"
               />
             </div>
 

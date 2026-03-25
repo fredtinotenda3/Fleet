@@ -11,10 +11,45 @@ export async function GET(req: NextRequest) {
   if (unauth) return unauth;
 
   try {
-    const license_plate = req.nextUrl.searchParams.get("license_plate");
+    const { searchParams } = new URL(req.url);
     const db = await connectToDatabase();
 
-    const pipeline: any[] = [
+    const license_plate = searchParams.get("license_plate");
+    const search = searchParams.get("search") || "";
+    const unitId = searchParams.get("unit_id");
+    const start = searchParams.get("start");
+    const end = searchParams.get("end");
+
+    // Pagination
+    const pageParam = searchParams.get("page");
+    const paginated = !!pageParam;
+    const page = parseInt(pageParam || "1");
+    const limit = parseInt(searchParams.get("limit") || "50");
+    const skip = (page - 1) * limit;
+
+    // Match stage
+    const matchStage: any = {};
+
+    if (license_plate) {
+      matchStage.license_plate = license_plate.toUpperCase();
+    }
+
+    if (search) {
+      matchStage.license_plate = { $regex: search, $options: "i" };
+    }
+
+    if (unitId) {
+      matchStage.unit_id = unitId;
+    }
+
+    if (start || end) {
+      matchStage.date = {};
+      if (start) matchStage.date.$gte = new Date(start);
+      if (end) matchStage.date.$lte = new Date(end);
+    }
+
+    const basePipeline: any[] = [
+      { $match: matchStage },
       {
         $lookup: {
           from: "tblvehicles",
@@ -48,18 +83,42 @@ export async function GET(req: NextRequest) {
           fuel_volume: 1,
           cost: 1,
           odometer: 1,
+          unit_id: "$unit.unit_id",
           unit: { name: 1, symbol: 1, unit_id: 1 },
         },
       },
     ];
 
-    if (license_plate) {
-      pipeline.unshift({ $match: { license_plate: license_plate.toUpperCase() } });
+    if (paginated) {
+      const [countResult, data] = await Promise.all([
+        db.collection(COLLECTION).aggregate([
+          ...basePipeline,
+          { $count: "total" },
+        ]).toArray(),
+        db.collection(COLLECTION).aggregate([
+          ...basePipeline,
+          { $sort: { date: -1 } },
+          { $skip: skip },
+          { $limit: limit },
+        ]).toArray(),
+      ]);
+
+      const total = countResult[0]?.total ?? 0;
+
+      return NextResponse.json(
+        data.map((doc) => ({ ...doc, _id: doc._id.toString() })),
+        { headers: { "X-Total-Count": total.toString() } }
+      );
     }
 
-    const data = await db.collection(COLLECTION).aggregate(pipeline).toArray();
+    // No pagination — return all (used by charts)
+    const data = await db.collection(COLLECTION).aggregate([
+      ...basePipeline,
+      { $sort: { date: -1 } },
+    ]).toArray();
+
     return NextResponse.json(
-      data.map((doc) => ({ ...doc, _id: doc._id.toString(), unit_id: doc.unit?.unit_id }))
+      data.map((doc) => ({ ...doc, _id: doc._id.toString() }))
     );
   } catch (error) {
     console.error("GET Error:", error);
@@ -88,7 +147,6 @@ export async function POST(req: NextRequest) {
       license_plate: body.license_plate.toUpperCase(),
       isDeleted: { $ne: true },
     });
-
     if (!vehicle) {
       return NextResponse.json({ error: "Vehicle not found or deleted" }, { status: 400 });
     }
@@ -98,18 +156,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid unit ID" }, { status: 400 });
     }
 
-    const insertData = {
+    const result = await db.collection(COLLECTION).insertOne({
       ...body,
       license_plate: body.license_plate.toUpperCase(),
       fuel_volume: Number(body.fuel_volume),
       cost: Number(body.cost),
       odometer: Number(body.odometer),
       date: new Date(body.date),
-      unit_id: body.unit_id,
       createdAt: new Date(),
-    };
+    });
 
-    const result = await db.collection(COLLECTION).insertOne(insertData);
     return NextResponse.json({ _id: result.insertedId.toString() }, { status: 201 });
   } catch (error) {
     console.error("POST Error:", error);

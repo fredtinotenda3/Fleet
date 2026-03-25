@@ -13,10 +13,44 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const db = await connectToDatabase();
-    const licensePlate = searchParams.get("license_plate");
 
-    const aggregationPipeline: any[] = [
-      { $match: { isDeleted: { $ne: true } } },
+    const licensePlate = searchParams.get("license_plate");
+    const search = searchParams.get("search") || "";
+    const type = searchParams.get("type");
+    const start = searchParams.get("start");
+    const end = searchParams.get("end");
+
+    // Pagination — only applied when page param is present
+    const pageParam = searchParams.get("page");
+    const limitParam = searchParams.get("limit");
+    const paginated = !!pageParam;
+    const page = parseInt(pageParam || "1");
+    const limit = parseInt(limitParam || "50");
+    const skip = (page - 1) * limit;
+
+    // Base match stage
+    const matchStage: any = { isDeleted: { $ne: true } };
+
+    if (licensePlate) {
+      matchStage.license_plate = licensePlate.toUpperCase();
+    }
+
+    if (search) {
+      matchStage.$or = [
+        { license_plate: { $regex: search, $options: "i" } },
+        { description: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    if (start || end) {
+      matchStage.date = {};
+      if (start) matchStage.date.$gte = new Date(start);
+      if (end) matchStage.date.$lte = new Date(end);
+    }
+
+    // Build aggregation pipeline
+    const basePipeline: any[] = [
+      { $match: matchStage },
       {
         $lookup: {
           from: "tblvehicles",
@@ -42,17 +76,44 @@ export async function GET(req: Request) {
         },
       },
       { $unwind: { path: "$expense_type", preserveNullAndEmptyArrays: true } },
-      { $sort: { date: -1 } },
     ];
 
-    if (licensePlate) {
-      aggregationPipeline[0].$match.license_plate = licensePlate.toUpperCase();
+    // Filter by expense type name if provided
+    if (type && type !== "all") {
+      basePipeline.push({
+        $match: { "expense_type.name": { $regex: `^${type}$`, $options: "i" } },
+      });
     }
 
-    const data = await db
-      .collection(COLLECTION)
-      .aggregate(aggregationPipeline)
-      .toArray();
+    if (paginated) {
+      // Run count and data in parallel
+      const [countResult, data] = await Promise.all([
+        db.collection(COLLECTION).aggregate([
+          ...basePipeline,
+          { $count: "total" },
+        ]).toArray(),
+        db.collection(COLLECTION).aggregate([
+          ...basePipeline,
+          { $sort: { date: -1 } },
+          { $skip: skip },
+          { $limit: limit },
+          { $project: { vehicle_info: 0 } },
+        ]).toArray(),
+      ]);
+
+      const total = countResult[0]?.total ?? 0;
+
+      return NextResponse.json(data, {
+        headers: { "X-Total-Count": total.toString() },
+      });
+    }
+
+    // No pagination — return all (used by charts/dashboard)
+    const data = await db.collection(COLLECTION).aggregate([
+      ...basePipeline,
+      { $sort: { date: -1 } },
+      { $project: { vehicle_info: 0 } },
+    ]).toArray();
 
     return NextResponse.json(data);
   } catch (error) {
@@ -73,13 +134,9 @@ export async function POST(req: Request) {
     const { license_plate, amount, date, description, jobTrip, notes, expense_type_id } = body;
 
     if (
-      !license_plate ||
-      typeof license_plate !== "string" ||
-      !amount ||
-      isNaN(amount) ||
-      !date ||
-      !expense_type_id ||
-      !ObjectId.isValid(expense_type_id)
+      !license_plate || typeof license_plate !== "string" ||
+      !amount || isNaN(amount) ||
+      !date || !expense_type_id || !ObjectId.isValid(expense_type_id)
     ) {
       return NextResponse.json({ error: "Missing or invalid fields" }, { status: 400 });
     }
@@ -96,7 +153,6 @@ export async function POST(req: Request) {
       license_plate: license_plate.toUpperCase(),
       isDeleted: { $ne: true },
     });
-
     if (!vehicleExists) {
       return NextResponse.json({ error: "Vehicle not found" }, { status: 400 });
     }
@@ -105,12 +161,11 @@ export async function POST(req: Request) {
       _id: new ObjectId(expense_type_id),
       isDeleted: { $ne: true },
     });
-
     if (!typeExists) {
       return NextResponse.json({ error: "Invalid expense type ID" }, { status: 400 });
     }
 
-    const doc = {
+    const result = await db.collection(COLLECTION).insertOne({
       license_plate: license_plate.toUpperCase(),
       amount: Number(amount),
       date: new Date(date),
@@ -119,9 +174,8 @@ export async function POST(req: Request) {
       ...(jobTrip && { jobTrip }),
       ...(notes && { notes }),
       isDeleted: false,
-    };
+    });
 
-    const result = await db.collection(COLLECTION).insertOne(doc);
     return NextResponse.json({ insertedId: result.insertedId }, { status: 201 });
   } catch (error) {
     return NextResponse.json(

@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "db:indexes": "tsx scripts/create-indexes.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.13",
@@ -46,12 +47,14 @@
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
     "@types/mongodb": "^4.0.6",
-    "@types/node": "^20",
+    "@types/node": "^20.19.37",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "15.3.1",
     "tailwindcss": "^4",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
     "tw-animate-css": "^1.2.9",
     "typescript": "^5.8.3"
   }
