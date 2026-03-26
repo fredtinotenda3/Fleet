@@ -85,18 +85,26 @@ export const formatDate = (date: Date | string, formatStr = "MMM dd, yyyy") => {
 
 export const calculateEfficiency = (logs: FuelLog[]) => {
   const efficiencyMap = new Map<string, number>();
-  const sortedLogs = [...logs].sort(
+  
+  // Filter logs to only include those with valid odometer readings
+  const logsWithOdometer = logs.filter(log => log.odometer !== undefined && log.odometer !== null);
+  
+  const sortedLogs = [...logsWithOdometer].sort(
     (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
   );
 
   for (let i = 1; i < sortedLogs.length; i++) {
     const current = sortedLogs[i];
     const previous = sortedLogs[i - 1];
-    const distance = current.odometer - previous.odometer;
-    if (current.fuel_volume > 0) {
+    
+    // Both odometer values are guaranteed to exist due to the filter above
+    const distance = (current.odometer as number) - (previous.odometer as number);
+    
+    if (current.fuel_volume > 0 && distance > 0) {
       const efficiency = distance / current.fuel_volume;
       efficiencyMap.set(current.date.toString(), Number(efficiency.toFixed(2)));
     }
   }
+  
   return efficiencyMap;
 };

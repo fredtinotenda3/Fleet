@@ -39,6 +39,8 @@ export type Expense = {
   expense_type?: ExpenseType;
 };
 
+// In types/index.ts — replace the FuelLog type with this:
+
 export type FuelLog = {
   _id?: string;
   license_plate: string;
@@ -46,7 +48,7 @@ export type FuelLog = {
   fuel_volume: number;
   unit_id: string;
   cost: number;
-  odometer: number;
+  odometer?: number;  // FIX: optional — not all fill-ups will have an odometer reading
   unit?: {
     name: string;
     symbol: string;
@@ -108,3 +110,4 @@ export type Unit = {
   symbol: string;
   type: string;
 };
+

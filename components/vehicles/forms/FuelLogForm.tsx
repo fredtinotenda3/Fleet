@@ -9,7 +9,7 @@ interface FuelLogFormProps {
     date: string;
     fuel_volume: number;
     cost: number;
-    odometer: number;
+    odometer?: number;
     unit_id: string;
     license_plate: string;
   }) => void;
@@ -31,9 +31,8 @@ export function FuelLogForm({
   );
   const [cost, setCost] = useState(initialData?.cost.toString() || "");
   const [odometer, setOdometer] = useState(
-    initialData?.odometer.toString() || ""
+    initialData?.odometer?.toString() || ""
   );
-  // FIX: default to unit_id (the custom string), not _id (MongoDB ObjectId)
   const [unitId, setUnitId] = useState(
     initialData?.unit_id || units[0]?.unit_id || ""
   );
@@ -44,7 +43,7 @@ export function FuelLogForm({
       setDate(new Date(initialData.date).toISOString().slice(0, 10));
       setFuelVolume(initialData.fuel_volume.toString());
       setCost(initialData.cost.toString());
-      setOdometer(initialData.odometer.toString());
+      setOdometer(initialData.odometer?.toString() || "");
       setUnitId(initialData.unit_id || units[0]?.unit_id || "");
     } else {
       setDate("");
@@ -59,25 +58,32 @@ export function FuelLogForm({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
-    if (!date || !fuelVolume || !cost || !odometer || !unitId) {
-      setError("All fields are required.");
+    if (!date || !fuelVolume || !cost || !unitId) {
+      setError("Date, fuel volume, cost and unit are required.");
       return;
     }
 
     const fuelVolumeNum = Number(fuelVolume);
     const costNum = Number(cost);
-    const odometerNum = Number(odometer);
 
-    if (
-      isNaN(fuelVolumeNum) ||
-      isNaN(costNum) ||
-      isNaN(odometerNum) ||
-      fuelVolumeNum <= 0 ||
-      costNum < 0 ||
-      odometerNum < 0
-    ) {
-      setError("Please enter valid positive numbers.");
+    if (isNaN(fuelVolumeNum) || fuelVolumeNum <= 0) {
+      setError("Fuel volume must be a positive number.");
       return;
+    }
+
+    if (isNaN(costNum) || costNum < 0) {
+      setError("Cost must be a valid non-negative number.");
+      return;
+    }
+
+    // Odometer is optional — only validate if provided
+    let odometerNum: number | undefined;
+    if (odometer !== "") {
+      odometerNum = Number(odometer);
+      if (isNaN(odometerNum) || odometerNum < 0) {
+        setError("Odometer must be a valid non-negative number.");
+        return;
+      }
     }
 
     setError(null);
@@ -85,8 +91,8 @@ export function FuelLogForm({
       date,
       fuel_volume: fuelVolumeNum,
       cost: costNum,
-      odometer: odometerNum,
-      unit_id: unitId,          // ← always the unit_id string, e.g. "L" or "gal"
+      ...(odometerNum !== undefined && { odometer: odometerNum }),
+      unit_id: unitId,
       license_plate: license_plate.toUpperCase(),
     });
   }
@@ -97,7 +103,7 @@ export function FuelLogForm({
 
       <div>
         <label htmlFor="date" className="block font-medium text-sm mb-1">
-          Date
+          Date <span className="text-red-500">*</span>
         </label>
         <input
           id="date"
@@ -111,7 +117,7 @@ export function FuelLogForm({
 
       <div>
         <label htmlFor="fuelVolume" className="block font-medium text-sm mb-1">
-          Fuel Volume
+          Fuel Volume <span className="text-red-500">*</span>
         </label>
         <input
           id="fuelVolume"
@@ -127,7 +133,7 @@ export function FuelLogForm({
 
       <div>
         <label htmlFor="unit" className="block font-medium text-sm mb-1">
-          Unit
+          Unit <span className="text-red-500">*</span>
         </label>
         <select
           id="unit"
@@ -138,7 +144,6 @@ export function FuelLogForm({
         >
           <option value="">Select unit</option>
           {units.map((unit) => (
-            // FIX: value must be unit.unit_id, not unit._id
             <option key={unit.unit_id} value={unit.unit_id}>
               {unit.name} ({unit.symbol})
             </option>
@@ -148,7 +153,7 @@ export function FuelLogForm({
 
       <div>
         <label htmlFor="cost" className="block font-medium text-sm mb-1">
-          Cost
+          Cost <span className="text-red-500">*</span>
         </label>
         <input
           id="cost"
@@ -164,7 +169,10 @@ export function FuelLogForm({
 
       <div>
         <label htmlFor="odometer" className="block font-medium text-sm mb-1">
-          Odometer
+          Odometer{" "}
+          <span className="text-muted-foreground text-xs font-normal">
+            (optional)
+          </span>
         </label>
         <input
           id="odometer"
@@ -173,8 +181,8 @@ export function FuelLogForm({
           step="any"
           value={odometer}
           onChange={(e) => setOdometer(e.target.value)}
+          placeholder="Leave blank if unknown"
           className="block w-full border rounded px-3 py-2 text-sm"
-          required
         />
       </div>
 

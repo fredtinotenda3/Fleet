@@ -79,9 +79,8 @@ export const FuelLogForm = ({
       <Input
         name="odometer"
         type="number"
-        min="0"
-        required
         defaultValue={editLog?.odometer}
+        placeholder="Leave blank if unknown"
       />
     </div>
 

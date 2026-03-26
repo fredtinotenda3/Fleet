@@ -219,11 +219,19 @@ export const FuelLogsAnalytics = () => {
         0
       );
 
-      // Efficiency
+      // Efficiency - only calculate if we have valid odometer readings
       if (logs.length > 1) {
-        const distance = logs[logs.length - 1].odometer - logs[0].odometer;
-        const totalFuel = logs.reduce((sum, log) => sum + log.fuel_volume, 0);
-        efficiencyByVehicle[licensePlate] = distance / totalFuel;
+        const firstLog = logs[0];
+        const lastLog = logs[logs.length - 1];
+        
+        // Check if both odometer values exist
+        if (firstLog.odometer !== undefined && lastLog.odometer !== undefined) {
+          const distance = lastLog.odometer - firstLog.odometer;
+          const totalFuel = logs.reduce((sum, log) => sum + log.fuel_volume, 0);
+          if (totalFuel > 0) {
+            efficiencyByVehicle[licensePlate] = distance / totalFuel;
+          }
+        }
       }
 
       // Fuel volume vs cost
@@ -339,7 +347,7 @@ export const FuelLogsAnalytics = () => {
                     "N/A"
                   }</td>
                   <td>$${log.cost.toFixed(2)}</td>
-                  <td>${log.odometer}</td>
+                  <td>${log.odometer ?? 'N/A'}</td>
                 </tr>
               `
                 )

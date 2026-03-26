@@ -76,8 +76,9 @@ export default function FuelLogSection({
       for (let i = 1; i < sortedLogs.length; i++) {
         const current = sortedLogs[i];
         const previous = sortedLogs[i - 1];
-        const distance = current.odometer - previous.odometer;
-        if (current.fuel_volume > 0) {
+        // Only calculate efficiency if both odometer values exist
+        if (current.odometer && previous.odometer && current.fuel_volume > 0) {
+          const distance = current.odometer - previous.odometer;
           efficiencyData.push({
             date: formatDate(current.date),
             efficiency: Number((distance / current.fuel_volume).toFixed(2)),
@@ -122,7 +123,7 @@ export default function FuelLogSection({
     date: string;
     fuel_volume: number;
     cost: number;
-    odometer: number;
+    odometer?: number;
     unit_id: string;
     license_plate: string;
   }) => {
@@ -130,10 +131,17 @@ export default function FuelLogSection({
     try {
       const url = editLog ? `/api/fuellogs?id=${editLog._id}` : "/api/fuellogs";
       const method = editLog ? "PUT" : "POST";
+      
+      // Only include odometer if it has a value
+      const payload = {
+        ...logData,
+        odometer: logData.odometer ?? undefined,
+      };
+      
       const res = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(logData),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
@@ -240,7 +248,7 @@ export default function FuelLogSection({
                 </Badge>
               </TableCell>
               <TableCell>${Number(log.cost).toFixed(2)}</TableCell>
-              <TableCell>{log.odometer.toLocaleString()}</TableCell>
+              <TableCell>{log.odometer?.toLocaleString() ?? 'N/A'}</TableCell>
               <TableCell>
                 <div className="flex gap-2">
                   <Button

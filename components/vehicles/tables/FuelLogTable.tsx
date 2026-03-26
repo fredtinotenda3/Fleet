@@ -56,7 +56,7 @@ export const FuelLogTable = ({
                   </Badge>
                 </td>
                 <td className="p-2">${log.cost.toFixed(2)}</td>
-                <td className="p-2">{log.odometer.toLocaleString()}</td>
+                <td className="p-2">{log.odometer?.toLocaleString()}</td>
                 {(onEdit || onDelete) && (
                   <td className="p-2 flex gap-2">
                     {onEdit && (
