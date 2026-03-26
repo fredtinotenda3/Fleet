@@ -26,7 +26,7 @@ interface ServiceFormProps {
 }
 
 const RECURRENCE_OPTIONS = [
-  { value: "", label: "No recurrence" },
+  { value: "none", label: "No recurrence" },
   { value: "7d", label: "Every week" },
   { value: "14d", label: "Every 2 weeks" },
   { value: "30d", label: "Every month" },
@@ -47,7 +47,7 @@ export default function ServiceForm({
     due_date: new Date().toISOString().split("T")[0],
     status: "pending",
     notes: "",
-    recurrence_interval: "",
+    recurrence_interval: undefined,
     license_plate: vehicle.license_plate,
   });
 
@@ -58,7 +58,7 @@ export default function ServiceForm({
         due_date: editService.due_date
           ? new Date(editService.due_date).toISOString().split("T")[0]
           : new Date().toISOString().split("T")[0],
-        recurrence_interval: editService.recurrence_interval || "",
+        recurrence_interval: editService.recurrence_interval || undefined,
         license_plate: vehicle.license_plate,
       });
       setOpen(true);
@@ -72,7 +72,7 @@ export default function ServiceForm({
         due_date: new Date().toISOString().split("T")[0],
         status: "pending",
         notes: "",
-        recurrence_interval: "",
+        recurrence_interval: undefined,
         license_plate: vehicle.license_plate,
       });
     }
@@ -88,8 +88,8 @@ export default function ServiceForm({
       const payload = {
         ...formData,
         due_date: new Date(formData.due_date!).toISOString(),
-        // Strip empty recurrence so it's not stored as ""
-        recurrence_interval: formData.recurrence_interval || undefined,
+        // Convert "none" to undefined for the API
+        recurrence_interval: formData.recurrence_interval === "none" ? undefined : formData.recurrence_interval,
         ...(isEdit && { _id: editService!._id }),
       };
 
@@ -189,7 +189,7 @@ export default function ServiceForm({
             <div>
               <Label>Recurrence</Label>
               <Select
-                value={formData.recurrence_interval || ""}
+                value={formData.recurrence_interval || "none"}
                 onValueChange={(value) =>
                   setFormData({ ...formData, recurrence_interval: value })
                 }
@@ -199,13 +199,13 @@ export default function ServiceForm({
                 </SelectTrigger>
                 <SelectContent>
                   {RECURRENCE_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value || "none"} value={opt.value}>
+                    <SelectItem key={opt.value} value={opt.value}>
                       {opt.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              {formData.recurrence_interval && (
+              {formData.recurrence_interval && formData.recurrence_interval !== "none" && (
                 <p className="text-xs text-muted-foreground mt-1">
                   When marked complete, the next reminder will be created automatically.
                 </p>
