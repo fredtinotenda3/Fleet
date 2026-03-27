@@ -5,7 +5,7 @@ import { useEffect, useState, useMemo, useCallback } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { FuelLog, MeterLog, Expense, Vehicle, Reminder } from "@/types";
+import { FuelLog, MeterLog, Expense, Vehicle, Reminder, Trip } from "@/types";
 import { toast } from "sonner";
 import {
   FuelIcon,
@@ -14,10 +14,13 @@ import {
   Wrench,
   Calendar,
   Car,
+  Route,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SVGAttributes } from "react";
 import React from "react";
+import { calculateCombinedDistance, formatDistance, calculateFuelEfficiencyWithCombinedDistance } from "@/lib/distance";
+import TripLogSection from "./TripLogSection";
 
 type VehicleDetailSectionProps = {
   vehicle: Vehicle;
@@ -48,6 +51,10 @@ const iconColors = {
     bg: "bg-purple-100 dark:bg-purple-900/20",
     text: "text-purple-600 dark:text-purple-400",
   },
+  trip: {
+    bg: "bg-cyan-100 dark:bg-cyan-900/20",
+    text: "text-cyan-600 dark:text-cyan-400",
+  },
 };
 
 interface StatCardProps {
@@ -75,6 +82,7 @@ export default function VehicleDetailSection({
   const [fuelLogs, setFuelLogs] = useState<FuelLog[]>([]);
   const [meterLogs, setMeterLogs] = useState<MeterLog[]>([]);
   const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
   const userLocale =
     typeof navigator !== "undefined" ? navigator.language : "en-US";
@@ -90,12 +98,21 @@ export default function VehicleDetailSection({
     [fuelLogs]
   );
 
-  const totalMeterOdometer = useMemo(
-    () => meterLogs.reduce((sum, log) => sum + (Number(log.odometer) || 0), 0),
-    [meterLogs]
-  );
+  // Combined distance from meter logs + manual trips
+  const combinedDistance = useMemo(() => {
+    return calculateCombinedDistance({
+      meterLogs,
+      trips,
+      defaultUnitSymbol: "km",
+    });
+  }, [meterLogs, trips]);
 
   const serviceCount = useMemo(() => reminders.length, [reminders]);
+
+  // Fuel efficiency using combined distance
+  const fuelEfficiency = useMemo(() => {
+    return calculateFuelEfficiencyWithCombinedDistance(fuelLogs, meterLogs, trips);
+  }, [fuelLogs, meterLogs, trips]);
 
   const getSafeCurrency = useCallback((locale: string): string => {
     try {
@@ -122,37 +139,6 @@ export default function VehicleDetailSection({
     },
     [userLocale]
   );
-
-  const calculateSimpleEfficiency = useCallback(
-    () =>
-      totalFuelVolume > 0
-        ? Number((totalMeterOdometer / totalFuelVolume).toFixed(2))
-        : null,
-    [totalFuelVolume, totalMeterOdometer]
-  );
-
-  const fuelEfficiency = useMemo(() => {
-    try {
-      if (fuelLogs.length < 2) return calculateSimpleEfficiency();
-
-      const sorted = [...fuelLogs].sort(
-        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
-      );
-
-      const first = sorted[0]?.odometer;
-      const last = sorted[sorted.length - 1]?.odometer;
-      if (!first || !last) return calculateSimpleEfficiency();
-
-      const distance = last - first;
-      const volume = sorted
-        .slice(1)
-        .reduce((sum, log) => sum + (Number(log.fuel_volume) || 0), 0);
-
-      return volume > 0 ? Number((distance / volume).toFixed(2)) : null;
-    } catch {
-      return calculateSimpleEfficiency();
-    }
-  }, [fuelLogs, calculateSimpleEfficiency]);
 
   const formattedExpenses = useMemo(
     () => (
@@ -184,16 +170,34 @@ export default function VehicleDetailSection({
   const formattedDistance = useMemo(
     () => (
       <span className="font-mono">
-        {totalMeterOdometer ? formatUnit(totalMeterOdometer, "km") : "N/A"}
+        {combinedDistance.hasData
+          ? formatDistance(
+              combinedDistance.totalDistance,
+              combinedDistance.unitSymbol,
+              { fallback: "N/A" }
+            )
+          : "No distance data"}
       </span>
     ),
-    [totalMeterOdometer, formatUnit]
+    [combinedDistance]
   );
+
+  const formattedDistanceDescription = useMemo(() => {
+    if (!combinedDistance.hasData) return "Add meter logs or manual trips";
+    const parts = [];
+    if (combinedDistance.sources.meterLogs > 0) {
+      parts.push(`${combinedDistance.sources.meterLogs.toLocaleString()} km from meter`);
+    }
+    if (combinedDistance.sources.trips > 0) {
+      parts.push(`${combinedDistance.sources.trips.toLocaleString()} km from trips`);
+    }
+    return parts.join(" • ");
+  }, [combinedDistance]);
 
   const formattedEfficiency = useMemo(
     () => (
       <span className="font-mono">
-        {fuelEfficiency !== null ? `${fuelEfficiency} km/L` : "N/A"}
+        {fuelEfficiency !== null ? `${fuelEfficiency.toFixed(2)} km/L` : "N/A"}
       </span>
     ),
     [fuelEfficiency]
@@ -225,6 +229,7 @@ export default function VehicleDetailSection({
           `/api/fuellogs?license_plate=${vehicle.license_plate}`,
           `/api/meterlogs?license_plate=${vehicle.license_plate}`,
           `/api/reminders?license_plate=${vehicle.license_plate}`,
+          `/api/trips?license_plate=${vehicle.license_plate}`,
         ];
 
         const responses = await Promise.all(
@@ -235,14 +240,31 @@ export default function VehicleDetailSection({
           responses.map((res) => safeJSON(res))
         );
 
-        const [expenses, fuelLogs, meterLogs, reminders] = results.map(
+        const [expensesData, fuelLogsData, meterLogsData, remindersData, tripsData] = results.map(
           (result) => (result.status === "fulfilled" ? result.value : [])
         );
 
-        setExpenses(expenses);
-        setFuelLogs(fuelLogs);
-        setMeterLogs(meterLogs);
-        setReminders(reminders);
+        // Parse dates
+        const parsedFuelLogs = fuelLogsData.map((log: FuelLog) => ({
+          ...log,
+          date: new Date(log.date),
+        }));
+        
+        const parsedMeterLogs = meterLogsData.map((log: MeterLog) => ({
+          ...log,
+          date: new Date(log.date),
+        }));
+        
+        const parsedTrips = tripsData.map((trip: Trip) => ({
+          ...trip,
+          date: new Date(trip.date),
+        }));
+
+        setExpenses(expensesData);
+        setFuelLogs(parsedFuelLogs);
+        setMeterLogs(parsedMeterLogs);
+        setReminders(remindersData);
+        setTrips(parsedTrips);
       } catch (error) {
         if (error instanceof Error && error.name !== "AbortError") {
           toast.error("Error loading vehicle data");
@@ -314,7 +336,7 @@ export default function VehicleDetailSection({
           icon={<GaugeIcon className="h-5 w-5" />}
           title="Total Distance"
           value={formattedDistance}
-          description="Calculated from meter logs"
+          description={formattedDistanceDescription}
           colorKey="distance"
         />
         <StatCard
@@ -327,20 +349,34 @@ export default function VehicleDetailSection({
           description="Active service reminders"
           colorKey="service"
         />
-        {/* Add this card inside the stats grid (after the Services StatCard) */}
-      <CostPerKmCard
-        expenses={expenses}
-        fuelLogs={fuelLogs}
-        meterLogs={meterLogs}
-        loading={loading}
-      />
+        <CostPerKmCard
+          expenses={expenses}
+          fuelLogs={fuelLogs}
+          meterLogs={meterLogs}
+          trips={trips}
+          loading={loading}
+        />
+        <StatCard
+          loading={loading}
+          icon={<Route className="h-5 w-5" />}
+          title="Manual Trips"
+          value={
+            <span className="font-mono">{trips.length.toLocaleString()}</span>
+          }
+          description={
+            trips.length
+              ? `${trips.reduce((sum, t) => sum + t.distance_calculated, 0).toLocaleString()} km logged`
+              : "No manual trips recorded"
+          }
+          colorKey="trip"
+        />
         <StatCard
           loading={loading}
           icon={<GaugeIcon className="h-5 w-5" />}
           title="Fuel Efficiency"
           value={formattedEfficiency}
           description={
-            fuelEfficiency ? "Distance per liter" : "No fuel data available"
+            fuelEfficiency ? "Distance per liter" : "Need fuel logs + distance data"
           }
           colorKey={
             fuelEfficiency
@@ -416,6 +452,11 @@ export default function VehicleDetailSection({
             </div>
           </CardContent>
         </Card>
+      </div>
+
+      {/* Trip Log Section */}
+      <div className="mt-6">
+        <TripLogSection vehicle={vehicle} />
       </div>
     </div>
   );

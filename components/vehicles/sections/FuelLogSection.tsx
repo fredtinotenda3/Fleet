@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { FuelLog, Unit } from "@/types";
+import { FuelLog, Unit, Trip, MeterLog } from "@/types";
 import { FuelCharts } from "./fuel/FuelCharts";
 import { FuelStats } from "./fuel/FuelStats";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ import { Trash2, Edit } from "lucide-react";
 import { toast } from "sonner";
 import { useTheme } from "next-themes";
 import { FuelLogForm } from "../forms/FuelLogForm";
+import { calculateCombinedDistance, calculateFuelEfficiencyWithCombinedDistance } from "@/lib/distance";
 
 interface ChartData {
   timeData: { date: string; volume: number }[];
@@ -47,6 +48,8 @@ export default function FuelLogSection({
   const { theme } = useTheme();
   const [logs, setLogs] = useState<FuelLog[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
+  const [meterLogs, setMeterLogs] = useState<MeterLog[]>([]);
+  const [trips, setTrips] = useState<Trip[]>([]);
   const [open, setOpen] = useState(false);
   const [editLog, setEditLog] = useState<FuelLog | null>(null);
   const [, setLoading] = useState(false);
@@ -62,43 +65,45 @@ export default function FuelLogSection({
         `/api/fuellogs?license_plate=${vehicle.license_plate}`
       );
       const data = await res.json();
-      setLogs(data);
-
-      const sortedLogs = [...data].sort(
-        (a: FuelLog, b: FuelLog) =>
-          new Date(a.date).getTime() - new Date(b.date).getTime()
-      );
-
-      const timeMap = new Map<string, number>();
-      const costMap = new Map<string, number>();
-      const efficiencyData: { date: string; efficiency: number }[] = [];
-
-      for (let i = 1; i < sortedLogs.length; i++) {
-        const current = sortedLogs[i];
-        const previous = sortedLogs[i - 1];
-        // Only calculate efficiency if both odometer values exist
-        if (current.odometer && previous.odometer && current.fuel_volume > 0) {
-          const distance = current.odometer - previous.odometer;
-          efficiencyData.push({
-            date: formatDate(current.date),
-            efficiency: Number((distance / current.fuel_volume).toFixed(2)),
-          });
-        }
-      }
-
-      sortedLogs.forEach((log: FuelLog) => {
-        const date = formatDate(log.date);
-        timeMap.set(date, (timeMap.get(date) || 0) + log.fuel_volume);
-        costMap.set(date, (costMap.get(date) || 0) + log.cost);
-      });
-
-      setChartData({
-        timeData: Array.from(timeMap, ([date, volume]) => ({ date, volume })),
-        costData: Array.from(costMap, ([date, cost]) => ({ date, cost })),
-        efficiencyData,
-      });
+      const parsedLogs = data.map((log: FuelLog) => ({
+        ...log,
+        date: new Date(log.date),
+      }));
+      setLogs(parsedLogs);
     } catch {
       toast.error("Failed to load fuel logs");
+    }
+  }, [vehicle.license_plate]);
+
+  const fetchMeterLogs = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `/api/meterlogs?license_plate=${vehicle.license_plate}`
+      );
+      const data = await res.json();
+      const parsedLogs = data.map((log: MeterLog) => ({
+        ...log,
+        date: new Date(log.date),
+      }));
+      setMeterLogs(parsedLogs);
+    } catch {
+      console.error("Failed to load meter logs");
+    }
+  }, [vehicle.license_plate]);
+
+  const fetchTrips = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `/api/trips?license_plate=${vehicle.license_plate}`
+      );
+      const data = await res.json();
+      const parsedTrips = (Array.isArray(data) ? data : data.data || []).map((trip: Trip) => ({
+        ...trip,
+        date: new Date(trip.date),
+      }));
+      setTrips(parsedTrips);
+    } catch {
+      console.error("Failed to load trips");
     }
   }, [vehicle.license_plate]);
 
@@ -114,11 +119,71 @@ export default function FuelLogSection({
 
   useEffect(() => {
     fetchFuelLogs();
+    fetchMeterLogs();
+    fetchTrips();
     fetchUnits();
-  }, [fetchFuelLogs, fetchUnits]);
+  }, [fetchFuelLogs, fetchMeterLogs, fetchTrips, fetchUnits]);
 
-  // FIX: use controlled state via FuelLogForm's onSubmit callback
-  // instead of reading FormData from e.currentTarget
+  // Process chart data with combined distance efficiency
+  useEffect(() => {
+    const sortedLogs = [...logs].sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+    );
+
+    const timeMap = new Map<string, number>();
+    const costMap = new Map<string, number>();
+    const efficiencyData: { date: string; efficiency: number }[] = [];
+
+    // Calculate efficiency using combined distance between fuel logs
+    for (let i = 1; i < sortedLogs.length; i++) {
+      const current = sortedLogs[i];
+      const previous = sortedLogs[i - 1];
+      
+      // Get distance between the two fuel logs using combined distance
+      const startDate = new Date(previous.date);
+      const endDate = new Date(current.date);
+      
+      // Filter meter logs and trips within the date range
+      const logsBetweenDates = meterLogs.filter(
+        (log) => new Date(log.date) >= startDate && new Date(log.date) <= endDate
+      );
+      
+      const tripsBetweenDates = trips.filter(
+        (trip) => new Date(trip.date) >= startDate && new Date(trip.date) <= endDate
+      );
+      
+      const distance = calculateCombinedDistance({
+        meterLogs: logsBetweenDates,
+        trips: tripsBetweenDates,
+      }).totalDistance;
+      
+      // If we have odometer readings on the fuel logs themselves, use those as fallback
+      let finalDistance = distance;
+      if (finalDistance === 0 && previous.odometer && current.odometer) {
+        finalDistance = current.odometer - previous.odometer;
+      }
+      
+      if (current.fuel_volume > 0 && finalDistance > 0) {
+        efficiencyData.push({
+          date: formatDate(current.date),
+          efficiency: Number((finalDistance / current.fuel_volume).toFixed(2)),
+        });
+      }
+    }
+
+    sortedLogs.forEach((log: FuelLog) => {
+      const date = formatDate(log.date);
+      timeMap.set(date, (timeMap.get(date) || 0) + log.fuel_volume);
+      costMap.set(date, (costMap.get(date) || 0) + log.cost);
+    });
+
+    setChartData({
+      timeData: Array.from(timeMap, ([date, volume]) => ({ date, volume })),
+      costData: Array.from(costMap, ([date, cost]) => ({ date, cost })),
+      efficiencyData,
+    });
+  }, [logs, meterLogs, trips]);
+
   const handleSubmit = async (logData: {
     date: string;
     fuel_volume: number;
@@ -132,7 +197,6 @@ export default function FuelLogSection({
       const url = editLog ? `/api/fuellogs?id=${editLog._id}` : "/api/fuellogs";
       const method = editLog ? "PUT" : "POST";
       
-      // Only include odometer if it has a value
       const payload = {
         ...logData,
         odometer: logData.odometer ?? undefined,
@@ -187,6 +251,13 @@ export default function FuelLogSection({
   const totalCost = logs.reduce((sum, log) => sum + log.cost, 0);
   const averageCostPerUnit = totalFuel > 0 ? totalCost / totalFuel : 0;
 
+  // Calculate overall fuel efficiency using combined distance
+  const overallEfficiency = calculateFuelEfficiencyWithCombinedDistance(
+    logs,
+    meterLogs,
+    trips
+  );
+
   const getPrimaryUnit = () => {
     if (logs.length === 0) return null;
     const unitCounts: Record<string, number> = {};
@@ -204,7 +275,15 @@ export default function FuelLogSection({
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h3 className="text-lg font-semibold">Fuel Logs</h3>
+        <div>
+          <h3 className="text-lg font-semibold">Fuel Logs</h3>
+          {overallEfficiency !== null && (
+            <p className="text-sm text-muted-foreground">
+              Overall efficiency: <span className="font-mono font-medium">{overallEfficiency.toFixed(2)} km/L</span>
+              <span className="text-xs ml-2">(using combined distance from meter logs + trips)</span>
+            </p>
+          )}
+        </div>
         <Button onClick={() => setOpen(true)}>Add Fuel Log</Button>
       </div>
 

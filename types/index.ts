@@ -82,6 +82,23 @@ export type Reminder = {
   next_due_odometer?: number;
 };
 
+// ========== TRIP TYPE FOR MANUAL DISTANCE LOGGING ==========
+export type Trip = {
+  _id?: string;
+  license_plate: string;
+  // Two mutually exclusive modes:
+  trip_distance?: number;        // For "distance" mode: user enters distance directly
+  start_odometer?: number;       // For "odometer" mode: starting reading
+  end_odometer?: number;         // For "odometer" mode: ending reading
+  distance_calculated: number;   // The actual distance (either direct input or end-start)
+  mode: "distance" | "odometer"; // How this trip was recorded
+  date: Date;
+  notes?: string;
+  unit_id: string;               // Reference to tblunits for km/mi etc.
+  created_at?: Date;
+};
+// =========================================================
+
 export type PaginatedResponse<T> = {
   data: T[];
   pagination: {
@@ -110,4 +127,3 @@ export type Unit = {
   symbol: string;
   type: string;
 };
-

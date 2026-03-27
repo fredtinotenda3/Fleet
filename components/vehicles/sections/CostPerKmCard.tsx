@@ -1,14 +1,16 @@
 "use client";
 
 import { useMemo } from "react";
-import { Expense, FuelLog, MeterLog } from "@/types";
+import { Expense, FuelLog, MeterLog, Trip } from "@/types";
 import { TrendingDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { calculateCombinedDistance } from "@/lib/distance";  // Removed formatDistance
 
 interface CostPerKmProps {
   expenses: Expense[];
   fuelLogs: FuelLog[];
   meterLogs: MeterLog[];
+  trips?: Trip[];  // NEW: optional trips prop
   loading: boolean;
 }
 
@@ -21,26 +23,36 @@ const iconColors: Record<RatingType, { bg: string; text: string }> = {
   neutral: { bg: "bg-blue-100 dark:bg-blue-900/20", text: "text-blue-600 dark:text-blue-400" },
 };
 
-export function CostPerKmCard({ expenses, fuelLogs, meterLogs, loading }: CostPerKmProps) {
-  const { costPerKm, totalDistance, totalCost, rating } = useMemo(() => {
+export function CostPerKmCard({ expenses, fuelLogs, meterLogs, trips = [], loading }: CostPerKmProps) {
+  const { costPerKm, totalDistance, totalCost, rating, distanceSource } = useMemo(() => {
     // Total cost = all expenses + all fuel costs
     const expenseTotal = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
     const fuelTotal = fuelLogs.reduce((sum, f) => sum + (Number(f.cost) || 0), 0);
     const totalCost = expenseTotal + fuelTotal;
 
-    // Total distance = max odometer - min odometer across all meter logs
-    if (meterLogs.length < 2) {
-      return { costPerKm: null, totalDistance: 0, totalCost, rating: "neutral" as RatingType };
+    // Total distance using combined utility
+    const combined = calculateCombinedDistance({
+      meterLogs,
+      trips,
+      defaultUnitSymbol: "km",
+    });
+
+    const totalDistance = combined.totalDistance;
+    const hasMeterData = combined.sources.meterLogCount > 0;
+    const hasTripData = combined.sources.tripCount > 0;
+
+    // Determine source description
+    let distanceSource = "No distance data";
+    if (hasMeterData && hasTripData) {
+      distanceSource = "Meter logs + manual trips";
+    } else if (hasMeterData) {
+      distanceSource = "Meter logs only";
+    } else if (hasTripData) {
+      distanceSource = "Manual trips only";
     }
 
-    const readings = meterLogs
-      .map((log) => Number(log.odometer))
-      .filter((r) => !isNaN(r));
-
-    const totalDistance = Math.max(...readings) - Math.min(...readings);
-
-    if (totalDistance <= 0) {
-      return { costPerKm: null, totalDistance: 0, totalCost, rating: "neutral" as RatingType };
+    if (!combined.hasData || totalDistance <= 0) {
+      return { costPerKm: null, totalDistance: 0, totalCost, rating: "neutral" as RatingType, distanceSource };
     }
 
     const costPerKm = totalCost / totalDistance;
@@ -51,10 +63,17 @@ export function CostPerKmCard({ expenses, fuelLogs, meterLogs, loading }: CostPe
       : costPerKm < 1.5 ? "average"
       : "poor";
 
-    return { costPerKm, totalDistance, totalCost, rating };
-  }, [expenses, fuelLogs, meterLogs]);
+    return { costPerKm, totalDistance, totalCost, rating, distanceSource };
+  }, [expenses, fuelLogs, meterLogs, trips]);
 
   const color = iconColors[rating];
+
+  // Format cost per km with appropriate decimal places
+  const formattedCostPerKm = costPerKm !== null 
+    ? costPerKm < 0.01 
+      ? `$${costPerKm.toFixed(4)}/km`
+      : `$${costPerKm.toFixed(3)}/km`
+    : "N/A";
 
   return (
     <article className="hover:shadow-md transition-shadow" aria-busy={loading}>
@@ -69,18 +88,23 @@ export function CostPerKmCard({ expenses, fuelLogs, meterLogs, loading }: CostPe
           ) : costPerKm !== null ? (
             <>
               <div className={cn("text-xl font-semibold font-mono", color.text)}>
-                ${costPerKm.toFixed(3)}/km
+                {formattedCostPerKm}
               </div>
               <p className="text-xs text-muted-foreground">
                 ${totalCost.toLocaleString(undefined, { maximumFractionDigits: 0 })} over{" "}
                 {totalDistance.toLocaleString()} km
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Source: {distanceSource}
               </p>
             </>
           ) : (
             <>
               <div className="text-xl font-semibold text-muted-foreground">N/A</div>
               <p className="text-xs text-muted-foreground">
-                Need 2+ meter logs to calculate
+                {distanceSource === "No distance data" 
+                  ? "Add meter logs or manual trips to calculate"
+                  : "Need distance data to calculate"}
               </p>
             </>
           )}

@@ -27,7 +27,7 @@ async function createIndexes() {
 
     console.log("Connected to MongoDB. Creating indexes...\n");
 
-    // ── tblvehicles ──────────────────────────────────────────────
+    // ── tblvehicles ──────────────────────────────────────────────────────────────
     await db.collection("tblvehicles").createIndexes([
       // Most common query: filter by license_plate + not deleted
       { key: { license_plate: 1, isDeleted: 1 }, name: "idx_vehicle_plate_deleted" },
@@ -38,7 +38,7 @@ async function createIndexes() {
     ]);
     console.log("✓ tblvehicles indexes created");
 
-    // ── tblexpenses ──────────────────────────────────────────────
+    // ── tblexpenses ──────────────────────────────────────────────────────────────
     await db.collection("tblexpenses").createIndexes([
       // Per-vehicle expense lookup (most frequent)
       { key: { license_plate: 1, isDeleted: 1 }, name: "idx_expense_plate_deleted" },
@@ -51,7 +51,7 @@ async function createIndexes() {
     ]);
     console.log("✓ tblexpenses indexes created");
 
-    // ── tblfuellogs ──────────────────────────────────────────────
+    // ── tblfuellogs ──────────────────────────────────────────────────────────────
     await db.collection("tblfuellogs").createIndexes([
       // Per-vehicle fuel log lookup
       { key: { license_plate: 1 }, name: "idx_fuel_plate" },
@@ -62,7 +62,7 @@ async function createIndexes() {
     ]);
     console.log("✓ tblfuellogs indexes created");
 
-    // ── tblmeterlogs ─────────────────────────────────────────────
+    // ── tblmeterlogs ─────────────────────────────────────────────────────────────
     await db.collection("tblmeterlogs").createIndexes([
       // Per-vehicle meter log lookup (most frequent)
       { key: { license_plate: 1 }, name: "idx_meter_plate" },
@@ -73,7 +73,25 @@ async function createIndexes() {
     ]);
     console.log("✓ tblmeterlogs indexes created");
 
-    // ── tblreminders ─────────────────────────────────────────────
+    // ── tbltrips ─────────────────────────────────────────────────────────────────
+    // NEW: Indexes for manual trips collection
+    await db.collection("tbltrips").createIndexes([
+      // Per-vehicle trip lookup (most frequent)
+      { key: { license_plate: 1 }, name: "idx_trips_plate" },
+      // Date sorting for timeline views
+      { key: { date: -1 }, name: "idx_trips_date_desc" },
+      // Combined: plate + date for distance calculations
+      { key: { license_plate: 1, date: -1 }, name: "idx_trips_plate_date" },
+      // Mode filtering (distance vs odometer)
+      { key: { mode: 1 }, name: "idx_trips_mode" },
+      // Unit lookup for conversions
+      { key: { unit_id: 1 }, name: "idx_trips_unit" },
+      // Compound index for distance calculations with date range
+      { key: { license_plate: 1, date: -1, distance_calculated: 1 }, name: "idx_trips_plate_date_distance" },
+    ]);
+    console.log("✓ tbltrips indexes created");
+
+    // ── tblreminders ─────────────────────────────────────────────────────────────
     await db.collection("tblreminders").createIndexes([
       // Per-vehicle reminder lookup
       { key: { license_plate: 1 }, name: "idx_reminder_plate" },
@@ -83,17 +101,19 @@ async function createIndexes() {
       { key: { due_date: 1 }, name: "idx_reminder_due_date" },
       // Combined: status + due_date for overdue queries
       { key: { status: 1, due_date: 1 }, name: "idx_reminder_status_due" },
+      // For service interval calculations (completion date)
+      { key: { license_plate: 1, status: 1, completion_date: -1 }, name: "idx_reminder_plate_status_completion" },
     ]);
     console.log("✓ tblreminders indexes created");
 
-    // ── tblexpense_types ─────────────────────────────────────────
+    // ── tblexpense_types ─────────────────────────────────────────────────────────
     await db.collection("tblexpense_types").createIndexes([
       // Soft delete filter + name sort
       { key: { isDeleted: 1, name: 1 }, name: "idx_expense_type_deleted_name" },
     ]);
     console.log("✓ tblexpense_types indexes created");
 
-    // ── tblunits ─────────────────────────────────────────────────
+    // ── tblunits ─────────────────────────────────────────────────────────────────
     await db.collection("tblunits").createIndexes([
       // unit_id is the FK used everywhere — must be fast
       { key: { unit_id: 1 }, name: "idx_unit_id", unique: true },
@@ -102,7 +122,7 @@ async function createIndexes() {
     ]);
     console.log("✓ tblunits indexes created");
 
-    // ── tbladmin ─────────────────────────────────────────────────
+    // ── tbladmin ─────────────────────────────────────────────────────────────────
     await db.collection("tbladmin").createIndexes([
       // Login lookup by email
       { key: { Email: 1 }, name: "idx_admin_email", unique: true },
@@ -110,6 +130,7 @@ async function createIndexes() {
     console.log("✓ tbladmin indexes created");
 
     console.log("\nAll indexes created successfully.");
+    console.log("\n⚠️ Note: If tbltrips collection didn't exist, it will be created when first trip is logged.");
   } catch (error) {
     console.error("Error creating indexes:", error);
     process.exit(1);

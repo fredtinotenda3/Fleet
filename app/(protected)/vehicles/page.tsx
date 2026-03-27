@@ -16,6 +16,7 @@ import ExpenseSection from "@/components/vehicles/sections/ExpenseSection";
 import MaintenanceSection from "@/components/vehicles/sections/MaintenanceSection";
 import FuelLogSection from "@/components/vehicles/sections/FuelLogSection";
 import MeterLogSection from "@/components/vehicles/sections/MeterLogSection";
+import TripLogSection from "@/components/vehicles/sections/TripLogSection"; // NEW
 import { Vehicle, PaginatedResponse, ApiFilter } from "@/types";
 import { DeleteConfirmationDialog } from "@/components/vehicles/ui/DeleteConfirmationDialog";
 import { FiltersAndSearchBar } from "@/components/vehicles/ui/FiltersAndSearchBar";
@@ -273,7 +274,7 @@ export default function VehiclePage() {
       </Dialog>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList>
+        <TabsList className="flex flex-wrap h-auto">
           <TabsTrigger value="vehicles">
             Vehicles ({data.pagination.total})
           </TabsTrigger>
@@ -283,6 +284,7 @@ export default function VehiclePage() {
               <TabsTrigger value="expenses">Expenses</TabsTrigger>
               <TabsTrigger value="logs">FuelLogs</TabsTrigger>
               <TabsTrigger value="meter">MeterLogs</TabsTrigger>
+              <TabsTrigger value="trips">Trips</TabsTrigger> {/* NEW */}
               <TabsTrigger value="maintenance">Maintenance</TabsTrigger>
             </>
           )}
@@ -316,6 +318,9 @@ export default function VehiclePage() {
             </TabsContent>
             <TabsContent value="meter">
               <MeterLogSection vehicle={selectedVehicle} />
+            </TabsContent>
+            <TabsContent value="trips">
+              <TripLogSection vehicle={selectedVehicle} />
             </TabsContent>
             <TabsContent value="maintenance">
               <MaintenanceSection vehicle={selectedVehicle} />
