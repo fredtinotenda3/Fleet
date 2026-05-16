@@ -8,11 +8,13 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
+  const [loading, setLoading] = useState(false);
   const router = useRouter();
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setErrorMsg("");
+    setLoading(true);
 
     try {
       const result = await signIn("credentials", {
@@ -27,13 +29,14 @@ export default function LoginPage() {
             ? "Invalid email or password"
             : "Authentication failed"
         );
-      } else {
-        router.refresh();
-        router.push("/dashboard");
+      } else if (result?.ok) {
+        router.replace("/dashboard");
       }
     } catch (error) {
       console.error("Login error:", error);
       setErrorMsg("An unexpected error occurred");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -73,9 +76,10 @@ export default function LoginPage() {
 
         <button
           type="submit"
-          className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700"
+          disabled={loading}
+          className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 disabled:opacity-60"
         >
-          Log In
+          {loading ? "Signing in..." : "Log In"}
         </button>
 
         <button

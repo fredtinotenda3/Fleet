@@ -3,12 +3,31 @@ import connectToDatabase from "./mongodb";
 import { compare } from "bcryptjs";
 import { AuthOptions } from "next-auth";
 import { ObjectId } from "mongodb";
+import { JWT } from "next-auth/jwt";
 
 interface User {
   _id: ObjectId;
   Email: string;
   Password: string;
   FirstName: string;
+  Role?: string;
+}
+
+interface CustomToken extends JWT {
+  id?: string;
+  email?: string;
+  name?: string;
+  role?: string;
+  roles?: string[];
+  tenantId?: string;
+}
+
+interface CustomSessionUser {
+  id: string;
+  email: string;
+  name: string;
+  role?: string;
+  roles?: string[];
 }
 
 export const authOptions: AuthOptions = {
@@ -34,10 +53,7 @@ export const authOptions: AuthOptions = {
             throw new Error("User not found");
           }
 
-          // If using password hashing (recommended):
           const isValid = await compare(credentials.password, user.Password);
-          // If NOT using hashing (not recommended):
-          // const isValid = credentials.password === user.Password;
 
           if (!isValid) {
             throw new Error("Invalid password");
@@ -47,6 +63,7 @@ export const authOptions: AuthOptions = {
             id: user._id.toString(),
             name: user.FirstName,
             email: user.Email,
+            role: user.Role || "admin",
           };
         } catch (error) {
           console.error("Authentication error:", error);
@@ -57,8 +74,6 @@ export const authOptions: AuthOptions = {
   ],
   pages: {
     signIn: "/auth/login",
-    // error: "/auth/error", // Updated path
-    // signOut: "/auth/logout", // If using custom logout
   },
   session: {
     strategy: "jwt",
@@ -69,13 +84,21 @@ export const authOptions: AuthOptions = {
       if (user) {
         token.id = user.id;
         token.email = user.email;
+        token.role = (user as CustomSessionUser).role || "super_admin";
+        token.roles = ["super_admin", "organization_owner"];
+        token.tenantId = "default";
       }
-      return token;
+      return token as CustomToken;
     },
     async session({ session, token }) {
-      session.user.id = token.id as string;
-      session.user.email = token.email as string;
-      session.user.name = token.name as string;
+      const customToken = token as CustomToken;
+      session.user.id = customToken.id as string;
+      session.user.email = customToken.email as string;
+      session.user.name = customToken.name as string;
+      (session.user as CustomSessionUser).role = customToken.role;
+      (session.user as CustomSessionUser).roles = customToken.roles;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (session as any).tenantId = customToken.tenantId;
       return session;
     },
   },

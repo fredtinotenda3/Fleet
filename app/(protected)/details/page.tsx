@@ -93,7 +93,14 @@ export default function AllVehiclesDetailsPage() {
   const router = useRouter();
   const [data, setData] = useState<PaginatedResponse<Vehicle>>({
     data: [],
-    pagination: { page: 1, limit: PAGE_SIZE, total: 0, totalPages: 0 },
+    pagination: { 
+      page: 1, 
+      limit: PAGE_SIZE, 
+      total: 0, 
+      totalPages: 0,
+      hasNext: false,
+      hasPrev: false
+    },
   });
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearch] = useDebounce(searchTerm, 500);
