@@ -4,6 +4,7 @@ import "./globals.css";
 import SessionWrapper from "./session-wrapper";
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "next-themes";
+import { QueryProvider } from './providers/QueryProvider';
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -20,31 +21,22 @@ export const metadata: Metadata = {
   description: "Created by Fred Tinotenda",
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="system"
-          enableSystem
-          disableTransitionOnChange
-        >
-          <SessionWrapper>
-            <div className="flex h-screen w-screen overflow-hidden">
-              <main className="flex-1 overflow-auto bg-gray-100 dark:bg-gray-950">
-                {children}
-              </main>
-            </div>
-          </SessionWrapper>
-          <Toaster position="top-right" richColors />
-        </ThemeProvider>
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+        <QueryProvider>
+          <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+            <SessionWrapper>
+              <div className="flex h-screen w-screen overflow-hidden">
+                <main className="flex-1 overflow-auto bg-gray-100 dark:bg-gray-950">
+                  {children}
+                </main>
+              </div>
+            </SessionWrapper>
+            <Toaster position="top-right" richColors />
+          </ThemeProvider>
+        </QueryProvider>
       </body>
     </html>
   );
