@@ -1,4 +1,4 @@
-// types/index.ts — single source of truth for all app types
+// /types/index.ts
 
 export type Vehicle = {
   _id?: string;
@@ -6,98 +6,95 @@ export type Vehicle = {
   make: string;
   model: string;
   year: number;
-  vehicle_type: string;
-  purchase_date: string;
-  fuel_type: string;
   color?: string;
   vin?: string;
+  owner_id?: string;
+  created_at?: string;
   status?: "active" | "inactive" | "maintenance";
-  registration_expiry?: string;
-  insurance_provider?: string;
-  last_service_date?: string;
-  service_interval?: number;
-  odometer?: number;
-  createdAt?: Date;
-};
-
-export type ExpenseType = {
-  _id?: string;
-  name: string;
-  category: string;
-  description?: string;
+  fuel_type?: string;
+  purchase_date?: string;
+  vehicle_type?: string;
 };
 
 export type Expense = {
   _id?: string;
   license_plate: string;
+  type_id?: string;
+  expense_type_id?: string;
+  expense_type?: ExpenseType;
   amount: number;
-  date: Date;
+  date: Date | string;
   description?: string;
   jobTrip?: string;
   notes?: string;
-  expense_type_id: string;
-  expense_type?: ExpenseType;
+  created_at?: string;
 };
-
-// In types/index.ts — replace the FuelLog type with this:
 
 export type FuelLog = {
   _id?: string;
   license_plate: string;
-  date: Date | string;
   fuel_volume: number;
-  unit_id: string;
   cost: number;
-  odometer?: number;  // FIX: optional — not all fill-ups will have an odometer reading
-  unit?: {
-    name: string;
-    symbol: string;
-    unit_id: string;
-  };
+  date: Date | string;
+  unit_id: string;
+  unit?: Unit;
+  odometer?: number;
+  notes?: string;
 };
 
 export type MeterLog = {
   _id?: string;
   license_plate: string;
-  date: Date;
   odometer: number;
-  unit: string;
+  date: Date | string;
   unit_id: string;
+  unit?: Unit;
+  notes?: string;
 };
 
-// Reminder status aligned with DB values and app usage
-export type ReminderStatus = "pending" | "due" | "completed" | "overdue";
+export type Trip = {
+  _id?: string;
+  license_plate: string;
+  date: Date | string;
+  mode: "distance" | "odometer";
+  distance_calculated: number;
+  unit_id: string;
+  trip_distance?: number;
+  start_odometer?: number;
+  end_odometer?: number;
+  notes?: string;
+  created_at?: Date;
+};
 
 export type Reminder = {
   _id?: string;
   license_plate: string;
   title: string;
-  due_date: string;
+  due_date: Date | string;
+  status: "pending" | "completed" | "overdue";
   notes?: string;
-  status: ReminderStatus;
-  completion_date?: string;
-  priority?: "high" | "medium" | "low";
-  service_type?: string;
   recurrence_interval?: string;
-  next_due_odometer?: number;
+  completion_date?: Date | string;
+  priority?: "critical" | "high" | "medium" | "low";
+  category?: MaintenanceCategory;
+  estimated_cost?: number;
 };
 
-// ========== TRIP TYPE FOR MANUAL DISTANCE LOGGING ==========
-export type Trip = {
+export type ExpenseType = {
   _id?: string;
-  license_plate: string;
-  // Two mutually exclusive modes:
-  trip_distance?: number;        // For "distance" mode: user enters distance directly
-  start_odometer?: number;       // For "odometer" mode: starting reading
-  end_odometer?: number;         // For "odometer" mode: ending reading
-  distance_calculated: number;   // The actual distance (either direct input or end-start)
-  mode: "distance" | "odometer"; // How this trip was recorded
-  date: Date;
-  notes?: string;
-  unit_id: string;               // Reference to tblunits for km/mi etc.
-  created_at?: Date;
+  name: string;
+  category?: string;
+  description?: string;
+  isDeleted?: boolean;
 };
-// =========================================================
+
+export type Unit = {
+  _id?: string;
+  unit_id: string;
+  name: string;
+  symbol: string;
+  type: "distance" | "volume" | "currency";
+};
 
 export type PaginatedResponse<T> = {
   data: T[];
@@ -114,16 +111,125 @@ export type ApiFilter = {
   make?: string;
   model?: string;
   status?: string;
-  startDate?: string;
-  endDate?: string;
+  page?: number;
+  limit?: number;
   sortBy?: string;
   sortOrder?: "asc" | "desc";
 };
 
-export type Unit = {
-  _id?: string;
-  unit_id: string;
-  name: string;
-  symbol: string;
-  type: string;
+// NEW: Maintenance Types
+export type MaintenanceCategory = 
+  | "braking_system"
+  | "fuel_system"
+  | "spring_suspension"
+  | "auto_electricals"
+  | "engine_gearbox"
+  | "cab_body";
+
+export const MAINTENANCE_ITEMS: Record<MaintenanceCategory, string[]> = {
+  braking_system: [
+    "Airline leak or bulge",
+    "Loose mounding bolts",
+    "Evidence of oil seepage",
+    "Cracked brake drums",
+    "Inoperative low air warning device",
+    "Master cylinder leakage",
+    "Check clutch pedal free travel and linkage",
+    "Adjust brakes",
+    "Check and adjust pedal free travel",
+    "Check master cylinder fluids",
+    "Exhaust leak forward or below the gas"
+  ],
+  fuel_system: [
+    "Visible fuel leak",
+    "Fuel tank repairs",
+    "Cooling system check"
+  ],
+  spring_suspension: [
+    "Cracked, loose or missing U bolt",
+    "Broken main leaf in leaf spring",
+    "Displaced leaf contacting tire",
+    "Broken or missing shocks",
+    "Missing or broken axle bolts",
+    "Drain drum, gear box and axle",
+    "Flush and refill lubricants",
+    "Oil, brake fluid, shock absorber check",
+    "Steering joints, U bolts to torque specs",
+    "Lubricate rear axle bearing",
+    "Tighten rear axle shaft nuts",
+    "Check wheel alignment",
+    "Tyre replacements",
+    "Excessive free play check",
+    "Worn or faulty universal joints",
+    "Steering wheel securement",
+    "Loose tire rod ends"
+  ],
+  auto_electricals: [
+    "Visual cracks or distortion in lights",
+    "Both brake lights inoperative",
+    "Both taillights inoperative",
+    "Turn signal inoperative",
+    "Inoperative siren",
+    "Emergency lighting not visible",
+    "Aim headlights",
+    "Battery clean and tighten terminals",
+    "Operation of all instruments",
+    "Lights, horns and accessories check",
+    "Adjust fan belt tension",
+    "Coolant leak at water pump",
+    "Major coolant leak",
+    "Automatic transmission overheating",
+    "Defective clutch components",
+    "Defective foot throttle",
+    "Defective charging system",
+    "Alternator or starter issues",
+    "Electrical wiring check"
+  ],
+  engine_gearbox: [
+    "Engine overhaul",
+    "New Engine installation",
+    "New gear box installation",
+    "Engine coolant in motor oil",
+    "Tune engine including tappets",
+    "Adjust ignition timing",
+    "Oil change",
+    "Filter replacements"
+  ],
+  cab_body: [
+    "Missing or broken mirrors",
+    "Defective doors",
+    "Operation of body hardware",
+    "Doors, glasses, locks and keys check",
+    "Cab body inspection",
+    "Body panel repairs"
+  ]
+};
+
+export const getPriorityFromItem = (item: string): "critical" | "high" | "medium" | "low" => {
+  const criticalItems = [
+    "Airline leak or bulge",
+    "Visible fuel leak",
+    "Cracked brake drums",
+    "Inoperative low air warning device",
+    "Any broken main leaf",
+    "Both brake lights missing",
+    "Inoperative siren",
+    "Engine coolant in motor oil"
+  ];
+  
+  const highItems = [
+    "Loose mounding bolts",
+    "Evidence of oil seepage",
+    "Master cylinder leakage",
+    "Fuel tank repairs",
+    "Broken or missing shocks",
+    "Excessive free play",
+    "Loose tire rod ends",
+    "Defective doors",
+    "Defective clutch components"
+  ];
+  
+  if (criticalItems.includes(item)) return "critical";
+  if (highItems.includes(item)) return "high";
+  return "medium";
 };

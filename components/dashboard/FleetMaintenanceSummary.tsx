@@ -8,9 +8,9 @@ import { StatCard } from "@/components/vehicles/sections/maintenance/AnalyticsCo
 import { MaintenanceCharts } from "@/components/vehicles/sections/maintenance/MaintenanceCharts";
 import { Wrench, CalendarCheck, AlarmClockCheck, AlertTriangle, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
-import type { Reminder, Vehicle, MeterLog, Trip } from "@/types";
+import type { Reminder, Vehicle, MeterLog, Trip, MaintenanceCategory } from "@/types";
 import { format, parse, isAfter } from "date-fns";
-import { calculateCombinedDistance, getDistanceSinceDate } from "@/lib/distance";  // Removed formatDistance
+import { calculateCombinedDistance, getDistanceSinceDate } from "@/lib/distance";
 
 interface ServiceAlert {
   vehicle: Vehicle;
@@ -21,6 +21,16 @@ interface ServiceAlert {
   daysOverdue?: number;
 }
 
+// Category display names
+const categoryNames: Record<MaintenanceCategory, string> = {
+  braking_system: "Braking System",
+  fuel_system: "Fuel System",
+  spring_suspension: "Spring & Suspension",
+  auto_electricals: "Auto Electricals",
+  engine_gearbox: "Engine & Gearbox",
+  cab_body: "Cab / Body",
+};
+
 export default function FleetMaintenanceSummary() {
   const [chartData, setChartData] = useState<Reminder[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
@@ -28,45 +38,48 @@ export default function FleetMaintenanceSummary() {
   const [tripsMap, setTripsMap] = useState<Map<string, Trip[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [serviceAlerts, setServiceAlerts] = useState<ServiceAlert[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string>("all");
 
-  // Calculate crucial maintenance statistics
-  const stats = useMemo(
-    () => ({
-      total: chartData.length,
-      completed: chartData.filter((r) => r.status === "completed").length,
-      pending: chartData.filter((r) => r.status === "pending").length,
-      overdue: chartData.filter((r) => r.status === "overdue").length,
-      completionRate:
-        chartData.length > 0
-          ? Math.round(
-              (chartData.filter((r) => r.status === "completed").length /
-                chartData.length) *
-                100
-            )
-          : 0,
-      avgCompletionDays:
-        chartData.length > 0
-          ? Math.round(
-              chartData
-                .filter((r) => r.completion_date && r.due_date)
-                .reduce((sum, r) => {
-                  const due = new Date(r.due_date).getTime();
-                  const completed = new Date(r.completion_date!).getTime();
-                  return (
-                    sum +
-                    Math.max(
-                      0,
-                      Math.round((completed - due) / (1000 * 60 * 60 * 24))
-                    )
-                  );
-                }, 0) / chartData.length
-            )
-          : 0,
-      vehiclesWithServiceAlerts: serviceAlerts.length,
-      criticalAlerts: serviceAlerts.filter(a => a.alertType === "critical").length,
-    }),
-    [chartData, serviceAlerts]
-  );
+  // Calculate crucial maintenance statistics with category breakdown
+  const stats = useMemo(() => {
+    const filteredData = selectedCategory === "all" 
+      ? chartData 
+      : chartData.filter(r => (r as any).category === selectedCategory);
+
+    const byCategory = chartData.reduce((acc, reminder) => {
+      const cat = (reminder as any).category as MaintenanceCategory;
+      if (cat) {
+        if (!acc[cat]) {
+          acc[cat] = { total: 0, pending: 0, completed: 0, overdue: 0 };
+        }
+        acc[cat].total++;
+        if (reminder.status === "completed") acc[cat].completed++;
+        if (reminder.status === "pending") acc[cat].pending++;
+        if (reminder.status === "overdue") acc[cat].overdue++;
+      }
+      return acc;
+    }, {} as Record<string, { total: number; pending: number; completed: number; overdue: number }>);
+
+    const byPriority = chartData.reduce((acc, reminder) => {
+      const priority = (reminder as any).priority || "medium";
+      if (!acc[priority]) acc[priority] = 0;
+      acc[priority]++;
+      return acc;
+    }, {} as Record<string, number>);
+
+    return {
+      total: filteredData.length,
+      completed: filteredData.filter((r) => r.status === "completed").length,
+      pending: filteredData.filter((r) => r.status === "pending").length,
+      overdue: filteredData.filter((r) => r.status === "overdue").length,
+      completionRate: filteredData.length > 0
+        ? Math.round((filteredData.filter((r) => r.status === "completed").length / filteredData.length) * 100)
+        : 0,
+      criticalCount: chartData.filter((r) => (r as any).priority === "critical").length,
+      byCategory,
+      byPriority,
+    };
+  }, [chartData, selectedCategory]);
 
   // Fetch all vehicles
   const fetchVehicles = useCallback(async () => {
@@ -131,98 +144,6 @@ export default function FleetMaintenanceSummary() {
     return tripsMap;
   }, []);
 
-  // Calculate service alerts based on 10,000 km interval
-  const calculateServiceAlerts = useCallback((
-    vehiclesList: Vehicle[],
-    meterLogs: Map<string, MeterLog[]>,
-    trips: Map<string, Trip[]>,
-    completedServices: Reminder[]
-  ): ServiceAlert[] => {
-    const alerts: ServiceAlert[] = [];
-    const SERVICE_INTERVAL_KM = 10000; // 10,000 km service interval
-
-    for (const vehicle of vehiclesList) {
-      // Find the last completed service reminder for this vehicle
-      const vehicleServices = completedServices.filter(
-        (s) => s.license_plate === vehicle.license_plate
-      );
-      
-      // Sort by completion date (most recent first)
-      const sortedServices = vehicleServices.sort(
-        (a, b) => new Date(b.completion_date || 0).getTime() - new Date(a.completion_date || 0).getTime()
-      );
-      
-      const lastService = sortedServices[0];
-      const lastServiceDate = lastService?.completion_date ? new Date(lastService.completion_date) : null;
-      
-      // Get last service odometer from service record or fallback to vehicle's initial odometer
-      let lastServiceOdometer: number | null = null;
-      
-      // Try to get from the service reminder if stored
-      if (lastService?.next_due_odometer) {
-        lastServiceOdometer = lastService.next_due_odometer - SERVICE_INTERVAL_KM;
-      }
-      
-      // Get all distance events after last service
-      const vehicleMeterLogs = meterLogs.get(vehicle.license_plate) || [];
-      const vehicleTrips = trips.get(vehicle.license_plate) || [];
-      
-      let distanceSinceLastService = 0;
-      
-      if (lastServiceDate) {
-        // Calculate distance since last service date
-        distanceSinceLastService = getDistanceSinceDate(
-          vehicleMeterLogs,
-          vehicleTrips,
-          lastServiceDate
-        );
-      } else {
-        // No previous service - use total combined distance
-        const combined = calculateCombinedDistance({
-          meterLogs: vehicleMeterLogs,
-          trips: vehicleTrips,
-        });
-        distanceSinceLastService = combined.totalDistance;
-      }
-      
-      // Determine alert type
-      let alertType: "warning" | "critical" | "due_soon" = "due_soon";
-      let daysOverdue: number | undefined;
-      
-      if (distanceSinceLastService >= SERVICE_INTERVAL_KM) {
-        // Overdue - calculate approximate days overdue
-        const kmOverdue = distanceSinceLastService - SERVICE_INTERVAL_KM;
-        // Rough estimate: assume average daily usage of 100 km for overdue calculation
-        daysOverdue = Math.round(kmOverdue / 100);
-        alertType = "critical";
-      } else if (distanceSinceLastService >= SERVICE_INTERVAL_KM - 1000) {
-        // Within 1000 km of service
-        alertType = "warning";
-      } else if (distanceSinceLastService >= SERVICE_INTERVAL_KM - 2000) {
-        // Within 2000 km of service
-        alertType = "due_soon";
-      } else {
-        // Not due yet - skip
-        continue;
-      }
-      
-      alerts.push({
-        vehicle,
-        lastServiceDate,
-        lastServiceOdometer,
-        distanceSinceLastService,
-        alertType,
-        daysOverdue,
-      });
-    }
-    
-    // Sort by most urgent first
-    return alerts.sort((a, b) => {
-      const urgencyOrder = { critical: 0, warning: 1, due_soon: 2 };
-      return urgencyOrder[a.alertType] - urgencyOrder[b.alertType];
-    });
-  }, []);
-
   // Fetch maintenance data for entire fleet
   const fetchMaintenanceData = useCallback(async () => {
     setLoading(true);
@@ -236,9 +157,9 @@ export default function FleetMaintenanceSummary() {
       setChartData(data || []);
     } catch (error) {
       console.error("Fetch error:", error);
-      toast.error(
-        "Failed to load maintenance summary. Please try again later."
-      );
+      toast.error("Failed to load maintenance summary. Please try again later.");
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -274,15 +195,89 @@ export default function FleetMaintenanceSummary() {
       setServiceAlerts(alerts);
       setLoading(false);
     } else if (vehicles.length > 0 && meterLogsMap.size === 0 && tripsMap.size === 0) {
-      // No distance data at all
       setServiceAlerts([]);
       setLoading(false);
     }
-  }, [vehicles, meterLogsMap, tripsMap, chartData, calculateServiceAlerts]);
+  }, [vehicles, meterLogsMap, tripsMap, chartData]);
 
-  // Prepare data for charts with months in ascending order
+  const calculateServiceAlerts = useCallback((
+    vehiclesList: Vehicle[],
+    meterLogs: Map<string, MeterLog[]>,
+    trips: Map<string, Trip[]>,
+    completedServices: Reminder[]
+  ): ServiceAlert[] => {
+    const alerts: ServiceAlert[] = [];
+    const SERVICE_INTERVAL_KM = 10000;
+
+    for (const vehicle of vehiclesList) {
+      const vehicleServices = completedServices.filter(
+        (s) => s.license_plate === vehicle.license_plate
+      );
+      
+      const sortedServices = vehicleServices.sort(
+        (a, b) => new Date(b.completion_date || 0).getTime() - new Date(a.completion_date || 0).getTime()
+      );
+      
+      const lastService = sortedServices[0];
+      const lastServiceDate = lastService?.completion_date ? new Date(lastService.completion_date) : null;
+      
+      let lastServiceOdometer: number | null = null;
+      if (lastService?.next_due_odometer) {
+        lastServiceOdometer = lastService.next_due_odometer - SERVICE_INTERVAL_KM;
+      }
+      
+      const vehicleMeterLogs = meterLogs.get(vehicle.license_plate) || [];
+      const vehicleTrips = trips.get(vehicle.license_plate) || [];
+      
+      let distanceSinceLastService = 0;
+      
+      if (lastServiceDate) {
+        distanceSinceLastService = getDistanceSinceDate(
+          vehicleMeterLogs,
+          vehicleTrips,
+          lastServiceDate
+        );
+      } else {
+        const combined = calculateCombinedDistance({
+          meterLogs: vehicleMeterLogs,
+          trips: vehicleTrips,
+        });
+        distanceSinceLastService = combined.totalDistance;
+      }
+      
+      let alertType: "warning" | "critical" | "due_soon" = "due_soon";
+      let daysOverdue: number | undefined;
+      
+      if (distanceSinceLastService >= SERVICE_INTERVAL_KM) {
+        const kmOverdue = distanceSinceLastService - SERVICE_INTERVAL_KM;
+        daysOverdue = Math.round(kmOverdue / 100);
+        alertType = "critical";
+      } else if (distanceSinceLastService >= SERVICE_INTERVAL_KM - 1000) {
+        alertType = "warning";
+      } else if (distanceSinceLastService >= SERVICE_INTERVAL_KM - 2000) {
+        alertType = "due_soon";
+      } else {
+        continue;
+      }
+      
+      alerts.push({
+        vehicle,
+        lastServiceDate,
+        lastServiceOdometer,
+        distanceSinceLastService,
+        alertType,
+        daysOverdue,
+      });
+    }
+    
+    return alerts.sort((a, b) => {
+      const urgencyOrder = { critical: 0, warning: 1, due_soon: 2 };
+      return urgencyOrder[a.alertType] - urgencyOrder[b.alertType];
+    });
+  }, []);
+
+  // Prepare data for charts
   const chartMetrics = useMemo(() => {
-    // Create a map for the trends data
     const trendsMap = new Map<
       string,
       {
@@ -293,12 +288,19 @@ export default function FleetMaintenanceSummary() {
       }
     >();
 
-    // Aggregate data by month
+    // Category distribution for pie chart
+    const categoryDistribution = Object.entries(stats.byCategory).map(([cat, data]) => ({
+      name: categoryNames[cat as MaintenanceCategory] || cat,
+      value: data.total,
+      pending: data.pending,
+      overdue: data.overdue,
+      completed: data.completed,
+    }));
+
+    // Monthly trends
     chartData.forEach((reminder) => {
       const date = new Date(reminder.due_date);
       const monthKey = format(date, "MMM yyyy");
-
-      // Create a date object for the first day of the month
       const monthDate = parse(monthKey, "MMM yyyy", new Date());
 
       if (!trendsMap.has(monthKey)) {
@@ -316,7 +318,6 @@ export default function FleetMaintenanceSummary() {
       if (reminder.status === "overdue") counts.overdue++;
     });
 
-    // Convert to array and sort by date object
     const trendsData = Array.from(trendsMap.values())
       .sort((a, b) => (isAfter(a.dateObj, b.dateObj) ? 1 : -1))
       .map(({ dateObj, ...counts }) => ({
@@ -324,7 +325,6 @@ export default function FleetMaintenanceSummary() {
         ...counts,
       }));
 
-    // Status distribution data
     const statusData = Object.entries(
       chartData.reduce((acc, reminder) => {
         acc[reminder.status] = (acc[reminder.status] || 0) + 1;
@@ -335,8 +335,10 @@ export default function FleetMaintenanceSummary() {
     return {
       statusData,
       trendsData,
+      categoryDistribution,
+      priorityDistribution: Object.entries(stats.byPriority).map(([priority, count]) => ({ priority, count })),
     };
-  }, [chartData]);
+  }, [chartData, stats.byCategory, stats.byPriority]);
 
   return (
     <div className="space-y-6 p-6">
@@ -347,40 +349,77 @@ export default function FleetMaintenanceSummary() {
             Fleet Maintenance Summary
           </h1>
           <p className="text-muted-foreground">
-            Key maintenance metrics across all vehicles
+            Complete maintenance tracking across 6 service categories
           </p>
         </div>
       </div>
 
-      {/* Crucial Stats Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <StatCard
-          title="Total Services"
-          value={stats.total}
-          icon={<Wrench className="h-5 w-5" />}
-        />
-        <StatCard
-          title="Completed"
-          value={stats.completed}
-          icon={<CalendarCheck className="h-5 w-5" />}
-          delta={stats.completionRate}
-        />
-        <StatCard
-          title="Pending"
-          value={stats.pending}
-          icon={<AlarmClockCheck className="h-5 w-5" />}
-        />
-        <StatCard
-          title="Overdue"
-          value={stats.overdue}
-          icon={<AlarmClockCheck className="h-5 w-5 text-red-500" />}
-        />
-        <StatCard
-          title="Vehicles Due"
-          value={stats.vehiclesWithServiceAlerts}
-          icon={<TrendingUp className="h-5 w-5 text-amber-500" />}
-        />
+      {/* Category Filter Tabs */}
+      <div className="flex flex-wrap gap-2 border-b pb-2">
+        <button
+          onClick={() => setSelectedCategory("all")}
+          className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+            selectedCategory === "all"
+              ? "bg-blue-600 text-white"
+              : "bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
+          }`}
+        >
+          All Categories
+        </button>
+        {Object.entries(categoryNames).map(([key, name]) => (
+          <button
+            key={key}
+            onClick={() => setSelectedCategory(key)}
+            className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
+              selectedCategory === key
+                ? "bg-blue-600 text-white"
+                : "bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
+            }`}
+          >
+            {name}
+          </button>
+        ))}
       </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <StatCard title="Total Services" value={stats.total} icon={<Wrench className="h-5 w-5" />} />
+        <StatCard title="Completed" value={stats.completed} icon={<CalendarCheck className="h-5 w-5" />} delta={stats.completionRate} />
+        <StatCard title="Pending" value={stats.pending} icon={<AlarmClockCheck className="h-5 w-5" />} />
+        <StatCard title="Overdue" value={stats.overdue} icon={<AlarmClockCheck className="h-5 w-5 text-red-500" />} />
+        <StatCard title="Critical Issues" value={stats.criticalCount} icon={<AlertTriangle className="h-5 w-5 text-red-500" />} />
+      </div>
+
+      {/* Category Summary Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        {Object.entries(stats.byCategory).map(([cat, data]) => (
+          <div
+            key={cat}
+            className="border rounded-lg p-3 text-center hover:shadow-md transition-shadow cursor-pointer"
+            onClick={() => setSelectedCategory(cat)}
+          >
+            <p className="text-xs text-muted-foreground">{categoryNames[cat as MaintenanceCategory]}</p>
+            <p className="text-xl font-bold">{data.total}</p>
+            <div className="flex justify-center gap-2 text-xs mt-1">
+              {data.overdue > 0 && <span className="text-red-500">{data.overdue} overdue</span>}
+              {data.pending > 0 && <span className="text-yellow-500">{data.pending} pending</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Charts */}
+      {loading ? (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Skeleton className="h-96 rounded-xl" />
+          <Skeleton className="h-96 rounded-xl" />
+        </div>
+      ) : (
+        <MaintenanceCharts
+          statusData={chartMetrics.statusData}
+          trendsData={chartMetrics.trendsData}
+        />
+      )}
 
       {/* 10,000 km Service Alerts Section */}
       <div className="rounded-lg border p-4 bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800">
@@ -434,11 +473,6 @@ export default function FleetMaintenanceSummary() {
                         DUE SOON
                       </Badge>
                     )}
-                    {alert.alertType === "due_soon" && (
-                      <Badge variant="secondary" className="ml-2 bg-yellow-500 text-white">
-                        APPROACHING
-                      </Badge>
-                    )}
                   </div>
                   <div className="mt-2 text-sm">
                     <p>
@@ -451,50 +485,20 @@ export default function FleetMaintenanceSummary() {
                           ({(alert.distanceSinceLastService - 10000).toLocaleString()} km over)
                         </span>
                       )}
-                      {alert.distanceSinceLastService < 10000 && (
-                        <span className="text-amber-600 dark:text-amber-400 ml-2">
-                          ({(10000 - alert.distanceSinceLastService).toLocaleString()} km remaining)
-                        </span>
-                      )}
                     </p>
-                    {alert.lastServiceDate && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Last service: {format(alert.lastServiceDate, "MMM dd, yyyy")}
-                      </p>
-                    )}
-                    {alert.daysOverdue && alert.daysOverdue > 0 && (
-                      <p className="text-xs text-red-600 dark:text-red-400 mt-1">
-                        Approximately {alert.daysOverdue} days overdue
-                      </p>
-                    )}
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <Badge variant="outline" className="whitespace-nowrap">
-                    <TrendingUp className="h-3 w-3 mr-1" />
-                    {alert.distanceSinceLastService >= 10000 ? "Service Required" : `${(10000 - alert.distanceSinceLastService).toLocaleString()} km to go`}
-                  </Badge>
-                </div>
+                <Badge variant="outline" className="whitespace-nowrap">
+                  <TrendingUp className="h-3 w-3 mr-1" />
+                  {alert.distanceSinceLastService >= 10000 ? "Service Required" : `${(10000 - alert.distanceSinceLastService).toLocaleString()} km to go`}
+                </Badge>
               </div>
             ))}
           </div>
         )}
       </div>
 
-      {/* Crucial Maintenance Charts */}
-      {loading ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Skeleton className="h-96 rounded-xl" />
-          <Skeleton className="h-96 rounded-xl" />
-        </div>
-      ) : (
-        <MaintenanceCharts
-          statusData={chartMetrics.statusData}
-          trendsData={chartMetrics.trendsData}
-        />
-      )}
-
-      {/* Critical Alerts Section (existing overdue reminders) */}
+      {/* Critical Overdue Reminders */}
       <div className="rounded-lg border p-4 bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-800">
         <h2 className="text-lg font-semibold text-red-700 dark:text-red-400 flex items-center gap-2">
           <AlarmClockCheck className="h-5 w-5" />
@@ -515,7 +519,7 @@ export default function FleetMaintenanceSummary() {
           <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
             {chartData
               .filter((r) => r.status === "overdue")
-              .slice(0, 4)
+              .slice(0, 6)
               .map((reminder) => (
                 <div
                   key={reminder._id}
@@ -524,6 +528,11 @@ export default function FleetMaintenanceSummary() {
                   <div>
                     <p className="font-medium">{reminder.license_plate}</p>
                     <p className="text-sm">{reminder.title}</p>
+                    {(reminder as any).category && (
+                      <p className="text-xs text-muted-foreground">
+                        {categoryNames[(reminder as any).category as MaintenanceCategory]}
+                      </p>
+                    )}
                   </div>
                   <Badge variant="destructive">
                     Overdue:{" "}

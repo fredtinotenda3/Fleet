@@ -131,53 +131,94 @@ export async function POST(req: Request) {
   try {
     const db = await connectToDatabase();
     const body = await req.json();
+    
+    console.log("📝 Received expense data:", JSON.stringify(body, null, 2));
+    
     const { license_plate, amount, date, description, jobTrip, notes, expense_type_id } = body;
 
-    if (
-      !license_plate || typeof license_plate !== "string" ||
-      !amount || isNaN(amount) ||
-      !date || !expense_type_id || !ObjectId.isValid(expense_type_id)
-    ) {
-      return NextResponse.json({ error: "Missing or invalid fields" }, { status: 400 });
+    // Validate required fields with detailed errors
+    const errors: string[] = [];
+    
+    if (!license_plate || typeof license_plate !== "string") {
+      errors.push("License plate is required");
+    }
+    
+    if (!amount) {
+      errors.push("Amount is required");
+    } else if (isNaN(Number(amount)) || Number(amount) <= 0) {
+      errors.push("Amount must be a positive number");
+    }
+    
+    if (!date) {
+      errors.push("Date is required");
+    }
+    
+    if (errors.length > 0) {
+      console.log("❌ Validation errors:", errors);
+      return NextResponse.json({ error: errors.join(", ") }, { status: 400 });
     }
 
-    if (Number(amount) <= 0) {
-      return NextResponse.json({ error: "Amount must be positive" }, { status: 400 });
+    // Validate date
+    let expenseDate;
+    try {
+      expenseDate = new Date(date);
+      if (isNaN(expenseDate.getTime())) {
+        return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
+      }
+    } catch (err) {
+      return NextResponse.json({ error: "Invalid date format" }, { status: 400 });
     }
 
-    if (new Date(date) > new Date()) {
-      return NextResponse.json({ error: "Date cannot be in the future" }, { status: 400 });
-    }
-
+    // Check if vehicle exists (case insensitive)
     const vehicleExists = await db.collection("tblvehicles").findOne({
-      license_plate: license_plate.toUpperCase(),
+      license_plate: { $regex: `^${license_plate}$`, $options: "i" },
       isDeleted: { $ne: true },
     });
+    
     if (!vehicleExists) {
-      return NextResponse.json({ error: "Vehicle not found" }, { status: 400 });
+      console.log("❌ Vehicle not found:", license_plate);
+      return NextResponse.json({ error: `Vehicle "${license_plate}" not found` }, { status: 400 });
     }
 
-    const typeExists = await db.collection("tblexpense_types").findOne({
-      _id: new ObjectId(expense_type_id),
-      isDeleted: { $ne: true },
-    });
-    if (!typeExists) {
-      return NextResponse.json({ error: "Invalid expense type ID" }, { status: 400 });
+    // Handle expense_type_id - make it optional
+    let validatedExpenseTypeId = null;
+    if (expense_type_id && expense_type_id !== "null" && expense_type_id !== "") {
+      if (ObjectId.isValid(expense_type_id)) {
+        const typeExists = await db.collection("tblexpense_types").findOne({
+          _id: new ObjectId(expense_type_id),
+          isDeleted: { $ne: true },
+        });
+        if (typeExists) {
+          validatedExpenseTypeId = new ObjectId(expense_type_id);
+        }
+      }
     }
 
-    const result = await db.collection(COLLECTION).insertOne({
+    // Prepare expense data
+    const expenseData: any = {
       license_plate: license_plate.toUpperCase(),
       amount: Number(amount),
-      date: new Date(date),
-      expense_type_id: new ObjectId(expense_type_id),
-      ...(description && { description }),
-      ...(jobTrip && { jobTrip }),
-      ...(notes && { notes }),
+      date: expenseDate,
       isDeleted: false,
-    });
+      createdAt: new Date(),
+    };
 
-    return NextResponse.json({ insertedId: result.insertedId }, { status: 201 });
+    // Add optional fields only if they exist
+    if (description && description.trim()) expenseData.description = description.trim();
+    if (jobTrip && jobTrip.trim()) expenseData.jobTrip = jobTrip.trim();
+    if (notes && notes.trim()) expenseData.notes = notes.trim();
+    if (validatedExpenseTypeId) expenseData.expense_type_id = validatedExpenseTypeId;
+
+    console.log("✅ Inserting expense:", JSON.stringify(expenseData, null, 2));
+
+    const result = await db.collection("tblexpenses").insertOne(expenseData);
+
+    return NextResponse.json({ 
+      insertedId: result.insertedId,
+      message: "Expense created successfully" 
+    }, { status: 201 });
   } catch (error) {
+    console.error("❌ POST error:", error);
     return NextResponse.json(
       { error: "Failed to create expense", details: (error as Error).message },
       { status: 500 }

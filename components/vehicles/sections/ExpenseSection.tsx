@@ -50,7 +50,8 @@ export default function ExpenseSection({ vehicle }: { vehicle: Vehicle }) {
       const monthMap = new Map<string, number>();
 
       data.forEach((expense: Expense) => {
-        const typeName = expense.expense_type?.name || "Other";
+        // Use expense_item if available, otherwise fallback to expense_type name
+        const typeName = (expense as any).expense_item || expense.expense_type?.name || "Other";
         const date = new Date(expense.date);
         const monthKey = format(date, "MMM yyyy");
 
@@ -131,7 +132,10 @@ export default function ExpenseSection({ vehicle }: { vehicle: Vehicle }) {
   const filteredExpenses = useMemo(
     () =>
       selectedCategory
-        ? expenses.filter((exp) => exp.expense_type?.name === selectedCategory)
+        ? expenses.filter((exp) => {
+            const expenseName = (exp as any).expense_item || exp.expense_type?.name;
+            return expenseName === selectedCategory;
+          })
         : expenses,
     [expenses, selectedCategory]
   );
@@ -178,21 +182,6 @@ export default function ExpenseSection({ vehicle }: { vehicle: Vehicle }) {
         </Button>
       </div>
 
-      <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {editingExpense ? "Edit Expense" : "Add Expense"}
-            </DialogTitle>
-          </DialogHeader>
-          <ExpenseForm
-            vehicleLicensePlate={vehicle.license_plate}
-            refresh={fetchExpenses}
-            closeModal={() => setShowForm(false)}
-            expense={editingExpense}
-          />
-        </DialogContent>
-      </Dialog>
       <ExpenseStats
         totalExpense={totalExpense}
         averageDailyExpense={averageDailyExpense}
@@ -209,6 +198,7 @@ export default function ExpenseSection({ vehicle }: { vehicle: Vehicle }) {
           setSelectedCategory((prev) => (prev === category ? null : category))
         }
       />
+
       <ExpenseTable
         expenses={filteredExpenses}
         loading={loading}
@@ -217,6 +207,19 @@ export default function ExpenseSection({ vehicle }: { vehicle: Vehicle }) {
           setShowForm(true);
         }}
         onDelete={handleDelete}
+      />
+
+      {/* Expense Form Dialog */}
+      <ExpenseForm
+        open={showForm}
+        onOpenChange={setShowForm}
+        vehicleLicensePlate={vehicle.license_plate}
+        refresh={fetchExpenses}
+        expense={editingExpense}
+        onClose={() => {
+          setShowForm(false);
+          setEditingExpense(undefined);
+        }}
       />
     </div>
   );

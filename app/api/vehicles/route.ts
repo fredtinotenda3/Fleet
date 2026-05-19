@@ -169,26 +169,80 @@ export async function DELETE(req: Request) {
   if (unauth) return unauth;
 
   try {
-    const { id } = await req.json();
-    if (!id)
+    const { id, license_plate, cascade = true } = await req.json();
+    
+    if (!id && !license_plate) {
       return NextResponse.json(
-        { error: "Vehicle ID required" },
+        { error: "Vehicle ID or license plate required" },
         { status: 400 }
       );
-
-    const db = await connectToDatabase();
-    const result = await db
-      .collection(COLLECTION)
-      .updateOne(
-        { _id: new ObjectId(id) },
-        { $set: { isDeleted: true, deletedAt: new Date() } }
-      );
-
-    if (result.matchedCount === 0) {
-      return NextResponse.json({ error: "Vehicle not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ message: "Vehicle deleted" });
+    const db = await connectToDatabase();
+    const vehiclesCollection = db.collection(COLLECTION);
+    
+    // Build query
+    const query: any = {};
+    if (id) query._id = new ObjectId(id);
+    if (license_plate) query.license_plate = license_plate.toUpperCase();
+    
+    // Get the vehicle first
+    const vehicle = await vehiclesCollection.findOne(query);
+    if (!vehicle) {
+      return NextResponse.json({ error: "Vehicle not found" }, { status: 404 });
+    }
+    
+    const vehiclePlate = vehicle.license_plate;
+    
+    if (cascade) {
+      // Delete all related data
+      console.log(`🗑️ Cascading delete for vehicle: ${vehiclePlate}`);
+      
+      // 1. Delete expenses
+      const expensesResult = await db.collection("tblexpenses").deleteMany({
+        license_plate: vehiclePlate
+      });
+      console.log(`   Deleted ${expensesResult.deletedCount} expenses`);
+      
+      // 2. Delete fuel logs
+      const fuelLogsResult = await db.collection("tblfuellogs").deleteMany({
+        license_plate: vehiclePlate
+      });
+      console.log(`   Deleted ${fuelLogsResult.deletedCount} fuel logs`);
+      
+      // 3. Delete meter logs
+      const meterLogsResult = await db.collection("tblmeterlogs").deleteMany({
+        license_plate: vehiclePlate
+      });
+      console.log(`   Deleted ${meterLogsResult.deletedCount} meter logs`);
+      
+      // 4. Delete reminders
+      const remindersResult = await db.collection("tblreminders").deleteMany({
+        license_plate: vehiclePlate
+      });
+      console.log(`   Deleted ${remindersResult.deletedCount} reminders`);
+      
+      // 5. Delete trips
+      const tripsResult = await db.collection("tbltrips").deleteMany({
+        license_plate: vehiclePlate
+      });
+      console.log(`   Deleted ${tripsResult.deletedCount} trips`);
+    }
+    
+    // Delete the vehicle (hard delete)
+    const result = await vehiclesCollection.deleteOne(query);
+    
+    if (result.deletedCount === 0) {
+      return NextResponse.json({ error: "Vehicle not found" }, { status: 404 });
+    }
+    
+    return NextResponse.json({ 
+      message: "Vehicle and all related data deleted successfully",
+      deleted: {
+        vehicle: true,
+        ...(cascade && { cascade: true })
+      }
+    });
   } catch (error) {
     console.error("DELETE error:", error);
     return NextResponse.json(

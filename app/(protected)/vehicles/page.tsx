@@ -16,12 +16,16 @@ import ExpenseSection from "@/components/vehicles/sections/ExpenseSection";
 import MaintenanceSection from "@/components/vehicles/sections/MaintenanceSection";
 import FuelLogSection from "@/components/vehicles/sections/FuelLogSection";
 import MeterLogSection from "@/components/vehicles/sections/MeterLogSection";
-import TripLogSection from "@/components/vehicles/sections/TripLogSection"; // NEW
+import TripLogSection from "@/components/vehicles/sections/TripLogSection";
 import { Vehicle, PaginatedResponse, ApiFilter } from "@/types";
 import { DeleteConfirmationDialog } from "@/components/vehicles/ui/DeleteConfirmationDialog";
 import { FiltersAndSearchBar } from "@/components/vehicles/ui/FiltersAndSearchBar";
 import { VehiclesTable } from "@/components/vehicles/tables/VehiclesTable";
 import { useSearchParams } from "next/navigation";
+import { ImportModal } from "@/components/vehicles/ImportModal";
+import { ExportModal } from "@/components/vehicles/ExportModal";
+import { Download, Upload } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 // Type guard helpers
 function isErrorWithMessage(error: unknown): error is { message: string } {
@@ -49,6 +53,9 @@ export default function VehiclePage() {
   const [vehicleToDelete, setVehicleToDelete] = useState<string | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [loadingTable, setLoadingTable] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportData, setExportData] = useState<any[]>([]);
 
   // Set license plate filter from URL param
   useEffect(() => {
@@ -242,6 +249,261 @@ export default function VehiclePage() {
     [fetchVehicles]
   );
 
+const handleImport = async (records: any[]) => {
+  console.log("🚀 IMPORT STARTED - Records to import:", records.length);
+  
+  let successCount = 0;
+  let errorCount = 0;
+  const createdVehicles = new Set<string>();
+  const createdExpenseTypes = new Set<string>();
+  const errors: string[] = [];
+
+  // First, collect all unique vehicles that need to be created
+  const uniqueVehicles = new Set<string>();
+  for (const record of records) {
+    if (record.vehiclePlate && record.vehiclePlate !== "UNKNOWN" && record.vehiclePlate !== "Unknown") {
+      uniqueVehicles.add(record.vehiclePlate);
+    }
+  }
+  // ALWAYS add UNKNOWN vehicle
+  uniqueVehicles.add("UNKNOWN");
+  
+  // Collect all unique account types for expense categories
+  const uniqueAccounts = new Set<string>();
+  for (const record of records) {
+    if (record.account && record.account !== "Motor Expenses") {
+      uniqueAccounts.add(record.account);
+    }
+  }
+  uniqueAccounts.add("Motor Expenses");
+  uniqueAccounts.add("Fuel & Oil Distribution Cost");
+  uniqueAccounts.add("Motor Vehicle- Parking Fees");
+  uniqueAccounts.add("Tollgate_Weighbridge Fees");
+  
+  console.log("🚗 Unique vehicles to create:", Array.from(uniqueVehicles));
+  console.log("📁 Unique expense types to create:", Array.from(uniqueAccounts));
+  
+  // Create ALL vehicles first (including UNKNOWN)
+  for (const vehiclePlate of uniqueVehicles) {
+    try {
+      // Check if vehicle exists
+      const checkRes = await fetch(`/api/vehicles?license_plate=${encodeURIComponent(vehiclePlate)}`);
+      const vehiclesData = await checkRes.json();
+      let vehicles = Array.isArray(vehiclesData) ? vehiclesData : vehiclesData.data || [];
+      
+      if (vehicles.length === 0) {
+        const createRes = await fetch("/api/vehicles", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            license_plate: vehiclePlate,
+            make: vehiclePlate === "UNKNOWN" ? "Unknown" : "Unknown",
+            model: vehiclePlate === "UNKNOWN" ? "Vehicle" : "Truck",
+            year: new Date().getFullYear(),
+            vehicle_type: vehiclePlate === "UNKNOWN" ? "Unknown" : "Commercial",
+            purchase_date: new Date().toISOString().split("T")[0],
+            fuel_type: "Diesel",
+            status: "active",
+          }),
+        });
+        
+        if (createRes.ok) {
+          createdVehicles.add(vehiclePlate);
+          console.log(`✅ Created vehicle: ${vehiclePlate}`);
+        } else {
+          console.log(`❌ Failed to create vehicle: ${vehiclePlate}`);
+        }
+      } else {
+        console.log(`✓ Vehicle already exists: ${vehiclePlate}`);
+        createdVehicles.add(vehiclePlate);
+      }
+    } catch (err) {
+      console.error(`Error creating vehicle ${vehiclePlate}:`, err);
+    }
+  }
+  
+  // Create expense types from unique accounts
+  const expenseTypeMap = new Map<string, string>();
+  
+  for (const account of uniqueAccounts) {
+    try {
+      const checkRes = await fetch(`/api/expense-types`);
+      const existingTypes = await checkRes.json();
+      const existingType = existingTypes.find((et: any) => et.name === account);
+      
+      if (existingType) {
+        expenseTypeMap.set(account, existingType._id);
+        console.log(`✓ Expense type already exists: ${account}`);
+      } else {
+        const createRes = await fetch("/api/expense-types", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: account,
+            category: getCategoryFromAccount(account),
+            description: `Auto-created from import: ${account}`,
+          }),
+        });
+        
+        if (createRes.ok) {
+          const newType = await createRes.json();
+          expenseTypeMap.set(account, newType.insertedId);
+          createdExpenseTypes.add(account);
+          console.log(`✅ Created expense type: ${account}`);
+        }
+      }
+    } catch (err) {
+      console.error(`Error creating expense type ${account}:`, err);
+    }
+  }
+  
+  // Now create all expenses
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i];
+    
+    try {
+      let vehiclePlate = record.vehiclePlate;
+      if (!vehiclePlate || vehiclePlate === "Unknown") {
+        vehiclePlate = "UNKNOWN";
+      }
+      
+      let dateStr = "";
+      if (record.date instanceof Date) {
+        dateStr = record.date.toISOString().split("T")[0];
+      } else if (typeof record.date === 'string') {
+        dateStr = record.date;
+      } else {
+        dateStr = new Date(record.date).toISOString().split("T")[0];
+      }
+      
+      let description = "";
+      if (record.items && record.items.length > 0) {
+        description = record.items.slice(0, 3).join("; ");
+        if (record.items.length > 3) {
+          description += ` (+${record.items.length - 3} more)`;
+        }
+      } else {
+        description = record.details || "Imported expense";
+      }
+      
+      const accountName = record.account || "Motor Expenses";
+      const expenseTypeId = expenseTypeMap.get(accountName);
+      
+      const expenseData: any = {
+        license_plate: vehiclePlate,
+        amount: record.totalAmount,
+        date: dateStr,
+        description: description.substring(0, 200),
+        notes: `Imported: ${record.references?.join(", ") || record.reference || "No ref"}`,
+      };
+      
+      if (expenseTypeId) {
+        expenseData.expense_type_id = expenseTypeId;
+      }
+      
+      const response = await fetch("/api/expenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(expenseData),
+      });
+      
+      if (response.ok) {
+        successCount++;
+      } else {
+        const result = await response.json();
+        errorCount++;
+        errors.push(`${vehiclePlate}: ${result.error || "Unknown error"}`);
+      }
+    } catch (err) {
+      errorCount++;
+      errors.push(`${record.vehiclePlate || "Unknown"}: ${err instanceof Error ? err.message : "Unknown error"}`);
+    }
+  }
+  
+  console.log(`\n📊 IMPORT SUMMARY:`);
+  console.log(`   Vehicles created: ${createdVehicles.size}`);
+  console.log(`   Expense types created: ${createdExpenseTypes.size}`);
+  console.log(`   Expenses created: ${successCount}`);
+  console.log(`   Expenses failed: ${errorCount}`);
+  
+  if (createdVehicles.size > 0) {
+    toast.success(`Created ${createdVehicles.size} new vehicle(s): ${Array.from(createdVehicles).join(", ")}`);
+  }
+  
+  if (createdExpenseTypes.size > 0) {
+    toast.success(`Created ${createdExpenseTypes.size} new expense type(s)`);
+  }
+  
+  if (errorCount > 0) {
+    toast.error(`Import completed: ${successCount} expenses created, ${errorCount} failed`, {
+      description: errors.slice(0, 3).join(", "),
+      duration: 5000,
+    });
+  } else {
+    toast.success(`Successfully created ${successCount} expense records`);
+  }
+  
+  // Refresh data
+  fetchVehicles();
+  setSelectedVehicle(null);
+};
+
+function getCategoryFromAccount(account: string): string {
+  const lowerAccount = account.toLowerCase();
+  if (lowerAccount.includes('fuel') || lowerAccount.includes('oil')) {
+    return 'Fuel & Oil';
+  }
+  if (lowerAccount.includes('motor expense')) {
+    return 'Maintenance & Repairs';
+  }
+  if (lowerAccount.includes('parking')) {
+    return 'Parking Fees';
+  }
+  if (lowerAccount.includes('toll') || lowerAccount.includes('weighbridge')) {
+    return 'Toll Fees';
+  }
+  return 'Other';
+}
+
+// Helper function to map account to category
+function getCategoryFromAccount(account: string): string {
+  const lowerAccount = account.toLowerCase();
+  if (lowerAccount.includes('fuel') || lowerAccount.includes('oil')) {
+    return 'Fuel & Oil';
+  }
+  if (lowerAccount.includes('motor expense')) {
+    return 'Maintenance & Repairs';
+  }
+  if (lowerAccount.includes('parking')) {
+    return 'Parking Fees';
+  }
+  if (lowerAccount.includes('toll') || lowerAccount.includes('weighbridge')) {
+    return 'Toll Fees';
+  }
+  return 'Other';
+}
+  const handleExport = async () => {
+    // Fetch all vehicles for export
+    const res = await fetch("/api/vehicles?limit=10000");
+    const result = await res.json();
+    const vehicles = result.data || result;
+    
+    const exportData = vehicles.map((vehicle: any) => ({
+      "License Plate": vehicle.license_plate,
+      "Make": vehicle.make,
+      "Model": vehicle.model,
+      "Year": vehicle.year,
+      "Vehicle Type": vehicle.vehicle_type,
+      "Fuel Type": vehicle.fuel_type,
+      "Color": vehicle.color || "N/A",
+      "Status": vehicle.status || "active",
+      "Purchase Date": vehicle.purchase_date ? new Date(vehicle.purchase_date).toLocaleDateString() : "N/A",
+    }));
+    
+    setExportData(exportData);
+    setShowExportModal(true);
+  };
+
   return (
     <div className="container mx-auto p-6 space-y-6">
       <DeleteConfirmationDialog
@@ -251,12 +513,24 @@ export default function VehiclePage() {
         deleteLoading={deleteLoading}
       />
 
-      <FiltersAndSearchBar
-        searchTerm={searchTerm}
-        setSearchTerm={setSearchTerm}
-        setFilters={setFilters}
-        toggleFormOpen={toggleFormOpen}
-      />
+      <div className="flex justify-between items-center">
+        <FiltersAndSearchBar
+          searchTerm={searchTerm}
+          setSearchTerm={setSearchTerm}
+          setFilters={setFilters}
+          toggleFormOpen={toggleFormOpen}
+        />
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setShowImportModal(true)}>
+            <Upload className="h-4 w-4 mr-2" />
+            Import
+          </Button>
+          <Button variant="outline" onClick={handleExport}>
+            <Download className="h-4 w-4 mr-2" />
+            Export
+          </Button>
+        </div>
+      </div>
 
       <Dialog open={isFormOpen} onOpenChange={toggleFormOpen}>
         <DialogContent>
@@ -284,7 +558,7 @@ export default function VehiclePage() {
               <TabsTrigger value="expenses">Expenses</TabsTrigger>
               <TabsTrigger value="logs">FuelLogs</TabsTrigger>
               <TabsTrigger value="meter">MeterLogs</TabsTrigger>
-              <TabsTrigger value="trips">Trips</TabsTrigger> {/* NEW */}
+              <TabsTrigger value="trips">Trips</TabsTrigger>
               <TabsTrigger value="maintenance">Maintenance</TabsTrigger>
             </>
           )}
@@ -328,6 +602,19 @@ export default function VehiclePage() {
           </>
         )}
       </Tabs>
+
+      <ImportModal
+        open={showImportModal}
+        onOpenChange={setShowImportModal}
+        onImport={handleImport}
+      />
+
+      <ExportModal
+        open={showExportModal}
+        onOpenChange={setShowExportModal}
+        data={exportData}
+        title="Vehicles"
+      />
     </div>
   );
 }

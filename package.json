@@ -7,7 +7,16 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "db:indexes": "tsx scripts/create-indexes.ts"
+    "db:indexes": "tsx scripts/create-indexes.ts",
+    "db:migrate-reminders": "tsx scripts/migrate-reminders-categories.ts",
+    "db:add-maintenance-indexes": "tsx scripts/add-maintenance-indexes.ts",
+    "db:seed-expense-types": "tsx scripts/seed-expense-types.ts",
+    "db:seed-maintenance-expenses": "tsx scripts/seed-maintenance-expenses.ts",
+    "db:seed-actual-expenses": "tsx scripts/seed-actual-expenses.ts",
+    "db:clear-expenses": "tsx scripts/clear-expenses.ts",
+    "db:delete-vehicle": "tsx scripts/cascade-delete-vehicle.ts",
+    "db:delete-all-vehicles": "tsx scripts/cascade-delete-vehicle.ts --all",
+    "db:reset-vehicles": "npm run db:delete-all-vehicles && npm run db:seed-vehicles"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.13",
@@ -31,6 +40,7 @@
     "next": "^15.3.6",
     "next-auth": "^4.24.11",
     "next-themes": "^0.4.6",
+    "papaparse": "^5.5.3",
     "react": "^19.0.0",
     "react-chartjs-2": "^5.3.0",
     "react-csv": "^2.2.2",
@@ -41,13 +51,15 @@
     "recharts": "^2.15.3",
     "sonner": "^2.0.3",
     "tailwind-merge": "^3.3.0",
-    "use-debounce": "^10.0.4"
+    "use-debounce": "^10.0.4",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
     "@types/mongodb": "^4.0.6",
     "@types/node": "^20.19.37",
+    "@types/papaparse": "^5.5.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
