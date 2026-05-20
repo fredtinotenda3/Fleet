@@ -16,7 +16,9 @@
     "db:clear-expenses": "tsx scripts/clear-expenses.ts",
     "db:delete-vehicle": "tsx scripts/cascade-delete-vehicle.ts",
     "db:delete-all-vehicles": "tsx scripts/cascade-delete-vehicle.ts --all",
-    "db:reset-vehicles": "npm run db:delete-all-vehicles && npm run db:seed-vehicles"
+    "db:reset-vehicles": "npm run db:delete-all-vehicles && npm run db:seed-vehicles",
+    "db:make-admin": "node scripts/make-me-admin.js"
+    
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.13",

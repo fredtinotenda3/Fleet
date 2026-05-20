@@ -17,9 +17,9 @@ async function makeMeAdmin() {
     const db = client.db("VehicleExpense");
     const collection = db.collection("tbladmin");
 
-    const yourEmail = "fredtinotenda3@gmail.com"; // CHANGE THIS
-    const yourFirstName = "Stanley"; // CHANGE THIS
-    const yourPassword = "1011"; // CHANGE THIS
+    const yourEmail = "jan@gmail.com"; // CHANGE THIS
+    const yourFirstName = "jan"; // CHANGE THIS
+    const yourPassword = "jan123"; // CHANGE THIS
 
     const hashedPassword = await bcrypt.hash(yourPassword, 10);
 
