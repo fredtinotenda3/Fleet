@@ -1,3 +1,3 @@
-﻿export { Input } from './Input';
-export { Select } from './Select';
-export { Autocomplete } from './Autocomplete';
+﻿export { Input } from "./input"
+export { Label } from "./label"
+export { Autocomplete } from "./Autocomplete"
