@@ -1,8 +1,12 @@
 // modules/notifications/repositories/notification.repository.ts
 
 import { BaseRepository } from '@/server/repositories/base.repository';
-import { Notification, NotificationPreferences } from '../types/notification.types';
+import { Notification } from '../types/notification.types';
 import { Filter, ObjectId } from 'mongodb';
+import {
+  PaginationParams,
+  PaginatedResponse,
+} from '@/shared/types/common.types';
 
 export class NotificationRepository extends BaseRepository<Notification> {
   protected collectionName = 'tblnotifications';
@@ -10,24 +14,15 @@ export class NotificationRepository extends BaseRepository<Notification> {
   async findByUserId(
     userId: string,
     tenantId: string,
-    page: number = 1,
-    limit: number = 20,
+    pagination: PaginationParams,
     unreadOnly: boolean = false
-  ): Promise<{ data: Notification[]; total: number; page: number; totalPages: number }> {
-    const filter: Filter<Notification> = { userId } as Filter<Notification>;
-    
-    if (unreadOnly) {
-      filter.read = { $ne: true } as any;
-    }
-    
-    const result = await this.findWithPagination(filter, { page, limit }, tenantId);
-    
-    return {
-      data: result.data,
-      total: result.pagination.total,
-      page: result.pagination.page,
-      totalPages: result.pagination.totalPages,
-    };
+  ): Promise<PaginatedResponse<Notification>> {
+    const filter: Filter<Notification> = { 
+      userId,
+      ...(unreadOnly && { read: { $ne: true } })
+    } as Filter<Notification>;
+
+    return this.findWithPagination(filter, pagination, tenantId);
   }
 
   async getUnreadCount(userId: string, tenantId: string): Promise<number> {
@@ -37,22 +32,29 @@ export class NotificationRepository extends BaseRepository<Notification> {
       userId,
       read: { $ne: true },
     };
-    
-    return collection.countDocuments(filter as Filter<Notification>);
+    return collection.countDocuments(filter as unknown as Filter<Notification>);
   }
 
-  async markAsRead(notificationId: string, userId: string, tenantId: string): Promise<boolean> {
+  async markAsRead(
+    notificationId: string,
+    userId: string,
+    tenantId: string
+  ): Promise<boolean> {
+    if (!ObjectId.isValid(notificationId)) return false;
     const collection = await this.getCollection();
     const filter = {
       ...this.getActiveFilter(tenantId),
       _id: new ObjectId(notificationId),
       userId,
     };
-    
-    const result = await collection.updateOne(filter as Filter<Notification>, {
-      $set: { read: true, readAt: new Date() },
-    });
-    
+
+    const result = await collection.updateOne(
+      filter as unknown as Filter<Notification>,
+      {
+        $set: { read: true, readAt: new Date() },
+      }
+    );
+
     return result.modifiedCount > 0;
   }
 
@@ -63,98 +65,51 @@ export class NotificationRepository extends BaseRepository<Notification> {
       userId,
       read: { $ne: true },
     };
-    
-    const result = await collection.updateMany(filter as Filter<Notification>, {
-      $set: { read: true, readAt: new Date() },
-    });
-    
+
+    const result = await collection.updateMany(
+      filter as unknown as Filter<Notification>,
+      {
+        $set: { read: true, readAt: new Date() },
+      }
+    );
+
     return result.modifiedCount;
   }
 
-  async deleteOldNotifications(daysOld: number = 30, tenantId: string): Promise<number> {
+  async deleteOldNotifications(tenantId: string, daysOld: number = 30): Promise<number> {
     const collection = await this.getCollection();
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - daysOld);
-    
+
     const filter = {
       ...this.getActiveFilter(tenantId),
       sentAt: { $lt: cutoffDate },
       read: true,
     };
-    
-    const result = await collection.deleteMany(filter as Filter<Notification>);
+
+    const result = await collection.deleteMany(filter as unknown as Filter<Notification>);
     return result.deletedCount || 0;
   }
 
-  async getPreferences(userId: string, tenantId: string): Promise<NotificationPreferences | null> {
-    const collection = await this.getCollection();
-    const result = await collection.findOne({
-      _id: `prefs_${userId}` as any,
-      tenantId,
-    });
-    
-    return result as NotificationPreferences || null;
-  }
-
-  async upsertPreferences(
-    userId: string,
-    tenantId: string,
-    preferences: Partial<NotificationPreferences>
-  ): Promise<void> {
-    const collection = await this.getCollection();
-    
-    await collection.updateOne(
-      { _id: `prefs_${userId}`, tenantId },
+  async getHighPriorityUnread(tenantId: string): Promise<Notification[]> {
+    return this.findMany(
       {
-        $set: {
-          ...preferences,
-          userId,
-          tenantId,
-          updatedAt: new Date(),
-        },
-        $setOnInsert: {
-          createdAt: new Date(),
-        },
-      },
-      { upsert: true }
+        read: { $ne: true },
+        priority: { $in: ['high', 'critical'] },
+      } as unknown as Filter<Notification>,
+      tenantId,
+      { sortBy: 'sentAt', sortOrder: 'desc' }
     );
   }
 
-  async getNotificationsByType(
-    type: string,
-    tenantId: string,
-    limit: number = 100
-  ): Promise<Notification[]> {
+  async deleteExpired(tenantId: string): Promise<number> {
+    const collection = await this.getCollection();
     const filter = {
-      type,
-      read: false,
+      ...this.getActiveFilter(tenantId),
+      expiresAt: { $lt: new Date() },
     };
-    
-    return this.findMany(filter, tenantId, { limit, sortBy: 'sentAt', sortOrder: 'desc' });
-  }
-
-  async getRecentNotifications(
-    tenantId: string,
-    hours: number = 24,
-    limit: number = 50
-  ): Promise<Notification[]> {
-    const cutoffDate = new Date();
-    cutoffDate.setHours(cutoffDate.getHours() - hours);
-    
-    const filter = {
-      sentAt: { $gte: cutoffDate },
-    };
-    
-    return this.findMany(filter, tenantId, { limit, sortBy: 'sentAt', sortOrder: 'desc' });
-  }
-
-  async getHighPriorityUnread(tenantId: string): Promise<Notification[]> {
-    const filter = {
-      read: { $ne: true },
-      priority: { $in: ['high', 'critical'] },
-    };
-    
-    return this.findMany(filter, tenantId, { sortBy: 'sentAt', sortOrder: 'desc' });
+    const result = await collection.deleteMany(filter as unknown as Filter<Notification>);
+    return result.deletedCount || 0;
   }
 }
 

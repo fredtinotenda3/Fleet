@@ -1,57 +1,67 @@
 // infrastructure/websocket/client.ts
 
-import { io, Socket } from 'socket.io-client';
+type EventHandler = (data: unknown) => void;
 
 export class WebSocketClient {
-  private socket: Socket | null = null;
-  private eventHandlers: Map<string, Set<(data: any) => void>> = new Map();
+  private socket: any | null = null;
+  private eventHandlers = new Map<string, Set<EventHandler>>();
 
-  connect(token: string) {
-    this.socket = io({
-      path: '/api/socket',
-      auth: { token },
-      transports: ['websocket'],
-    });
+  connect(token: string): void {
+    if (this.socket?.connected) return;
 
-    this.socket.on('connect', () => {
-      console.log('[WebSocket] Connected');
-    });
+    import('socket.io-client')
+      .then(({ io }) => {
+        this.socket = io({
+          path: '/api/socket',
+          auth: { token },
+          transports: ['websocket'],
+          reconnection: true,
+          reconnectionAttempts: 5,
+          reconnectionDelay: 1_000,
+        });
 
-    this.socket.on('disconnect', () => {
-      console.log('[WebSocket] Disconnected');
-    });
+        this.socket.on('connect', () => {
+          console.log('[WebSocket] Connected');
+        });
 
-    this.socket.onAny((event, data) => {
-      const handlers = this.eventHandlers.get(event);
-      if (handlers) {
-        handlers.forEach(handler => handler(data));
-      }
-    });
+        this.socket.on('disconnect', () => {
+          console.log('[WebSocket] Disconnected');
+        });
+
+        this.socket.onAny((event: string, data: unknown) => {
+          const handlers = this.eventHandlers.get(event);
+          if (handlers) {
+            handlers.forEach((handler) => handler(data));
+          }
+        });
+      })
+      .catch(() => {
+        console.warn(
+          '[WebSocket] socket.io-client not available — real-time updates disabled'
+        );
+      });
   }
 
-  on(event: string, handler: (data: any) => void) {
+  on(event: string, handler: EventHandler): void {
     if (!this.eventHandlers.has(event)) {
       this.eventHandlers.set(event, new Set());
     }
     this.eventHandlers.get(event)!.add(handler);
   }
 
-  off(event: string, handler: (data: any) => void) {
-    const handlers = this.eventHandlers.get(event);
-    if (handlers) {
-      handlers.delete(handler);
-    }
+  off(event: string, handler: EventHandler): void {
+    this.eventHandlers.get(event)?.delete(handler);
   }
 
-  subscribe(events: string[]) {
+  subscribe(events: string[]): void {
     this.socket?.emit('subscribe', events);
   }
 
-  unsubscribe(events: string[]) {
+  unsubscribe(events: string[]): void {
     this.socket?.emit('unsubscribe', events);
   }
 
-  disconnect() {
+  disconnect(): void {
     this.socket?.disconnect();
     this.socket = null;
     this.eventHandlers.clear();

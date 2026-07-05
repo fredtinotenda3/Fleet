@@ -1,9 +1,10 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 // modules/billing/services/stripe.service.ts
 
 import Stripe from 'stripe';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2024-12-18.acacia',
+  apiVersion: '2026-06-24.dahlia',
 });
 
 export interface SubscriptionPlan {
@@ -86,7 +87,7 @@ export class BillingService {
   async createCheckoutSession(organizationId: string, planId: string, userId: string, tenantId: string): Promise<string> {
     const plan = PLANS.find(p => p.id === planId);
     if (!plan) throw new Error('Invalid plan');
-    
+
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       payment_method_types: ['card'],
@@ -105,10 +106,10 @@ export class BillingService {
         userId,
       },
     });
-    
+
     return session.url!;
   }
-  
+
   async handleWebhook(event: Stripe.Event, tenantId: string): Promise<void> {
     switch (event.type) {
       case 'checkout.session.completed':
@@ -128,38 +129,38 @@ export class BillingService {
         break;
     }
   }
-  
+
   private async handleCheckoutCompleted(session: Stripe.Checkout.Session, tenantId: string): Promise<void> {
     const organizationId = session.client_reference_id;
     const planId = session.metadata?.planId;
-    
+
     if (organizationId && planId) {
       // Update organization subscription
       // await organizationService.updateSubscription(organizationId, planId, tenantId);
     }
   }
-  
+
   private async handleSubscriptionUpdated(subscription: Stripe.Subscription, tenantId: string): Promise<void> {
     // Sync subscription status with organization
   }
-  
+
   private async handleSubscriptionCanceled(subscription: Stripe.Subscription, tenantId: string): Promise<void> {
     // Downgrade to free plan
   }
-  
+
   private async handlePaymentSucceeded(invoice: Stripe.Invoice, tenantId: string): Promise<void> {
     // Record successful payment
   }
-  
+
   private async handlePaymentFailed(invoice: Stripe.Invoice, tenantId: string): Promise<void> {
     // Notify organization owner
   }
-  
+
   async getSubscriptionStatus(organizationId: string, tenantId: string): Promise<any> {
     // Retrieve subscription status from database
     return null;
   }
-  
+
   async generateInvoice(organizationId: string, tenantId: string): Promise<Buffer> {
     // Generate PDF invoice
     return Buffer.from('');

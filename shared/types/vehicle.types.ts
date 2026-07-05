@@ -16,10 +16,12 @@ export interface Vehicle extends BaseEntity {
   registration_expiry?: string;
   insurance_provider?: string;
   last_service_date?: string;
+  last_service_odometer?: number;
   service_interval?: number;
   odometer?: number;
   image_url?: string;
   notes?: string;
+  orgUnitId?: string;
 }
 
 export interface VehicleCreateDTO {
@@ -37,6 +39,7 @@ export interface VehicleCreateDTO {
   insurance_provider?: string;
   service_interval?: number;
   odometer?: number;
+  orgUnitId?: string;
 }
 
 export interface VehicleUpdateDTO extends Partial<VehicleCreateDTO> {

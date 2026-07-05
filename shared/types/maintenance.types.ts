@@ -13,10 +13,12 @@ export interface Reminder extends BaseEntity {
   completion_date?: Date;
   priority?: Priority;
   service_type?: string;
-  recurrence_interval?: string; // Format: "30d", "3m", "1y"
+  category?: string;
+  recurrence_interval?: string;
   next_due_date?: Date;
   next_due_odometer?: number;
   assigned_to?: string;
+  estimated_cost?: number;
 }
 
 export interface ReminderCreateDTO {
@@ -26,8 +28,10 @@ export interface ReminderCreateDTO {
   notes?: string;
   priority?: Priority;
   service_type?: string;
+  category?: string;
   recurrence_interval?: string;
   assigned_to?: string;
+  estimated_cost?: number;
 }
 
 export interface ReminderUpdateDTO extends Partial<ReminderCreateDTO> {
@@ -40,6 +44,7 @@ export interface MaintenanceFilters {
   license_plate?: string;
   status?: ReminderStatus;
   priority?: Priority;
+  category?: string;
   startDate?: Date;
   endDate?: Date;
   assigned_to?: string;

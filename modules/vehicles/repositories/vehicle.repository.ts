@@ -1,33 +1,61 @@
-// C:\Users\user\Desktop\Fleet\modules\vehicles\repositories\vehicle.repository.ts
+// modules/vehicles/repositories/vehicle.repository.ts
 
-import { Filter, Document } from 'mongodb';
+import { Filter, Document, ObjectId } from 'mongodb';
 import { BaseRepository } from '@/server/repositories/base.repository';
-import { Vehicle, VehicleFilters, VehicleStats } from '@/shared/types/vehicle.types';
-import { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
+import {
+  Vehicle,
+  VehicleFilters,
+  VehicleStats,
+} from '@/shared/types/vehicle.types';
+import {
+  PaginationParams,
+  PaginatedResponse,
+} from '@/shared/types/common.types';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 
 export class VehicleRepository extends BaseRepository<Vehicle> {
   protected collectionName = 'tblvehicles';
 
-  // Helper to check if user is super admin (can be passed from service layer)
-  private async isSuperAdmin(tenantId: string): Promise<boolean> {
-    // tenantId === 'default' or we can check from token
-    // For now, treat 'default' as super admin tenant
-    return tenantId === 'default' || tenantId === 'system';
+  private isSuperAdminTenant(tenantId: string): boolean {
+    return (
+      tenantId === 'default' ||
+      tenantId === 'system' ||
+      tenantId === 'super_admin'
+    );
   }
 
-  async findByLicensePlate(licensePlate: string, tenantId: string, isSuperAdmin: boolean = false): Promise<Vehicle | null> {
-    return this.findOne({ license_plate: licensePlate.toUpperCase() }, tenantId, false, isSuperAdmin);
+  async findByLicensePlate(
+    licensePlate: string,
+    tenantId: string
+  ): Promise<Vehicle | null> {
+    return this.findOne(
+      { license_plate: licensePlate.toUpperCase() } as Filter<Vehicle>,
+      tenantId,
+      false,
+      this.isSuperAdminTenant(tenantId)
+    );
   }
 
-  async findByLicensePlates(licensePlates: string[], tenantId: string, isSuperAdmin: boolean = false): Promise<Vehicle[]> {
-    return this.findMany({ license_plate: { $in: licensePlates.map(p => p.toUpperCase()) } }, tenantId, {}, false, isSuperAdmin);
+  async findByLicensePlates(
+    licensePlates: string[],
+    tenantId: string
+  ): Promise<Vehicle[]> {
+    return this.findMany(
+      {
+        license_plate: { $in: licensePlates.map((p) => p.toUpperCase()) },
+      } as Filter<Vehicle>,
+      tenantId,
+      {},
+      false,
+      this.isSuperAdminTenant(tenantId)
+    );
   }
 
   async searchVehicles(
     searchTerm: string,
     tenantId: string,
-    pagination: PaginationParams,
-    isSuperAdmin: boolean = false
+    pagination: PaginationParams
   ): Promise<PaginatedResponse<Vehicle>> {
     const filter: Filter<Vehicle> = {
       $or: [
@@ -36,197 +64,208 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
         { model: { $regex: searchTerm, $options: 'i' } },
         { vin: { $regex: searchTerm, $options: 'i' } },
       ],
-    };
-    return this.findWithPagination(filter, pagination, tenantId, false, isSuperAdmin);
+    } as Filter<Vehicle>;
+    return this.findWithPagination(
+      filter,
+      pagination,
+      tenantId,
+      false,
+      this.isSuperAdminTenant(tenantId)
+    );
   }
 
-  async getFilteredVehiclesOptimized(
+  async getFilteredVehicles(
     filters: VehicleFilters,
     pagination: PaginationParams,
-    tenantId: string,
-    isSuperAdmin: boolean = false
+    tenantId: string
   ): Promise<PaginatedResponse<Vehicle>> {
     const collection = await this.getCollection();
-    
-    // Build efficient query with covered indexes
-    const query: any = {
+    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+
+    const query: Record<string, unknown> = {
       isDeleted: { $ne: true },
     };
-    
-    // Only add tenant filter if NOT super admin
-    if (!isSuperAdmin && tenantId && tenantId !== 'default') {
+
+    if (!isSuperAdmin) {
       query.tenantId = tenantId;
     }
-    
+
     if (filters.license_plate) {
-      query.license_plate = { $regex: `^${filters.license_plate}`, $options: 'i' };
+      query.license_plate = {
+        $regex: `^${filters.license_plate}`,
+        $options: 'i',
+      };
     }
-    
     if (filters.status) {
       query.status = filters.status;
     }
-    
     if (filters.make) {
       query.make = { $regex: `^${filters.make}`, $options: 'i' };
     }
-    
     if (filters.model) {
       query.model = { $regex: `^${filters.model}`, $options: 'i' };
     }
-    
-    // Project only needed fields for performance
-    const projection = {
-      _id: 1,
-      license_plate: 1,
-      make: 1,
-      model: 1,
-      year: 1,
-      status: 1,
-      color: 1,
-      fuel_type: 1,
-      vehicle_type: 1,
-      purchase_date: 1,
-      odometer: 1,
-      vin: 1,
-      createdAt: 1,
-      tenantId: 1,
-    };
-    
+    if (filters.year) {
+      query.year = filters.year;
+    }
+    if (filters.vehicle_type) {
+      query.vehicle_type = {
+        $regex: `^${filters.vehicle_type}`,
+        $options: 'i',
+      };
+    }
+
     const { page, limit } = pagination;
     const skip = (page - 1) * limit;
-    
+
     const [data, total] = await Promise.all([
       collection
-        .find(query)
-        .project(projection)
+        .find(query as Filter<Vehicle>)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .toArray(),
-      collection.countDocuments(query),
+      collection.countDocuments(query as Filter<Vehicle>),
     ]);
-    
-    console.log(`📊 Vehicle query: ${total} total vehicles found (isSuperAdmin: ${isSuperAdmin})`);
-    
+
     return {
-      data: data as unknown as Vehicle[],
+      data: data as Vehicle[],
       pagination: {
         page,
         limit,
         total,
-        totalPages: Math.ceil(total / limit),
+        totalPages: Math.max(1, Math.ceil(total / limit)),
         hasNext: page * limit < total,
         hasPrev: page > 1,
       },
     };
   }
 
-  async getFilteredVehicles(
+  async getFilteredVehiclesInScope(
     filters: VehicleFilters,
-    tenantId: string,
     pagination: PaginationParams,
-    isSuperAdmin: boolean = false
+    context: TenantContext
   ): Promise<PaginatedResponse<Vehicle>> {
-    return this.getFilteredVehiclesOptimized(filters, pagination, tenantId, isSuperAdmin);
+    const collection = await this.getCollection();
+
+    const query: Record<string, unknown> = {
+      isDeleted: { $ne: true },
+    };
+
+    // Tenant isolation — super admins skip this, same as getFilteredVehicles
+    if (!this.isSuperAdminTenant(context.organizationId)) {
+      query.tenantId = context.organizationId;
+    }
+
+    if (filters.license_plate) {
+      query.license_plate = {
+        $regex: `^${filters.license_plate}`,
+        $options: 'i',
+      };
+    }
+    if (filters.status) {
+      query.status = filters.status;
+    }
+    if (filters.make) {
+      query.make = { $regex: `^${filters.make}`, $options: 'i' };
+    }
+    if (filters.model) {
+      query.model = { $regex: `^${filters.model}`, $options: 'i' };
+    }
+    if (filters.year) {
+      query.year = filters.year;
+    }
+    if (filters.vehicle_type) {
+      query.vehicle_type = {
+        $regex: `^${filters.vehicle_type}`,
+        $options: 'i',
+      };
+    }
+
+    // Apply org-unit scope filter on top of everything else
+    const scopeFilter = tenantScopeService.buildFilter<Vehicle>(context, 'orgUnitId');
+    Object.assign(query, scopeFilter);
+
+    const { page, limit } = pagination;
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await Promise.all([
+      collection
+        .find(query as Filter<Vehicle>)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .toArray(),
+      collection.countDocuments(query as Filter<Vehicle>),
+    ]);
+
+    return {
+      data: data as Vehicle[],
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+        hasNext: page * limit < total,
+        hasPrev: page > 1,
+      },
+    };
   }
 
-  async getVehicleStats(tenantId: string, isSuperAdmin: boolean = false): Promise<VehicleStats> {
+  async getVehicleStats(tenantId: string): Promise<VehicleStats> {
     const collection = await this.getCollection();
-    
-    // Build filter based on admin status
-    const baseFilter: any = { isDeleted: { $ne: true } };
-    if (!isSuperAdmin && tenantId && tenantId !== 'default') {
+    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+
+    const baseFilter: Record<string, unknown> = {
+      isDeleted: { $ne: true },
+    };
+    if (!isSuperAdmin) {
       baseFilter.tenantId = tenantId;
     }
-    
+
     const [total, active, inactive, maintenance] = await Promise.all([
-      collection.countDocuments(baseFilter),
-      collection.countDocuments({ ...baseFilter, status: 'active' }),
-      collection.countDocuments({ ...baseFilter, status: 'inactive' }),
-      collection.countDocuments({ ...baseFilter, status: 'maintenance' }),
+      collection.countDocuments(baseFilter as Filter<Vehicle>),
+      collection.countDocuments({
+        ...baseFilter,
+        status: 'active',
+      } as Filter<Vehicle>),
+      collection.countDocuments({
+        ...baseFilter,
+        status: 'inactive',
+      } as Filter<Vehicle>),
+      collection.countDocuments({
+        ...baseFilter,
+        status: 'maintenance',
+      } as Filter<Vehicle>),
     ]);
-    
-    console.log(`📊 Vehicle stats: total=${total}, active=${active}, inactive=${inactive}, maintenance=${maintenance}`);
 
     return { total, active, inactive, maintenance };
   }
 
-  async getVehiclesByStatus(status: string, tenantId: string, isSuperAdmin: boolean = false): Promise<Vehicle[]> {
-    return this.findMany({ status }, tenantId, {}, false, isSuperAdmin);
-  }
-
-  async getVehiclesWithRecentActivity(
-    days: number,
-    tenantId: string,
-    limit: number = 10,
-    isSuperAdmin: boolean = false
+  async getVehiclesByStatus(
+    status: string,
+    tenantId: string
   ): Promise<Vehicle[]> {
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - days);
-
-    const filter: any = {};
-    if (!isSuperAdmin && tenantId && tenantId !== 'default') {
-      filter.tenantId = tenantId;
-    }
-
-    const pipeline = [
-      { $match: { ...filter, isDeleted: { $ne: true } } },
-      {
-        $lookup: {
-          from: 'tblexpenses',
-          let: { plate: '$license_plate' },
-          pipeline: [
-            {
-              $match: {
-                $expr: { $eq: ['$license_plate', '$$plate'] },
-                date: { $gte: cutoffDate },
-              },
-            },
-            { $limit: 1 },
-          ],
-          as: 'recent_expense',
-        },
-      },
-      {
-        $lookup: {
-          from: 'tblfuellogs',
-          let: { plate: '$license_plate' },
-          pipeline: [
-            {
-              $match: {
-                $expr: { $eq: ['$license_plate', '$$plate'] },
-                date: { $gte: cutoffDate },
-              },
-            },
-            { $limit: 1 },
-          ],
-          as: 'recent_fuel',
-        },
-      },
-      {
-        $match: {
-          $or: [
-            { 'recent_expense.0': { $exists: true } },
-            { 'recent_fuel.0': { $exists: true } },
-          ],
-        },
-      },
-      { $limit: limit },
-    ];
-
-    const collection = await this.getCollection();
-    return collection.aggregate<Vehicle>(pipeline).toArray();
+    return this.findMany(
+      { status } as Filter<Vehicle>,
+      tenantId,
+      {},
+      false,
+      this.isSuperAdminTenant(tenantId)
+    );
   }
 
   async getVehiclesDueForService(
     mileageThreshold: number,
-    tenantId: string,
-    isSuperAdmin: boolean = false
+    tenantId: string
   ): Promise<Vehicle[]> {
     const collection = await this.getCollection();
-    
-    const baseFilter: any = { isDeleted: { $ne: true } };
-    if (!isSuperAdmin && tenantId && tenantId !== 'default') {
+    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+
+    const baseFilter: Record<string, unknown> = {
+      isDeleted: { $ne: true },
+    };
+    if (!isSuperAdmin) {
       baseFilter.tenantId = tenantId;
     }
 
@@ -237,7 +276,9 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
           from: 'tblmeterlogs',
           let: { plate: '$license_plate' },
           pipeline: [
-            { $match: { $expr: { $eq: ['$license_plate', '$$plate'] } } },
+            {
+              $match: { $expr: { $eq: ['$license_plate', '$$plate'] } },
+            },
             { $sort: { date: -1 } },
             { $limit: 1 },
             { $project: { odometer: 1 } },
@@ -247,14 +288,21 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
       },
       {
         $addFields: {
-          currentOdometer: { $ifNull: [{ $arrayElemAt: ['$latest_meter.odometer', 0] }, 0] },
+          currentOdometer: {
+            $ifNull: [{ $arrayElemAt: ['$latest_meter.odometer', 0] }, 0],
+          },
         },
       },
       {
         $match: {
           $expr: {
             $gte: [
-              { $subtract: ['$currentOdometer', { $ifNull: ['$last_service_odometer', 0] }] },
+              {
+                $subtract: [
+                  '$currentOdometer',
+                  { $ifNull: ['$last_service_odometer', 0] },
+                ],
+              },
               mileageThreshold,
             ],
           },
@@ -265,11 +313,18 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
     return collection.aggregate<Vehicle>(pipeline).toArray();
   }
 
-  async getVehicleAnalytics(tenantId: string, startDate: Date, endDate: Date, isSuperAdmin: boolean = false): Promise<Document[]> {
+  async getVehicleAnalytics(
+    tenantId: string,
+    startDate: Date,
+    endDate: Date
+  ): Promise<Document[]> {
     const collection = await this.getCollection();
-    
-    const baseFilter: any = { isDeleted: { $ne: true } };
-    if (!isSuperAdmin && tenantId && tenantId !== 'default') {
+    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+
+    const baseFilter: Record<string, unknown> = {
+      isDeleted: { $ne: true },
+    };
+    if (!isSuperAdmin) {
       baseFilter.tenantId = tenantId;
     }
 
@@ -302,16 +357,37 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
                 date: { $gte: startDate, $lte: endDate },
               },
             },
-            { $group: { _id: null, totalFuel: { $sum: '$fuel_volume' }, totalCost: { $sum: '$cost' } } },
+            {
+              $group: {
+                _id: null,
+                totalFuel: { $sum: '$fuel_volume' },
+                totalCost: { $sum: '$cost' },
+              },
+            },
           ],
           as: 'fuel_stats',
         },
       },
       {
         $addFields: {
-          totalExpenses: { $ifNull: [{ $arrayElemAt: ['$expense_total.total', 0] }, 0] },
-          totalFuelCost: { $ifNull: [{ $arrayElemAt: ['$fuel_stats.totalCost', 0] }, 0] },
-          totalFuelVolume: { $ifNull: [{ $arrayElemAt: ['$fuel_stats.totalFuel', 0] }, 0] },
+          totalExpenses: {
+            $ifNull: [
+              { $arrayElemAt: ['$expense_total.total', 0] },
+              0,
+            ],
+          },
+          totalFuelCost: {
+            $ifNull: [
+              { $arrayElemAt: ['$fuel_stats.totalCost', 0] },
+              0,
+            ],
+          },
+          totalFuelVolume: {
+            $ifNull: [
+              { $arrayElemAt: ['$fuel_stats.totalFuel', 0] },
+              0,
+            ],
+          },
         },
       },
       {
@@ -325,7 +401,9 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
           totalExpenses: 1,
           totalFuelCost: 1,
           totalFuelVolume: 1,
-          totalOperatingCost: { $add: ['$totalExpenses', '$totalFuelCost'] },
+          totalOperatingCost: {
+            $add: ['$totalExpenses', '$totalFuelCost'],
+          },
         },
       },
       { $sort: { totalOperatingCost: -1 } },

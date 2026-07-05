@@ -1,0 +1,1 @@
+export const OBSERVABILITY_ALERT_TRIGGERED = 'ObservabilityAlertTriggered';

@@ -11,6 +11,7 @@ export interface FuelLog extends BaseEntity {
   odometer?: number;
   station_name?: string;
   fuel_type?: string;
+  notes?: string;
   unit?: {
     name: string;
     symbol: string;
@@ -27,6 +28,7 @@ export interface FuelLogCreateDTO {
   odometer?: number;
   station_name?: string;
   fuel_type?: string;
+  notes?: string;
 }
 
 export interface FuelLogUpdateDTO extends Partial<FuelLogCreateDTO> {

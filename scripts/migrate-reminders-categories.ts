@@ -1,6 +1,7 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /**
  * Migration script to add category and priority fields to existing reminders
- * 
+ *
  * Run with: npx ts-node scripts/migrate-reminders-categories.ts
  */
 
@@ -8,11 +9,9 @@ import { MongoClient, Db } from "mongodb";
 import * as dotenv from "dotenv";
 import path from "path";
 
-// Load environment variables
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
-// Types
-type MaintenanceCategory = 
+type MaintenanceCategory =
   | "braking_system"
   | "fuel_system"
   | "spring_suspension"
@@ -27,17 +26,18 @@ interface ReminderDocument {
   status: string;
   due_date: Date | string;
   notes?: string;
-  category?: MaintenanceCategory;
+  // Allow `null` explicitly so the migration query below
+  // (`{ category: null }`) type-checks against Mongo's Filter<T>.
+  category?: MaintenanceCategory | null;
   priority?: string;
   recurrence_interval?: string;
   completion_date?: Date | string;
   created_at?: Date;
 }
 
-// Keyword mapping for title -> category
 const CATEGORY_KEYWORDS: Record<MaintenanceCategory, string[]> = {
   braking_system: [
-    "brake", "braking", "airline", "bulge", "mounding bolt", 
+    "brake", "braking", "airline", "bulge", "mounding bolt",
     "oil seepage", "drum", "low air warning", "master cylinder",
     "clutch pedal", "pedal free travel", "brake fluid", "exhaust leak"
   ],
@@ -65,7 +65,6 @@ const CATEGORY_KEYWORDS: Record<MaintenanceCategory, string[]> = {
   ],
 };
 
-// Priority mapping based on keywords (critical > high > medium > low)
 const CRITICAL_KEYWORDS = [
   "leak", "cracked", "broken", "inoperative", "failure", "overheating",
   "seepage", "missing", "warning", "emergency", "airline"
@@ -78,8 +77,7 @@ const HIGH_KEYWORDS = [
 
 function determineCategory(title: string): MaintenanceCategory {
   const lowerTitle = title.toLowerCase();
-  
-  // Check each category's keywords
+
   for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
     for (const keyword of keywords) {
       if (lowerTitle.includes(keyword.toLowerCase())) {
@@ -87,37 +85,33 @@ function determineCategory(title: string): MaintenanceCategory {
       }
     }
   }
-  
-  // Default to engine_gearbox for general maintenance
+
   return "engine_gearbox";
 }
 
 function determinePriority(title: string): string {
   const lowerTitle = title.toLowerCase();
-  
-  // Check for critical keywords
+
   for (const keyword of CRITICAL_KEYWORDS) {
     if (lowerTitle.includes(keyword.toLowerCase())) {
       return "critical";
     }
   }
-  
-  // Check for high priority keywords
+
   for (const keyword of HIGH_KEYWORDS) {
     if (lowerTitle.includes(keyword.toLowerCase())) {
       return "high";
     }
   }
-  
-  // Check for specific maintenance items
+
   if (lowerTitle.includes("oil change") || lowerTitle.includes("tune")) {
     return "medium";
   }
-  
+
   if (lowerTitle.includes("inspection") || lowerTitle.includes("check")) {
     return "low";
   }
-  
+
   return "medium";
 }
 
@@ -137,7 +131,6 @@ async function migrateReminders() {
     const db = client.db("VehicleExpense");
     const collection = db.collection<ReminderDocument>("tblreminders");
 
-    // Get all reminders without category field
     const reminders = await collection.find({
       $or: [
         { category: { $exists: false } },
@@ -170,10 +163,9 @@ async function migrateReminders() {
       low: 0,
     };
 
-    // Process each reminder
     for (const reminder of reminders) {
       const title = reminder.title || "";
-      
+
       if (!title) {
         console.log(`⚠️ Skipping reminder ${reminder._id} - no title`);
         skippedCount++;
@@ -183,15 +175,14 @@ async function migrateReminders() {
       const category = determineCategory(title);
       const priority = determinePriority(title);
 
-      // Update the reminder
       const result = await collection.updateOne(
         { _id: reminder._id },
-        { 
-          $set: { 
+        {
+          $set: {
             category,
             priority,
             updated_at: new Date()
-          } 
+          }
         }
       );
 
@@ -203,27 +194,26 @@ async function migrateReminders() {
       }
     }
 
-    // Print summary
     console.log("\n" + "=".repeat(50));
     console.log("📊 MIGRATION SUMMARY");
     console.log("=".repeat(50));
     console.log(`✅ Total reminders updated: ${updatedCount}`);
     console.log(`⚠️ Skipped: ${skippedCount}`);
     console.log(`📋 Total processed: ${reminders.length}`);
-    
+
     console.log("\n📁 Category Distribution:");
     for (const [category, count] of Object.entries(stats)) {
       const categoryName = category.replace("_", " ").toUpperCase();
       console.log(`   ${categoryName}: ${count}`);
     }
-    
+
     console.log("\n⚠️ Priority Distribution:");
     for (const [priority, count] of Object.entries(priorityStats)) {
       console.log(`   ${priority.toUpperCase()}: ${count}`);
     }
 
     console.log("\n✅ Migration completed successfully!");
-    
+
   } catch (error) {
     console.error("❌ Migration failed:", error);
     process.exit(1);
@@ -232,5 +222,4 @@ async function migrateReminders() {
   }
 }
 
-// Run the migration
 migrateReminders().catch(console.error);

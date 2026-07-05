@@ -4,42 +4,65 @@ import { z } from 'zod';
 
 const modeSchema = z.enum(['distance', 'odometer']);
 
-export const tripSchema = z.discriminatedUnion('mode', [
-  z.object({
-    mode: z.literal('distance'),
-    license_plate: z.string().min(1, 'License plate is required'),
-    date: z.date().or(z.string().datetime()).transform(val => new Date(val)),
-    unit_id: z.string().min(1, 'Unit is required'),
-    trip_distance: z.number().positive('Trip distance must be positive'),
-    notes: z.string().max(500).optional(),
-    start_location: z.string().optional(),
-    end_location: z.string().optional(),
-    driver_id: z.string().optional(),
-  }),
-  z.object({
-    mode: z.literal('odometer'),
-    license_plate: z.string().min(1, 'License plate is required'),
-    date: z.date().or(z.string().datetime()).transform(val => new Date(val)),
-    unit_id: z.string().min(1, 'Unit is required'),
-    start_odometer: z.number().nonnegative('Start odometer cannot be negative'),
-    end_odometer: z.number().nonnegative('End odometer cannot be negative'),
-    notes: z.string().max(500).optional(),
-    start_location: z.string().optional(),
-    end_location: z.string().optional(),
-    driver_id: z.string().optional(),
-  }),
-]).refine(data => {
-  if (data.mode === 'odometer' && data.end_odometer < data.start_odometer) {
-    return false;
-  }
-  return true;
-}, {
-  message: 'End odometer cannot be less than start odometer',
-  path: ['end_odometer'],
+export const tripBaseSchema = z.object({
+  license_plate: z
+    .string()
+    .min(1, 'License plate is required')
+    .transform((val) => val.toUpperCase()),
+  date: z
+    .union([z.date(), z.string().min(1, 'Date is required')])
+    .transform((val) => new Date(val)),
+  unit_id: z.string().min(1, 'Unit is required'),
+  notes: z.string().max(500).optional().nullable(),
+  start_location: z.string().max(200).optional().nullable(),
+  end_location: z.string().max(200).optional().nullable(),
+  driver_id: z.string().optional().nullable(),
+  mode: modeSchema,
+  trip_distance: z.number().positive().optional().nullable(),
+  start_odometer: z.number().nonnegative().optional().nullable(),
+  end_odometer: z.number().nonnegative().optional().nullable(),
 });
 
-export const tripCreateSchema = tripSchema;
-export const tripUpdateSchema = tripSchema.partial().extend({
+export const tripCreateSchema = tripBaseSchema.superRefine((data, ctx) => {
+  if (data.mode === 'distance') {
+    if (!data.trip_distance || data.trip_distance <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Trip distance is required and must be positive for distance mode',
+        path: ['trip_distance'],
+      });
+    }
+  }
+  if (data.mode === 'odometer') {
+    if (data.start_odometer == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Start odometer is required for odometer mode',
+        path: ['start_odometer'],
+      });
+    }
+    if (data.end_odometer == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'End odometer is required for odometer mode',
+        path: ['end_odometer'],
+      });
+    }
+    if (
+      data.start_odometer != null &&
+      data.end_odometer != null &&
+      data.end_odometer < data.start_odometer
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'End odometer cannot be less than start odometer',
+        path: ['end_odometer'],
+      });
+    }
+  }
+});
+
+export const tripUpdateSchema = tripBaseSchema.partial().extend({
   _id: z.string().min(1, 'Trip ID is required'),
 });
 
@@ -53,5 +76,5 @@ export const tripFiltersSchema = z.object({
   limit: z.number().int().positive().max(100).default(50),
 });
 
-export type TripInput = z.infer<typeof tripSchema>;
-export type TripCreateInput = z.infer<typeof tripCreateSchema>;
+export type TripCreateInput = z.infer<typeof tripBaseSchema>;
+export type TripUpdateInput = z.infer<typeof tripUpdateSchema>;

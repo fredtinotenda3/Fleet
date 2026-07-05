@@ -1,3 +1,5 @@
+// shared/utils/validation.utils.ts
+
 import { ZodSchema, ZodError } from 'zod';
 
 export interface ValidationResult<T> {
@@ -16,17 +18,14 @@ export async function validateWithZod<T>(
   } catch (error) {
     if (error instanceof ZodError) {
       const errors: Record<string, string[]> = {};
-      error.errors.forEach((err) => {
+      // Zod v4 renamed `ZodError.errors` to `ZodError.issues`.
+      error.issues.forEach((err) => {
         const path = err.path.length > 0 ? err.path.join('.') : '_global';
         if (!errors[path]) errors[path] = [];
         errors[path].push(err.message);
       });
-      // Log the real field-level errors so we can debug
-      console.error('Zod field errors:', JSON.stringify(errors, null, 2));
-      console.error('Zod raw issues:', JSON.stringify(error.errors, null, 2));
       return { success: false, errors };
     }
-    console.error('Non-Zod validation error:', error);
     return { success: false, errors: { _global: ['Validation failed'] } };
   }
 }
@@ -49,7 +48,7 @@ export function sanitizeObject<T extends Record<string, unknown>>(obj: T): T {
 }
 
 export function isValidLicensePlate(plate: string): boolean {
-  const regex = /^[A-Z0-9-]{1,20}$/i;
+  const regex = /^[A-Z0-9\-]{1,20}$/i;
   return regex.test(plate);
 }
 

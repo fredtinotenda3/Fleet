@@ -1,73 +1,81 @@
 // infrastructure/monitoring/logger.ts
 
-import winston from 'winston';
-import { Sentry } from './sentry';
-
-const { combine, timestamp, printf, colorize, json } = winston.format;
-
-const customFormat = printf(({ level, message, timestamp, ...meta }) => {
-  return `${timestamp} [${level}]: ${message} ${Object.keys(meta).length ? JSON.stringify(meta) : ''}`;
-});
-
-export const logger = winston.createLogger({
-  level: process.env.LOG_LEVEL || 'info',
-  format: combine(
-    timestamp(),
-    process.env.NODE_ENV === 'production' ? json() : customFormat
-  ),
-  transports: [
-    new winston.transports.Console({
-      format: combine(
-        colorize(),
-        customFormat
-      ),
-    }),
-    new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
-    new winston.transports.File({ filename: 'logs/combined.log' }),
-  ],
-});
+import { structuredLogger } from '@/infrastructure/observability/structured-logger';
+import { metricsRegistry } from '@/infrastructure/observability/metrics.registry';
 
 export class MonitoringService {
-  logInfo(message: string, meta?: Record<string, any>) {
-    logger.info(message, meta);
+  logInfo(message: string, meta?: Record<string, unknown>): void {
+    structuredLogger.info(message, meta);
   }
 
-  logError(message: string, error?: Error, meta?: Record<string, any>) {
-    logger.error(message, { error: error?.message, stack: error?.stack, ...meta });
-    
-    if (process.env.NODE_ENV === 'production') {
-      Sentry.captureException(error, {
-        extra: meta,
-        tags: { service: 'fleet-api' },
-      });
-    }
+  logError(
+    message: string,
+    error?: Error,
+    meta?: Record<string, unknown>
+  ): void {
+    structuredLogger.error(message, error, meta);
   }
 
-  logWarn(message: string, meta?: Record<string, any>) {
-    logger.warn(message, meta);
+  logWarn(message: string, meta?: Record<string, unknown>): void {
+    structuredLogger.warn(message, meta);
   }
 
-  logDebug(message: string, meta?: Record<string, any>) {
-    logger.debug(message, meta);
+  logDebug(message: string, meta?: Record<string, unknown>): void {
+    structuredLogger.debug(message, meta);
   }
 
-  async trackMetric(name: string, value: number, tags?: Record<string, string>) {
-    logger.info(`Metric: ${name}=${value}`, { metric: name, value, tags });
-    // Could also send to DataDog, Prometheus, etc.
+  async trackMetric(
+    name: string,
+    value: number,
+    tags?: Record<string, string>
+  ): Promise<void> {
+    metricsRegistry.observeGeneric(name, value, tags);
+    structuredLogger.debug(`Metric: ${name}=${value}`, {
+      metric: name,
+      value,
+      tags,
+    });
   }
 
-  async trackApiLatency(endpoint: string, durationMs: number, statusCode: number) {
+  async trackApiLatency(
+    endpoint: string,
+    durationMs: number,
+    statusCode: number
+  ): Promise<void> {
+    metricsRegistry.httpRequestDuration.observe(
+      { route: endpoint, status: String(statusCode) } as never,
+      durationMs / 1000
+    );
     await this.trackMetric('api.latency', durationMs, {
       endpoint,
       status: statusCode.toString(),
     });
   }
 
-  async trackDatabaseQuery(collection: string, durationMs: number) {
+  async trackDatabaseQuery(
+    collection: string,
+    durationMs: number
+  ): Promise<void> {
+    metricsRegistry.dbQueryDuration.observe(
+      { collection, operation: 'unknown' },
+      durationMs / 1000
+    );
     await this.trackMetric('db.query.duration', durationMs, { collection });
   }
 
-  async trackJob(jobType: string, durationMs: number, success: boolean) {
+  async trackJob(
+    jobType: string,
+    durationMs: number,
+    success: boolean
+  ): Promise<void> {
+    metricsRegistry.queueJobDuration.observe(
+      { jobType, status: success ? 'success' : 'failure' },
+      durationMs / 1000
+    );
+    metricsRegistry.queueJobTotal.inc({
+      jobType,
+      status: success ? 'success' : 'failure',
+    });
     await this.trackMetric('job.duration', durationMs, {
       type: jobType,
       success: success.toString(),

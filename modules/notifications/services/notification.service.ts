@@ -1,33 +1,62 @@
 // modules/notifications/services/notification.service.ts
 
-import { BaseService } from '@/server/services/base.service';
-import { Notification, NotificationPreferences, NotificationType } from '../types/notification.types';
+import {
+  Notification,
+  NotificationPreferences,
+  NotificationType,
+} from '../types/notification.types';
 import { notificationRepository } from '../repositories/notification.repository';
-import { webSocketManager } from '@/infrastructure/websocket/server';
-import { queueService, JobType } from '@/infrastructure/queue/queue.service';
-import { auditLog } from '@/infrastructure/monitoring/audit.logger';
+import { notificationPreferencesRepository } from '../repositories/notification-preferences.repository';
+import { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
+
+// Lazy-load the WebSocket manager to avoid circular dependencies
+let webSocketManagerPromise: Promise<any> | null = null;
+function getWebSocketManager() {
+  if (!webSocketManagerPromise) {
+    webSocketManagerPromise = import('@/infrastructure/websocket/server').then(
+      (mod) => mod.webSocketManager
+    );
+  }
+  return webSocketManagerPromise;
+}
+
+type NewNotificationInput = Omit<
+  Notification,
+  | '_id'
+  | 'createdAt'
+  | 'updatedAt'
+  | 'tenantId'
+  | 'sentAt'
+  | 'read'
+  | 'readAt'
+  | 'deliveryMethods'
+  | 'isDeleted'
+>;
 
 export class NotificationService {
   async sendNotification(
     userId: string,
     tenantId: string,
-    notification: Omit<Notification, '_id' | 'createdAt' | 'updatedAt' | 'tenantId' | 'sentAt' | 'read' | 'readAt' | 'deliveryMethods'>
-  ): Promise<Notification> {
+    notification: NewNotificationInput
+  ): Promise<Notification | null> {
     const preferences = await this.getPreferences(userId, tenantId);
     const typeConfig = preferences.types[notification.type];
 
-    // Check if user wants this notification type
     if (!typeConfig?.enabled) {
-      return null as any;
+      return null;
     }
 
-    const deliveryMethods = typeConfig.channels.filter(channel => 
-      preferences.channels[channel as keyof typeof preferences.channels]
+    const deliveryMethods = typeConfig.channels.filter(
+      (channel) => preferences.channels[channel as keyof typeof preferences.channels]
     );
 
+    if (deliveryMethods.length === 0) {
+      return null;
+    }
+
     const notificationData: Omit<Notification, '_id' | 'createdAt' | 'updatedAt'> = {
-      userId,
       tenantId,
+      userId,
       type: notification.type,
       title: notification.title,
       message: notification.message,
@@ -43,38 +72,27 @@ export class NotificationService {
       isDeleted: false,
     };
 
-    const result = await notificationRepository.create(notificationData, tenantId);
-    const savedNotification = result as Notification;
+    const savedNotification = await notificationRepository.create(
+      notificationData,
+      tenantId,
+      userId
+    );
 
-    // Send real-time notification via WebSocket
     if (deliveryMethods.includes('in_app')) {
-      webSocketManager.emitToUser(userId, 'notification:new', {
-        id: savedNotification._id,
-        title: notification.title,
-        message: notification.message,
-        type: notification.type,
-        priority: notification.priority,
-        actionUrl: notification.actionUrl,
-      });
+      try {
+        const wsManager = await getWebSocketManager();
+        wsManager.emitToUser(userId, 'notification:new', {
+          id: savedNotification._id,
+          title: notification.title,
+          message: notification.message,
+          type: notification.type,
+          priority: notification.priority,
+          actionUrl: notification.actionUrl,
+        });
+      } catch {
+        // WebSocket manager may not be initialised in all environments
+      }
     }
-
-    // Queue email delivery
-    if (deliveryMethods.includes('email')) {
-      await queueService.addJob(JobType.SEND_NOTIFICATION, {
-        type: JobType.SEND_NOTIFICATION,
-        payload: {
-          type: 'email',
-          userId,
-          notification: savedNotification,
-        },
-        tenantId,
-      });
-    }
-
-    await auditLog.logAction('NOTIFICATION_SENT', userId, tenantId, {
-      type: notification.type,
-      priority: notification.priority,
-    });
 
     return savedNotification;
   }
@@ -82,74 +100,102 @@ export class NotificationService {
   async sendBulkNotification(
     userIds: string[],
     tenantId: string,
-    notification: Omit<Notification, '_id' | 'createdAt' | 'updatedAt' | 'tenantId' | 'userId' | 'sentAt' | 'read' | 'readAt' | 'deliveryMethods'>
+    notification: Omit<NewNotificationInput, 'userId'>
   ): Promise<Notification[]> {
     const results = await Promise.all(
-      userIds.map(userId => this.sendNotification(userId, tenantId, { ...notification, userId }))
+      userIds.map((userId) =>
+        this.sendNotification(userId, tenantId, {
+          ...notification,
+          userId,
+        } as NewNotificationInput)
+      )
     );
-    return results.filter(Boolean);
+    return results.filter((r): r is Notification => r !== null);
   }
 
   async sendMaintenanceOverdue(reminder: any, tenantId: string): Promise<void> {
-    await this.sendNotification(
-      reminder.assigned_to || reminder.createdBy,
-      tenantId,
-      {
-        userId: reminder.assigned_to || reminder.createdBy,
-        type: 'maintenance_overdue',
-        title: 'Maintenance Overdue',
-        message: `${reminder.title} for vehicle ${reminder.license_plate} is overdue by ${this.getDaysOverdue(reminder.due_date)} days`,
-        priority: 'high',
-        data: { reminderId: reminder._id, licensePlate: reminder.license_plate },
-        actionUrl: `/maintenance/${reminder._id}`,
-        actionLabel: 'View Service',
-      }
-    );
+    const assignee = reminder.assigned_to || reminder.createdBy;
+    if (!assignee) return;
+
+    await this.sendNotification(assignee, tenantId, {
+      userId: assignee,
+      type: 'maintenance_overdue',
+      title: 'Maintenance Overdue',
+      message: `${reminder.title} for vehicle ${reminder.license_plate} is overdue`,
+      priority: 'high',
+      data: { reminderId: reminder._id, licensePlate: reminder.license_plate },
+      actionUrl: `/maintenance/${reminder._id}`,
+      actionLabel: 'View Service',
+    } as NewNotificationInput);
   }
 
   async sendMaintenanceUpcoming(reminder: any, tenantId: string): Promise<void> {
-    const daysUntil = this.getDaysUntil(reminder.due_date);
-    
-    if (daysUntil <= 3) {
-      await this.sendNotification(
-        reminder.assigned_to || reminder.createdBy,
-        tenantId,
-        {
-          userId: reminder.assigned_to || reminder.createdBy,
-          type: 'maintenance_upcoming',
-          title: 'Maintenance Due Soon',
-          message: `${reminder.title} for vehicle ${reminder.license_plate} is due in ${daysUntil} days`,
-          priority: 'medium',
-          data: { reminderId: reminder._id, licensePlate: reminder.license_plate, daysUntil },
-          actionUrl: `/maintenance/${reminder._id}`,
-          actionLabel: 'Schedule Service',
-        }
-      );
-    }
+    const daysUntil = Math.ceil(
+      (new Date(reminder.due_date).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)
+    );
+
+    if (daysUntil > 3) return;
+
+    const assignee = reminder.assigned_to || reminder.createdBy;
+    if (!assignee) return;
+
+    await this.sendNotification(assignee, tenantId, {
+      userId: assignee,
+      type: 'maintenance_upcoming',
+      title: 'Maintenance Due Soon',
+      message: `${reminder.title} for vehicle ${reminder.license_plate} is due in ${daysUntil} days`,
+      priority: 'medium',
+      data: { reminderId: reminder._id, licensePlate: reminder.license_plate, daysUntil },
+      actionUrl: `/maintenance/${reminder._id}`,
+      actionLabel: 'Schedule Service',
+    } as NewNotificationInput);
+  }
+
+  async getNotifications(
+    userId: string,
+    tenantId: string,
+    pagination: PaginationParams,
+    unreadOnly: boolean = false
+  ): Promise<PaginatedResponse<Notification>> {
+    return notificationRepository.findByUserId(userId, tenantId, pagination, unreadOnly);
   }
 
   async markAsRead(notificationId: string, userId: string, tenantId: string): Promise<void> {
-    await notificationRepository.update(notificationId, { read: true, readAt: new Date() }, tenantId, userId);
+    await notificationRepository.markAsRead(notificationId, userId, tenantId);
   }
 
-  async markAllAsRead(userId: string, tenantId: string): Promise<void> {
-    await notificationRepository.markAllAsRead(userId, tenantId);
+  async markAllAsRead(userId: string, tenantId: string): Promise<number> {
+    return notificationRepository.markAllAsRead(userId, tenantId);
   }
 
   async getUnreadCount(userId: string, tenantId: string): Promise<number> {
     return notificationRepository.getUnreadCount(userId, tenantId);
   }
 
-  async getPreferences(userId: string, tenantId: string): Promise<NotificationPreferences> {
-    const preferences = await notificationRepository.getPreferences(userId, tenantId);
-    if (!preferences) {
-      return this.getDefaultPreferences(userId, tenantId);
-    }
-    return preferences;
+  async getHighPriorityUnread(tenantId: string) {
+    return notificationRepository.getHighPriorityUnread(tenantId);
   }
 
-  async updatePreferences(userId: string, tenantId: string, preferences: Partial<NotificationPreferences>): Promise<void> {
-    await notificationRepository.upsertPreferences(userId, tenantId, preferences);
+  async cleanupOldNotifications(tenantId: string, daysOld: number = 30): Promise<number> {
+    const [expired, old] = await Promise.all([
+      notificationRepository.deleteExpired(tenantId),
+      notificationRepository.deleteOldNotifications(tenantId, daysOld),
+    ]);
+    return expired + old;
+  }
+
+  async getPreferences(userId: string, tenantId: string): Promise<NotificationPreferences> {
+    const preferences = await notificationPreferencesRepository.get(userId, tenantId);
+    return preferences || this.getDefaultPreferences(userId, tenantId);
+  }
+
+  async updatePreferences(
+    userId: string,
+    tenantId: string,
+    preferences: Partial<NotificationPreferences>
+  ): Promise<NotificationPreferences> {
+    await notificationPreferencesRepository.upsert(userId, tenantId, preferences);
+    return this.getPreferences(userId, tenantId);
   }
 
   private getDefaultPreferences(userId: string, tenantId: string): NotificationPreferences {
@@ -182,14 +228,6 @@ export class NotificationService {
         frequency: 'daily',
       },
     };
-  }
-
-  private getDaysOverdue(date: Date): number {
-    return Math.max(0, Math.ceil((new Date().getTime() - new Date(date).getTime()) / (1000 * 60 * 60 * 24)));
-  }
-
-  private getDaysUntil(date: Date): number {
-    return Math.max(0, Math.ceil((new Date(date).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24)));
   }
 }
 

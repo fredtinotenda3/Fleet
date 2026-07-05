@@ -1,7 +1,7 @@
 // app/api/units/route.ts
 import { NextResponse } from "next/server";
 import connectToDatabase from "@/lib/mongodb";
-import { ObjectId } from "mongodb";
+import { ObjectId, Filter } from "mongodb";
 import { Unit } from "@/types";
 import { requireAuth } from "@/lib/requireAuth";
 
@@ -15,7 +15,15 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const type = searchParams.get("type");
     const db = await connectToDatabase();
-    const query = type ? { type: type.toLowerCase() } : {};
+
+    const query: Filter<Unit> = {};
+    if (type) {
+      // Cast is safe here: the DB only ever stores the three literal
+      // values below, and an unrecognized `type` query param should
+      // simply match nothing rather than fail the request.
+      query.type = type.toLowerCase() as Unit["type"];
+    }
+
     const units = await db
       .collection<Unit>(COLLECTION)
       .find(query)

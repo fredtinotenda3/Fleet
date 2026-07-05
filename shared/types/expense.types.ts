@@ -16,7 +16,7 @@ export interface Expense extends BaseEntity {
   description?: string;
   jobTrip?: string;
   notes?: string;
-  expense_type_id: string;
+  expense_type_id?: string;
   expense_type?: ExpenseType;
 }
 
@@ -24,7 +24,7 @@ export interface ExpenseCreateDTO {
   license_plate: string;
   amount: number;
   date: Date | string;
-  expense_type_id: string;
+  expense_type_id?: string | null;
   description?: string;
   jobTrip?: string;
   notes?: string;

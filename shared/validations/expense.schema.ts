@@ -3,18 +3,25 @@
 import { z } from 'zod';
 
 export const expenseSchema = z.object({
-  license_plate: z.string().min(1, 'License plate is required'),
-  amount: z.number()
+  license_plate: z
+    .string()
+    .min(1, 'License plate is required')
+    .transform((val) => val.toUpperCase()),
+  amount: z
+    .number({ error: 'Amount must be a number' })
     .positive('Amount must be positive')
-    .max(9999999.99, 'Amount exceeds maximum allowed'),
-  date: z.date().or(z.string().datetime()).transform(val => new Date(val)),
-  expense_type_id: z.string().min(1, 'Expense type is required'),
+    .max(9_999_999.99, 'Amount exceeds maximum allowed'),
+  date: z
+    .union([z.date(), z.string().min(1, 'Date is required')])
+    .transform((val) => new Date(val)),
+  expense_type_id: z.string().optional().nullable(),
   description: z.string().max(500, 'Description too long').optional(),
   jobTrip: z.string().max(100, 'Job/Trip reference too long').optional(),
   notes: z.string().max(1000, 'Notes too long').optional(),
 });
 
 export const expenseCreateSchema = expenseSchema;
+
 export const expenseUpdateSchema = expenseSchema.partial().extend({
   _id: z.string().min(1, 'Expense ID is required'),
 });
@@ -31,8 +38,8 @@ export const expenseFiltersSchema = z.object({
 });
 
 export const expenseTypeSchema = z.object({
-  name: z.string().min(1, 'Name is required').max(50, 'Name too long'),
-  category: z.string().min(1, 'Category is required'),
+  name: z.string().min(1, 'Name is required').max(100, 'Name too long'),
+  category: z.string().min(1, 'Category is required').max(50),
   description: z.string().max(200).optional(),
 });
 

@@ -2,9 +2,13 @@
 
 import { NextResponse } from 'next/server';
 import { ApiResponse, PaginatedResponse as PaginatedResponseType } from '@/shared/types/common.types';
+import { applySecurityHeaders } from '@/infrastructure/security/security-headers';
 
-export function successResponse<T>(data: T, meta?: Record<string, unknown>): NextResponse<ApiResponse<T>> {
-  return NextResponse.json({
+export function successResponse<T>(
+  data: T,
+  meta?: Record<string, unknown>
+): NextResponse<ApiResponse<T>> {
+  const response = NextResponse.json({
     success: true,
     data,
     meta: {
@@ -12,10 +16,14 @@ export function successResponse<T>(data: T, meta?: Record<string, unknown>): Nex
       ...meta,
     },
   });
+  return applySecurityHeaders(response) as NextResponse<ApiResponse<T>>;
 }
 
-export function createdResponse<T>(data: T, meta?: Record<string, unknown>): NextResponse<ApiResponse<T>> {
-  return NextResponse.json(
+export function createdResponse<T>(
+  data: T,
+  meta?: Record<string, unknown>
+): NextResponse<ApiResponse<T>> {
+  const response = NextResponse.json(
     {
       success: true,
       data,
@@ -26,6 +34,7 @@ export function createdResponse<T>(data: T, meta?: Record<string, unknown>): Nex
     },
     { status: 201 }
   );
+  return applySecurityHeaders(response) as NextResponse<ApiResponse<T>>;
 }
 
 export function paginatedResponse<T>(
@@ -33,7 +42,7 @@ export function paginatedResponse<T>(
   pagination: PaginatedResponseType<T>['pagination'],
   meta?: Record<string, unknown>
 ): NextResponse<ApiResponse<T[]>> {
-  return NextResponse.json({
+  const response = NextResponse.json({
     success: true,
     data,
     pagination,
@@ -42,6 +51,7 @@ export function paginatedResponse<T>(
       ...meta,
     },
   });
+  return applySecurityHeaders(response) as NextResponse<ApiResponse<T[]>>;
 }
 
 export function errorResponse(
@@ -50,7 +60,7 @@ export function errorResponse(
   status: number = 500,
   details?: unknown
 ): NextResponse<ApiResponse<null>> {
-  return NextResponse.json(
+  const response = NextResponse.json(
     {
       success: false,
       error: {
@@ -64,8 +74,9 @@ export function errorResponse(
     },
     { status }
   );
+  return applySecurityHeaders(response) as NextResponse<ApiResponse<null>>;
 }
 
 export function noContentResponse(): NextResponse {
-  return new NextResponse(null, { status: 204 });
+  return applySecurityHeaders(new NextResponse(null, { status: 204 }));
 }

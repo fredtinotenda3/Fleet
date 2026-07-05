@@ -245,7 +245,7 @@ export default function VehicleForm({ closeModal, refresh, onSuccess, vehicle }:
           </Label>
           <Select
             value={formData.vehicle_type}
-            onValueChange={(val) => setFormData((p) => ({ ...p, vehicle_type: val }))}
+            onValueChange={(val) => setFormData((p) => ({ ...p, vehicle_type: val as string }))}
           >
             <SelectTrigger className={errors.vehicle_type ? 'border-red-500' : ''}>
               <SelectValue placeholder="Select type" />
@@ -264,7 +264,7 @@ export default function VehicleForm({ closeModal, refresh, onSuccess, vehicle }:
           </Label>
           <Select
             value={formData.fuel_type}
-            onValueChange={(val) => setFormData((p) => ({ ...p, fuel_type: val }))}
+            onValueChange={(val) => setFormData((p) => ({ ...p, fuel_type: val as string }))}
           >
             <SelectTrigger className={errors.fuel_type ? 'border-red-500' : ''}>
               <SelectValue placeholder="Select fuel type" />
@@ -325,7 +325,7 @@ export default function VehicleForm({ closeModal, refresh, onSuccess, vehicle }:
           <Label className="text-sm font-medium">Status</Label>
           <Select
             value={formData.status}
-            onValueChange={(val) => setFormData((p) => ({ ...p, status: val as any }))}
+            onValueChange={(val) => setFormData((p) => ({ ...p, status: val as VehicleFormData['status'] }))}
           >
             <SelectTrigger className="w-full md:w-56">
               <SelectValue />

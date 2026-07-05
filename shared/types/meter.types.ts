@@ -1,13 +1,14 @@
 // shared/types/meter.types.ts
 
 import { BaseEntity } from './common.types';
-import type { Unit } from './unit.types';  // Import Unit from unit.types
+import type { Unit } from './unit.types';
 
 export interface MeterLog extends BaseEntity {
   license_plate: string;
   odometer: number;
   date: Date;
   unit_id: string;
+  notes?: string;
   unit?: Unit;
 }
 
@@ -16,6 +17,7 @@ export interface MeterLogCreateDTO {
   odometer: number;
   date: Date | string;
   unit_id: string;
+  notes?: string;
 }
 
 export interface MeterLogUpdateDTO extends Partial<MeterLogCreateDTO> {

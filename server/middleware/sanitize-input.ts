@@ -1,34 +1,38 @@
 // server/middleware/sanitize-input.ts
 
 import { NextRequest, NextResponse } from 'next/server';
-import { sanitization } from '@/infrastructure/security/sanitization';
+
+function sanitizeValue(value: string): string {
+  return value.replace(/[$]/g, '').replace(/[<>]/g, '').trim();
+}
+
+function sanitizeObject(obj: unknown): unknown {
+  if (typeof obj === 'string') return sanitizeValue(obj);
+  if (Array.isArray(obj)) return obj.map(sanitizeObject);
+  if (obj !== null && typeof obj === 'object') {
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(obj as Record<string, unknown>)) {
+      sanitized[key] = sanitizeObject(val);
+    }
+    return sanitized;
+  }
+  return obj;
+}
 
 export async function sanitizeInput(
   req: NextRequest,
-  handler: (req: NextRequest, sanitizedBody?: any) => Promise<NextResponse>
+  handler: (req: NextRequest, sanitizedBody?: unknown) => Promise<NextResponse>
 ): Promise<NextResponse> {
-  // Sanitize query params
-  const url = new URL(req.url);
-  url.searchParams.forEach((value, key) => {
-    const sanitized = sanitization.sanitizeString(value);
-    if (sanitized !== value) {
-      url.searchParams.set(key, sanitized);
-    }
-  });
-  
-  // Sanitize body if present
-  let sanitizedBody: any = undefined;
+  let sanitizedBody: unknown = undefined;
+
   if (req.method !== 'GET' && req.method !== 'DELETE') {
     try {
       const body = await req.clone().json();
-      sanitizedBody = sanitization.sanitizeInput(body);
+      sanitizedBody = sanitizeObject(body);
     } catch {
-      // No body or invalid JSON
+      // No body or invalid JSON — proceed without
     }
   }
-  
-  // Create new request with sanitized URL
-  const sanitizedReq = new NextRequest(url.toString(), req);
-  
-  return handler(sanitizedReq, sanitizedBody);
+
+  return handler(req, sanitizedBody);
 }

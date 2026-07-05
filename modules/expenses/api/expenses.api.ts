@@ -1,88 +1,114 @@
-// modules/analytics/api/analytics.api.ts
+// modules/expenses/api/expenses.api.ts
 
 import { apiClient } from '@/shared/utils/api-client.utils';
-import { DateRange } from '@/shared/types/common.types';
+import {
+  Expense,
+  ExpenseCreateDTO,
+  ExpenseUpdateDTO,
+  ExpenseFilters,
+  ExpenseStats,
+} from '@/shared/types/expense.types';
+import { PaginatedResponse, DateRange } from '@/shared/types/common.types';
 
-const BASE_URL = '/analytics';
+const BASE_URL = '/expenses';
 
-export interface FleetKPIs {
-  totalVehicles: number;
-  activeVehicles: number;
-  maintenanceVehicles: number;
-  totalExpenses: number;
-  totalFuelCost: number;
-  totalFuelVolume: number;
-  totalDistance: number;
-  averageFuelEfficiency: number | null;
-  costPerKm: number | null;
-  pendingMaintenance: number;
-  overdueMaintenance: number;
-}
+export const expensesApi = {
+  async getExpenses(
+    filters: ExpenseFilters = {},
+    page: number = 1,
+    limit: number = 10
+  ): Promise<PaginatedResponse<Expense>> {
+    const params: Record<string, string | number | boolean | undefined> = {
+      page,
+      limit,
+      ...(filters.license_plate && {
+        license_plate: filters.license_plate,
+      }),
+      ...(filters.type && { type: filters.type }),
+      ...(filters.startDate && {
+        startDate: filters.startDate.toISOString(),
+      }),
+      ...(filters.endDate && { endDate: filters.endDate.toISOString() }),
+      ...(filters.minAmount !== undefined && {
+        minAmount: filters.minAmount,
+      }),
+      ...(filters.maxAmount !== undefined && {
+        maxAmount: filters.maxAmount,
+      }),
+    };
 
-export interface OperationalMetrics {
-  averageDailyDistance: number;
-  averageDailyExpense: number;
-  averageCostPerVehicle: number;
-  vehicleUtilizationRate: number;
-  maintenanceCompletionRate: number;
-}
+    return apiClient.get<PaginatedResponse<Expense>>(BASE_URL, { params });
+  },
 
-export interface CostBreakdown {
-  byCategory: Record<string, number>;
-  byVehicle: Array<{ license_plate: string; total: number }>;
-  percentageChange: number;
-}
+  async getExpenseById(id: string): Promise<Expense> {
+    return apiClient.get<Expense>(BASE_URL, { params: { id } });
+  },
 
-export interface FuelEfficiencyTrend {
-  month: string;
-  efficiency: number;
-}
-
-export interface MaintenanceForecast {
-  license_plate: string;
-  daysUntilDue: number;
-  estimatedCost: number;
-  priority: 'high' | 'medium' | 'low';
-}
-
-export const analyticsApi = {
-  async getFleetKPIs(dateRange?: DateRange): Promise<FleetKPIs> {
+  async getExpenseStats(dateRange?: DateRange): Promise<ExpenseStats> {
     const params: Record<string, string | undefined> = {};
-    if (dateRange?.startDate) params.startDate = dateRange.startDate.toISOString();
-    if (dateRange?.endDate) params.endDate = dateRange.endDate.toISOString();
-    
-    return apiClient.get<FleetKPIs>(BASE_URL, { params: { action: 'kpis', ...params } });
+    if (dateRange?.startDate)
+      params.startDate = dateRange.startDate.toISOString();
+    if (dateRange?.endDate)
+      params.endDate = dateRange.endDate.toISOString();
+
+    return apiClient.get<ExpenseStats>(BASE_URL, {
+      params: { action: 'stats', ...params },
+    });
   },
 
-  async getOperationalMetrics(dateRange: DateRange): Promise<OperationalMetrics> {
-    return apiClient.get<OperationalMetrics>(BASE_URL, {
+  async getMonthlyTrends(
+    months: number = 12
+  ): Promise<Array<{ month: string; total: number }>> {
+    return apiClient.get<Array<{ month: string; total: number }>>(
+      BASE_URL,
+      { params: { action: 'monthly', months } }
+    );
+  },
+
+  async getExpenseAnalytics(
+    startDate: Date,
+    endDate: Date
+  ): Promise<any[]> {
+    return apiClient.get<any[]>(BASE_URL, {
       params: {
-        action: 'metrics',
-        startDate: dateRange.startDate.toISOString(),
-        endDate: dateRange.endDate.toISOString(),
+        action: 'analytics',
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
       },
     });
   },
 
-  async getCostBreakdown(dateRange: DateRange): Promise<CostBreakdown> {
-    return apiClient.get<CostBreakdown>(BASE_URL, {
-      params: {
-        action: 'cost-breakdown',
-        startDate: dateRange.startDate.toISOString(),
-        endDate: dateRange.endDate.toISOString(),
-      },
-    });
+  async getExpenseTypes(): Promise<Array<{ _id: string; name: string; category: string }>> {
+    return apiClient.get<Array<{ _id: string; name: string; category: string }>>(
+      '/expense-types'
+    );
   },
 
-  async getFuelEfficiencyTrend(months: number = 6): Promise<FuelEfficiencyTrend[]> {
-    return apiClient.get<FuelEfficiencyTrend[]>(BASE_URL, {
-      params: { action: 'fuel-efficiency', months },
-    });
+  async createExpense(data: ExpenseCreateDTO): Promise<Expense> {
+    return apiClient.post<Expense>(BASE_URL, data);
   },
 
-  async getMaintenanceForecast(): Promise<MaintenanceForecast[]> {
-    return apiClient.get<MaintenanceForecast[]>(BASE_URL, {
-      params: { action: 'maintenance-forecast' },
-    });
+  async updateExpense(
+    id: string,
+    data: ExpenseUpdateDTO
+  ): Promise<Expense> {
+    return apiClient.put<Expense>(BASE_URL, data, { params: { id } });
+  },
+
+  async deleteExpense(id: string): Promise<void> {
+    await apiClient.delete<void>(BASE_URL, { params: { id } });
+  },
+
+  async createExpenseType(data: {
+    name: string;
+    category: string;
+    description?: string;
+  }): Promise<{ _id: string; name: string }> {
+    return apiClient.post<{ _id: string; name: string }>(
+      '/expense-types',
+      data
+    );
   },
 };
+
+export default expensesApi;

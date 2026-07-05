@@ -2,7 +2,7 @@
  * Run once to create all MongoDB indexes for the Fleet app.
  *
  * Usage:
- *   npx ts-node -e "require('./scripts/create-indexes.ts')"
+ 
  *
  * Or add to package.json scripts:
  *   "db:indexes": "npx ts-node scripts/create-indexes.ts"

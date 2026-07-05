@@ -1,8 +1,8 @@
 // shared/config/constants.ts
 
 export const APP_CONFIG = {
-  name: 'StanleyVerse Fleet Management',
-  version: '2.0.0',
+  name: 'Fleet Management System',
+  version: process.env.npm_package_version || '2.0.0',
   environment: process.env.NODE_ENV || 'development',
   apiBaseUrl: process.env.NEXT_PUBLIC_API_BASE_URL || '/api',
 } as const;
@@ -20,10 +20,29 @@ export const DATE_CONFIG = {
 } as const;
 
 export const VEHICLE_CONFIG = {
-  serviceIntervalKm: 10000,
+  serviceIntervalKm: 10_000,
   statusOptions: ['active', 'inactive', 'maintenance'] as const,
-  fuelTypes: ['Petrol', 'Diesel', 'Electric', 'Hybrid', 'LPG', 'CNG'] as const,
-  vehicleTypes: ['Car', 'Truck', 'Van', 'Bus', 'Motorcycle', 'Tractor', 'Trailer'] as const,
+  fuelTypes: [
+    'Petrol',
+    'Diesel',
+    'Electric',
+    'Hybrid',
+    'LPG',
+    'CNG',
+    'Hydrogen',
+  ] as const,
+  vehicleTypes: [
+    'Car',
+    'Truck',
+    'Van',
+    'Bus',
+    'Motorcycle',
+    'Tractor',
+    'Trailer',
+    'SUV',
+    'Sedan',
+    'Hatchback',
+  ] as const,
 } as const;
 
 export const MAINTENANCE_CONFIG = {
@@ -40,7 +59,14 @@ export const MAINTENANCE_CONFIG = {
 } as const;
 
 export const EXPENSE_CONFIG = {
-  categories: ['Fuel', 'Maintenance', 'Insurance', 'Registration', 'Repairs', 'Other'] as const,
+  categories: [
+    'Fuel',
+    'Maintenance',
+    'Insurance',
+    'Registration',
+    'Repairs',
+    'Other',
+  ] as const,
 } as const;
 
 export const CURRENCY_CONFIG = {

@@ -1,93 +1,153 @@
 // infrastructure/cache/cache.service.ts
-
-import Redis from 'ioredis';
-
-export const cacheConnection = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+// In-memory implementation used when REDIS_URL is absent.
+// Automatically switches to Redis when REDIS_URL is present.
 
 export interface CacheOptions {
   ttl?: number; // seconds
   prefix?: string;
 }
 
+// Lazy Redis singleton – now uses dynamic import 
+let _redisPromise: Promise<any> | null = null;
+
+function getRedisPromise(): Promise<any> {
+  if (!process.env.REDIS_URL) return Promise.resolve(null);
+  if (_redisPromise) return _redisPromise;
+  _redisPromise = (async () => {
+    try {
+      const { default: Redis } = await import('ioredis');
+      return new Redis(process.env.REDIS_URL!, { lazyConnect: true });
+    } catch {
+      return null;
+    }
+  })();
+  return _redisPromise;
+}
+
+// Exported so health check can use it
+export const cacheConnection = new Proxy(
+  {} as any,
+  {
+    get(_target, prop) {
+      // Return an async wrapper that resolves the Redis instance lazily
+      return async (...args: any[]) => {
+        const redis = await getRedisPromise();
+        if (redis) {
+          return redis[prop as string](...args);
+        }
+        // No-op for non-Redis environments
+        if (prop === 'ping') return 'PONG';
+        return null;
+      };
+    },
+  }
+);
+
+// Simple in-process LRU fallback
+const memStore = new Map<string, { value: string; expires: number }>();
+
+function memGet(key: string): string | null {
+  const entry = memStore.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expires) {
+    memStore.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+function memSet(key: string, value: string, ttlSeconds: number): void {
+  memStore.set(key, {
+    value,
+    expires: Date.now() + ttlSeconds * 1000,
+  });
+}
+
+function memDel(key: string): void {
+  memStore.delete(key);
+}
+
+function memKeys(pattern: string): string[] {
+  const regex = new RegExp(
+    '^' + pattern.replace(/\*/g, '.*').replace(/\?/g, '.') + '$'
+  );
+  return Array.from(memStore.keys()).filter((k) => regex.test(k));
+}
+
 export class CacheService {
-  private defaultTTL = 300; // 5 minutes
+  private readonly defaultTTL = 300;
 
   async get<T>(key: string, options?: CacheOptions): Promise<T | null> {
     const fullKey = this.buildKey(key, options);
-    const data = await cacheConnection.get(fullKey);
-    if (!data) return null;
-    
+    const redis = await getRedisPromise();
+
+    const raw = redis
+      ? await redis.get(fullKey)
+      : memGet(fullKey);
+
+    if (!raw) return null;
     try {
-      return JSON.parse(data) as T;
+      return JSON.parse(raw) as T;
     } catch {
-      return data as T;
+      return raw as unknown as T;
     }
   }
 
-  async set(key: string, value: any, options?: CacheOptions): Promise<void> {
+  async set(
+    key: string,
+    value: unknown,
+    options?: CacheOptions
+  ): Promise<void> {
     const fullKey = this.buildKey(key, options);
     const ttl = options?.ttl || this.defaultTTL;
-    const serialized = typeof value === 'string' ? value : JSON.stringify(value);
-    await cacheConnection.setex(fullKey, ttl, serialized);
+    const serialized =
+      typeof value === 'string' ? value : JSON.stringify(value);
+
+    const redis = await getRedisPromise();
+    if (redis) {
+      await redis.setex(fullKey, ttl, serialized);
+    } else {
+      memSet(fullKey, serialized, ttl);
+    }
   }
 
   async delete(key: string, options?: CacheOptions): Promise<void> {
     const fullKey = this.buildKey(key, options);
-    await cacheConnection.del(fullKey);
+    const redis = await getRedisPromise();
+    if (redis) {
+      await redis.del(fullKey);
+    } else {
+      memDel(fullKey);
+    }
   }
 
   async deletePattern(pattern: string): Promise<void> {
-    const keys = await cacheConnection.keys(pattern);
-    if (keys.length > 0) {
-      await cacheConnection.del(...keys);
+    const redis = await getRedisPromise();
+    if (redis) {
+      const keys: string[] = await redis.keys(pattern);
+      if (keys.length > 0) await redis.del(...keys);
+    } else {
+      memKeys(pattern).forEach(memDel);
     }
   }
 
   async exists(key: string, options?: CacheOptions): Promise<boolean> {
     const fullKey = this.buildKey(key, options);
-    const result = await cacheConnection.exists(fullKey);
-    return result === 1;
+    const redis = await getRedisPromise();
+    if (redis) {
+      return (await redis.exists(fullKey)) === 1;
+    }
+    return memGet(fullKey) !== null;
   }
 
-  async increment(key: string, options?: CacheOptions): Promise<number> {
-    const fullKey = this.buildKey(key, options);
-    return await cacheConnection.incr(fullKey);
-  }
-
-  async expire(key: string, seconds: number, options?: CacheOptions): Promise<void> {
-    const fullKey = this.buildKey(key, options);
-    await cacheConnection.expire(fullKey, seconds);
+  async invalidateTenantCache(tenantId: string): Promise<void> {
+    await this.deletePattern(`*:${tenantId}:*`);
+    await this.deletePattern(`cache:*:${tenantId}:*`);
   }
 
   private buildKey(key: string, options?: CacheOptions): string {
     const prefix = options?.prefix || 'cache';
     return `${prefix}:${key}`;
-  }
-
-  // Fleet-specific cache methods
-  async getVehicleStats(tenantId: string) {
-    return this.get(`vehicle:stats:${tenantId}`);
-  }
-
-  async setVehicleStats(tenantId: string, stats: any) {
-    return this.set(`vehicle:stats:${tenantId}`, stats, { ttl: 60 }); // 1 minute
-  }
-
-  async getFleetKPIs(tenantId: string, dateRange: string) {
-    return this.get(`fleet:kpis:${tenantId}:${dateRange}`);
-  }
-
-  async setFleetKPIs(tenantId: string, dateRange: string, kpis: any) {
-    return this.set(`fleet:kpis:${tenantId}:${dateRange}`, kpis, { ttl: 300 }); // 5 minutes
-  }
-
-  async invalidateTenantCache(tenantId: string) {
-    await this.deletePattern(`*:${tenantId}:*`);
-    await this.deletePattern(`cache:*:${tenantId}:*`);
-  }
-
-  async invalidateVehicleCache(tenantId: string, vehicleId: string) {
-    await this.deletePattern(`*:${tenantId}:${vehicleId}*`);
   }
 }
 

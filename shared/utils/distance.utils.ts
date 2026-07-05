@@ -14,7 +14,7 @@ export function formatDistance(
   unit: string = DISTANCE_CONFIG.defaultUnit,
   decimals: number = 1
 ): string {
-  if (distance === 0) return `0 ${unit}`;
+  if (!distance || distance === 0) return `0 ${unit}`;
   const formatted = distance.toLocaleString(undefined, {
     maximumFractionDigits: decimals,
     minimumFractionDigits: 0,
@@ -47,8 +47,12 @@ export function convertDistance(
   fromUnit: string,
   toUnit: string
 ): number {
-  const fromFactor = DISTANCE_CONFIG.units[fromUnit as keyof typeof DISTANCE_CONFIG.units]?.factor || 1;
-  const toFactor = DISTANCE_CONFIG.units[toUnit as keyof typeof DISTANCE_CONFIG.units]?.factor || 1;
+  const fromFactor =
+    DISTANCE_CONFIG.units[fromUnit as keyof typeof DISTANCE_CONFIG.units]
+      ?.factor || 1;
+  const toFactor =
+    DISTANCE_CONFIG.units[toUnit as keyof typeof DISTANCE_CONFIG.units]
+      ?.factor || 1;
   const inKm = value * fromFactor;
   return inKm / toFactor;
 }
@@ -57,7 +61,9 @@ export function calculateTotalDistanceFromLogs(
   logs: Array<{ odometer: number; date: Date }>
 ): number {
   if (logs.length < 2) return 0;
-  const sorted = [...logs].sort((a, b) => a.date.getTime() - b.date.getTime());
+  const sorted = [...logs].sort(
+    (a, b) => a.date.getTime() - b.date.getTime()
+  );
   const first = sorted[0].odometer;
   const last = sorted[sorted.length - 1].odometer;
   return Math.max(0, last - first);

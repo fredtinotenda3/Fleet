@@ -12,18 +12,21 @@ export function validatePaginationParams(
   page: unknown,
   limit: unknown
 ): PaginationParams {
-  let validPage = DEFAULT_PAGINATION.page;
-  let validLimit = DEFAULT_PAGINATION.limit;
+  // Explicit `number` annotations: without them, TS keeps the literal
+  // types `1` / `10` inferred from the `as const` DEFAULT_PAGINATION
+  // object, which then rejects any other number being assigned below.
+  let validPage: number = DEFAULT_PAGINATION.page;
+  let validLimit: number = DEFAULT_PAGINATION.limit;
 
   if (typeof page === 'string' || typeof page === 'number') {
     const parsed = Number(page);
-    if (!isNaN(parsed) && parsed >= 1) validPage = parsed;
+    if (!isNaN(parsed) && parsed >= 1) validPage = Math.floor(parsed);
   }
 
   if (typeof limit === 'string' || typeof limit === 'number') {
     const parsed = Number(limit);
     if (!isNaN(parsed) && parsed >= 1 && parsed <= DEFAULT_PAGINATION.maxLimit) {
-      validLimit = parsed;
+      validLimit = Math.floor(parsed);
     }
   }
 
@@ -36,7 +39,7 @@ export function createPaginatedResponse<T>(
   params: PaginationParams
 ): PaginatedResponse<T> {
   const { page, limit } = params;
-  const totalPages = Math.ceil(total / limit);
+  const totalPages = Math.max(1, Math.ceil(total / limit));
 
   return {
     data,
@@ -52,7 +55,7 @@ export function createPaginatedResponse<T>(
 }
 
 export function calculateSkip(page: number, limit: number): number {
-  return (page - 1) * limit;
+  return (Math.max(1, page) - 1) * limit;
 }
 
 export function getPaginationRange(currentPage: number, totalPages: number): number[] {
@@ -65,7 +68,7 @@ export function getPaginationRange(currentPage: number, totalPages: number): num
     range.push(i);
   }
 
-  if (start > 2) range.unshift(-1); // ellipsis indicator
+  if (start > 2) range.unshift(-1);
   if (start > 1) range.unshift(1);
   if (end < totalPages - 1) range.push(-1);
   if (end < totalPages) range.push(totalPages);

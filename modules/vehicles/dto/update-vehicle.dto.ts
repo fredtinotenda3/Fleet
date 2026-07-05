@@ -28,12 +28,12 @@ export class UpdateVehicleDto {
     this.vehicle_type = data.vehicle_type;
     this.purchase_date = data.purchase_date;
     this.fuel_type = data.fuel_type;
-    this.color = data.color;
-    this.vin = data.vin;
+    this.color = data.color ?? undefined;
+    this.vin = data.vin ?? undefined;
     this.status = data.status;
-    this.registration_expiry = data.registration_expiry;
-    this.insurance_provider = data.insurance_provider;
-    this.service_interval = data.service_interval;
-    this.odometer = data.odometer;
+    this.registration_expiry = data.registration_expiry ?? undefined;
+    this.insurance_provider = data.insurance_provider ?? undefined;
+    this.service_interval = data.service_interval ?? undefined;
+    this.odometer = data.odometer ?? undefined;
   }
 }

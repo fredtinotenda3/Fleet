@@ -1,0 +1,47 @@
+{
+  "title": "Fleet Platform — Observability",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "id": 1, "title": "API p95 Latency", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(fleet_http_request_duration_seconds_bucket[5m])) by (le, route))" }]
+    },
+    {
+      "id": 2, "title": "API Error Rate (5xx %)", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [{ "expr": "sum(rate(fleet_http_requests_total{status=~\"5..\"}[5m])) / sum(rate(fleet_http_requests_total[5m])) * 100" }]
+    },
+    {
+      "id": 3, "title": "DB Query p95 by Collection", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(fleet_db_query_duration_seconds_bucket[5m])) by (le, collection))" }]
+    },
+    {
+      "id": 4, "title": "Slow Queries / min", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [{ "expr": "sum(rate(fleet_db_slow_queries_total[1m])) by (collection)" }]
+    },
+    {
+      "id": 5, "title": "Queue Depth by State", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [{ "expr": "fleet_queue_depth" }]
+    },
+    {
+      "id": 6, "title": "Queue Job Throughput", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [{ "expr": "sum(rate(fleet_queue_job_total[5m])) by (jobType, status)" }]
+    },
+    {
+      "id": 7, "title": "Active Workflow Instances", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [{ "expr": "fleet_workflow_active_instances" }]
+    },
+    {
+      "id": 8, "title": "Workflow Step p95 Duration (approvals)", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "targets": [{ "expr": "histogram_quantile(0.95, sum(rate(fleet_workflow_step_duration_seconds_bucket[15m])) by (le, action))" }]
+    }
+  ]
+}

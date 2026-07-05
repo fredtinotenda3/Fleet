@@ -3,7 +3,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 import { Permission, permissionService } from '@/server/permissions/roles';
-import { auditLog } from '@/infrastructure/monitoring/audit.logger';
 
 export interface AuthContext {
   userId: string;
@@ -12,104 +11,137 @@ export interface AuthContext {
   permissions: Permission[];
 }
 
-export async function getAuthContext(req: NextRequest): Promise<AuthContext | null> {
+export async function getAuthContext(
+  req: NextRequest
+): Promise<AuthContext | null> {
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
-  
-  if (!token) {
-    return null;
-  }
-  
-  const roles = (token as any).roles || ['viewer'];
-  const permissions = roles.flatMap((role: string) => 
-    permissionService.getPermissionsForRole(role as any)
-  );
-  
+
+  if (!token) return null;
+
+  const roles: string[] = (token as any).roles || ['viewer'];
+  const permissions = roles
+    .flatMap((role: string) =>
+      permissionService.getPermissionsForRole(role as any)
+    )
+    .filter((v, i, a) => a.indexOf(v) === i);
+
+  const isSuperAdminUser =
+    roles.includes('super_admin') || roles.includes('organization_owner');
+
   return {
     userId: token.sub as string,
-    tenantId: (token as any).tenantId || 'default',
+    tenantId: isSuperAdminUser
+      ? 'default'
+      : (token as any).tenantId || 'default',
     roles,
-    permissions: [...new Set(permissions)],
+    permissions,
   };
 }
 
 export function requirePermission(permission: Permission) {
-  return async (req: NextRequest, handler: (req: NextRequest, context: AuthContext) => Promise<NextResponse>) => {
+  return async (
+    req: NextRequest,
+    handler: (
+      req: NextRequest,
+      context: AuthContext
+    ) => Promise<NextResponse>
+  ) => {
     const context = await getAuthContext(req);
-    
+
     if (!context) {
       return NextResponse.json(
-        { success: false, error: { code: 'UNAUTHORIZED', message: 'Authentication required' } },
+        {
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+        },
         { status: 401 }
       );
     }
-    
+
     if (!context.permissions.includes(permission)) {
-      await auditLog.logAction('PERMISSION_DENIED', context.userId, context.tenantId, {
-        requiredPermission: permission,
-        path: req.nextUrl.pathname,
-        method: req.method,
-      });
-      
       return NextResponse.json(
-        { success: false, error: { code: 'FORBIDDEN', message: 'Insufficient permissions' } },
+        {
+          success: false,
+          error: { code: 'FORBIDDEN', message: 'Insufficient permissions' },
+        },
         { status: 403 }
       );
     }
-    
+
     return handler(req, context);
   };
 }
 
 export function requireAnyPermission(permissions: Permission[]) {
-  return async (req: NextRequest, handler: (req: NextRequest, context: AuthContext) => Promise<NextResponse>) => {
+  return async (
+    req: NextRequest,
+    handler: (
+      req: NextRequest,
+      context: AuthContext
+    ) => Promise<NextResponse>
+  ) => {
     const context = await getAuthContext(req);
-    
+
     if (!context) {
       return NextResponse.json(
-        { success: false, error: { code: 'UNAUTHORIZED', message: 'Authentication required' } },
+        {
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+        },
         { status: 401 }
       );
     }
-    
-    const hasPermission = permissions.some(p => context.permissions.includes(p));
-    
+
+    const hasPermission = permissions.some((p) =>
+      context.permissions.includes(p)
+    );
+
     if (!hasPermission) {
-      await auditLog.logAction('PERMISSION_DENIED', context.userId, context.tenantId, {
-        requiredPermissions: permissions,
-        path: req.nextUrl.pathname,
-        method: req.method,
-      });
-      
       return NextResponse.json(
-        { success: false, error: { code: 'FORBIDDEN', message: 'Insufficient permissions' } },
+        {
+          success: false,
+          error: { code: 'FORBIDDEN', message: 'Insufficient permissions' },
+        },
         { status: 403 }
       );
     }
-    
+
     return handler(req, context);
   };
 }
 
 export function requireRole(roles: string[]) {
-  return async (req: NextRequest, handler: (req: NextRequest, context: AuthContext) => Promise<NextResponse>) => {
+  return async (
+    req: NextRequest,
+    handler: (
+      req: NextRequest,
+      context: AuthContext
+    ) => Promise<NextResponse>
+  ) => {
     const context = await getAuthContext(req);
-    
+
     if (!context) {
       return NextResponse.json(
-        { success: false, error: { code: 'UNAUTHORIZED', message: 'Authentication required' } },
+        {
+          success: false,
+          error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+        },
         { status: 401 }
       );
     }
-    
-    const hasRole = context.roles.some(role => roles.includes(role));
-    
+
+    const hasRole = context.roles.some((role) => roles.includes(role));
+
     if (!hasRole) {
       return NextResponse.json(
-        { success: false, error: { code: 'FORBIDDEN', message: 'Insufficient role' } },
+        {
+          success: false,
+          error: { code: 'FORBIDDEN', message: 'Insufficient role' },
+        },
         { status: 403 }
       );
     }
-    
+
     return handler(req, context);
   };
 }

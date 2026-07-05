@@ -1,0 +1,1119 @@
+# Enterprise Fleet Management System – Complete Roadmap to Reach World-Class Enterprise Platform
+
+You are acting as a Principal Software Architect, Enterprise Solutions Architect, and Senior Staff Engineer.
+
+The current project is **already a working enterprise-grade Fleet Management System** built with **Next.js, TypeScript, MongoDB, React, and a modular architecture**.
+
+The project already contains:
+
+* Modular architecture
+* Repository pattern
+* Service layer
+* DTOs
+* Validation
+* API routes
+* Shared components
+* Infrastructure layer
+* Security layer
+* Logging
+* Monitoring
+* WebSockets
+* Caching
+* Queue abstraction
+* Vehicles
+* Fuel
+* Expenses
+* Maintenance
+* Trips
+* Reports
+* Notifications
+* Organizations
+* Analytics
+* Workflows
+* Billing
+* Intelligence modules
+
+This is **NOT a CRUD application**.
+
+The goal is **NOT to redesign it**.
+
+The goal is to transform it into a **world-class Enterprise Fleet Management Platform** comparable to products from Geotab, Samsara, Fleetio, Verizon Connect, Motive, Fleet Complete, or other enterprise fleet platforms.
+
+The architecture must remain clean, modular, scalable, and maintainable.
+
+No shortcuts.
+
+No technical debt.
+
+Everything must be production-ready.
+
+---
+
+# OBJECTIVE
+
+Transform the existing project into an enterprise platform capable of serving:
+
+* Thousands of organizations
+* Millions of vehicles
+* Millions of trips
+* Millions of maintenance records
+* Millions of events
+* Large enterprise customers
+* Government fleets
+* Logistics companies
+* Construction companies
+* Mining companies
+* Public transport
+* Rental fleets
+
+The platform should support horizontal scaling and long-term maintainability.
+
+---
+
+# 1. IMPLEMENT TRUE DOMAIN-DRIVEN DESIGN (DDD)
+
+The current modules are good but should evolve into true business domains.
+
+Each domain must become self-contained.
+
+Each domain should contain:
+
+* entities
+* aggregates
+* value objects
+* repositories
+* services
+* factories
+* mappers
+* DTOs
+* validators
+* permissions
+* policies
+* events
+* commands
+* queries
+* hooks
+* APIs
+* tests
+
+Example:
+
+modules/
+vehicle/
+entities/
+aggregates/
+value-objects/
+repositories/
+services/
+factories/
+events/
+commands/
+queries/
+dto/
+validators/
+permissions/
+policies/
+api/
+hooks/
+tests/
+
+Business logic must stay inside its domain.
+
+No duplicated logic.
+
+No cross-domain coupling.
+
+---
+
+# 2. IMPLEMENT EVENT-DRIVEN ARCHITECTURE
+
+Stop relying on direct service-to-service calls.
+
+Everything important should emit domain events.
+
+Examples:
+
+VehicleCreated
+
+VehicleUpdated
+
+VehicleDeleted
+
+TripStarted
+
+TripCompleted
+
+MaintenanceScheduled
+
+MaintenanceCompleted
+
+FuelAdded
+
+ExpenseCreated
+
+BookingApproved
+
+BookingRejected
+
+ReminderTriggered
+
+InspectionCompleted
+
+InsuranceExpired
+
+DocumentUploaded
+
+DriverAssigned
+
+DriverRemoved
+
+Events should automatically trigger workflows.
+
+Example:
+
+MaintenanceCompleted
+
+↓
+
+Update vehicle status
+
+↓
+
+Update analytics
+
+↓
+
+Update reports
+
+↓
+
+Notify manager
+
+↓
+
+Schedule next maintenance
+
+↓
+
+Audit log
+
+↓
+
+Generate invoice
+
+↓
+
+Update dashboard
+
+No duplicated workflow logic.
+
+---
+
+# 3. IMPLEMENT CQRS
+
+Separate reads from writes.
+
+Instead of:
+
+VehicleService
+
+Create:
+
+VehicleCommandService
+
+VehicleQueryService
+
+Commands should only modify data.
+
+Queries should only retrieve data.
+
+This improves:
+
+* scalability
+* caching
+* optimization
+* reporting
+* maintainability
+
+---
+
+# 4. OPTIONAL EVENT SOURCING
+
+Instead of storing only current state,
+
+Store every state change.
+
+Vehicle Created
+
+Vehicle Updated
+
+Vehicle Sold
+
+Vehicle Assigned
+
+Vehicle Repaired
+
+Vehicle Retired
+
+Trip Started
+
+Trip Finished
+
+Fuel Added
+
+Maintenance Completed
+
+Every event becomes permanent history.
+
+Allows:
+
+Audit
+
+Replay
+
+Historical analytics
+
+State reconstruction
+
+---
+
+# 5. BUILD A WORKFLOW ENGINE
+
+Current workflows should evolve into a configurable workflow engine.
+
+Users should configure workflows without changing code.
+
+Example:
+
+IF
+
+Maintenance overdue
+
+THEN
+
+Create Work Order
+
+↓
+
+Assign Mechanic
+
+↓
+
+Notify Fleet Manager
+
+↓
+
+Notify Driver
+
+↓
+
+Reserve Parts
+
+↓
+
+Generate Purchase Request
+
+↓
+
+Schedule Inspection
+
+↓
+
+Generate Invoice
+
+Support:
+
+Approval chains
+
+Conditions
+
+Timers
+
+Escalations
+
+Parallel approvals
+
+Retries
+
+Failure handling
+
+Workflow history
+
+---
+
+# 6. BUILD A BUSINESS RULE ENGINE
+
+Business logic should not live in code whenever possible.
+
+Allow administrators to create rules.
+
+Examples:
+
+IF Vehicle Type = Truck
+
+AND Mileage > 150000
+
+THEN Schedule Maintenance Every 5000 km
+
+Example:
+
+IF Fuel Consumption > Expected
+
+THEN Raise Fuel Fraud Alert
+
+Support:
+
+AND
+
+OR
+
+Nested conditions
+
+Variables
+
+Reusable rules
+
+Priority
+
+Rule versioning
+
+Rule testing
+
+---
+
+# 7. EXPAND AI MODULE
+
+Current intelligence module should evolve significantly.
+
+Implement:
+
+Predictive maintenance
+
+Fuel anomaly detection
+
+Expense anomaly detection
+
+Driver risk scoring
+
+Vehicle health scoring
+
+Predict component failure
+
+Predict tire replacement
+
+Predict resale value
+
+Trip optimization
+
+Maintenance forecasting
+
+Fuel forecasting
+
+Fleet optimization
+
+Utilization prediction
+
+Downtime prediction
+
+AI recommendations
+
+Fleet health dashboard
+
+The AI module should become a first-class subsystem.
+
+---
+
+# 8. BUILD DIGITAL TWIN MODEL
+
+Each vehicle should have a complete digital representation.
+
+Vehicle
+
+↓
+
+Documents
+
+↓
+
+Fuel
+
+↓
+
+Trips
+
+↓
+
+GPS
+
+↓
+
+Sensors
+
+↓
+
+Maintenance
+
+↓
+
+Repairs
+
+↓
+
+Tires
+
+↓
+
+Expenses
+
+↓
+
+Insurance
+
+↓
+
+Inspection
+
+↓
+
+Bookings
+
+↓
+
+Assignments
+
+↓
+
+Alerts
+
+↓
+
+Current Status
+
+Everything visible from one screen.
+
+---
+
+# 9. IMPLEMENT STREAMING ARCHITECTURE
+
+Support live updates.
+
+Replace polling where appropriate.
+
+Use event streaming.
+
+Support:
+
+Vehicle location
+
+Fuel updates
+
+Trip progress
+
+Alerts
+
+Maintenance
+
+Dashboard metrics
+
+Notifications
+
+Scalable architecture.
+
+---
+
+# 10. JOB SCHEDULER
+
+Move scheduled logic out of API routes.
+
+Dedicated scheduler.
+
+Examples:
+
+Reminder jobs
+
+Maintenance jobs
+
+Cleanup jobs
+
+Backups
+
+Archive jobs
+
+Email jobs
+
+SMS jobs
+
+Notification jobs
+
+Invoice generation
+
+Recurring maintenance
+
+Recurring inspections
+
+Retry failed jobs
+
+---
+
+# 11. DOCUMENT GENERATION ENGINE
+
+Automatically generate:
+
+Invoices
+
+Maintenance reports
+
+Inspection reports
+
+Trip reports
+
+Vehicle reports
+
+Expense reports
+
+Fuel reports
+
+Driver reports
+
+Compliance reports
+
+Insurance reports
+
+Support:
+
+PDF
+
+Excel
+
+CSV
+
+Word
+
+Templates
+
+Branding
+
+Digital signatures
+
+---
+
+# 12. ADVANCED REPORTING
+
+Current reports should evolve into Business Intelligence.
+
+Features:
+
+Custom dashboards
+
+Custom KPIs
+
+Pivot tables
+
+Saved reports
+
+Scheduled reports
+
+Interactive charts
+
+Export
+
+Filtering
+
+Grouping
+
+Drill-down
+
+Comparisons
+
+Forecasting
+
+Executive dashboards
+
+---
+
+# 13. PERMISSION ENGINE
+
+Move beyond simple roles.
+
+Implement granular permissions.
+
+Examples:
+
+Vehicle.Create
+
+Vehicle.Delete
+
+Vehicle.Export
+
+Vehicle.Transfer
+
+Maintenance.Assign
+
+Maintenance.Approve
+
+Expense.Approve
+
+Expense.Reject
+
+Trip.Schedule
+
+Trip.Cancel
+
+Fuel.Import
+
+Report.Export
+
+Dashboard.Configure
+
+Notification.Manage
+
+Support:
+
+Permission groups
+
+Permission inheritance
+
+Custom roles
+
+Temporary permissions
+
+Branch-level permissions
+
+Department permissions
+
+Resource-level permissions
+
+---
+
+# 14. TRUE MULTI-TENANCY
+
+Support:
+
+Platform
+
+↓
+
+Organization
+
+↓
+
+Branch
+
+↓
+
+Department
+
+↓
+
+Workshop
+
+↓
+
+Fleet
+
+↓
+
+Users
+
+Complete tenant isolation.
+
+Shared infrastructure.
+
+Secure data separation.
+
+---
+
+# 15. PLUGIN SYSTEM
+
+Allow external integrations.
+
+Examples:
+
+GPS Providers
+
+ERP
+
+Accounting
+
+HR
+
+Payroll
+
+SAP
+
+Oracle
+
+Microsoft Dynamics
+
+QuickBooks
+
+Stripe
+
+Email
+
+SMS
+
+WhatsApp
+
+Slack
+
+Microsoft Teams
+
+Plugins should not require modifying the core system.
+
+---
+
+# 16. PUBLIC DEVELOPER PLATFORM
+
+Implement:
+
+REST API
+
+GraphQL
+
+OpenAPI
+
+SDK
+
+Webhooks
+
+OAuth
+
+API Keys
+
+Rate limiting
+
+Versioning
+
+Documentation
+
+Developer portal
+
+---
+
+# 17. OFFLINE-FIRST SUPPORT
+
+Drivers
+
+Mechanics
+
+Inspectors
+
+Warehouse staff
+
+Should continue working offline.
+
+Automatic synchronization when online.
+
+Conflict resolution.
+
+Retry logic.
+
+---
+
+# 18. MOBILE ECOSYSTEM
+
+Create dedicated applications.
+
+Driver App
+
+Mechanic App
+
+Manager App
+
+Inspector App
+
+Warehouse App
+
+Executive Dashboard
+
+Each optimized for its users.
+
+---
+
+# 19. OBSERVABILITY
+
+Implement enterprise observability.
+
+Metrics
+
+Tracing
+
+Performance monitoring
+
+Health monitoring
+
+Real-time alerts
+
+Crash analytics
+
+Dependency tracking
+
+Slow query monitoring
+
+API latency monitoring
+
+Queue monitoring
+
+---
+
+# 20. ENTERPRISE INFRASTRUCTURE
+
+Support:
+
+Docker
+
+Kubernetes
+
+Horizontal scaling
+
+Redis
+
+CDN
+
+Load balancing
+
+Blue-Green deployment
+
+Canary deployment
+
+CI/CD
+
+Backups
+
+Disaster recovery
+
+Auto scaling
+
+Secrets management
+
+Environment management
+
+---
+
+# 21. TESTING
+
+Expand testing.
+
+Unit
+
+Integration
+
+E2E
+
+Performance
+
+Load
+
+Stress
+
+Security
+
+Mutation
+
+Contract
+
+Accessibility
+
+Visual regression
+
+Chaos testing
+
+Coverage should remain consistently high.
+
+---
+
+# 22. ENTERPRISE SECURITY
+
+Implement:
+
+RBAC
+
+ABAC
+
+MFA
+
+SSO
+
+OIDC
+
+OAuth
+
+JWT rotation
+
+Secrets vault
+
+Encryption at rest
+
+Encryption in transit
+
+Immutable audit logs
+
+Session management
+
+Threat detection
+
+Rate limiting
+
+Input sanitization
+
+OWASP best practices
+
+Security headers
+
+---
+
+# 23. ENTERPRISE USER EXPERIENCE
+
+Implement:
+
+Global search
+
+Command palette
+
+Keyboard shortcuts
+
+Saved views
+
+Bulk operations
+
+Drag-and-drop
+
+Custom dashboards
+
+Widgets
+
+Dark mode
+
+Accessibility
+
+Undo/Redo
+
+Quick actions
+
+Favorites
+
+Recently viewed
+
+Pinned items
+
+Notification center
+
+Activity feed
+
+---
+
+# 24. EXPAND BUSINESS DOMAINS
+
+Expand the platform into a complete fleet ecosystem.
+
+Required domains include:
+
+Fleet
+
+Vehicles
+
+Drivers
+
+Bookings
+
+Dispatch
+
+Trips
+
+GPS
+
+Telematics
+
+Fuel
+
+Maintenance
+
+Workshop
+
+Mechanics
+
+Inventory
+
+Spare Parts
+
+Procurement
+
+Purchasing
+
+Suppliers
+
+Warehouses
+
+Finance
+
+Invoices
+
+Payments
+
+Insurance
+
+Claims
+
+Accidents
+
+Inspections
+
+Compliance
+
+Documents
+
+Contracts
+
+Scheduling
+
+Human Resources
+
+Payroll Integration
+
+Notifications
+
+Messaging
+
+Reporting
+
+Analytics
+
+Artificial Intelligence
+
+Workflow Automation
+
+Integrations
+
+Customer Portal
+
+Administration
+
+System Configuration
+
+Audit
+
+Security
+
+Settings
+
+---
+
+# CODE QUALITY REQUIREMENTS
+
+Every implementation must:
+
+* Return complete production-ready files (never snippets).
+* Preserve the existing architecture where it is already strong.
+* Avoid breaking changes unless clearly justified.
+* Eliminate duplicated code.
+* Follow SOLID principles.
+* Keep business logic inside domain modules.
+* Use strict TypeScript typing.
+* Include proper validation and error handling.
+* Include tests where appropriate.
+* Be scalable, maintainable, and extensible.
+* Follow clean architecture principles.
+* Be optimized for performance and enterprise workloads.
+
+The objective is to evolve the current application into a **best-in-class enterprise Fleet Management Platform** that is architecturally capable of supporting large organizations, complex workflows, advanced analytics, AI-driven operations, and future expansion without accumulating technical debt.

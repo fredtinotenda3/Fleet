@@ -45,23 +45,24 @@ export function isOverdue(date: Date | string): boolean {
   return parsed < new Date();
 }
 
-export function getDateRangePreset(preset: 'week' | 'month' | 'quarter' | 'year'): { start: Date; end: Date } {
-  const now = new Date();
-  const end = now;
-  let start = now;
+export function getDateRangePreset(
+  preset: 'week' | 'month' | 'quarter' | 'year'
+): { start: Date; end: Date } {
+  const end = new Date();
+  const start = new Date();
 
   switch (preset) {
     case 'week':
-      start = new Date(now.setDate(now.getDate() - 7));
+      start.setDate(end.getDate() - 7);
       break;
     case 'month':
-      start = new Date(now.setMonth(now.getMonth() - 1));
+      start.setMonth(end.getMonth() - 1);
       break;
     case 'quarter':
-      start = new Date(now.setMonth(now.getMonth() - 3));
+      start.setMonth(end.getMonth() - 3);
       break;
     case 'year':
-      start = new Date(now.setFullYear(now.getFullYear() - 1));
+      start.setFullYear(end.getFullYear() - 1);
       break;
   }
 
@@ -73,9 +74,11 @@ export function toISODate(date: Date | string): string {
   return format(parsed, DATE_FORMATS.API);
 }
 
-export function groupByMonth<T extends { date: Date }>(items: T[]): Map<string, T[]> {
+export function groupByMonth<T extends { date: Date }>(
+  items: T[]
+): Map<string, T[]> {
   const grouped = new Map<string, T[]>();
-  items.forEach(item => {
+  items.forEach((item) => {
     const monthKey = format(item.date, DATE_FORMATS.YEAR_MONTH);
     if (!grouped.has(monthKey)) grouped.set(monthKey, []);
     grouped.get(monthKey)!.push(item);

@@ -30,7 +30,10 @@ export function formatCurrencyCompact(amount: number): string {
   return formatCurrency(amount);
 }
 
-export function calculateAverageCost(totalCost: number, totalUnits: number): number {
+export function calculateAverageCost(
+  totalCost: number,
+  totalUnits: number
+): number {
   if (totalUnits === 0) return 0;
   return totalCost / totalUnits;
 }
@@ -38,7 +41,7 @@ export function calculateAverageCost(totalCost: number, totalUnits: number): num
 export function getTrendIcon(change: number): string {
   if (change > 0) return '▲';
   if (change < 0) return '▼';
-  return '●';
+  return '◆';
 }
 
 export function getTrendColor(change: number): string {

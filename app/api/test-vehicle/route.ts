@@ -1,4 +1,4 @@
-// C:\Users\user\Desktop\Fleet\app\api\test-vehicle\route.ts
+// app/api/test-vehicle/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
 import { vehicleCreateSchema } from '@/shared/validations/vehicle.schema';
@@ -7,23 +7,24 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     console.log('Testing vehicle data:', body);
-    
+
     const result = vehicleCreateSchema.safeParse(body);
-    
+
     if (!result.success) {
-      console.error('Validation errors:', result.error.errors);
+      // Zod v4 renamed ZodError#errors -> ZodError#issues.
+      console.error('Validation errors:', result.error.issues);
       return NextResponse.json({
         success: false,
-        errors: result.error.errors.map(e => ({
+        errors: result.error.issues.map((e) => ({
           path: e.path.join('.'),
-          message: e.message
-        }))
+          message: e.message,
+        })),
       }, { status: 400 });
     }
-    
+
     return NextResponse.json({
       success: true,
-      data: result.data
+      data: result.data,
     });
   } catch (error) {
     console.error('Error:', error);

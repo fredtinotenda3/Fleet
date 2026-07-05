@@ -1,53 +1,72 @@
+// app/api/health/route.ts
+
 import { NextResponse } from 'next/server';
 import connectToDatabase from '@/infrastructure/database/mongodb';
-import { cacheConnection } from '@/infrastructure/cache/cache.service';
-import { redisConnection } from '@/infrastructure/queue/queue.service';
 
-export async function GET() {
-  const checks = {
-    database: await checkDatabase(),
-    redis: await checkRedis(),
-    queue: await checkQueue(),
-    timestamp: new Date().toISOString(),
-  };
-  
-  const isHealthy = Object.values(checks).every(check => 
-    typeof check === 'object' ? check.status === 'healthy' : check
-  );
-  
-  return NextResponse.json(checks, { status: isHealthy ? 200 : 503 });
+interface HealthCheck {
+  status: 'healthy' | 'unhealthy';
+  latency?: number;
+  error?: string;
 }
 
-async function checkDatabase(): Promise<{ status: string; latency: number }> {
+async function checkDatabase(): Promise<HealthCheck> {
   const start = Date.now();
   try {
     const db = await connectToDatabase();
     await db.command({ ping: 1 });
-    const latency = Date.now() - start;
-    return { status: 'healthy', latency };
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  } catch (_error) {
-    return { status: 'unhealthy', latency: Date.now() - start };
+    return { status: 'healthy', latency: Date.now() - start };
+  } catch (error) {
+    return {
+      status: 'unhealthy',
+      latency: Date.now() - start,
+      error: String(error),
+    };
   }
 }
 
-async function checkRedis(): Promise<{ status: string; latency: number }> {
+async function checkRedis(): Promise<HealthCheck> {
+  // Redis is optional — if not configured, report as skipped
+  if (!process.env.REDIS_URL) {
+    return { status: 'healthy', latency: 0 };
+  }
+
   const start = Date.now();
   try {
-    await cacheConnection.ping();
-    const latency = Date.now() - start;
-    return { status: 'healthy', latency };
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  } catch (_error) {
-    return { status: 'unhealthy', latency: Date.now() - start };
+    // Lazy-load ioredis only if REDIS_URL is present so the build
+    // succeeds in environments without Redis
+    const Redis = (await import('ioredis')).default;
+    const client = new Redis(process.env.REDIS_URL, {
+      connectTimeout: 2000,
+      maxRetriesPerRequest: 1,
+    });
+    await client.ping();
+    await client.quit();
+    return { status: 'healthy', latency: Date.now() - start };
+  } catch (error) {
+    return {
+      status: 'unhealthy',
+      latency: Date.now() - start,
+      error: String(error),
+    };
   }
 }
 
-async function checkQueue(): Promise<{ status: string }> {
-  try {
-    await redisConnection.ping();
-    return { status: 'healthy' };
-  } catch {
-    return { status: 'unhealthy' };
-  }
+export async function GET() {
+  const [database, redis] = await Promise.all([
+    checkDatabase(),
+    checkRedis(),
+  ]);
+
+  const checks = {
+    database,
+    redis,
+    timestamp: new Date().toISOString(),
+    version: process.env.npm_package_version || '0.0.1',
+    environment: process.env.NODE_ENV || 'development',
+  };
+
+  const isHealthy =
+    database.status === 'healthy' && redis.status === 'healthy';
+
+  return NextResponse.json(checks, { status: isHealthy ? 200 : 503 });
 }

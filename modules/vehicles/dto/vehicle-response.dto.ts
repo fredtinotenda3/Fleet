@@ -39,8 +39,10 @@ export class VehicleResponseDto {
     this.last_service_date = vehicle.last_service_date || null;
     this.service_interval = vehicle.service_interval || null;
     this.odometer = vehicle.odometer || null;
-    this.createdAt = vehicle.createdAt!;
-    this.updatedAt = vehicle.updatedAt!;
+    // BaseEntity.createdAt/updatedAt are typed `Timestamp` (Date | string)
+    // since Mongo can round-trip them as ISO strings; normalize to Date here.
+    this.createdAt = new Date(vehicle.createdAt!);
+    this.updatedAt = new Date(vehicle.updatedAt!);
   }
 
   static fromVehicle(vehicle: Vehicle): VehicleResponseDto {

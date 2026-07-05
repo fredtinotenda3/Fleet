@@ -18,15 +18,17 @@ export function transformToTimeSeries<T extends { date: Date; amount: number }>(
   dateFormat: string = DATE_FORMATS.DISPLAY_SHORT
 ): ChartDataPoint[] {
   const grouped = new Map<string, number>();
-  
-  data.forEach(item => {
+
+  data.forEach((item) => {
     const key = formatDate(item.date, dateFormat);
     grouped.set(key, (grouped.get(key) || 0) + item.amount);
   });
-  
+
   return Array.from(grouped.entries())
     .map(([date, value]) => ({ date, value }))
-    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    .sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+    );
 }
 
 export function transformToCategoryData<T extends { name: string; value: number }>(
@@ -36,32 +38,11 @@ export function transformToCategoryData<T extends { name: string; value: number 
   const sorted = [...data].sort((a, b) => b.value - a.value);
   const top = sorted.slice(0, topN);
   const total = top.reduce((sum, item) => sum + item.value, 0);
-  
-  return top.map(item => ({
+
+  return top.map((item) => ({
     ...item,
     percentage: total > 0 ? (item.value / total) * 100 : 0,
   }));
-}
-
-export function transformMonthlyTrends<T extends { date: Date; amount: number }>(
-  data: T[]
-): ChartDataPoint[] {
-  const monthlyMap = new Map<string, number>();
-  
-  data.forEach(item => {
-    const monthKey = formatDate(item.date, DATE_FORMATS.MONTH_YEAR);
-    monthlyMap.set(monthKey, (monthlyMap.get(monthKey) || 0) + item.amount);
-  });
-  
-  return Array.from(monthlyMap.entries())
-    .map(([date, value]) => ({ date, value }))
-    .sort((a, b) => {
-      const [aMonth, aYear] = a.date.split(' ');
-      const [bMonth, bYear] = b.date.split(' ');
-      const aDate = new Date(`${aMonth} 1, ${aYear}`);
-      const bDate = new Date(`${bMonth} 1, ${bYear}`);
-      return aDate.getTime() - bDate.getTime();
-    });
 }
 
 export const CHART_COLORS = {
@@ -71,7 +52,16 @@ export const CHART_COLORS = {
   warning: '#f59e0b',
   info: '#8b5cf6',
   gray: '#6b7280',
-  palette: ['#3b82f6', '#10b981', '#ef4444', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#f97316'],
+  palette: [
+    '#3b82f6',
+    '#10b981',
+    '#ef4444',
+    '#f59e0b',
+    '#8b5cf6',
+    '#06b6d4',
+    '#ec4899',
+    '#f97316',
+  ],
 } as const;
 
 export function getChartColor(index: number): string {

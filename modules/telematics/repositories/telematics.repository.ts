@@ -1,26 +1,66 @@
 // modules/telematics/repositories/telematics.repository.ts
 
+import { Db } from 'mongodb';
 import { BaseRepository } from '@/server/repositories/base.repository';
-import { TelematicsData, TelematicsAlert, Geofence, TelematicsDevice } from '../types/telematics.types';
+import connectToDatabase from '@/infrastructure/database/mongodb';
+import {
+  TelematicsData,
+  TelematicsAlert,
+  Geofence,
+  TelematicsDevice,
+  TelematicsLocation,
+} from '../types/telematics.types';
 import { Filter, ObjectId } from 'mongodb';
 
 export class TelematicsRepository extends BaseRepository<TelematicsData> {
   protected collectionName = 'tbltelematics';
 
-  // Telematics Data methods
-  async getLatestTelematicsData(vehicleId: string, tenantId: string): Promise<TelematicsData | null> {
+  private async getDb(): Promise<Db> {
+    return connectToDatabase();
+  }
+
+  private async alertsCollection() {
+    const db = await this.getDb();
+    return db.collection<TelematicsAlert & { vehicleId: string; tenantId: string }>(
+      'tbltelematics_alerts'
+    );
+  }
+
+  private async geofencesCollection() {
+    const db = await this.getDb();
+    return db.collection<Geofence>('tbltelematics_geofences');
+  }
+
+  private async geofenceStatesCollection() {
+    const db = await this.getDb();
+    return db.collection<{
+      vehicleId: string;
+      geofenceId: string;
+      isInside: boolean;
+      updatedAt: Date;
+    }>('tbltelematics_geofence_states');
+  }
+
+  private async devicesCollection() {
+    const db = await this.getDb();
+    return db.collection<TelematicsDevice>('tbltelematics_devices');
+  }
+
+  // ── Telematics Data ─────────────────────────────────────────────────
+
+  async getLatestTelematicsData(
+    vehicleId: string,
+    tenantId: string
+  ): Promise<TelematicsData | null> {
     const collection = await this.getCollection();
-    const filter = {
-      ...this.getActiveFilter(tenantId),
-      vehicleId,
-    };
-    
+    const filter = { ...this.getActiveFilter(tenantId), vehicleId };
+
     const result = await collection
       .find(filter as Filter<TelematicsData>)
       .sort({ timestamp: -1 })
       .limit(1)
       .toArray();
-    
+
     return result[0] || null;
   }
 
@@ -36,68 +76,137 @@ export class TelematicsRepository extends BaseRepository<TelematicsData> {
       vehicleId,
       timestamp: { $gte: startDate, $lte: endDate },
     };
-    
-    return this.findMany(filter, tenantId, { limit, sortBy: 'timestamp', sortOrder: 'desc' });
+
+    return this.findMany(filter, tenantId, {
+      limit,
+      sortBy: 'timestamp',
+      sortOrder: 'desc',
+    });
   }
 
-  async getTelematicsByDevice(deviceId: string, tenantId: string, limit: number = 100): Promise<TelematicsData[]> {
-    const filter = {
-      ...this.getActiveFilter(tenantId),
-      deviceId,
-    };
-    
-    return this.findMany(filter, tenantId, { limit, sortBy: 'timestamp', sortOrder: 'desc' });
+  async getTelematicsByDevice(
+    deviceId: string,
+    tenantId: string,
+    limit: number = 100
+  ): Promise<TelematicsData[]> {
+    const filter = { ...this.getActiveFilter(tenantId), deviceId };
+    return this.findMany(filter, tenantId, {
+      limit,
+      sortBy: 'timestamp',
+      sortOrder: 'desc',
+    });
   }
 
-  // Alert methods
-  async createAlert(vehicleId: string, alert: TelematicsAlert, tenantId: string): Promise<void> {
+  async bulkInsertTelematics(
+    dataArray: Omit<TelematicsData, '_id' | 'createdAt' | 'updatedAt'>[],
+    tenantId: string
+  ): Promise<void> {
+    if (dataArray.length === 0) return;
     const collection = await this.getCollection();
-    const alertsCollection = collection.collection?.('tbltelematics_alerts') || collection;
-    
-    await alertsCollection.insertOne({
+    const now = new Date();
+
+    const documents = dataArray.map((data) => ({
+      ...data,
+      tenantId,
+      createdAt: now,
+      updatedAt: now,
+      isDeleted: false,
+    }));
+
+    await collection.insertMany(documents as any[]);
+  }
+
+  async getDailySummary(
+    vehicleId: string,
+    date: Date,
+    tenantId: string
+  ): Promise<{
+    vehicleId: string;
+    date: Date;
+    totalDistance: number;
+    maxSpeed: number;
+    avgSpeed: number;
+    totalDuration: number;
+    fuelUsed: number;
+    alertCount: number;
+    dataPoints: number;
+  } | null> {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const data = await this.getTelematicsHistory(vehicleId, startOfDay, endOfDay, tenantId);
+    if (data.length === 0) return null;
+
+    const first = data[data.length - 1];
+    const last = data[0];
+
+    return {
+      vehicleId,
+      date,
+      totalDistance: (last.trip?.odometer || 0) - (first.trip?.odometer || 0),
+      maxSpeed: Math.max(...data.map((d) => d.location?.speed || 0)),
+      avgSpeed: data.reduce((sum, d) => sum + (d.location?.speed || 0), 0) / data.length,
+      totalDuration: last.trip?.tripDuration || 0,
+      // fuelUsed lives under `fuel`, not `trip`, per TelematicsData's shape.
+      fuelUsed: last.fuel?.fuelUsed || 0,
+      alertCount: data.filter((d) => (d.alerts?.length || 0) > 0).length,
+      dataPoints: data.length,
+    };
+  }
+
+  // ── Alerts ───────────────────────────────────────────────────────────
+
+  async createAlert(
+    vehicleId: string,
+    alert: TelematicsAlert,
+    tenantId: string
+  ): Promise<void> {
+    const collection = await this.alertsCollection();
+    await collection.insertOne({
       vehicleId,
       ...alert,
       tenantId,
       createdAt: new Date(),
       isDeleted: false,
-    });
+    } as any);
   }
 
   async getActiveAlerts(vehicleId: string, tenantId: string): Promise<TelematicsAlert[]> {
-    const collection = await this.getCollection();
-    const alertsCollection = collection.collection?.('tbltelematics_alerts') || collection;
-    
+    const collection = await this.alertsCollection();
     const filter = {
-      ...this.getActiveFilter(tenantId),
+      tenantId,
+      isDeleted: { $ne: true },
       vehicleId,
       acknowledgedAt: { $exists: false },
     };
-    
-    return alertsCollection.find(filter as Filter<any>).toArray();
+
+    return collection.find(filter as any).toArray() as Promise<TelematicsAlert[]>;
   }
 
   async acknowledgeAlert(alertId: string, userId: string, tenantId: string): Promise<boolean> {
-    const collection = await this.getCollection();
-    const alertsCollection = collection.collection?.('tbltelematics_alerts') || collection;
-    
-    const filter = {
-      ...this.getActiveFilter(tenantId),
-      _id: new ObjectId(alertId),
-    };
-    
-    const result = await alertsCollection.updateOne(filter as Filter<any>, {
-      $set: { acknowledgedAt: new Date(), acknowledgedBy: userId },
-    });
-    
+    if (!ObjectId.isValid(alertId)) return false;
+    const collection = await this.alertsCollection();
+
+    const result = await collection.updateOne(
+      { _id: new ObjectId(alertId), tenantId } as any,
+      { $set: { acknowledgedAt: new Date(), acknowledgedBy: userId } }
+    );
+
     return result.modifiedCount > 0;
   }
 
-  // Geofence methods
-  async createGeofence(geofence: Omit<Geofence, '_id' | 'createdAt' | 'updatedAt'>, tenantId: string, userId: string): Promise<Geofence> {
-    const collection = await this.getCollection();
-    const geofenceCollection = collection.collection?.('tbltelematics_geofences') || collection;
-    
+  // ── Geofences ────────────────────────────────────────────────────────
+
+  async createGeofence(
+    geofence: Omit<Geofence, '_id' | 'createdAt' | 'updatedAt'>,
+    tenantId: string,
+    userId: string
+  ): Promise<Geofence> {
+    const collection = await this.geofencesCollection();
     const now = new Date();
+
     const geofenceData = {
       ...geofence,
       tenantId,
@@ -107,33 +216,36 @@ export class TelematicsRepository extends BaseRepository<TelematicsData> {
       updatedAt: now,
       isDeleted: false,
     };
-    
-    const result = await geofenceCollection.insertOne(geofenceData);
+
+    const result = await collection.insertOne(geofenceData as any);
     return { ...geofenceData, _id: result.insertedId.toString() } as Geofence;
   }
 
   async getGeofence(id: string, tenantId: string): Promise<Geofence | null> {
-    const collection = await this.getCollection();
-    const geofenceCollection = collection.collection?.('tbltelematics_geofences') || collection;
-    
-    const filter = {
-      ...this.getActiveFilter(tenantId),
+    if (!ObjectId.isValid(id)) return null;
+    const collection = await this.geofencesCollection();
+
+    const result = await collection.findOne({
       _id: new ObjectId(id),
-    };
-    
-    const result = await geofenceCollection.findOne(filter as Filter<any>);
-    return result as Geofence || null;
+      tenantId,
+      isDeleted: { $ne: true },
+    } as any);
+
+    return (result as Geofence) || null;
   }
 
-  async getActiveGeofences(vehicleId: string | undefined, tenantId: string): Promise<Geofence[]> {
-    const collection = await this.getCollection();
-    const geofenceCollection = collection.collection?.('tbltelematics_geofences') || collection;
-    
-    const filter: any = {
-      ...this.getActiveFilter(tenantId),
+  async getActiveGeofences(
+    vehicleId: string | undefined,
+    tenantId: string
+  ): Promise<Geofence[]> {
+    const collection = await this.geofencesCollection();
+
+    const filter: Record<string, unknown> = {
+      tenantId,
+      isDeleted: { $ne: true },
       active: true,
     };
-    
+
     if (vehicleId) {
       filter.$or = [
         { vehicleId },
@@ -141,74 +253,98 @@ export class TelematicsRepository extends BaseRepository<TelematicsData> {
         { vehicleId: null },
       ];
     }
-    
-    return geofenceCollection.find(filter).toArray();
+
+    return collection.find(filter as any).toArray() as Promise<Geofence[]>;
   }
 
-  async updateGeofence(id: string, geofence: Partial<Geofence>, tenantId: string, userId: string): Promise<Geofence | null> {
-    const collection = await this.getCollection();
-    const geofenceCollection = collection.collection?.('tbltelematics_geofences') || collection;
-    
-    const filter = {
-      ...this.getActiveFilter(tenantId),
-      _id: new ObjectId(id),
-    };
-    
-    const result = await geofenceCollection.findOneAndUpdate(
-      filter as Filter<any>,
+  async updateGeofence(
+    id: string,
+    geofence: Partial<Geofence>,
+    tenantId: string,
+    userId: string
+  ): Promise<Geofence | null> {
+    if (!ObjectId.isValid(id)) return null;
+    const collection = await this.geofencesCollection();
+
+    const result = await collection.findOneAndUpdate(
+      { _id: new ObjectId(id), tenantId, isDeleted: { $ne: true } } as any,
       { $set: { ...geofence, updatedAt: new Date(), updatedBy: userId } },
       { returnDocument: 'after' }
     );
-    
-    return result as Geofence || null;
+
+    return (result as Geofence) || null;
   }
 
   async deleteGeofence(id: string, tenantId: string): Promise<boolean> {
-    const collection = await this.getCollection();
-    const geofenceCollection = collection.collection?.('tbltelematics_geofences') || collection;
-    
-    const filter = {
-      ...this.getActiveFilter(tenantId),
-      _id: new ObjectId(id),
-    };
-    
-    const result = await geofenceCollection.updateOne(filter as Filter<any>, {
-      $set: { isDeleted: true, deletedAt: new Date() },
-    });
-    
+    if (!ObjectId.isValid(id)) return false;
+    const collection = await this.geofencesCollection();
+
+    const result = await collection.updateOne(
+      { _id: new ObjectId(id), tenantId } as any,
+      { $set: { isDeleted: true, deletedAt: new Date() } }
+    );
+
     return result.modifiedCount > 0;
   }
 
+  // ── Geofence state (batched) ────────────────────────────────────────
+
+  async getGeofenceStatesForVehicle(
+    vehicleId: string,
+    geofenceIds: string[]
+  ): Promise<Map<string, boolean>> {
+    if (geofenceIds.length === 0) return new Map();
+    const collection = await this.geofenceStatesCollection();
+
+    const results = await collection
+      .find({ vehicleId, geofenceId: { $in: geofenceIds } })
+      .toArray();
+
+    const map = new Map<string, boolean>();
+    for (const r of results) {
+      map.set(r.geofenceId, r.isInside);
+    }
+    return map;
+  }
+
+  async setGeofenceStates(
+    vehicleId: string,
+    updates: Array<{ geofenceId: string; isInside: boolean }>
+  ): Promise<void> {
+    if (updates.length === 0) return;
+    const collection = await this.geofenceStatesCollection();
+
+    const operations = updates.map((u) => ({
+      updateOne: {
+        filter: { vehicleId, geofenceId: u.geofenceId },
+        update: {
+          $set: { isInside: u.isInside, updatedAt: new Date() },
+        },
+        upsert: true,
+      },
+    }));
+
+    await collection.bulkWrite(operations);
+  }
+
   async getGeofenceState(vehicleId: string, geofenceId: string): Promise<boolean | null> {
-    const collection = await this.getCollection();
-    const stateCollection = collection.collection?.('tbltelematics_geofence_states') || collection;
-    
-    const filter = {
-      vehicleId,
-      geofenceId,
-    };
-    
-    const result = await stateCollection.findOne(filter);
-    return result?.isInside ?? null;
+    const map = await this.getGeofenceStatesForVehicle(vehicleId, [geofenceId]);
+    return map.get(geofenceId) ?? null;
   }
 
   async setGeofenceState(vehicleId: string, geofenceId: string, isInside: boolean): Promise<void> {
-    const collection = await this.getCollection();
-    const stateCollection = collection.collection?.('tbltelematics_geofence_states') || collection;
-    
-    await stateCollection.updateOne(
-      { vehicleId, geofenceId },
-      { $set: { isInside, updatedAt: new Date() } },
-      { upsert: true }
-    );
+    await this.setGeofenceStates(vehicleId, [{ geofenceId, isInside }]);
   }
 
-  // Device methods
-  async registerDevice(device: Omit<TelematicsDevice, '_id' | 'createdAt' | 'updatedAt'>, tenantId: string): Promise<TelematicsDevice> {
-    const collection = await this.getCollection();
-    const deviceCollection = collection.collection?.('tbltelematics_devices') || collection;
-    
+  // ── Devices ──────────────────────────────────────────────────────────
+
+  async registerDevice(
+    device: Omit<TelematicsDevice, '_id' | 'createdAt' | 'updatedAt'>,
+    tenantId: string
+  ): Promise<TelematicsDevice> {
+    const collection = await this.devicesCollection();
     const now = new Date();
+
     const deviceData = {
       ...device,
       tenantId,
@@ -216,98 +352,58 @@ export class TelematicsRepository extends BaseRepository<TelematicsData> {
       updatedAt: now,
       isDeleted: false,
     };
-    
-    const result = await deviceCollection.insertOne(deviceData);
+
+    const result = await collection.insertOne(deviceData as any);
     return { ...deviceData, _id: result.insertedId.toString() } as TelematicsDevice;
   }
 
   async getDevice(deviceId: string, tenantId: string): Promise<TelematicsDevice | null> {
-    const collection = await this.getCollection();
-    const deviceCollection = collection.collection?.('tbltelematics_devices') || collection;
-    
-    const filter = {
-      ...this.getActiveFilter(tenantId),
+    const collection = await this.devicesCollection();
+    const result = await collection.findOne({
       deviceId,
-    };
-    
-    const result = await deviceCollection.findOne(filter as Filter<any>);
-    return result as TelematicsDevice || null;
+      tenantId,
+      isDeleted: { $ne: true },
+    } as any);
+
+    return (result as TelematicsDevice) || null;
   }
 
-  async updateDeviceLastPing(deviceId: string, tenantId: string, location?: any): Promise<void> {
-    const collection = await this.getCollection();
-    const deviceCollection = collection.collection?.('tbltelematics_devices') || collection;
-    
-    const filter = {
-      ...this.getActiveFilter(tenantId),
-      deviceId,
-    };
-    
-    await deviceCollection.updateOne(filter as Filter<any>, {
-      $set: {
-        lastPingAt: new Date(),
-        lastLocation: location,
-        status: 'active',
-        updatedAt: new Date(),
-      },
-    });
+  async updateDeviceLastPing(
+    deviceId: string,
+    tenantId: string,
+    location?: TelematicsLocation
+  ): Promise<void> {
+    const collection = await this.devicesCollection();
+
+    await collection.updateOne(
+      { deviceId, tenantId, isDeleted: { $ne: true } } as any,
+      {
+        $set: {
+          lastPingAt: new Date(),
+          lastLocation: location,
+          status: 'active',
+          updatedAt: new Date(),
+        },
+      }
+    );
   }
 
-  async getOfflineDevices(minutesOffline: number = 5, tenantId: string): Promise<TelematicsDevice[]> {
-    const collection = await this.getCollection();
-    const deviceCollection = collection.collection?.('tbltelematics_devices') || collection;
+  async getOfflineDevices(
+    tenantId: string,
+    minutesOffline: number = 5
+  ): Promise<TelematicsDevice[]> {
+    const collection = await this.devicesCollection();
     const cutoffDate = new Date();
     cutoffDate.setMinutes(cutoffDate.getMinutes() - minutesOffline);
-    
-    const filter = {
-      ...this.getActiveFilter(tenantId),
-      status: 'active',
-      lastPingAt: { $lt: cutoffDate },
-    };
-    
-    return deviceCollection.find(filter as Filter<any>).toArray();
-  }
 
-  // Batch operations
-  async bulkInsertTelematics(dataArray: Omit<TelematicsData, '_id' | 'createdAt' | 'updatedAt'>[], tenantId: string): Promise<void> {
-    const collection = await this.getCollection();
-    const now = new Date();
-    
-    const documents = dataArray.map(data => ({
-      ...data,
-      tenantId,
-      createdAt: now,
-      updatedAt: now,
-      isDeleted: false,
-    }));
-    
-    await collection.insertMany(documents);
-  }
-
-  async getDailySummary(vehicleId: string, date: Date, tenantId: string): Promise<any> {
-    const startOfDay = new Date(date);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(date);
-    endOfDay.setHours(23, 59, 59, 999);
-    
-    const data = await this.getTelematicsHistory(vehicleId, startOfDay, endOfDay, tenantId);
-    
-    if (data.length === 0) return null;
-    
-    const first = data[data.length - 1];
-    const last = data[0];
-    
-    return {
-      vehicleId,
-      date,
-      totalDistance: (last.trip?.odometer || 0) - (first.trip?.odometer || 0),
-      maxSpeed: Math.max(...data.map(d => d.location?.speed || 0)),
-      avgSpeed: data.reduce((sum, d) => sum + (d.location?.speed || 0), 0) / data.length,
-      totalDuration: last.trip?.tripDuration || 0,
-      fuelUsed: last.trip?.fuelUsed || 0,
-      alertCount: data.filter(d => d.alerts?.length).length,
-      dataPoints: data.length,
-    };
+    return collection
+      .find({
+        tenantId,
+        isDeleted: { $ne: true },
+        status: 'active',
+        lastPingAt: { $lt: cutoffDate },
+      } as any)
+      .toArray() as Promise<TelematicsDevice[]>;
   }
 }
 

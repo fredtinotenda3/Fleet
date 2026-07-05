@@ -1,24 +1,37 @@
+// server/services/base.service.ts
+
 import { ZodSchema } from 'zod';
 import { BaseRepository } from '@/server/repositories/base.repository';
-import { BaseEntity, PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
+import {
+  BaseEntity,
+  PaginationParams,
+  PaginatedResponse,
+} from '@/shared/types/common.types';
 import { validateWithZod } from '@/shared/utils/validation.utils';
-import { AppError, ValidationError, NotFoundError } from '@/server/errors/app.errors';
+import {
+  AppError,
+  ValidationError,
+  NotFoundError,
+} from '@/server/errors/app.errors';
 
-export abstract class BaseService<T extends BaseEntity, CreateDTO, UpdateDTO> {
+export abstract class BaseService<
+  T extends BaseEntity,
+  CreateDTO,
+  UpdateDTO
+> {
   constructor(protected repository: BaseRepository<T>) {}
 
   protected abstract getCreateSchema(): ZodSchema<CreateDTO>;
   protected abstract getUpdateSchema(): ZodSchema<UpdateDTO>;
+  protected abstract getEntityName(): string;
 
   protected async validateCreate(data: unknown): Promise<CreateDTO> {
     const result = await validateWithZod(this.getCreateSchema(), data);
     if (!result.success) {
-      // Build a readable error message from field errors
       const fieldErrors = result.errors || {};
       const messages = Object.entries(fieldErrors)
         .map(([field, errs]) => `${field}: ${errs.join(', ')}`)
         .join('; ');
-      console.error(`${this.getEntityName()} create validation failed:`, fieldErrors);
       throw new ValidationError(messages || 'Validation failed', fieldErrors);
     }
     return result.data!;
@@ -31,7 +44,6 @@ export abstract class BaseService<T extends BaseEntity, CreateDTO, UpdateDTO> {
       const messages = Object.entries(fieldErrors)
         .map(([field, errs]) => `${field}: ${errs.join(', ')}`)
         .join('; ');
-      console.error(`${this.getEntityName()} update validation failed:`, fieldErrors);
       throw new ValidationError(messages || 'Validation failed', fieldErrors);
     }
     return result.data!;
@@ -45,11 +57,17 @@ export abstract class BaseService<T extends BaseEntity, CreateDTO, UpdateDTO> {
     return entity;
   }
 
-  async findOne(filter: Record<string, unknown>, tenantId: string): Promise<T | null> {
+  async findOne(
+    filter: Record<string, unknown>,
+    tenantId: string
+  ): Promise<T | null> {
     return this.repository.findOne(filter as any, tenantId);
   }
 
-  async findMany(filter: Record<string, unknown>, tenantId: string): Promise<T[]> {
+  async findMany(
+    filter: Record<string, unknown>,
+    tenantId: string
+  ): Promise<T[]> {
     return this.repository.findMany(filter as any, tenantId);
   }
 
@@ -58,24 +76,47 @@ export abstract class BaseService<T extends BaseEntity, CreateDTO, UpdateDTO> {
     pagination: PaginationParams,
     tenantId: string
   ): Promise<PaginatedResponse<T>> {
-    return this.repository.findWithPagination(filter as any, pagination, tenantId);
+    return this.repository.findWithPagination(
+      filter as any,
+      pagination,
+      tenantId
+    );
   }
 
-  async create(data: unknown, tenantId: string, userId?: string): Promise<T> {
+  async create(
+    data: unknown,
+    tenantId: string,
+    userId?: string
+  ): Promise<T> {
     const validatedData = await this.validateCreate(data);
     return this.repository.create(validatedData as any, tenantId, userId);
   }
 
-  async update(id: string, data: unknown, tenantId: string, userId?: string): Promise<T | null> {
+  async update(
+    id: string,
+    data: unknown,
+    tenantId: string,
+    userId?: string
+  ): Promise<T | null> {
     const validatedData = await this.validateUpdate(data);
-    const entity = await this.repository.update(id, validatedData as any, tenantId, userId);
+    const entity = await this.repository.update(
+      id,
+      validatedData as any,
+      tenantId,
+      userId
+    );
     if (!entity) {
       throw new NotFoundError(`${this.getEntityName()} not found`);
     }
     return entity;
   }
 
-  async delete(id: string, tenantId: string, userId?: string, soft: boolean = true): Promise<boolean> {
+  async delete(
+    id: string,
+    tenantId: string,
+    userId?: string,
+    soft: boolean = true
+  ): Promise<boolean> {
     const entity = await this.repository.findById(id, tenantId);
     if (!entity) {
       throw new NotFoundError(`${this.getEntityName()} not found`);
@@ -86,13 +127,17 @@ export abstract class BaseService<T extends BaseEntity, CreateDTO, UpdateDTO> {
     return this.repository.hardDelete(id, tenantId);
   }
 
-  async count(filter: Record<string, unknown>, tenantId: string): Promise<number> {
+  async count(
+    filter: Record<string, unknown>,
+    tenantId: string
+  ): Promise<number> {
     return this.repository.count(filter as any, tenantId);
   }
 
-  async exists(filter: Record<string, unknown>, tenantId: string): Promise<boolean> {
+  async exists(
+    filter: Record<string, unknown>,
+    tenantId: string
+  ): Promise<boolean> {
     return this.repository.exists(filter as any, tenantId);
   }
-
-  protected abstract getEntityName(): string;
 }

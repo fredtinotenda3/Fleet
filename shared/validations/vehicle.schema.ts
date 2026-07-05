@@ -1,3 +1,5 @@
+// shared/validations/vehicle.schema.ts
+
 import { z } from 'zod';
 
 const currentYear = new Date().getFullYear();
@@ -10,26 +12,27 @@ export const vehicleSchema = z.object({
     .min(1, 'License plate is required')
     .max(20, 'License plate must be at most 20 characters')
     .transform((val) => val.toUpperCase().replace(/\s/g, '')),
-  make: z.string().min(1, 'Make is required').max(50),
-  model: z.string().min(1, 'Model is required').max(50),
-  year: z
-    .number({ invalid_type_error: 'Year must be a number' })
+  make: z.string().min(1, 'Make is required').max(50, 'Make too long'),
+  model: z.string().min(1, 'Model is required').max(50, 'Model too long'),
+    year: z
+    .number({ message: 'Year must be a number' })
     .int('Year must be an integer')
     .min(1900, 'Year must be 1900 or later')
     .max(currentYear + 2, `Year cannot exceed ${currentYear + 2}`),
-  vehicle_type: z.string().min(1, 'Vehicle type is required'),
+  vehicle_type: z.string().min(1, 'Vehicle type is required').max(50),
   purchase_date: z
     .string()
     .min(1, 'Purchase date is required')
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)'),
-  fuel_type: z.string().min(1, 'Fuel type is required'),
+  fuel_type: z.string().min(1, 'Fuel type is required').max(30),
   color: z.string().optional().nullable().default('#3b82f6'),
-  vin: z.string().optional().nullable(),
+  vin: z.string().max(17).optional().nullable(),
   status: vehicleStatusSchema.default('active'),
   registration_expiry: z.string().optional().nullable(),
-  insurance_provider: z.string().optional().nullable(),
+  insurance_provider: z.string().max(100).optional().nullable(),
   service_interval: z.number().positive().optional().nullable(),
   odometer: z.number().nonnegative().optional().nullable(),
+  orgUnitId: z.string().optional().nullable(),
 });
 
 export const vehicleCreateSchema = vehicleSchema;

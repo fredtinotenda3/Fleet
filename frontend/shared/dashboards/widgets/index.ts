@@ -1,0 +1,9 @@
+﻿export { FleetStatusWidget } from './FleetStatusWidget';
+export { FuelWidget } from './FuelWidget';
+export { MaintenanceWidget } from './MaintenanceWidget';
+export { TripsWidget } from './TripsWidget';
+export { ExpensesWidget } from './ExpensesWidget';
+export { AlertsWidget } from './AlertsWidget';
+export { KPIsWidget } from './KPIsWidget';
+export { MapsWidget } from './MapsWidget';
+export { AIRecommendationsWidget } from './AIRecommendationsWidget';

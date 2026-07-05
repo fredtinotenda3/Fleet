@@ -1,7 +1,9 @@
 // infrastructure/security/rate-limit.ts
 
 import { NextRequest, NextResponse } from 'next/server';
-import { cacheConnection } from '@/infrastructure/cache/cache.service';
+
+// In-memory store (replace with Redis in production)
+const requestStore = new Map<string, number[]>();
 
 export interface RateLimitConfig {
   windowMs: number;
@@ -10,42 +12,43 @@ export interface RateLimitConfig {
 }
 
 export class RateLimiter {
-  private defaultConfig: RateLimitConfig = {
-    windowMs: 60 * 1000, // 1 minute
-    maxRequests: 60,
+  private readonly defaultConfig: RateLimitConfig = {
+    windowMs: 60_000,
+    maxRequests: 100,
   };
 
-  async checkLimit(req: NextRequest, config?: Partial<RateLimitConfig>): Promise<{ allowed: boolean; remaining: number; reset: number }> {
-    const finalConfig = { ...this.defaultConfig, ...config };
+  checkLimit(
+    req: NextRequest,
+    config?: Partial<RateLimitConfig>
+  ): { allowed: boolean; remaining: number; reset: number } {
+    const finalConfig = {
+      ...this.defaultConfig,
+      ...config,
+    };
+
     const key = this.getKey(req, finalConfig);
-    
+
     const now = Date.now();
     const windowStart = now - finalConfig.windowMs;
-    
-    // Clean old requests
-    await cacheConnection.zremrangebyscore(key, 0, windowStart);
-    
-    // Count requests in window
-    const count = await cacheConnection.zcard(key);
-    
-    if (count >= finalConfig.maxRequests) {
-      const oldest = await cacheConnection.zrange(key, 0, 0, 'WITHSCORES');
-      const reset = parseInt(oldest[1]) + finalConfig.windowMs;
-      
+
+    const requests = (requestStore.get(key) ?? []).filter(
+      (timestamp) => timestamp > windowStart
+    );
+
+    if (requests.length >= finalConfig.maxRequests) {
       return {
         allowed: false,
         remaining: 0,
-        reset,
+        reset: (requests[0] ?? now) + finalConfig.windowMs,
       };
     }
-    
-    // Add current request
-    await cacheConnection.zadd(key, now, `${now}-${Math.random()}`);
-    await cacheConnection.expire(key, Math.ceil(finalConfig.windowMs / 1000));
-    
+
+    requests.push(now);
+    requestStore.set(key, requests);
+
     return {
       allowed: true,
-      remaining: finalConfig.maxRequests - count - 1,
+      remaining: finalConfig.maxRequests - requests.length,
       reset: now + finalConfig.windowMs,
     };
   }
@@ -54,9 +57,19 @@ export class RateLimiter {
     if (config.keyGenerator) {
       return config.keyGenerator(req);
     }
-    
-    const ip = req.headers.get('x-forwarded-for') || req.ip || 'unknown';
+
+    // Next.js no longer exposes req.ip.
+    // Try the standard proxy headers.
+    const forwardedFor = req.headers.get('x-forwarded-for');
+    const realIp = req.headers.get('x-real-ip');
+
+    const ip =
+      forwardedFor?.split(',')[0].trim() ??
+      realIp ??
+      'unknown';
+
     const path = req.nextUrl.pathname;
+
     return `rate-limit:${ip}:${path}`;
   }
 }
@@ -68,20 +81,51 @@ export async function withRateLimit(
   handler: () => Promise<NextResponse>,
   config?: Partial<RateLimitConfig>
 ): Promise<NextResponse> {
-  const { allowed, remaining, reset } = await rateLimiter.checkLimit(req, config);
-  
+  const finalConfig = {
+    windowMs: 60_000,
+    maxRequests: 100,
+    ...config,
+  };
+
+  const { allowed, remaining, reset } = rateLimiter.checkLimit(
+    req,
+    finalConfig
+  );
+
   if (!allowed) {
     return NextResponse.json(
-      { success: false, error: { code: 'RATE_LIMITED', message: 'Too many requests' } },
-      { status: 429, headers: { 'X-RateLimit-Reset': reset.toString() } }
+      {
+        success: false,
+        error: {
+          code: 'RATE_LIMITED',
+          message: 'Too many requests',
+        },
+      },
+      {
+        status: 429,
+        headers: {
+          'X-RateLimit-Limit': finalConfig.maxRequests.toString(),
+          'X-RateLimit-Remaining': '0',
+          'X-RateLimit-Reset': reset.toString(),
+        },
+      }
     );
   }
-  
+
   const response = await handler();
-  
-  response.headers.set('X-RateLimit-Limit', config?.maxRequests?.toString() || '60');
-  response.headers.set('X-RateLimit-Remaining', remaining.toString());
-  response.headers.set('X-RateLimit-Reset', reset.toString());
-  
+
+  response.headers.set(
+    'X-RateLimit-Limit',
+    finalConfig.maxRequests.toString()
+  );
+  response.headers.set(
+    'X-RateLimit-Remaining',
+    remaining.toString()
+  );
+  response.headers.set(
+    'X-RateLimit-Reset',
+    reset.toString()
+  );
+
   return response;
 }

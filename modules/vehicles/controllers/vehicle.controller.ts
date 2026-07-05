@@ -1,9 +1,10 @@
-// C:\Users\user\Desktop\Fleet\modules\vehicles\controllers\vehicle.controller.ts
+// modules/vehicles/controllers/vehicle.controller.ts
 
 import { NextRequest } from 'next/server';
-import { vehicleService } from '../services/vehicle.service';
+import { bootstrapCqrs } from '@/server/cqrs/cqrs.module';
+import { vehicleCommandService } from '../services/vehicle-command.service';
+import { vehicleQueryService } from '../services/vehicle-query.service';
 import { VehicleFilters } from '@/shared/types/vehicle.types';
-import { PaginationParams } from '@/shared/types/common.types';
 import { validatePaginationParams } from '@/shared/utils/pagination.utils';
 import {
   successResponse,
@@ -11,36 +12,64 @@ import {
   errorResponse,
   createdResponse,
 } from '@/server/utils/response.utils';
-import { AppError, ValidationError } from '@/server/errors/app.errors';
-import { getTenantFromRequest, getUserIdFromRequest, isSuperAdmin } from '@/server/utils/context.utils';
+import { AppError, ValidationError, UnauthorizedError } from '@/server/errors/app.errors';
+import {
+  getTenantFromRequest,
+  getUserIdFromRequest,
+} from '@/server/utils/context.utils';
+import { getAuthContext } from '@/server/auth/auth-context';
+import { tenantContextService } from '@/modules/tenancy/services/tenant-context.service';
+import { vehicleRepository } from '../repositories/vehicle.repository';
+
+
+// Ensure CQRS handlers are registered before any controller method runs.
+// Calling this at module-evaluation time (rather than inside each method)
+// keeps the cost of the idempotency check to once per process, not once
+// per request.
+bootstrapCqrs();
 
 export class VehicleController {
   async getVehicles(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const isAdmin = await isSuperAdmin(req);
+      const authContext = await getAuthContext(req);
+      if (!authContext) {
+        throw new UnauthorizedError('Authentication required');
+      }
+
+      const tenantContext = await tenantContextService.resolveContext(
+        authContext.userId,
+        authContext.tenantId,
+        authContext.roles,
+        authContext.isSuperAdmin,
+        authContext.orgUnitId
+      );
+
       const searchParams = req.nextUrl.searchParams;
 
       const filters: VehicleFilters = {
         license_plate: searchParams.get('license_plate') || undefined,
         make: searchParams.get('make') || undefined,
         model: searchParams.get('model') || undefined,
-        status: searchParams.get('status') as any || undefined,
-        year: searchParams.get('year') ? parseInt(searchParams.get('year')!) : undefined,
+        status: (searchParams.get('status') as any) || undefined,
+        year: searchParams.get('year')
+          ? parseInt(searchParams.get('year')!)
+          : undefined,
         vehicle_type: searchParams.get('vehicle_type') || undefined,
       };
 
-      const page = parseInt(searchParams.get('page') || '1');
-      const limit = parseInt(searchParams.get('limit') || '10');
+      const { page, limit } = validatePaginationParams(
+        searchParams.get('page'),
+        searchParams.get('limit')
+      );
 
-      const pagination: PaginationParams = { page, limit };
-      const result = await vehicleService.getFilteredVehicles(filters, pagination, tenantId);
-      
-      console.log(`✅ VehicleController.getVehicles returning: ${result.data.length} vehicles, total: ${result.pagination.total} (isAdmin: ${isAdmin})`);
-      
+      const result = await vehicleRepository.getFilteredVehiclesInScope(
+        filters,
+        { page, limit },
+        tenantContext
+      );
+
       return paginatedResponse(result.data, result.pagination);
     } catch (error) {
-      console.error('❌ VehicleController error:', error);
       return this.handleError(error);
     }
   }
@@ -48,7 +77,7 @@ export class VehicleController {
   async getVehicle(req: NextRequest, id: string) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const vehicle = await vehicleService.findById(id, tenantId);
+      const vehicle = await vehicleQueryService.getVehicleById(id, tenantId);
       return successResponse(vehicle);
     } catch (error) {
       return this.handleError(error);
@@ -64,31 +93,32 @@ export class VehicleController {
         throw new ValidationError('License plate is required');
       }
 
-      const vehicle = await vehicleService.findByLicensePlate(licensePlate, tenantId);
+      const vehicle = await vehicleQueryService.getVehicleByLicensePlate(
+        licensePlate,
+        tenantId
+      );
       return successResponse(vehicle);
     } catch (error) {
       return this.handleError(error);
     }
   }
 
+  async createVehicle(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const userId = await getUserIdFromRequest(req);
+      const body = await req.json();
 
-async createVehicle(req: NextRequest) {
-  try {
-    const tenantId = await getTenantFromRequest(req);
-    const userId = await getUserIdFromRequest(req);
-    const body = await req.json();
-    
-    console.log('Creating vehicle with data:', JSON.stringify(body, null, 2));
-    
-    const vehicle = await vehicleService.create(body, tenantId, userId);
-    console.log('Vehicle created successfully:', vehicle);
-    
-    return createdResponse(vehicle);
-  } catch (error) {
-    console.error('Create vehicle error details:', error);
-    return this.handleError(error);
+      const vehicle = await vehicleCommandService.createVehicle(
+        body,
+        tenantId,
+        userId
+      );
+      return createdResponse(vehicle);
+    } catch (error) {
+      return this.handleError(error);
+    }
   }
-}
 
   async updateVehicle(req: NextRequest, id: string) {
     try {
@@ -96,7 +126,12 @@ async createVehicle(req: NextRequest) {
       const userId = await getUserIdFromRequest(req);
       const body = await req.json();
 
-      const vehicle = await vehicleService.update(id, body, tenantId, userId);
+      const vehicle = await vehicleCommandService.updateVehicle(
+        id,
+        body,
+        tenantId,
+        userId
+      );
       return successResponse(vehicle);
     } catch (error) {
       return this.handleError(error);
@@ -109,7 +144,7 @@ async createVehicle(req: NextRequest) {
       const userId = await getUserIdFromRequest(req);
       const soft = req.nextUrl.searchParams.get('soft') !== 'false';
 
-      await vehicleService.delete(id, tenantId, userId, soft);
+      await vehicleCommandService.deleteVehicle(id, tenantId, userId, soft);
       return successResponse({ message: 'Vehicle deleted successfully' });
     } catch (error) {
       return this.handleError(error);
@@ -119,12 +154,9 @@ async createVehicle(req: NextRequest) {
   async getVehicleStats(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const isAdmin = await isSuperAdmin(req);
-      const stats = await vehicleService.getVehicleStats(tenantId);
-      console.log(`✅ Vehicle stats response: ${JSON.stringify(stats)} (isAdmin: ${isAdmin})`);
+      const stats = await vehicleQueryService.getVehicleStats(tenantId);
       return successResponse(stats);
     } catch (error) {
-      console.error('❌ Vehicle stats error:', error);
       return this.handleError(error);
     }
   }
@@ -138,7 +170,11 @@ async createVehicle(req: NextRequest) {
         req.nextUrl.searchParams.get('limit')
       );
 
-      const result = await vehicleService.searchVehicles(searchTerm, { page, limit }, tenantId);
+      const result = await vehicleQueryService.searchVehicles(
+        searchTerm,
+        { page, limit },
+        tenantId
+      );
       return paginatedResponse(result.data, result.pagination);
     } catch (error) {
       return this.handleError(error);
@@ -154,7 +190,10 @@ async createVehicle(req: NextRequest) {
         throw new ValidationError('Status parameter is required');
       }
 
-      const vehicles = await vehicleService.getVehiclesByStatus(status, tenantId);
+      const vehicles = await vehicleQueryService.getVehiclesByStatus(
+        status,
+        tenantId
+      );
       return successResponse(vehicles);
     } catch (error) {
       return this.handleError(error);
@@ -164,9 +203,14 @@ async createVehicle(req: NextRequest) {
   async getVehiclesDueForService(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const threshold = parseInt(req.nextUrl.searchParams.get('threshold') || '10000');
+      const threshold = parseInt(
+        req.nextUrl.searchParams.get('threshold') || '10000'
+      );
 
-      const vehicles = await vehicleService.getVehiclesDueForService(threshold, tenantId);
+      const vehicles = await vehicleQueryService.getVehiclesDueForService(
+        threshold,
+        tenantId
+      );
       return successResponse(vehicles);
     } catch (error) {
       return this.handleError(error);
@@ -176,10 +220,18 @@ async createVehicle(req: NextRequest) {
   async getVehicleAnalytics(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const startDate = new Date(req.nextUrl.searchParams.get('startDate') || new Date().toISOString());
-      const endDate = new Date(req.nextUrl.searchParams.get('endDate') || new Date().toISOString());
+      const startDate = new Date(
+        req.nextUrl.searchParams.get('startDate') || new Date().toISOString()
+      );
+      const endDate = new Date(
+        req.nextUrl.searchParams.get('endDate') || new Date().toISOString()
+      );
 
-      const analytics = await vehicleService.getVehicleAnalytics(tenantId, startDate, endDate);
+      const analytics = await vehicleQueryService.getVehicleAnalytics(
+        tenantId,
+        startDate,
+        endDate
+      );
       return successResponse(analytics);
     } catch (error) {
       return this.handleError(error);
@@ -192,7 +244,12 @@ async createVehicle(req: NextRequest) {
       const userId = await getUserIdFromRequest(req);
       const { status } = await req.json();
 
-      const vehicle = await vehicleService.updateStatus(id, status, tenantId, userId);
+      const vehicle = await vehicleCommandService.updateVehicleStatus(
+        id,
+        status,
+        tenantId,
+        userId
+      );
       return successResponse(vehicle);
     } catch (error) {
       return this.handleError(error);
@@ -201,9 +258,16 @@ async createVehicle(req: NextRequest) {
 
   private handleError(error: unknown) {
     if (error instanceof AppError) {
-      return errorResponse(error.message, error.code, error.statusCode);
+      return errorResponse(
+        error.message,
+        error.code,
+        error.statusCode,
+        error.details
+      );
     }
-    console.error('Unexpected error:', error);
+    console.error('[VehicleController] Unexpected error:', error);
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }
+
+export const vehicleController = new VehicleController();

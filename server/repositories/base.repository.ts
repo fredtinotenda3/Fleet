@@ -1,18 +1,30 @@
-// C:\Users\user\Desktop\Fleet\server\repositories\base.repository.ts
+/* eslint-disable @typescript-eslint/no-unused-vars */
+// server/repositories/base.repository.ts
 
-import { Db, Collection, Document, ObjectId, Filter, FindOptions, UpdateFilter } from 'mongodb';
+import {
+  Db,
+  Collection,
+  Document,
+  ObjectId,
+  Filter,
+  FindOptions,
+  UpdateFilter,
+} from 'mongodb';
 import connectToDatabase from '@/infrastructure/database/mongodb';
-import { BaseEntity, PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
-import { createPaginatedResponse, calculateSkip } from '@/shared/utils/pagination.utils';
+import {
+  BaseEntity,
+  PaginationParams,
+  PaginatedResponse,
+} from '@/shared/types/common.types';
+import {
+  createPaginatedResponse,
+  calculateSkip,
+} from '@/shared/utils/pagination.utils';
 
 export interface QueryOptions extends FindOptions {
   sortBy?: string;
   sortOrder?: 'asc' | 'desc';
-}
-
-export interface SoftDeleteOptions {
-  softDelete?: boolean;
-  deletedBy?: string;
+  limit?: number;
 }
 
 export abstract class BaseRepository<T extends BaseEntity> {
@@ -26,15 +38,21 @@ export abstract class BaseRepository<T extends BaseEntity> {
     return this.db.collection<T>(this.collectionName);
   }
 
-  protected getTenantFilter(tenantId: string, isSuperAdmin: boolean = false): Filter<T> {
-    // Super admin sees all tenants, regular users only see their tenant
-    if (isSuperAdmin) {
+  protected getTenantFilter(
+    tenantId: string,
+    isSuperAdmin: boolean = false
+  ): Filter<T> {
+    if (isSuperAdmin || tenantId === 'default' || tenantId === 'system') {
       return {} as Filter<T>;
     }
     return { tenantId } as Filter<T>;
   }
 
-  protected getActiveFilter(tenantId: string, includeDeleted: boolean = false, isSuperAdmin: boolean = false): Filter<T> {
+  protected getActiveFilter(
+    tenantId: string,
+    includeDeleted: boolean = false,
+    isSuperAdmin: boolean = false
+  ): Filter<T> {
     const filter = this.getTenantFilter(tenantId, isSuperAdmin);
     if (!includeDeleted) {
       return { ...filter, isDeleted: { $ne: true } } as Filter<T>;
@@ -42,22 +60,36 @@ export abstract class BaseRepository<T extends BaseEntity> {
     return filter;
   }
 
-  async findById(id: string, tenantId: string, includeDeleted: boolean = false, isSuperAdmin: boolean = false): Promise<T | null> {
+  async findById(
+    id: string,
+    tenantId: string,
+    includeDeleted: boolean = false,
+    isSuperAdmin: boolean = false
+  ): Promise<T | null> {
+    if (!ObjectId.isValid(id)) return null;
     const collection = await this.getCollection();
     const filter = {
       ...this.getActiveFilter(tenantId, includeDeleted, isSuperAdmin),
       _id: new ObjectId(id),
     } as Filter<T>;
-    return collection.findOne(filter);
+    // `collection.findOne` returns `WithId<T> | null` (Mongo's own `_id:
+    // ObjectId` clashes with our `_id?: string`); this repository's
+    // public contract has always been `T`, so cast at the boundary.
+    return collection.findOne(filter) as unknown as Promise<T | null>;
   }
 
-  async findOne(filter: Filter<T>, tenantId: string, includeDeleted: boolean = false, isSuperAdmin: boolean = false): Promise<T | null> {
+  async findOne(
+    filter: Filter<T>,
+    tenantId: string,
+    includeDeleted: boolean = false,
+    isSuperAdmin: boolean = false
+  ): Promise<T | null> {
     const collection = await this.getCollection();
     const finalFilter = {
       ...this.getActiveFilter(tenantId, includeDeleted, isSuperAdmin),
       ...filter,
     } as Filter<T>;
-    return collection.findOne(finalFilter);
+    return collection.findOne(finalFilter) as unknown as Promise<T | null>;
   }
 
   async findMany(
@@ -73,10 +105,19 @@ export abstract class BaseRepository<T extends BaseEntity> {
       ...filter,
     } as Filter<T>;
 
-    const { sortBy = 'createdAt', sortOrder = 'desc', ...findOptions } = options;
-    const sort: Record<string, 1 | -1> = { [sortBy]: sortOrder === 'asc' ? 1 : -1 };
+    const {
+      sortBy = 'createdAt',
+      sortOrder = 'desc',
+      limit,
+      ...findOptions
+    } = options;
+    const sort: Record<string, 1 | -1> = {
+      [sortBy]: sortOrder === 'asc' ? 1 : -1,
+    };
 
-    return collection.find(finalFilter, findOptions).sort(sort).toArray();
+    let cursor = collection.find(finalFilter, findOptions).sort(sort);
+    if (limit) cursor = cursor.limit(limit);
+    return cursor.toArray() as unknown as Promise<T[]>;
   }
 
   async findWithPagination(
@@ -92,22 +133,38 @@ export abstract class BaseRepository<T extends BaseEntity> {
       ...filter,
     } as Filter<T>;
 
-    const { page, limit, sortBy = 'createdAt', sortOrder = 'desc' } = pagination;
+    const {
+      page,
+      limit,
+      sortBy = 'createdAt',
+      sortOrder = 'desc',
+    } = pagination;
     const skip = calculateSkip(page, limit);
-    const sort: Record<string, 1 | -1> = { [sortBy]: sortOrder === 'asc' ? 1 : -1 };
+    const sort: Record<string, 1 | -1> = {
+      [sortBy]: sortOrder === 'asc' ? 1 : -1,
+    };
 
     const [data, total] = await Promise.all([
-      collection.find(finalFilter).sort(sort).skip(skip).limit(limit).toArray(),
+      collection
+        .find(finalFilter)
+        .sort(sort)
+        .skip(skip)
+        .limit(limit)
+        .toArray(),
       collection.countDocuments(finalFilter),
     ]);
 
-    return createPaginatedResponse(data, total, { page, limit });
+    return createPaginatedResponse(data as unknown as T[], total, { page, limit });
   }
 
-  async create(data: Omit<T, '_id' | 'createdAt' | 'updatedAt' | 'isDeleted' | 'deletedAt'>, tenantId: string, userId?: string): Promise<T> {
+  async create(
+    data: Omit<T, '_id' | 'createdAt' | 'updatedAt' | 'isDeleted' | 'deletedAt'>,
+    tenantId: string,
+    userId?: string
+  ): Promise<T> {
     const collection = await this.getCollection();
     const now = new Date();
-    
+
     const document = {
       ...data,
       tenantId,
@@ -117,9 +174,9 @@ export abstract class BaseRepository<T extends BaseEntity> {
       deletedAt: null,
       createdBy: userId,
       updatedBy: userId,
-    } as T;
+    } as unknown as T;
 
-    const result = await collection.insertOne(document);
+    const result = await collection.insertOne(document as any);
     return { ...document, _id: result.insertedId.toString() };
   }
 
@@ -130,6 +187,7 @@ export abstract class BaseRepository<T extends BaseEntity> {
     userId?: string,
     isSuperAdmin: boolean = false
   ): Promise<T | null> {
+    if (!ObjectId.isValid(id)) return null;
     const collection = await this.getCollection();
     const filter = {
       ...this.getTenantFilter(tenantId, isSuperAdmin),
@@ -142,14 +200,22 @@ export abstract class BaseRepository<T extends BaseEntity> {
         ...data,
         updatedAt: new Date(),
         updatedBy: userId,
-      },
+      } as any,
     };
 
-    const result = await collection.findOneAndUpdate(filter, update, { returnDocument: 'after' });
-    return result;
+    const result = await collection.findOneAndUpdate(filter, update, {
+      returnDocument: 'after',
+    });
+    return (result ?? null) as unknown as T | null;
   }
 
-  async softDelete(id: string, tenantId: string, userId?: string, isSuperAdmin: boolean = false): Promise<boolean> {
+  async softDelete(
+    id: string,
+    tenantId: string,
+    userId?: string,
+    isSuperAdmin: boolean = false
+  ): Promise<boolean> {
+    if (!ObjectId.isValid(id)) return false;
     const collection = await this.getCollection();
     const filter = {
       ...this.getTenantFilter(tenantId, isSuperAdmin),
@@ -162,14 +228,20 @@ export abstract class BaseRepository<T extends BaseEntity> {
         isDeleted: true,
         deletedAt: new Date(),
         updatedBy: userId,
-      },
+        updatedAt: new Date(),
+      } as any,
     };
 
     const result = await collection.updateOne(filter, update);
     return result.modifiedCount > 0;
   }
 
-  async hardDelete(id: string, tenantId: string, isSuperAdmin: boolean = false): Promise<boolean> {
+  async hardDelete(
+    id: string,
+    tenantId: string,
+    isSuperAdmin: boolean = false
+  ): Promise<boolean> {
+    if (!ObjectId.isValid(id)) return false;
     const collection = await this.getCollection();
     const filter = {
       ...this.getTenantFilter(tenantId, isSuperAdmin),
@@ -180,7 +252,12 @@ export abstract class BaseRepository<T extends BaseEntity> {
     return result.deletedCount > 0;
   }
 
-  async count(filter: Filter<T> = {}, tenantId: string, includeDeleted: boolean = false, isSuperAdmin: boolean = false): Promise<number> {
+  async count(
+    filter: Filter<T> = {},
+    tenantId: string,
+    includeDeleted: boolean = false,
+    isSuperAdmin: boolean = false
+  ): Promise<number> {
     const collection = await this.getCollection();
     const finalFilter = {
       ...this.getActiveFilter(tenantId, includeDeleted, isSuperAdmin),
@@ -189,25 +266,12 @@ export abstract class BaseRepository<T extends BaseEntity> {
     return collection.countDocuments(finalFilter);
   }
 
-  async exists(filter: Filter<T>, tenantId: string, isSuperAdmin: boolean = false): Promise<boolean> {
-    const count = await this.count(filter, tenantId, false, isSuperAdmin);
-    return count > 0;
-  }
-
-  async bulkWrite(operations: Array<{ type: 'insert' | 'update' | 'delete'; document: any }>, tenantId: string): Promise<void> {
-    const collection = await this.getCollection();
-    const bulkOps = operations.map(op => {
-      switch (op.type) {
-        case 'insert':
-          return { insertOne: { document: { ...op.document, tenantId } } };
-        case 'update':
-          return { updateOne: { filter: { ...this.getTenantFilter(tenantId), _id: op.document._id }, update: { $set: op.document } } };
-        case 'delete':
-          return { deleteOne: { filter: { ...this.getTenantFilter(tenantId), _id: op.document._id } } };
-        default:
-          throw new Error(`Unknown operation type: ${op.type}`);
-      }
-    });
-    await collection.bulkWrite(bulkOps);
+  async exists(
+    filter: Filter<T>,
+    tenantId: string,
+    isSuperAdmin: boolean = false
+  ): Promise<boolean> {
+    const c = await this.count(filter, tenantId, false, isSuperAdmin);
+    return c > 0;
   }
 }

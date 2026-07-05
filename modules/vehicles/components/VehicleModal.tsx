@@ -24,7 +24,14 @@ export function VehicleModal({ open, onOpenChange, vehicle, onSuccess }: Vehicle
           <DialogTitle>{vehicle ? 'Edit Vehicle' : 'Add New Vehicle'}</DialogTitle>
         </DialogHeader>
         <VehicleForm
-          vehicle={vehicle || undefined}
+          vehicle={
+            vehicle
+              ? {
+                  ...vehicle,
+                  status: vehicle.status as 'active' | 'inactive' | 'maintenance',
+                }
+              : undefined
+          }
           onSuccess={() => {
             onSuccess();
             onOpenChange(false);

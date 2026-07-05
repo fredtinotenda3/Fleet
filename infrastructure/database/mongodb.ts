@@ -1,13 +1,5 @@
-// infrastructure/database/mongodb.ts
-
 import { MongoClient, Db } from 'mongodb';
-
-declare global {
-  // eslint-disable-next-line no-var
-  var _mongoClient: MongoClient | undefined;
-  // eslint-disable-next-line no-var
-  var _mongoClientPromise: Promise<MongoClient> | undefined;
-}
+import { attachDbMonitoring } from '@/infrastructure/observability/db-monitoring';
 
 const uri = process.env.MONGODB_URI;
 if (!uri) {
@@ -17,24 +9,31 @@ if (!uri) {
 const options = {
   maxPoolSize: 10,
   minPoolSize: 2,
-  maxIdleTimeMS: 60000,
-  connectTimeoutMS: 10000,
-  socketTimeoutMS: 45000,
+  maxIdleTimeMS: 60_000,                                                                                                                                                                             
+  connectTimeoutMS: 10_000,
+  socketTimeoutMS: 45_000,
+  monitorCommands: true,
 };
 
-let client: MongoClient;
+async function connectWithMonitoring(): Promise<MongoClient> {
+  const client = new MongoClient(uri!, options);
+  const connected = await client.connect();
+  attachDbMonitoring(connected);
+  return connected;
+}
+
+let _mongoClientPromise: Promise<MongoClient> | undefined;
+
 let clientPromise: Promise<MongoClient>;
 
 if (process.env.NODE_ENV === 'development') {
-  if (!global._mongoClientPromise) {
-    client = new MongoClient(uri, options);
-    global._mongoClient = client;
-    global._mongoClientPromise = client.connect();
+  // Preserve connection across HMR reloads in dev
+  if (!globalThis.__mongoClientPromise) {
+    globalThis.__mongoClientPromise = connectWithMonitoring();
   }
-  clientPromise = global._mongoClientPromise;
+  clientPromise = globalThis.__mongoClientPromise;
 } else {
-  client = new MongoClient(uri, options);
-  clientPromise = client.connect();
+  clientPromise = connectWithMonitoring();
 }
 
 async function connectToDatabase(): Promise<Db> {

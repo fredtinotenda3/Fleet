@@ -7,7 +7,7 @@ export interface Notification extends BaseEntity {
   type: NotificationType;
   title: string;
   message: string;
-  data?: Record<string, any>;
+  data?: Record<string, unknown>;
   read: boolean;
   readAt?: Date;
   priority: 'low' | 'medium' | 'high' | 'critical';

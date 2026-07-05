@@ -13,8 +13,7 @@ export interface Organization extends BaseEntity {
   status: 'active' | 'suspended' | 'archived';
   ownerId: string;
   members: OrganizationMember[];
-  createdAt: Date;
-  updatedAt: Date;
+  invites?: OrganizationInvite[];
 }
 
 export interface OrganizationBranding {
@@ -50,7 +49,7 @@ export interface OrganizationSubscription {
 export interface OrganizationFeatures {
   maxVehicles: number;
   maxUsers: number;
-  maxStorage: number; // GB
+  maxStorage: number;
   customBranding: boolean;
   advancedAnalytics: boolean;
   telematics: boolean;
