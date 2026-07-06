@@ -1,4 +1,3 @@
-
 // frontend/modules/auth/pages/LoginPage.tsx
 
 'use client';
@@ -7,24 +6,30 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { LoginForm } from '../components/LoginForm';
 import { MfaVerificationForm } from '../components/MfaVerificationForm';
+import { AuthLayout, AuthCard } from '@/frontend/shared/ui/auth';
 
 export function LoginPage() {
   const router = useRouter();
   const [needsMfa, setNeedsMfa] = useState(false);
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-sm flex-col justify-center space-y-6 px-4">
-      <div>
-        <h1 className="text-2xl font-semibold">Sign in</h1>
-        <p className="text-sm text-muted-foreground">Welcome back to Fleet Platform.</p>
-      </div>
-      {!needsMfa ? (
-        <LoginForm onMfaRequired={() => setNeedsMfa(true)} onSuccess={() => router.push('/dashboard')} />
-      ) : (
-        <MfaVerificationForm onSuccess={() => router.push('/dashboard')} />
-      )}
-    </div>
+    <AuthLayout
+      footer={
+        <>
+          © {new Date().getFullYear()} Fleet Platform. All rights reserved.
+        </>
+      }
+    >
+      <AuthCard
+        title={needsMfa ? 'Verify your identity' : 'Sign in'}
+        description={needsMfa ? 'Enter the code from your authenticator app to continue.' : 'Welcome back — sign in to your organization.'}
+      >
+        {!needsMfa ? (
+          <LoginForm onMfaRequired={() => setNeedsMfa(true)} onSuccess={() => router.push('/dashboard')} />
+        ) : (
+          <MfaVerificationForm onSuccess={() => router.push('/dashboard')} />
+        )}
+      </AuthCard>
+    </AuthLayout>
   );
 }
-
-
