@@ -1,12 +1,8 @@
-// app/api/trips/route.ts
+// app/api/trips/stats/route.ts
 
 import { NextRequest } from 'next/server';
 import { tripController } from '@/modules/trips/controllers/trip.controller';
 
 export async function GET(req: NextRequest) {
-  return tripController.getTrips(req);
-}
-
-export async function POST(req: NextRequest) {
-  return tripController.createTrip(req);
+  return tripController.getTripStats(req);
 }
