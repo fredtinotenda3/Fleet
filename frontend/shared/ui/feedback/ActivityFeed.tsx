@@ -21,7 +21,7 @@ export function ActivityFeed({ activities, className }: ActivityFeedProps) {
     <div className={cn('space-y-4', className)}>
       {activities.map((activity) => (
         <div key={activity.id} className="flex items-start gap-4 text-sm">
-          <div className="h-2 w-2 mt-2 rounded-full bg-primary" />
+          <div className="w-2 h-2 mt-2 rounded-full bg-primary" />
           <div className="flex-1">
             <p>
               <span className="font-medium">{activity.user}</span>{' '}

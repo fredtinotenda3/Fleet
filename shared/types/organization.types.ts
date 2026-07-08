@@ -14,6 +14,8 @@ export interface Organization extends BaseEntity {
   ownerId: string;
   members: OrganizationMember[];
   invites?: OrganizationInvite[];
+  aiSettings?: OrganizationAISettings;
+  reportingPreferences?: OrganizationReportingPreferences;
 }
 
 export interface OrganizationBranding {
@@ -89,3 +91,33 @@ export interface UserOrganization {
   isDefault: boolean;
   joinedAt: Date;
 }
+
+export interface OrganizationAISettings {
+  enabled: boolean;
+  predictiveMaintenance: boolean;
+  fuelFraudDetection: boolean;
+  driverRiskScoring: boolean;
+  expenseAnomalyDetection: boolean;
+  /** 0-1. Below this confidence, AI insights are suppressed from dashboards. */
+  confidenceThreshold: number;
+}
+
+export interface OrganizationReportingPreferences {
+  defaultExportFormat: 'pdf' | 'csv' | 'excel' | 'word';
+  autoWeeklyDigest: boolean;
+  defaultDashboardId?: string;
+}
+
+export const DEFAULT_AI_SETTINGS: OrganizationAISettings = {
+  enabled: false,
+  predictiveMaintenance: true,
+  fuelFraudDetection: true,
+  driverRiskScoring: true,
+  expenseAnomalyDetection: true,
+  confidenceThreshold: 0.7,
+};
+
+export const DEFAULT_REPORTING_PREFERENCES: OrganizationReportingPreferences = {
+  defaultExportFormat: 'pdf',
+  autoWeeklyDigest: false,
+};

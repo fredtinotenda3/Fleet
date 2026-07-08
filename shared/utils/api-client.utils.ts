@@ -1,4 +1,4 @@
-// C:\Users\user\Desktop\Fleet\shared\utils\api-client.utils.ts
+// shared/utils/api-client.utils.ts
 
 import { ApiResponse } from '@/shared/types/common.types';
 
@@ -34,7 +34,9 @@ class ApiClient {
   private defaultTimeout: number;
 
   constructor(config: ApiClientConfigType = {}) {
-    this.baseURL = config.baseURL || '/api';
+    // FIXED: Don't include /api in baseURL since routes already include it
+    // Set baseURL to empty string so paths like '/api/organizations' work correctly
+    this.baseURL = config.baseURL || '';
     this.defaultHeaders = {
       'Content-Type': 'application/json',
       ...config.headers,
@@ -43,7 +45,9 @@ class ApiClient {
   }
 
   private buildURL(path: string, params?: Record<string, string | number | boolean | undefined>): string {
-    const url = new URL(`${this.baseURL}${path}`, window.location.origin);
+    // FIXED: Simply append path to baseURL without double-prefixing
+    const fullPath = `${this.baseURL}${path}`;
+    const url = new URL(fullPath, window.location.origin);
     
     if (params) {
       Object.entries(params).forEach(([key, value]) => {
@@ -100,7 +104,6 @@ class ApiClient {
     }
     
     const data = await response.json();
-    console.log('API Client - raw response:', { url: response.url, data });
     
     // Check if the response has success property
     if (data.success === false) {
@@ -210,9 +213,9 @@ class ApiClient {
   }
 }
 
-// Singleton instance
+// FIXED: Singleton instance with empty baseURL since all API routes already include /api prefix
 export const apiClient = new ApiClient({
-  baseURL: process.env.NEXT_PUBLIC_API_BASE_URL || '/api',
+  baseURL: '',
 });
 
 // Re-export types with renamed names to avoid conflicts

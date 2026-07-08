@@ -1,61 +1,22 @@
-// import { MongoClient, Db } from "mongodb";
+// lib/mongodb.ts
+//
+// FIX: this file used to create its OWN separate MongoClient with its own
+// connection pool (`global._mongoClientPromise`), completely independent
+// from the pooled, monitored client in infrastructure/database/mongodb.ts
+// (`globalThis.__mongoClientPromise`). That meant the app was opening TWO
+// connection pools to the same Atlas cluster — one tuned (maxPoolSize,
+// timeouts, slow-query monitoring) and one untuned with Mongo driver
+// defaults. Every file that imported from here (including
+// lib/authOptions.ts) was going through the untuned, unmonitored pool.
+//
+// This file now just re-exports the single shared client so there's one
+// pool, one set of monitored slow-query logs, and no duplicate handshake
+// overhead on startup.
 
-// // Extend global type declarations
-// declare const global: typeof globalThis & {
-//   _mongoClient?: MongoClient;
-//   _mongoClientPromise?: Promise<MongoClient>;
-// };
-
-// const uri = "mongodb://127.0.0.1:27017";
-// //const uri = "mongodb://127.0.0.1:27017";
-// const options = {};
-
-// if (!global._mongoClientPromise) {
-//   const client = new MongoClient(uri, options);
-//   global._mongoClient = client;
-//   global._mongoClientPromise = client.connect();
-// }
-
-// const clientPromise = global._mongoClientPromise;
-
-// const connectToDatabase: () => Promise<Db> = async () => {
-//   const client = await clientPromise;
-//   return client.db("vehicle-expense-tracker");
-// };
-
-// export default connectToDatabase;
-// export type { Db, MongoClient };
-// export type ConnectToDatabase = typeof connectToDatabase;
-
-// ATLAS
-
-import { MongoClient, Db } from "mongodb";
-
-declare const global: typeof globalThis & {
-  _mongoClient?: MongoClient;
-  _mongoClientPromise?: Promise<MongoClient>;
-};
-
-const uri = process.env.MONGODB_URI;
-if (!uri) {
-  throw new Error("MONGODB_URI environment variable is not defined");
-}
-
-const options = {};
-
-if (!global._mongoClientPromise) {
-  const client = new MongoClient(uri, options);
-  global._mongoClient = client;
-  global._mongoClientPromise = client.connect();
-}
-
-const clientPromise = global._mongoClientPromise;
-
-const connectToDatabase: () => Promise<Db> = async () => {
-  const client = await clientPromise;
-  return client.db("VehicleExpense"); // Ensure DB name matches Atlas
-};
+import connectToDatabase, { clientPromise } from '@/infrastructure/database/mongodb';
+import type { Db, MongoClient } from 'mongodb';
 
 export default connectToDatabase;
+export { clientPromise };
 export type { Db, MongoClient };
 export type ConnectToDatabase = typeof connectToDatabase;

@@ -2,7 +2,8 @@
 
 import { NextRequest } from 'next/server';
 import { billingController } from '@/modules/billing/controllers/billing.controller';
+import { withAuth } from '@/server/middleware/with-auth';
 
-export async function GET(req: NextRequest) {
-  return billingController.listInvoices(req);
-}
+export const GET = withAuth(
+  (req: NextRequest) => billingController.listInvoices(req)
+);

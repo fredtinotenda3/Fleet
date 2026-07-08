@@ -2,14 +2,19 @@
 
 export const CURRENCY_CONFIG = {
   locale: 'en-US',
-  currency: 'USD',
+  currency: 'USD' as string,
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 } as const;
 
 export function formatCurrency(
   amount: number,
-  options: Partial<typeof CURRENCY_CONFIG> = {}
+  options: Partial<{
+    locale: string;
+    currency: string;
+    minimumFractionDigits: number;
+    maximumFractionDigits: number;
+  }> = {}
 ): string {
   const config = { ...CURRENCY_CONFIG, ...options };
   return new Intl.NumberFormat(config.locale, {

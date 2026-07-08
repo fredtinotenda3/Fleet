@@ -1,8 +1,20 @@
-﻿// Fleet Design System
+// Design System - Primitives
 export * from './primitives';
+
+// Data Display
 export * from './data-display';
+
+// Feedback
 export * from './feedback';
-export * from './navigation';
+
+// Forms
 export * from './forms';
-export * from './charts';
+
+// Layout
 export * from './layout';
+
+// Navigation
+export * from './navigation';
+
+// Auth
+export * from './auth';

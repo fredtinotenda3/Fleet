@@ -1,3 +1,8 @@
 ﻿export { Input } from "./input"
 export { Label } from "./label"
+export { Select, SelectGroup, SelectValue, SelectTrigger, SelectContent, SelectLabel, SelectItem, SelectSeparator, SelectScrollUpButton, SelectScrollDownButton } from "./select"
+export { Textarea } from "./textarea"
+export { Checkbox } from "./checkbox"
+export { Switch } from "./switch"
+export { Toggle, toggleVariants } from "./toggle"
 export { Autocomplete } from "./Autocomplete"

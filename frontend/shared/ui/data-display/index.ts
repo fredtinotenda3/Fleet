@@ -1,6 +1,9 @@
-﻿export { Badge } from './Badge';
-export { Card } from './Card';
-export { Table } from './Table';
-export { DataGrid } from './DataGrid';
-export { Timeline } from './Timeline';
-export { StatisticCards } from './StatisticCards';
+﻿export { Badge, badgeVariants } from "./badge"
+export { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./card"
+export { Table, TableHeader, TableBody, TableFooter, TableHead, TableRow, TableCell, TableCaption } from "./table"
+export { Avatar, AvatarImage, AvatarFallback } from "./avatar"
+export { Calendar } from "./calendar"
+export { Separator } from "./separator"
+export { DataGrid } from "./DataGrid"
+export { Timeline } from "./Timeline"
+export { StatisticCards } from "./StatisticCards"

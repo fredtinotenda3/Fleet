@@ -47,6 +47,29 @@ export class OrganizationRepository extends BaseRepository<Organization> {
       .toArray();
   }
 
+  async updateMemberStatus(
+    organizationId: string,
+    userId: string,
+    status: 'active' | 'suspended'
+  ): Promise<boolean> {
+    if (!ObjectId.isValid(organizationId)) return false;
+    const collection = await this.getCollection();
+    const result = await collection.updateOne(
+      {
+        _id: new ObjectId(organizationId),
+        isDeleted: { $ne: true },
+        'members.userId': userId,
+      } as unknown as Filter<Organization>,
+      {
+        $set: {
+          'members.$.status': status,
+          updatedAt: new Date(),
+        },
+      }
+    );
+    return result.modifiedCount > 0;
+  }
+
   async addMember(
     organizationId: string,
     member: OrganizationMember
@@ -179,9 +202,52 @@ export class OrganizationRepository extends BaseRepository<Organization> {
           'invites.$[elem].status': 'cancelled',
           updatedAt: new Date(),
         },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        arrayFilters: [{ 'elem.token': token }],
-      } as any
+      } as any,
+      { arrayFilters: [{ 'elem.token': token }] }
+    );
+    return result.modifiedCount > 0;
+  }
+
+  /**
+   * Extends a pending invite's expiry and returns the (still pending)
+   * invite for the caller to re-queue the notification email with.
+   * Does not rotate the token — the original invite link keeps working,
+   * which is what "resend" should mean (not "invalidate and reissue").
+   */
+  async touchInviteExpiry(
+    organizationId: string,
+    token: string,
+    newExpiresAt: Date
+  ): Promise<boolean> {
+    if (!ObjectId.isValid(organizationId)) return false;
+    const collection = await this.getCollection();
+    const result = await collection.updateOne(
+      {
+        _id: new ObjectId(organizationId),
+        isDeleted: { $ne: true },
+      } as unknown as Filter<Organization>,
+      {
+        $set: {
+          'invites.$[elem].expiresAt': newExpiresAt,
+          updatedAt: new Date(),
+        },
+      } as any,
+      { arrayFilters: [{ 'elem.token': token, 'elem.status': 'pending' }] }
+    );
+    return result.modifiedCount > 0;
+  }
+
+  async declineInviteByToken(token: string): Promise<boolean> {
+    const collection = await this.getCollection();
+    const result = await collection.updateOne(
+      {
+        isDeleted: { $ne: true },
+        invites: { $elemMatch: { token, status: 'pending' } },
+      } as unknown as Filter<Organization>,
+      {
+        $set: { 'invites.$[elem].status': 'cancelled', updatedAt: new Date() },
+      } as any,
+      { arrayFilters: [{ 'elem.token': token }] }
     );
     return result.modifiedCount > 0;
   }
@@ -231,7 +297,6 @@ export class OrganizationRepository extends BaseRepository<Organization> {
         $inc: { 'subscription.usedSeats': 1 } as any,
       },
       {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         arrayFilters: [{ 'elem.token': token }],
         returnDocument: 'after',
       } as any
@@ -251,7 +316,6 @@ export class OrganizationRepository extends BaseRepository<Organization> {
       } as Filter<Organization>,
       {
         $set: { 'invites.$[elem].status': 'expired' },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any,
       {
         arrayFilters: [{ 'elem.status': 'pending', 'elem.expiresAt': { $lt: new Date() } }],

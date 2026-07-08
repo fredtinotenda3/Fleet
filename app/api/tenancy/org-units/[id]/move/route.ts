@@ -5,14 +5,12 @@ import { tenancyController } from '@/modules/tenancy/controllers/tenancy.control
 import { withAuth } from '@/server/middleware/with-auth';
 import { Permission } from '@/server/permissions/roles';
 
-interface RouteParams {
-  params: Promise<{ id: string }>;
-}
+type Ctx = { params: Promise<{ id: string }> };
 
-export const PUT = withAuth<RouteParams>(
-  async (req: NextRequest, _ctx, { params }) => {
+export const PATCH = withAuth<Ctx>(
+  async (req: NextRequest, _context, { params }) => {
     const { id } = await params;
     return tenancyController.moveOrgUnit(req, id);
   },
-  { permission: Permission.ORG_UNIT_MANAGE }
+  { permission: Permission.ORG_UNIT_MOVE }
 );

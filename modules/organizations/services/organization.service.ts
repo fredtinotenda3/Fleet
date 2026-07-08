@@ -160,6 +160,134 @@ export class OrganizationService {
     return updated;
   }
 
+  async updateContactDetails(
+    organizationId: string,
+    data: import('@/shared/types/organization.settings-addendum').OrganizationContactDetails,
+    tenantId: string,
+    userId: string
+  ): Promise<Organization> {
+    const before = await this.getOrganization(organizationId, tenantId);
+    const updated = await this.repo.update(organizationId, { contact: data } as any, tenantId, userId, true);
+    if (!updated) throw new NotFoundError('Organization not found');
+    await auditLog.logUpdate(userId, tenantId, 'organization', organizationId, before, updated);
+    return updated;
+  }
+
+  async updateBusinessHours(
+    organizationId: string,
+    data: import('@/shared/types/organization.settings-addendum').OrganizationBusinessHours,
+    tenantId: string,
+    userId: string
+  ): Promise<Organization> {
+    const before = await this.getOrganization(organizationId, tenantId);
+    const updated = await this.repo.update(organizationId, { businessHours: data } as any, tenantId, userId, true);
+    if (!updated) throw new NotFoundError('Organization not found');
+    await auditLog.logUpdate(userId, tenantId, 'organization', organizationId, before, updated);
+    return updated;
+  }
+
+  async updateTaxSettings(
+    organizationId: string,
+    data: import('@/shared/types/organization.settings-addendum').OrganizationTaxSettings,
+    tenantId: string,
+    userId: string
+  ): Promise<Organization> {
+    const before = await this.getOrganization(organizationId, tenantId);
+    const updated = await this.repo.update(organizationId, { taxSettings: data } as any, tenantId, userId, true);
+    if (!updated) throw new NotFoundError('Organization not found');
+    await auditLog.logUpdate(userId, tenantId, 'organization', organizationId, before, updated);
+    return updated;
+  }
+
+  async updateLogo(
+    organizationId: string,
+    logoUrl: string,
+    tenantId: string,
+    userId: string
+  ): Promise<Organization> {
+    const org = await this.getOrganization(organizationId, tenantId);
+    const updated = await this.repo.update(
+      organizationId,
+      { branding: { ...org.branding, logoUrl } },
+      tenantId,
+      userId,
+      true
+    );
+    if (!updated) throw new NotFoundError('Organization not found');
+    await auditLog.log({
+      action: 'ORGANIZATION_LOGO_UPDATED',
+      userId, tenantId, entityType: 'organization', entityId: organizationId,
+    });
+    return updated;
+  }
+
+  async suspendMember(
+    organizationId: string,
+    memberId: string,
+    userId: string,
+    tenantId: string
+  ): Promise<void> {
+    const organization = await this.getOrganization(organizationId, tenantId);
+    const member = organization.members.find((m) => m.userId === memberId);
+    if (!member) {
+      throw new NotFoundError('Member not found');
+    }
+    if (member.role === 'organization_owner') {
+      throw new AppError('Cannot suspend the organization owner', 'CANNOT_SUSPEND_OWNER', 400);
+    }
+    if (member.status === 'suspended') {
+      throw new ConflictError('Member is already suspended');
+    }
+
+    const updated = await this.repo.updateMemberStatus(organizationId, memberId, 'suspended');
+    if (!updated) {
+      throw new AppError('Failed to suspend member', 'MEMBER_SUSPEND_FAILED', 500);
+    }
+
+    await auditLog.log({
+      action: 'MEMBER_SUSPENDED',
+      userId,
+      tenantId,
+      entityType: 'organization',
+      entityId: organizationId,
+      metadata: { memberId, email: member.email },
+    });
+
+    webSocketManager.emitToUser(memberId, 'organization:member_suspended', { organizationId });
+  }
+
+  async restoreMember(
+    organizationId: string,
+    memberId: string,
+    userId: string,
+    tenantId: string
+  ): Promise<void> {
+    const organization = await this.getOrganization(organizationId, tenantId);
+    const member = organization.members.find((m) => m.userId === memberId);
+    if (!member) {
+      throw new NotFoundError('Member not found');
+    }
+    if (member.status !== 'suspended') {
+      throw new ConflictError('Member is not currently suspended');
+    }
+
+    const updated = await this.repo.updateMemberStatus(organizationId, memberId, 'active');
+    if (!updated) {
+      throw new AppError('Failed to restore member', 'MEMBER_RESTORE_FAILED', 500);
+    }
+
+    await auditLog.log({
+      action: 'MEMBER_RESTORED',
+      userId,
+      tenantId,
+      entityType: 'organization',
+      entityId: organizationId,
+      metadata: { memberId, email: member.email },
+    });
+
+    webSocketManager.emitToUser(memberId, 'organization:member_restored', { organizationId });
+  }
+
   async addMember(
     organizationId: string,
     email: string,
@@ -240,6 +368,61 @@ export class OrganizationService {
     });
 
     return invite;
+  }
+
+  async resendInvite(
+    organizationId: string,
+    token: string,
+    userId: string,
+    tenantId: string
+  ): Promise<void> {
+    const organization = await this.getOrganization(organizationId, tenantId);
+    const invite = (organization.invites || []).find(
+      (i) => i.token === token && i.status === 'pending'
+    );
+    if (!invite) {
+      throw new NotFoundError('Pending invitation not found');
+    }
+
+    const newExpiresAt = new Date();
+    newExpiresAt.setDate(newExpiresAt.getDate() + INVITE_EXPIRY_DAYS);
+
+    const touched = await this.repo.touchInviteExpiry(organizationId, token, newExpiresAt);
+    if (!touched) {
+      throw new AppError('Failed to resend invitation', 'INVITE_RESEND_FAILED', 500);
+    }
+
+    await queueService.addJob(JobType.SEND_NOTIFICATION, {
+      type: JobType.SEND_NOTIFICATION,
+      payload: {
+        type: 'organization_invite',
+        email: invite.email,
+        data: {
+          organizationName: organization.name,
+          role: invite.role,
+          token,
+          invitedBy: invite.invitedBy,
+        },
+      },
+      tenantId,
+      userId,
+    });
+
+    await auditLog.log({
+      action: 'INVITE_RESENT',
+      userId,
+      tenantId,
+      entityType: 'organization',
+      entityId: organizationId,
+      metadata: { email: invite.email, token },
+    });
+  }
+
+  async declineInvite(token: string): Promise<void> {
+    const declined = await this.repo.declineInviteByToken(token);
+    if (!declined) {
+      throw new NotFoundError('Invalid or already resolved invitation');
+    }
   }
 
   async revokeInvite(
@@ -400,6 +583,71 @@ export class OrganizationService {
         400
       );
     }
+  }
+
+  async getStatistics(
+    organizationId: string,
+    tenantId: string
+  ): Promise<import('@/frontend/modules/organizations/types').OrganizationStatistics> {
+    const organization = await this.getOrganization(organizationId, tenantId);
+
+    const activeUsers = organization.members.filter((m) => m.status === 'active').length;
+    const totalUsers = organization.members.length;
+    const pendingInvites = (organization.invites || []).filter((i) => i.status === 'pending').length;
+
+    // Cross-module counts are best-effort via dynamic import to avoid a
+    // hard compile-time dependency from the organizations module onto
+    // vehicles/expenses. Each is wrapped so a missing/renamed method on
+    // either repository degrades to 0 rather than failing the whole
+    // dashboard.
+    let vehicleCount = 0;
+    let activeVehicles = 0;
+    let totalExpensesThisMonth = 0;
+    let totalExpensesLastMonth = 0;
+
+    try {
+      const { vehicleRepository } = await import('@/modules/vehicles/repositories/vehicle.repository');
+      vehicleCount = await vehicleRepository.count({}, tenantId);
+      activeVehicles = await vehicleRepository.count({ status: 'active' } as any, tenantId);
+    } catch {
+      // vehicles module unavailable in this context; leave at 0
+    }
+
+    try {
+      const { expenseRepository } = await import('@/modules/expenses/repositories/expense.repository');
+      const now = new Date();
+      const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+
+      const thisMonthExpenses = await expenseRepository.findMany(
+        { date: { $gte: startOfThisMonth } } as any,
+        tenantId
+      );
+      const lastMonthExpenses = await expenseRepository.findMany(
+        { date: { $gte: startOfLastMonth, $lt: startOfThisMonth } } as any,
+        tenantId
+      );
+      totalExpensesThisMonth = thisMonthExpenses.reduce((sum: number, e: any) => sum + (e.amount || 0), 0);
+      totalExpensesLastMonth = lastMonthExpenses.reduce((sum: number, e: any) => sum + (e.amount || 0), 0);
+    } catch {
+      // expenses module unavailable in this context; leave at 0
+    }
+
+    return {
+      activeUsers,
+      totalUsers,
+      pendingInvites,
+      vehicleCount,
+      activeVehicles,
+      totalExpensesThisMonth,
+      totalExpensesLastMonth,
+      storageUsedGb: 0, // wire to infrastructure/storage usage tracking when available
+      storageLimitGb: organization.features.maxStorage,
+      apiCallsThisMonth: 0, // wire to API key usage tracking when available
+      apiCallLimit: 10_000,
+      seatsUsed: organization.subscription.usedSeats,
+      seatsTotal: organization.subscription.seats,
+    };
   }
 
   private generateSlug(name: string): string {

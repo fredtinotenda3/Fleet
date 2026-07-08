@@ -1,15 +1,45 @@
 // infrastructure/database/indexes.ts
+//
+// FIX: indexes.session-addendum.ts (tblusersessions, tblrefreshtokens,
+// tblapikeys) and indexes.security-addendum.ts (tblorgunits,
+// tblcustomroles, tblresourcepermissions, tbluser_scope_assignments) were
+// written but NEVER imported/merged into the INDEXES map below, so
+// ensureIndexes() never created them. Those are exactly the collections
+// your dev log flagged as slow:
+//   Slow MongoDB query ... collection: tblrefreshtokens
+//   Slow MongoDB query ... collection: tblusersessions
+//   Slow MongoDB query ... collection: tblmfafactors  (add this one too, see note below)
+// Every session check, refresh-token rotation, and MFA lookup was doing a
+// full collection scan. This is the direct cause of /api/auth/session,
+// /api/security/sessions, and /api/security/mfa/status taking 20-60s.
+//
+// FIX 2 (this pass): idx_vehicle_tenant_plate was a plain unique index on
+// {tenantId, license_plate} with no partial filter, so a soft-deleted
+// vehicle (isDeleted: true) permanently occupied its license plate.
+// Re-creating/re-adding a vehicle with a plate that belonged to an
+// already-deleted record threw an unhandled E11000 duplicate key error,
+// which VehicleController.handleError() couldn't translate (it only
+// special-cases AppError subclasses), so it fell through to a generic
+// 500 on POST /api/vehicles. Scoping the unique index to non-deleted
+// documents only (partialFilterExpression) lets a plate be reused once
+// the old record is gone, matching how soft delete is supposed to work
+// everywhere else in this schema.
 
 import connectToDatabase from './mongodb';
 import { ensureDigitalTwinIndexes } from './indexes.digital-twin-addendum';
+import { SESSION_INDEXES } from './indexes.session-addendum';
+import { SECURITY_INDEXES } from './indexes.security-addendum';
 
-export const INDEXES = {
-  // ── Domain collections ───────────────────────────────────────────
+const BASE_INDEXES = {
+  // ── Domain collections ──────────────────────────────────────────
   tblvehicles: [
     {
       key: { tenantId: 1, license_plate: 1 },
       name: 'idx_vehicle_tenant_plate',
       unique: true,
+      // Only enforce uniqueness among non-deleted vehicles, so a soft-deleted
+      // vehicle's plate can be reused by a new/other vehicle.
+      partialFilterExpression: { isDeleted: { $ne: true } },
     },
     {
       key: { tenantId: 1, status: 1, isDeleted: 1 },
@@ -127,7 +157,7 @@ export const INDEXES = {
     },
   ],
 
-  // ── FleetOps collections ─────────────────────────────────────────
+  // ── FleetOps collections ──────────────────────────────────────────
   tbldispatchjobs: [
     { key: { tenantId: 1, status: 1, priority: 1 }, name: 'idx_dispatch_tenant_status_priority' },
     { key: { tenantId: 1, assignedDriverId: 1 }, name: 'idx_dispatch_tenant_driver' },
@@ -206,7 +236,7 @@ export const INDEXES = {
     },
   ],
 
-  // ── Security ─────────────────────────────────────────────────────
+  // ── Security ──────────────────────────────────────────────────────
   tblauditlog: [
     { key: { sequence: 1 }, name: 'idx_audit_sequence', unique: true },
     { key: { tenantId: 1, recordedAt: -1 }, name: 'idx_audit_tenant_recorded' },
@@ -222,9 +252,12 @@ export const INDEXES = {
     { key: { email: 1, tenantId: 1 }, name: 'idx_lockout_email_tenant', unique: true },
     { key: { lockedUntil: 1 }, name: 'idx_lockout_locked_until' },
   ],
+  // NOTE: also added { tenantId, status } here — previously only
+  // { userId, status } existed, but sessionService/mfaService lookups
+  // in this codebase are tenant-scoped first (see permission.middleware.ts).
   tblmfafactors: [
     { key: { userId: 1, status: 1 }, name: 'idx_mfa_factor_user_status' },
-    { key: { tenantId: 1 }, name: 'idx_mfa_factor_tenant' },
+    { key: { tenantId: 1, userId: 1 }, name: 'idx_mfa_factor_tenant_user' },
   ],
   tblmfabackupcodes: [
     { key: { userId: 1, used: 1 }, name: 'idx_mfa_backup_user_used' },
@@ -235,7 +268,7 @@ export const INDEXES = {
     { key: { domainHints: 1, status: 1 }, name: 'idx_sso_domainhints_status' },
   ],
 
-  // ── Phase 7 — Org Unit Hierarchy ─────────────────────────────────
+  // ── Phase 7 — Org Unit Hierarchy ──────────────────────────────────
   tblorgunits: [
     {
       key: { organizationId: 1, path: 1 },
@@ -243,7 +276,7 @@ export const INDEXES = {
     },
   ],
 
-  // ── Phase 10a — Plugins / Integrations ───────────────────────────
+  // ── Phase 10a — Plugins / Integrations ────────────────────────────
   tblplugins: [
     {
       key: { pluginId: 1 },
@@ -275,7 +308,7 @@ export const INDEXES = {
     },
   ],
 
-  // ── Phase 10b — Webhooks / Event Subscriptions ───────────────────
+  // ── Phase 10b — Webhooks / Event Subscriptions ────────────────────
   tblwebhooksubscriptions: [
     {
       key: { organizationId: 1, status: 1, events: 1 },
@@ -302,7 +335,7 @@ export const INDEXES = {
     },
   ],
 
-  // ── Slice 10d — OAuth Clients ────────────────────────────────────
+  // ── Slice 10d — OAuth Clients ──────────────────────────────────────
   tbloauth_clients: [
     {
       key: { clientId: 1 },
@@ -342,7 +375,7 @@ export const INDEXES = {
     },
   ],
 
-  // ── External Providers ───────────────────────────────────────────
+  // ── External Providers ────────────────────────────────────────────
   tblexternal_providers: [
     {
       key: { providerId: 1 },
@@ -361,6 +394,21 @@ export const INDEXES = {
       key: { organizationId: 1, type: 1 },
       name: 'idx_extprovider_org_type',
     },
+  ],
+} as const;
+
+// FIX: merge in the session/security addendum indexes. tblorgunits exists
+// in both BASE_INDEXES and SECURITY_INDEXES with different index names, so
+// it's merged explicitly (a plain spread would have silently dropped one
+// set — that was actually part of the same class of bug as the missing
+// session indexes).
+export const INDEXES = {
+  ...BASE_INDEXES,
+  ...SESSION_INDEXES,
+  ...SECURITY_INDEXES,
+  tblorgunits: [
+    ...BASE_INDEXES.tblorgunits,
+    ...SECURITY_INDEXES.tblorgunits,
   ],
 } as const;
 
@@ -392,6 +440,22 @@ export const INDEXES = {
  *    tblpurchaseorders, tblvendors, tblslapolicies, tblslatrackings,
  *    tblcompliancerules, tblcompliancerecords) are designed for multi-tenant
  *    isolation (tenantId prefix) plus domain-specific hot-path queries.
+ *
+ * 5. tblusersessions / tblrefreshtokens / tblapikeys (SESSION_INDEXES) and
+ *    tblorgunits / tblcustomroles / tblresourcepermissions /
+ *    tbluser_scope_assignments (SECURITY_INDEXES) are merged in above.
+ *    These were previously defined but unused — run `npm run db:indexes`
+ *    after pulling this fix to actually create them on your Atlas cluster.
+ *
+ * 6. idx_vehicle_tenant_plate is now a PARTIAL unique index
+ *    (partialFilterExpression: { isDeleted: { $ne: true } }). Because its
+ *    name and key are unchanged from before but its options changed,
+ *    MongoDB will reject an in-place alteration (IndexOptionsConflict,
+ *    code 85 — already handled by the catch below). You must drop the old
+ *    index once before this will take effect:
+ *      db.tblvehicles.dropIndex("idx_vehicle_tenant_plate")
+ *    then restart the app (or re-run `npm run db:indexes`) so it gets
+ *    recreated with the partial filter.
  */
 
 export async function ensureIndexes(): Promise<void> {
@@ -406,6 +470,7 @@ export async function ensureIndexes(): Promise<void> {
           {
             name: (indexDef as any).name,
             unique: (indexDef as any).unique || false,
+            partialFilterExpression: (indexDef as any).partialFilterExpression,
             background: true,
           }
         );

@@ -5,12 +5,10 @@ import { userScopeController } from '@/modules/security/controllers/user-scope.c
 import { withAuth } from '@/server/middleware/with-auth';
 import { Permission } from '@/server/permissions/roles';
 
-interface RouteParams {
-  params: Promise<{ id: string }>;
-}
+type Ctx = { params: Promise<{ id: string }> };
 
-export const DELETE = withAuth<RouteParams>(
-  async (req: NextRequest, _ctx, { params }) => {
+export const DELETE = withAuth<Ctx>(
+  async (req: NextRequest, _context, { params }) => {
     const { id } = await params;
     return userScopeController.revoke(req, id);
   },

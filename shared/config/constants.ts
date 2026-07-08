@@ -4,7 +4,8 @@ export const APP_CONFIG = {
   name: 'Fleet Management System',
   version: process.env.npm_package_version || '2.0.0',
   environment: process.env.NODE_ENV || 'development',
-  apiBaseUrl: process.env.NEXT_PUBLIC_API_BASE_URL || '/api',
+  // FIXED: Changed from '/api' to '' since all API routes already include /api prefix
+  apiBaseUrl: process.env.NEXT_PUBLIC_API_BASE_URL || '',
 } as const;
 
 export const PAGINATION_CONFIG = {
@@ -90,50 +91,51 @@ export const STORAGE_KEYS = {
   userPreferences: 'user-preferences',
 } as const;
 
+// FIXED: All API endpoints already include /api prefix
 export const API_ENDPOINTS = {
   auth: {
-    login: '/auth/login',
-    register: '/auth/register',
-    logout: '/auth/logout',
-    session: '/auth/session',
+    login: '/api/auth/login',
+    register: '/api/auth/register',
+    logout: '/api/auth/logout',
+    session: '/api/auth/session',
   },
   vehicles: {
-    base: '/vehicles',
-    details: (id: string) => `/vehicles/${id}`,
-    stats: '/vehicles/stats',
+    base: '/api/vehicles',
+    details: (id: string) => `/api/vehicles/${id}`,
+    stats: '/api/vehicles/stats',
   },
   expenses: {
-    base: '/expenses',
-    details: (id: string) => `/expenses/${id}`,
-    types: '/expense-types',
+    base: '/api/expenses',
+    details: (id: string) => `/api/expenses/${id}`,
+    types: '/api/expense-types',
   },
   fuel: {
-    base: '/fuellogs',
-    details: (id: string) => `/fuellogs/${id}`,
+    base: '/api/fuellogs',
+    details: (id: string) => `/api/fuellogs/${id}`,
   },
   maintenance: {
-    base: '/reminders',
-    details: (id: string) => `/reminders/${id}`,
+    base: '/api/reminders',
+    details: (id: string) => `/api/reminders/${id}`,
   },
   trips: {
-    base: '/trips',
-    details: (id: string) => `/trips/${id}`,
+    base: '/api/trips',
+    details: (id: string) => `/api/trips/${id}`,
   },
   meter: {
-    base: '/meterlogs',
-    details: (id: string) => `/meterlogs/${id}`,
-    last: '/meterlogs/last',
+    base: '/api/meterlogs',
+    details: (id: string) => `/api/meterlogs/${id}`,
+    last: '/api/meterlogs/last',
   },
-  units: '/units',
+  units: '/api/units',
   analytics: {
-    dashboard: '/analytics/dashboard',
-    fleet: '/analytics/fleet',
-    expenses: '/analytics/expenses',
-    fuel: '/analytics/fuel',
+    dashboard: '/api/analytics/dashboard',
+    fleet: '/api/analytics/fleet',
+    expenses: '/api/analytics/expenses',
+    fuel: '/api/analytics/fuel',
   },
   reports: {
-    base: '/reports',
-    export: '/reports/export',
-    schedule: '/reports/schedule',
+    base: '/api/reports',
+    export: '/api/reports/export',
+    schedule: '/api/reports/schedule',
   },
 } as const;

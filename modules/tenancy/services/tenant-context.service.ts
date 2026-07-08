@@ -24,6 +24,22 @@ export interface TenantContext {
 
 const ORG_WIDE_ROLES = ['organization_owner', 'fleet_manager'];
 
+/**
+ * Sentinel tenant ids that mean "no specific organization" (super admin /
+ * platform-level / dev seed data) rather than an actual document in
+ * tblorganizations. This mirrors `isSuperAdminTenant()` in
+ * modules/vehicles/repositories/vehicle.repository.ts and
+ * BaseRepository.getTenantFilter() in server/repositories/base.repository.ts
+ * â€” those already treat these three values as "skip tenant scoping".
+ * resolveContext() previously did NOT apply this exemption before doing
+ * its organization lookup, so any request from a super-admin/dev session
+ * (tenantId === 'default') threw NotFoundError('Organization not found')
+ * and every endpoint that goes through resolveContext() 404'd, even
+ * though the vehicles collection has real data and other endpoints
+ * (stats, search) that don't call resolveContext() worked fine.
+ */
+const SENTINEL_TENANT_IDS = new Set(['default', 'system', 'super_admin']);
+
 export class TenantContextService {
   /**
    * Resolves the full multi-tenant context for a user within an
@@ -44,14 +60,21 @@ export class TenantContextService {
     isSuperAdmin: boolean,
     activeOrgUnitId?: string
   ): Promise<TenantContext> {
-    const organization = await organizationRepository.findById(tenantId, tenantId, false, true);
-    if (!organization) {
-      throw new NotFoundError('Organization not found');
+    const isSentinelTenant = isSuperAdmin || SENTINEL_TENANT_IDS.has(tenantId);
+
+    let organizationName = tenantId;
+
+    if (!isSentinelTenant) {
+      const organization = await organizationRepository.findById(tenantId, tenantId, false, true);
+      if (!organization) {
+        throw new NotFoundError('Organization not found');
+      }
+      organizationName = organization.name;
     }
 
     let accessibleOrgUnitIds: string[] | null = null;
 
-    if (!isSuperAdmin && !roles.some((r) => ORG_WIDE_ROLES.includes(r))) {
+    if (!isSentinelTenant && !roles.some((r) => ORG_WIDE_ROLES.includes(r))) {
       const assignments = await userScopeAssignmentRepository.findByUser(userId, tenantId);
       const ids = new Set<string>();
 
@@ -65,7 +88,7 @@ export class TenantContextService {
     }
 
     let activeOrgUnitPath: string[] | undefined;
-    if (activeOrgUnitId) {
+    if (activeOrgUnitId && !isSentinelTenant) {
       const unit = await orgUnitRepository.findById(activeOrgUnitId, tenantId);
       if (unit) {
         activeOrgUnitPath = [...unit.path, unit._id!];
@@ -74,7 +97,7 @@ export class TenantContextService {
 
     return {
       organizationId: tenantId,
-      organizationName: organization.name,
+      organizationName,
       accessibleOrgUnitIds,
       activeOrgUnitId,
       activeOrgUnitPath,

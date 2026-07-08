@@ -71,6 +71,28 @@ export class OrganizationController {
     }
   }
 
+  async suspendMember(req: NextRequest, id: string, memberId: string) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const userId = await getUserIdFromRequest(req);
+      await organizationService.suspendMember(id, memberId, userId, tenantId);
+      return successResponse({ message: 'Member suspended successfully' });
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async restoreMember(req: NextRequest, id: string, memberId: string) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const userId = await getUserIdFromRequest(req);
+      await organizationService.restoreMember(id, memberId, userId, tenantId);
+      return successResponse({ message: 'Member restored successfully' });
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
   async inviteMember(req: NextRequest, id: string) {
     try {
       const tenantId = await getTenantFromRequest(req);
@@ -79,6 +101,27 @@ export class OrganizationController {
 
       const invite = await organizationService.addMember(id, email, role, userId, tenantId);
       return createdResponse(invite);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async resendInvite(req: NextRequest, id: string, token: string) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const userId = await getUserIdFromRequest(req);
+      await organizationService.resendInvite(id, token, userId, tenantId);
+      return successResponse({ message: 'Invitation resent' });
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async declineInvite(req: NextRequest) {
+    try {
+      const { token } = await req.json();
+      await organizationService.declineInvite(token);
+      return successResponse({ message: 'Invitation declined' });
     } catch (error) {
       return this.handleError(error);
     }
@@ -133,6 +176,87 @@ export class OrganizationController {
 
       await organizationService.updateMemberRole(id, memberId, role, userId, tenantId);
       return successResponse({ message: 'Member role updated successfully' });
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async getStatistics(req: NextRequest, id: string) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const stats = await organizationService.getStatistics(id, tenantId);
+      return successResponse(stats);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async updateContactDetails(req: NextRequest, id: string) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const userId = await getUserIdFromRequest(req);
+      const body = await req.json();
+      const { contactDetailsUpdateSchema } = await import('@/shared/validations/organization.settings-addendum.schema');
+      const parsed = contactDetailsUpdateSchema.safeParse(body);
+      if (!parsed.success) return errorResponse('Invalid contact details', 'VALIDATION_ERROR', 400, parsed.error.flatten());
+
+      const org = await organizationService.updateContactDetails(id, parsed.data, tenantId, userId);
+      return successResponse(org);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async updateBusinessHours(req: NextRequest, id: string) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const userId = await getUserIdFromRequest(req);
+      const body = await req.json();
+      const { businessHoursUpdateSchema } = await import('@/shared/validations/organization.settings-addendum.schema');
+      const parsed = businessHoursUpdateSchema.safeParse(body);
+      if (!parsed.success) return errorResponse('Invalid business hours', 'VALIDATION_ERROR', 400, parsed.error.flatten());
+
+      const org = await organizationService.updateBusinessHours(id, parsed.data, tenantId, userId);
+      return successResponse(org);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async updateTaxSettings(req: NextRequest, id: string) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const userId = await getUserIdFromRequest(req);
+      const body = await req.json();
+      const { taxSettingsUpdateSchema } = await import('@/shared/validations/organization.settings-addendum.schema');
+      const parsed = taxSettingsUpdateSchema.safeParse(body);
+      if (!parsed.success) return errorResponse('Invalid tax settings', 'VALIDATION_ERROR', 400, parsed.error.flatten());
+
+      const org = await organizationService.updateTaxSettings(id, parsed.data, tenantId, userId);
+      return successResponse(org);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async updateLogo(req: NextRequest, id: string) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const userId = await getUserIdFromRequest(req);
+      const formData = await req.formData();
+      const file = formData.get('logo') as File | null;
+      if (!file) return errorResponse('No logo file provided', 'VALIDATION_ERROR', 400);
+
+      const { storageService } = await import('@/infrastructure/storage/storage.service');
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const { url } = await storageService.upload({
+        buffer,
+        contentType: file.type,
+        key: `organizations/${tenantId}/logo-${Date.now()}`,
+      });
+
+      const org = await organizationService.updateLogo(id, url, tenantId, userId);
+      return successResponse(org);
     } catch (error) {
       return this.handleError(error);
     }

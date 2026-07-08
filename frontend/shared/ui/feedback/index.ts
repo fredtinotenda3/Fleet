@@ -1,7 +1,7 @@
-﻿export { Skeleton } from './skeleton';
-export { Dialog } from './dialog';
-export { Modal } from './Modal';
-export { Toast } from './Toast';
-export { NotificationCenter } from './NotificationCenter';
-export { ActivityFeed } from './ActivityFeed';
-export { Spinner } from './Spinner';
+export { Skeleton } from "./skeleton"
+export { Spinner } from "./spinner"
+export { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription, DialogClose } from "./dialog"
+export { Alert, AlertTitle, AlertDescription } from "./alert"
+export { Progress } from "./progress"
+export { NotificationCenter } from "./NotificationCenter"
+export { ActivityFeed } from "./ActivityFeed"

@@ -2,13 +2,21 @@
 
 import { DefaultOptions, QueryClient } from '@tanstack/react-query';
 
+// FIX: staleTime:0 + refetchOnWindowFocus:true + refetchOnMount:true meant
+// every single query, on every page, refetched every time you switched
+// windows/tabs or mounted a component — even if the data was fetched 2
+// seconds ago. Combined with slow backend routes, this created a visible
+// "everything reloads constantly" feel. staleTime > 0 means React Query
+// will just serve cached data without re-hitting the network within that
+// window; refetchOnWindowFocus:false stops the background refetch on
+// alt-tab (the classic cause of "why is /api/organizations firing again").
 export const defaultQueryOptions: DefaultOptions = {
   queries: {
-    staleTime: 0,
+    staleTime: 60 * 1000, // 1 minute — safe default, override per-query if you need fresher data
     gcTime: 1000 * 60 * 5, // 5 minutes
     retry: 1,
-    refetchOnWindowFocus: true,
-    refetchOnMount: true,
+    refetchOnWindowFocus: false,
+    refetchOnMount: true, // still fetches if there's no cached data yet, or cache is stale
     refetchOnReconnect: true,
   },
   mutations: {

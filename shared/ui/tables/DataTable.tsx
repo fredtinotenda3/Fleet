@@ -21,10 +21,10 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table';
-import { Button } from '@/components/ui/button';
+} from '@/frontend/shared/ui/data-display/table'
+import { Button } from '@/frontend/shared/ui/primitives/button'
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
-import { Skeleton } from '@/components/ui/skeleton';
+import { Skeleton } from '@/frontend/shared/ui/feedback/skeleton'
 
 export interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[];
@@ -77,13 +77,13 @@ export function DataTable<TData, TValue>({
 
   if (isLoading) {
     return (
-      <div className="rounded-md border">
+      <div className="border rounded-md">
         <Table>
           <TableHeader>
             <TableRow>
               {columns.map((column, index) => (
                 <TableHead key={index}>
-                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="w-24 h-4" />
                 </TableHead>
               ))}
             </TableRow>
@@ -93,7 +93,7 @@ export function DataTable<TData, TValue>({
               <TableRow key={i}>
                 {columns.map((_, j) => (
                   <TableCell key={j}>
-                    <Skeleton className="h-4 w-full" />
+                    <Skeleton className="w-full h-4" />
                   </TableCell>
                 ))}
               </TableRow>
@@ -106,7 +106,7 @@ export function DataTable<TData, TValue>({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-md border">
+      <div className="border rounded-md">
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
@@ -163,7 +163,7 @@ export function DataTable<TData, TValue>({
                 onClick={() => pagination.onPageChange(1)}
                 disabled={pagination.page === 1}
               >
-                <ChevronsLeft className="h-4 w-4" />
+                <ChevronsLeft className="w-4 h-4" />
               </Button>
               <Button
                 variant="outline"
@@ -171,7 +171,7 @@ export function DataTable<TData, TValue>({
                 onClick={() => pagination.onPageChange(pagination.page - 1)}
                 disabled={pagination.page === 1}
               >
-                <ChevronLeft className="h-4 w-4" />
+                <ChevronLeft className="w-4 h-4" />
               </Button>
               <div className="text-sm font-medium">
                 Page {pagination.page} of {pagination.totalPages}
@@ -182,7 +182,7 @@ export function DataTable<TData, TValue>({
                 onClick={() => pagination.onPageChange(pagination.page + 1)}
                 disabled={pagination.page === pagination.totalPages}
               >
-                <ChevronRight className="h-4 w-4" />
+                <ChevronRight className="w-4 h-4" />
               </Button>
               <Button
                 variant="outline"
@@ -190,7 +190,7 @@ export function DataTable<TData, TValue>({
                 onClick={() => pagination.onPageChange(pagination.totalPages)}
                 disabled={pagination.page === pagination.totalPages}
               >
-                <ChevronsRight className="h-4 w-4" />
+                <ChevronsRight className="w-4 h-4" />
               </Button>
             </div>
           </div>

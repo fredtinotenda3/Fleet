@@ -9,6 +9,7 @@ import {
   Filter,
   FindOptions,
   UpdateFilter,
+  MongoServerError,
 } from 'mongodb';
 import connectToDatabase from '@/infrastructure/database/mongodb';
 import {
@@ -20,6 +21,7 @@ import {
   createPaginatedResponse,
   calculateSkip,
 } from '@/shared/utils/pagination.utils';
+import { ConflictError } from '@/server/errors/app.errors';
 
 export interface QueryOptions extends FindOptions {
   sortBy?: string;
@@ -58,6 +60,32 @@ export abstract class BaseRepository<T extends BaseEntity> {
       return { ...filter, isDeleted: { $ne: true } } as Filter<T>;
     }
     return filter;
+  }
+
+  /**
+   * Translates a MongoDB duplicate-key error (E11000) into a ConflictError
+   * with a human-readable message, so callers (controllers) that only know
+   * how to render AppError subclasses (see VehicleController.handleError)
+   * get a proper 409 instead of a raw driver error falling through to a
+   * generic 500.
+   */
+  private translateDuplicateKeyError(error: unknown): never {
+    if (error instanceof MongoServerError && error.code === 11000) {
+      const keyValue = (error.keyValue ?? {}) as Record<string, unknown>;
+      const dupEntries = Object.entries(keyValue).filter(
+        ([key]) => key !== 'tenantId'
+      );
+      const dupField = dupEntries.map(([key]) => key).join(', ') || 'field';
+      const dupValue = dupEntries.map(([, value]) => value).join(', ');
+
+      throw new ConflictError(
+        dupValue
+          ? `A record with this ${dupField} already exists (${dupValue}).`
+          : `A record with this ${dupField} already exists.`,
+        { keyValue }
+      );
+    }
+    throw error;
   }
 
   async findById(
@@ -176,8 +204,18 @@ export abstract class BaseRepository<T extends BaseEntity> {
       updatedBy: userId,
     } as unknown as T;
 
-    const result = await collection.insertOne(document as any);
-    return { ...document, _id: result.insertedId.toString() };
+    try {
+      const result = await collection.insertOne(document as any);
+      return { ...document, _id: result.insertedId.toString() };
+    } catch (error) {
+      // FIX: this was the direct cause of the POST /api/vehicles 500s —
+      // re-creating a vehicle with a license_plate that still belonged to
+      // an (already soft-deleted) record threw a raw MongoServerError
+      // (E11000) that propagated straight out of this method. See
+      // translateDuplicateKeyError() and the partial index fix in
+      // infrastructure/database/indexes.ts.
+      this.translateDuplicateKeyError(error);
+    }
   }
 
   async update(
@@ -203,10 +241,17 @@ export abstract class BaseRepository<T extends BaseEntity> {
       } as any,
     };
 
-    const result = await collection.findOneAndUpdate(filter, update, {
-      returnDocument: 'after',
-    });
-    return (result ?? null) as unknown as T | null;
+    try {
+      const result = await collection.findOneAndUpdate(filter, update, {
+        returnDocument: 'after',
+      });
+      return (result ?? null) as unknown as T | null;
+    } catch (error) {
+      // Same rationale as create(): updating a record's unique field
+      // (e.g. re-assigning a license_plate) to a value already in active
+      // use should surface as a 409, not a raw driver error / 500.
+      this.translateDuplicateKeyError(error);
+    }
   }
 
   async softDelete(

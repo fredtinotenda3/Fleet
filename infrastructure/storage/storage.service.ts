@@ -29,6 +29,7 @@ export interface StoredFile {
 export class StorageService {
   private s3Client: S3Client;
   private bucket: string;
+  upload: any;
 
   constructor() {
     this.s3Client = new S3Client({

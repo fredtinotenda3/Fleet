@@ -1,9 +1,11 @@
-﻿'use client';
+﻿//frontend/shared/ui/feedback/NotificationCenter.tsx
+
+'use client';
 
 import * as React from 'react';
 import { Bell } from 'lucide-react';
 import { Button } from '@/frontend/shared/ui/primitives/button';
-import { Popover, PopoverContent, PopoverTrigger } from '@/frontend/shared/ui/feedback/popover';
+import { Popover, PopoverContent, PopoverTrigger } from '@/frontend/shared/ui/navigation/popover';
 import { ScrollArea } from '@/frontend/shared/ui/layout/scroll-area';
 import { cn } from '@/lib/utils';
 
@@ -26,17 +28,19 @@ export function NotificationCenter({ notifications, onMarkAsRead, onMarkAllAsRea
 
   return (
     <Popover>
-      <PopoverTrigger asChild>
-        <Button variant="ghost" size="icon" className="relative">
-          <Bell className="h-5 w-5" />
-          {unread > 0 && (
-            <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs text-white">
-              {unread}
-            </span>
-          )}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-80 p-0">
+      <PopoverTrigger 
+        render={
+          <Button variant="ghost" size="icon" className="relative">
+            <Bell className="w-5 h-5" />
+            {unread > 0 && (
+              <span className="absolute flex items-center justify-center w-5 h-5 text-xs text-white bg-red-500 rounded-full -top-1 -right-1">
+                {unread}
+              </span>
+            )}
+          </Button>
+        } 
+      />
+      <PopoverContent className="p-0 w-80">
         <div className="flex items-center justify-between p-4 border-b">
           <h4 className="font-medium">Notifications</h4>
           {unread > 0 && (
@@ -56,8 +60,8 @@ export function NotificationCenter({ notifications, onMarkAsRead, onMarkAllAsRea
               onClick={() => onMarkAsRead?.(notification.id)}
             >
               <div className="flex items-center gap-2">
-                {!notification.read && <div className="h-2 w-2 rounded-full bg-blue-500" />}
-                <span className="font-medium text-sm">{notification.title}</span>
+                {!notification.read && <div className="w-2 h-2 bg-blue-500 rounded-full" />}
+                <span className="text-sm font-medium">{notification.title}</span>
               </div>
               {notification.description && (
                 <p className="text-xs text-muted-foreground">{notification.description}</p>

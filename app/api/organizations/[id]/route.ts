@@ -2,17 +2,23 @@
 
 import { NextRequest } from 'next/server';
 import { organizationController } from '@/modules/organizations/controllers/organization.controller';
+import { withAuth } from '@/server/middleware/with-auth';
+import { Permission } from '@/server/permissions/roles';
 
-interface RouteParams {
-  params: Promise<{ id: string }>;
-}
+type Ctx = { params: Promise<{ id: string }> };
 
-export async function GET(req: NextRequest, { params }: RouteParams) {
-  const { id } = await params;
-  return organizationController.getOrganization(req, id);
-}
+export const GET = withAuth<Ctx>(
+  async (req: NextRequest, _context, { params }) => {
+    const { id } = await params;
+    return organizationController.getOrganization(req, id);
+  },
+  { permission: Permission.ORG_VIEW }
+);
 
-export async function PUT(req: NextRequest, { params }: RouteParams) {
-  const { id } = await params;
-  return organizationController.updateOrganization(req, id);
-}
+export const PATCH = withAuth<Ctx>(
+  async (req: NextRequest, _context, { params }) => {
+    const { id } = await params;
+    return organizationController.updateOrganization(req, id);
+  },
+  { permission: Permission.ORG_SETTINGS }
+);

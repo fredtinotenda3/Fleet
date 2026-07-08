@@ -80,6 +80,23 @@ export class RoleController {
     }
   }
 
+  async listPermissionDefinitions(req: NextRequest) {
+    try {
+      const { permissionRegistry } = await import('../registry/PermissionRegistry');
+      const { bootstrapPermissionRegistry } = await import('../registry/bootstrap-permission-registry');
+      bootstrapPermissionRegistry();
+
+      const category = req.nextUrl.searchParams.get('category');
+      const definitions = category
+        ? permissionRegistry.getByCategory(category)
+        : permissionRegistry.getAll();
+
+      return successResponse(definitions);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
   private handleError(error: unknown) {
     if (error instanceof AppError) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
