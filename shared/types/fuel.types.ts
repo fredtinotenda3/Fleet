@@ -12,6 +12,9 @@ export interface FuelLog extends BaseEntity {
   station_name?: string;
   fuel_type?: string;
   notes?: string;
+  currency?: string;
+  is_full_tank?: boolean;
+  receipt_url?: string;
   unit?: {
     name: string;
     symbol: string;
@@ -29,6 +32,9 @@ export interface FuelLogCreateDTO {
   station_name?: string;
   fuel_type?: string;
   notes?: string;
+  currency?: string;
+  is_full_tank?: boolean;
+  receipt_url?: string;
 }
 
 export interface FuelLogUpdateDTO extends Partial<FuelLogCreateDTO> {
@@ -48,4 +54,30 @@ export interface FuelStats {
   averageCostPerUnit: number;
   logCount: number;
   efficiency: number | null;
+}
+
+/** Enterprise analytics: fuel efficiency, cost/km, anomaly detection, freshness. */
+export interface FuelKpis {
+  averageFuelEfficiency: number; // km per L, derived from odometer deltas
+  totalDistance: number;
+  efficiencyTrend: number; // current-period efficiency minus previous-period
+  costPerKm: number;
+  costTrend: number; // current-period cost/km minus previous-period
+  vehiclesTracked: number;
+  abnormalConsumptionCount: number;
+  abnormalConsumptionPercentage: number;
+  daysSinceLastFill: number;
+  mostRecentVehicle?: string;
+  mostRecentPlate?: string;
+}
+
+/** Row returned by the abnormal-consumption detector: entries that exceed a vehicle's own rolling average volume by `threshold`x. */
+export interface AbnormalFuelConsumptionRow {
+  _id: string;
+  license_plate: string;
+  volume: number;
+  station_name?: string;
+  date: Date | string;
+  anomalyScore: number;
+  threshold: number;
 }

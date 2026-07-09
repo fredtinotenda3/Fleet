@@ -27,6 +27,9 @@ export const fuelLogSchema = z.object({
   station_name: z.string().max(100).optional().nullable(),
   fuel_type: z.string().max(30).optional().nullable(),
   notes: z.string().max(500).optional().nullable(),
+  currency: z.string().max(3).optional().nullable(),
+  is_full_tank: z.boolean().optional().nullable(),
+  receipt_url: z.string().url('Invalid receipt URL').max(500).optional().nullable(),
 });
 
 export const fuelLogCreateSchema = fuelLogSchema;

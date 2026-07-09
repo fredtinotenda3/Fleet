@@ -39,7 +39,6 @@ export class FuelController {
 
       const pageParam = searchParams.get('page');
       if (!pageParam) {
-        // Non-paginated for charts/dashboard
         const result = await fuelQueryService.getFilteredLogs(
           filters,
           { page: 1, limit: 10000 },
@@ -152,6 +151,38 @@ export class FuelController {
       const limit = Number(req.nextUrl.searchParams.get('limit') || '5');
 
       const data = await fuelQueryService.getTopFuelConsumers(tenantId, limit);
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async getFuelKpis(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const searchParams = req.nextUrl.searchParams;
+
+      const dateRange =
+        searchParams.get('startDate') && searchParams.get('endDate')
+          ? {
+              startDate: new Date(searchParams.get('startDate')!),
+              endDate: new Date(searchParams.get('endDate')!),
+            }
+          : undefined;
+
+      const kpis = await fuelQueryService.getFuelKpis(tenantId, dateRange);
+      return successResponse(kpis);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async getAbnormalConsumption(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const threshold = Number(req.nextUrl.searchParams.get('threshold') || '2');
+
+      const data = await fuelQueryService.getAbnormalConsumption(tenantId, threshold);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);

@@ -29,6 +29,9 @@ export class CreateFuelLogHandler
       station_name: raw.station_name,
       fuel_type: raw.fuel_type,
       notes: raw.notes,
+      currency: raw.currency,
+      is_full_tank: typeof raw.is_full_tank === 'string' ? raw.is_full_tank === 'true' : raw.is_full_tank,
+      receipt_url: raw.receipt_url,
     };
 
     const payload = Object.fromEntries(
@@ -75,11 +78,14 @@ export class CreateFuelLogHandler
       ...(validated.station_name && { station_name: String(validated.station_name) }),
       ...(validated.fuel_type && { fuel_type: String(validated.fuel_type) }),
       ...(validated.notes && { notes: String(validated.notes) }),
+      ...(validated.currency && { currency: String(validated.currency) }),
+      ...(validated.is_full_tank !== undefined &&
+        validated.is_full_tank !== null && { is_full_tank: Boolean(validated.is_full_tank) }),
+      ...(validated.receipt_url && { receipt_url: String(validated.receipt_url) }),
     };
 
     const created = await this.fuelRepo.create(fuelData, command.tenantId, command.userId);
 
-    // Emit event
     const eventBus = EventBusFactory.getInstance();
     await eventBus.publish(new FuelLoggedEvent(created, {
       tenantId: command.tenantId,

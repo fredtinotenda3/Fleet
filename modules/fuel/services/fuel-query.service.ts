@@ -6,7 +6,15 @@ import { GetFuelLogByIdQuery } from '../queries/get-fuel-log-by-id.query';
 import { GetFuelStatsQuery } from '../queries/get-fuel-stats.query';
 import { GetMonthlyFuelConsumptionQuery } from '../queries/get-monthly-fuel-consumption.query';
 import { GetTopFuelConsumersQuery } from '../queries/get-top-fuel-consumers.query';
-import { FuelLog, FuelFilters, FuelStats } from '@/shared/types/fuel.types';
+import { GetFuelKpisQuery } from '../queries/get-fuel-kpis.query';
+import { GetAbnormalFuelConsumptionQuery } from '../queries/get-abnormal-fuel-consumption.query';
+import {
+  FuelLog,
+  FuelFilters,
+  FuelStats,
+  FuelKpis,
+  AbnormalFuelConsumptionRow,
+} from '@/shared/types/fuel.types';
 import { PaginatedResponse, PaginationParams } from '@/shared/types/common.types';
 
 export class FuelQueryService {
@@ -50,6 +58,22 @@ export class FuelQueryService {
   ): Promise<Array<{ license_plate: string; totalFuel: number; totalCost: number }>> {
     return queryBus.execute<Array<{ license_plate: string; totalFuel: number; totalCost: number }>>(
       new GetTopFuelConsumersQuery(tenantId, limit)
+    );
+  }
+
+  async getFuelKpis(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<FuelKpis> {
+    return queryBus.execute<FuelKpis>(new GetFuelKpisQuery(tenantId, dateRange));
+  }
+
+  async getAbnormalConsumption(
+    tenantId: string,
+    threshold: number = 2
+  ): Promise<AbnormalFuelConsumptionRow[]> {
+    return queryBus.execute<AbnormalFuelConsumptionRow[]>(
+      new GetAbnormalFuelConsumptionQuery(tenantId, threshold)
     );
   }
 }

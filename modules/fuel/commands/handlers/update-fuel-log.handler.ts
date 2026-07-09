@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 // modules/fuel/commands/handlers/update-fuel-log.handler.ts
 
 import { ICommandHandler } from '@/server/cqrs/command';
@@ -11,6 +12,21 @@ import connectToDatabase from '@/infrastructure/database/mongodb';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { FuelLogUpdatedEvent } from '@/modules/fuel/events/FuelLogUpdatedEvent';
 
+const UPDATABLE_FIELDS = [
+  'license_plate',
+  'date',
+  'fuel_volume',
+  'unit_id',
+  'cost',
+  'odometer',
+  'notes',
+  'station_name',
+  'fuel_type',
+  'currency',
+  'is_full_tank',
+  'receipt_url',
+] as const;
+
 export class UpdateFuelLogHandler
   implements ICommandHandler<UpdateFuelLogCommand, FuelLog>
 {
@@ -20,8 +36,7 @@ export class UpdateFuelLogHandler
     const raw = command.rawData as Record<string, unknown>;
     const clean: Record<string, unknown> = { _id: command.fuelLogId };
 
-    const fields = ['license_plate', 'date', 'fuel_volume', 'unit_id', 'cost', 'odometer', 'notes'] as const;
-    for (const field of fields) {
+    for (const field of UPDATABLE_FIELDS) {
       if (raw[field] !== undefined && raw[field] !== '') {
         clean[field] = raw[field];
       }
@@ -68,7 +83,6 @@ export class UpdateFuelLogHandler
       throw new NotFoundError('Fuel log not found');
     }
 
-    // Emit event
     const eventBus = EventBusFactory.getInstance();
     await eventBus.publish(new FuelLogUpdatedEvent(updated, updateData, {
       tenantId: command.tenantId,
