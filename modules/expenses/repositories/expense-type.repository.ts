@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 // modules/expenses/repositories/expense-type.repository.ts
 
 import { Filter } from 'mongodb';

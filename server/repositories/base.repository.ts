@@ -186,7 +186,7 @@ export abstract class BaseRepository<T extends BaseEntity> {
   }
 
   async create(
-    data: Omit<T, '_id' | 'createdAt' | 'updatedAt' | 'isDeleted' | 'deletedAt'>,
+    data: Omit<T, '_id' | 'createdAt' | 'updatedAt' | 'isDeleted' | 'deletedAt' | 'tenantId'>,
     tenantId: string,
     userId?: string
   ): Promise<T> {
