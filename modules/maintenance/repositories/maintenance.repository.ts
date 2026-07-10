@@ -16,6 +16,26 @@ import { Filter, ObjectId } from 'mongodb';
 export class MaintenanceRepository extends BaseRepository<Reminder> {
   protected collectionName = 'tblreminders';
 
+  /**
+   * Mirrors VehicleRepository.isSuperAdminTenant() / FuelRepository's copy
+   * of the same helper. BaseRepository's findMany/findWithPagination
+   * already treat these pseudo-tenant values as "no tenant filter"
+   * internally (see recalculateOverdueStatuses below, via
+   * getActiveFilter()). getMaintenanceStats runs its own raw aggregation
+   * pipeline that bypasses BaseRepository, so it must apply the same rule
+   * explicitly -- otherwise the stats cards undercount relative to the
+   * list endpoint for super-admin sessions, since a strict
+   * `tenantId: 'default'` match only picks up reminders whose tenantId
+   * field is literally "default" instead of every tenant's data.
+   */
+  private isSuperAdminTenant(tenantId: string): boolean {
+    return (
+      tenantId === 'default' ||
+      tenantId === 'system' ||
+      tenantId === 'super_admin'
+    );
+  }
+
   async findByLicensePlate(
     licensePlate: string,
     tenantId: string,
@@ -75,10 +95,14 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
 
   async getMaintenanceStats(tenantId: string): Promise<MaintenanceStats> {
     const collection = await this.getCollection();
+    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+
     const filter: Record<string, unknown> = {
       isDeleted: { $ne: true },
-      tenantId,
     };
+    if (!isSuperAdmin) {
+      filter.tenantId = tenantId;
+    }
 
     const [total, completed, pending, overdue] = await Promise.all([
       collection.countDocuments(filter as Filter<Reminder>),
@@ -189,48 +213,48 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
    * (not ones already overdue) so the caller can notify their assignees
    * exactly once per transition, never on every cron tick.
    */
- // modules/maintenance/repositories/maintenance.repository.ts
+  // modules/maintenance/repositories/maintenance.repository.ts
 
-async recalculateOverdueStatuses(
-  tenantId: string
-): Promise<{ updatedCount: number; newlyOverdue: Reminder[] }> {
-  const collection = await this.getCollection();
-  const now = new Date();
-  const baseFilter = this.getActiveFilter(tenantId);
+  async recalculateOverdueStatuses(
+    tenantId: string
+  ): Promise<{ updatedCount: number; newlyOverdue: Reminder[] }> {
+    const collection = await this.getCollection();
+    const now = new Date();
+    const baseFilter = this.getActiveFilter(tenantId);
 
-  const newlyOverdue = await collection
-    .find({
-      ...baseFilter,
-      status: 'pending',
-      due_date: { $lt: now },
-    } as Filter<Reminder>)
-    .toArray();
+    const newlyOverdue = await collection
+      .find({
+        ...baseFilter,
+        status: 'pending',
+        due_date: { $lt: now },
+      } as Filter<Reminder>)
+      .toArray();
 
-  const overdueResult = newlyOverdue.length
-    ? await collection.updateMany(
-        {
-          _id: { $in: newlyOverdue.map((r) => new ObjectId(r._id)) },
-        } as unknown as Filter<Reminder>,  // ✅ fix: use `unknown` to bypass strict cast
-        { $set: { status: 'overdue', updatedAt: now } }
-      )
-    : { modifiedCount: 0 };
+    const overdueResult = newlyOverdue.length
+      ? await collection.updateMany(
+          {
+            _id: { $in: newlyOverdue.map((r) => new ObjectId(r._id)) },
+          } as unknown as Filter<Reminder>, // fix: use `unknown` to bypass strict cast
+          { $set: { status: 'overdue', updatedAt: now } }
+        )
+      : { modifiedCount: 0 };
 
-  // Reminders previously marked overdue whose due_date has since moved
-  // into the future (e.g. edited/rescheduled) revert to pending.
-  const revertResult = await collection.updateMany(
-    {
-      ...baseFilter,
-      status: 'overdue',
-      due_date: { $gte: now },
-    } as Filter<Reminder>,
-    { $set: { status: 'pending', updatedAt: now } }
-  );
+    // Reminders previously marked overdue whose due_date has since moved
+    // into the future (e.g. edited/rescheduled) revert to pending.
+    const revertResult = await collection.updateMany(
+      {
+        ...baseFilter,
+        status: 'overdue',
+        due_date: { $gte: now },
+      } as Filter<Reminder>,
+      { $set: { status: 'pending', updatedAt: now } }
+    );
 
-  return {
-    updatedCount: overdueResult.modifiedCount + revertResult.modifiedCount,
-    newlyOverdue,
-  };
-}
+    return {
+      updatedCount: overdueResult.modifiedCount + revertResult.modifiedCount,
+      newlyOverdue,
+    };
+  }
 }
 
 export const maintenanceRepository = new MaintenanceRepository();

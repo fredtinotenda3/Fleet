@@ -7,6 +7,8 @@ import {
   FuelStats,
   FuelKpis,
   AbnormalFuelConsumptionRow,
+  FuelPaymentMethod,
+  FuelPaymentBreakdown,
 } from '@/shared/types/fuel.types';
 import {
   PaginationParams,
@@ -24,8 +26,29 @@ interface VehiclePeriodAggregate {
   avgVolume: number;
 }
 
+const ALL_PAYMENT_METHODS: FuelPaymentMethod[] = ['cash', 'fuel_card', 'credit_card', 'company_account', 'other'];
+
 export class FuelRepository extends BaseRepository<FuelLog> {
   protected collectionName = 'tblfuellogs';
+
+  /**
+   * Mirrors VehicleRepository.isSuperAdminTenant(). BaseRepository's own
+   * findMany/findWithPagination/findOne already treat these pseudo-tenant
+   * values as "no tenant filter" internally, so every method below that
+   * builds its own raw aggregation pipeline (bypassing BaseRepository)
+   * must apply the exact same rule -- otherwise stats/KPI endpoints
+   * silently undercount relative to the list endpoints for super-admin
+   * sessions, since a strict `tenantId: 'default'` match only picks up
+   * rows whose tenantId field is literally the string "default" instead
+   * of every tenant's data.
+   */
+  private isSuperAdminTenant(tenantId: string): boolean {
+    return (
+      tenantId === 'default' ||
+      tenantId === 'system' ||
+      tenantId === 'super_admin'
+    );
+  }
 
   async findByLicensePlate(
     licensePlate: string,
@@ -47,41 +70,51 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     const filter: Record<string, unknown> = {};
 
     if (filters.license_plate) {
-      filter.license_plate = {
-        $regex: filters.license_plate,
-        $options: 'i',
-      };
+      filter.license_plate = { $regex: filters.license_plate, $options: 'i' };
     }
-    if (filters.unit_id) {
-      filter.unit_id = filters.unit_id;
-    }
+    if (filters.unit_id) filter.unit_id = filters.unit_id;
+    if (filters.payment_method) filter.payment_method = filters.payment_method;
+    if (filters.fuel_station_id) filter.fuel_station_id = filters.fuel_station_id;
+    if (filters.fuel_card_id) filter.fuel_card_id = filters.fuel_card_id;
     if (filters.startDate || filters.endDate) {
       filter.date = {};
       if (filters.startDate) (filter.date as any).$gte = filters.startDate;
       if (filters.endDate) (filter.date as any).$lte = filters.endDate;
     }
 
-    return this.findWithPagination(
-      filter as Filter<FuelLog>,
-      pagination,
-      tenantId
-    );
+    return this.findWithPagination(filter as Filter<FuelLog>, pagination, tenantId);
   }
 
+  /**
+   * Fleet-wide fuel stats. With no dateRange, this sums ALL matching fuel
+   * logs (all-time) -- callers must pass an explicit dateRange to scope to
+   * a period; there is no implicit "current month" default here.
+   *
+   * Tenant scoping now mirrors VehicleRepository / BaseRepository: for
+   * super-admin pseudo-tenants ('default' | 'system' | 'super_admin') the
+   * tenantId filter is omitted entirely so this aggregation covers the
+   * same document set as the (unscoped) list endpoint. Previously this
+   * filtered on `tenantId` by strict equality unconditionally, which
+   * silently excluded every real-tenant fuel log from the stats cards
+   * while the list/table view (going through BaseRepository) still
+   * showed them -- producing mismatched totals.
+   */
   async getFuelStats(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date }
   ): Promise<FuelStats> {
     const collection = await this.getCollection();
+    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+
     const filter: Record<string, unknown> = {
       isDeleted: { $ne: true },
-      tenantId,
     };
+    if (!isSuperAdmin) {
+      filter.tenantId = tenantId;
+    }
 
-    if (dateRange?.startDate)
-      (filter.date as any) = { $gte: dateRange.startDate };
-    if (dateRange?.endDate)
-      filter.date = { ...(filter.date as any), $lte: dateRange.endDate };
+    if (dateRange?.startDate) (filter.date as any) = { $gte: dateRange.startDate };
+    if (dateRange?.endDate) filter.date = { ...(filter.date as any), $lte: dateRange.endDate };
 
     const pipeline = [
       { $match: filter },
@@ -97,24 +130,47 @@ export class FuelRepository extends BaseRepository<FuelLog> {
               },
             },
           ],
+          byPayment: [
+            {
+              $group: {
+                _id: { $ifNull: ['$payment_method', 'cash'] },
+                totalCost: { $sum: '$cost' },
+                totalVolume: { $sum: '$fuel_volume' },
+                count: { $sum: 1 },
+              },
+            },
+          ],
         },
       },
     ];
 
     const result = await collection.aggregate(pipeline).toArray();
-    const data = result[0]?.total[0] || {
-      totalFuel: 0,
-      totalCost: 0,
-      count: 0,
-    };
+    const data = result[0]?.total[0] || { totalFuel: 0, totalCost: 0, count: 0 };
+    const byPayment = (result[0]?.byPayment || []) as Array<{
+      _id: FuelPaymentMethod;
+      totalCost: number;
+      totalVolume: number;
+      count: number;
+    }>;
+
+    const breakdownMap = new Map(byPayment.map((row) => [row._id, row]));
+    const paymentBreakdown: FuelPaymentBreakdown[] = ALL_PAYMENT_METHODS.map((method) => {
+      const row = breakdownMap.get(method);
+      return {
+        method,
+        totalCost: row?.totalCost ?? 0,
+        totalVolume: row?.totalVolume ?? 0,
+        count: row?.count ?? 0,
+      };
+    }).filter((row) => row.count > 0);
 
     return {
       totalFuel: data.totalFuel,
       totalCost: data.totalCost,
-      averageCostPerUnit:
-        data.totalFuel > 0 ? data.totalCost / data.totalFuel : 0,
+      averageCostPerUnit: data.totalFuel > 0 ? data.totalCost / data.totalFuel : 0,
       logCount: data.count,
       efficiency: null,
+      paymentBreakdown,
     };
   }
 
@@ -123,17 +179,20 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     months: number = 12
   ): Promise<Array<{ month: string; fuel: number; cost: number }>> {
     const collection = await this.getCollection();
+    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
     const startDate = new Date();
     startDate.setMonth(startDate.getMonth() - months);
 
+    const matchStage: Record<string, unknown> = {
+      isDeleted: { $ne: true },
+      date: { $gte: startDate },
+    };
+    if (!isSuperAdmin) {
+      matchStage.tenantId = tenantId;
+    }
+
     const pipeline = [
-      {
-        $match: {
-          isDeleted: { $ne: true },
-          tenantId,
-          date: { $gte: startDate },
-        },
-      },
+      { $match: matchStage },
       {
         $group: {
           _id: { $dateToString: { format: '%Y-%m', date: '$date' } },
@@ -145,11 +204,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     ];
 
     const results = await collection.aggregate(pipeline).toArray();
-    return results.map((r) => ({
-      month: r._id,
-      fuel: r.fuel,
-      cost: r.cost,
-    }));
+    return results.map((r) => ({ month: r._id, fuel: r.fuel, cost: r.cost }));
   }
 
   async getTopFuelConsumers(
@@ -157,9 +212,15 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     limit: number = 5
   ): Promise<Array<{ license_plate: string; totalFuel: number; totalCost: number }>> {
     const collection = await this.getCollection();
+    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+
+    const matchStage: Record<string, unknown> = { isDeleted: { $ne: true } };
+    if (!isSuperAdmin) {
+      matchStage.tenantId = tenantId;
+    }
 
     const pipeline = [
-      { $match: { isDeleted: { $ne: true }, tenantId } },
+      { $match: matchStage },
       {
         $group: {
           _id: '$license_plate',
@@ -169,48 +230,34 @@ export class FuelRepository extends BaseRepository<FuelLog> {
       },
       { $sort: { totalFuel: -1 } },
       { $limit: limit },
-      {
-        $project: {
-          license_plate: '$_id',
-          totalFuel: 1,
-          totalCost: 1,
-          _id: 0,
-        },
-      },
+      { $project: { license_plate: '$_id', totalFuel: 1, totalCost: 1, _id: 0 } },
     ];
 
     return collection.aggregate(pipeline).toArray() as Promise<
-      Array<{ license_plate: string; totalFuel: number; totalCost: number }>
-      >;
+      { license_plate: string; totalFuel: number; totalCost: number }[]
+    >;
   }
 
-  /**
-   * Fleet fuel-efficiency KPIs. Distance is derived from odometer deltas
-   * per vehicle within the period (max - min odometer reading), so it
-   * requires at least two odometer-tagged fills per vehicle to contribute.
-   * Trend fields compare the requested period against an equal-length
-   * immediately-preceding period.
-   */
   async getFuelKpis(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date }
   ): Promise<FuelKpis> {
     const collection = await this.getCollection();
+    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
     const now = new Date();
 
     const rangeEnd = dateRange?.endDate ?? now;
-    const rangeStart =
-      dateRange?.startDate ?? new Date(rangeEnd.getTime() - 90 * 24 * 60 * 60 * 1000);
+    const rangeStart = dateRange?.startDate ?? new Date(rangeEnd.getTime() - 90 * 24 * 60 * 60 * 1000);
     const periodMs = rangeEnd.getTime() - rangeStart.getTime();
     const prevRangeEnd = new Date(rangeStart.getTime() - 1);
     const prevRangeStart = new Date(prevRangeEnd.getTime() - periodMs);
 
-    const baseMatch = { isDeleted: { $ne: true }, tenantId };
+    const baseMatch: Record<string, unknown> = { isDeleted: { $ne: true } };
+    if (!isSuperAdmin) {
+      baseMatch.tenantId = tenantId;
+    }
 
-    const aggregateByVehicle = async (
-      start: Date,
-      end: Date
-    ): Promise<VehiclePeriodAggregate[]> => {
+    const aggregateByVehicle = async (start: Date, end: Date): Promise<VehiclePeriodAggregate[]> => {
       const pipeline = [
         { $match: { ...baseMatch, date: { $gte: start, $lte: end } } },
         {
@@ -231,10 +278,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     const [currentByVehicle, previousByVehicle, recentLogs] = await Promise.all([
       aggregateByVehicle(rangeStart, rangeEnd),
       aggregateByVehicle(prevRangeStart, prevRangeEnd),
-      collection
-        .find({ ...baseMatch, date: { $gte: rangeStart, $lte: rangeEnd } })
-        .sort({ date: -1 })
-        .toArray(),
+      collection.find({ ...baseMatch, date: { $gte: rangeStart, $lte: rangeEnd } }).sort({ date: -1 }).toArray(),
     ]);
 
     const summarize = (byVehicle: VehiclePeriodAggregate[]) => {
@@ -244,11 +288,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
       for (const v of byVehicle) {
         totalFuel += v.totalFuel || 0;
         totalCost += v.totalCost || 0;
-        if (
-          typeof v.minOdometer === 'number' &&
-          typeof v.maxOdometer === 'number' &&
-          v.maxOdometer > v.minOdometer
-        ) {
+        if (typeof v.minOdometer === 'number' && typeof v.maxOdometer === 'number' && v.maxOdometer > v.minOdometer) {
           totalDistance += v.maxOdometer - v.minOdometer;
         }
       }
@@ -273,10 +313,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
 
     const mostRecent = recentLogs[0];
     const daysSinceLastFill = mostRecent
-      ? Math.max(
-          0,
-          Math.floor((now.getTime() - new Date(mostRecent.date).getTime()) / (24 * 60 * 60 * 1000))
-        )
+      ? Math.max(0, Math.floor((now.getTime() - new Date(mostRecent.date).getTime()) / (24 * 60 * 60 * 1000)))
       : 0;
 
     return {
@@ -294,27 +331,18 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     };
   }
 
-  /**
-   * Flags fill-ups whose volume exceeds a vehicle's own rolling average
-   * volume by `threshold`x -- a lightweight, explainable stand-in for the
-   * fuel-fraud/anomaly AI service (modules/ai/services/fuel-fraud-detection.service.ts),
-   * scoped to this repository so the widget has no cross-module coupling.
-   */
-  async getAbnormalConsumption(
-    tenantId: string,
-    threshold: number = 2
-  ): Promise<AbnormalFuelConsumptionRow[]> {
+  async getAbnormalConsumption(tenantId: string, threshold: number = 2): Promise<AbnormalFuelConsumptionRow[]> {
     const collection = await this.getCollection();
+    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+
+    const matchStage: Record<string, unknown> = { isDeleted: { $ne: true } };
+    if (!isSuperAdmin) {
+      matchStage.tenantId = tenantId;
+    }
 
     const pipeline = [
-      { $match: { isDeleted: { $ne: true }, tenantId } },
-      {
-        $group: {
-          _id: '$license_plate',
-          avgVolume: { $avg: '$fuel_volume' },
-          logs: { $push: '$$ROOT' },
-        },
-      },
+      { $match: matchStage },
+      { $group: { _id: '$license_plate', avgVolume: { $avg: '$fuel_volume' }, logs: { $push: '$$ROOT' } } },
     ];
 
     const grouped = await collection.aggregate(pipeline).toArray();

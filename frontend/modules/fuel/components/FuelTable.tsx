@@ -20,6 +20,7 @@ import { formatDate } from '@/shared/utils/date.utils';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { PaginatedResponse } from '@/shared/types/common.types';
 import type { FuelLog } from '../types';
+import { PAYMENT_METHOD_LABELS } from '../types';
 
 interface FuelTableProps {
   result: PaginatedResponse<FuelLog> | undefined;
@@ -35,6 +36,14 @@ interface FuelTableProps {
   canManage: boolean;
   canDelete: boolean;
 }
+
+const PAYMENT_BADGE_VARIANT: Record<string, 'outline' | 'secondary'> = {
+  cash: 'secondary',
+  fuel_card: 'outline',
+  credit_card: 'outline',
+  company_account: 'outline',
+  other: 'outline',
+};
 
 export function FuelTable({
   result,
@@ -102,6 +111,18 @@ export function FuelTable({
         ),
       },
       {
+        accessorKey: 'payment_method',
+        header: 'Payment',
+        cell: ({ row }) => {
+          const method = row.original.payment_method ?? 'cash';
+          return (
+            <Badge variant={PAYMENT_BADGE_VARIANT[method] ?? 'outline'}>
+              {PAYMENT_METHOD_LABELS[method]}
+            </Badge>
+          );
+        },
+      },
+      {
         accessorKey: 'odometer',
         header: 'Odometer',
         cell: ({ row }) => (row.original.odometer != null ? row.original.odometer.toLocaleString() : 'N/A'),
@@ -109,7 +130,7 @@ export function FuelTable({
       {
         accessorKey: 'station_name',
         header: 'Station',
-        cell: ({ row }) => row.original.station_name || 'N/A',
+        cell: ({ row }) => row.original.fuel_station?.name || row.original.station_name || 'N/A',
       },
       {
         accessorKey: 'is_full_tank',

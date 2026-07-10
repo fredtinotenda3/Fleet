@@ -21,15 +21,16 @@ const UPDATABLE_FIELDS = [
   'odometer',
   'notes',
   'station_name',
+  'fuel_station_id',
   'fuel_type',
   'currency',
   'is_full_tank',
   'receipt_url',
+  'payment_method',
+  'fuel_card_id',
 ] as const;
 
-export class UpdateFuelLogHandler
-  implements ICommandHandler<UpdateFuelLogCommand, FuelLog>
-{
+export class UpdateFuelLogHandler implements ICommandHandler<UpdateFuelLogCommand, FuelLog> {
   constructor(private readonly fuelRepo: FuelRepository) {}
 
   async execute(command: UpdateFuelLogCommand): Promise<FuelLog> {
@@ -72,6 +73,31 @@ export class UpdateFuelLogHandler
       }
     }
 
+    if (updateData.fuel_station_id) {
+      const station = await db.collection('tblfuelstations').findOne({
+        _id: updateData.fuel_station_id as any,
+        tenantId: command.tenantId,
+        isDeleted: { $ne: true },
+      });
+      if (!station) {
+        throw new AppError('Selected fuel station was not found', 'FUEL_STATION_NOT_FOUND', 400);
+      }
+    }
+
+    if (updateData.payment_method === 'fuel_card' && updateData.fuel_card_id) {
+      const card = await db.collection('tblfuelcards').findOne({
+        _id: updateData.fuel_card_id as any,
+        tenantId: command.tenantId,
+        isDeleted: { $ne: true },
+      });
+      if (!card) {
+        throw new AppError('Selected fuel card was not found', 'FUEL_CARD_NOT_FOUND', 400);
+      }
+      if (card.status !== 'active') {
+        throw new AppError('Selected fuel card is not active', 'FUEL_CARD_INACTIVE', 400);
+      }
+    }
+
     const updated = await this.fuelRepo.update(
       command.fuelLogId,
       updateData as Partial<Omit<FuelLog, '_id' | 'tenantId' | 'createdAt' | 'createdBy'>>,
@@ -84,11 +110,13 @@ export class UpdateFuelLogHandler
     }
 
     const eventBus = EventBusFactory.getInstance();
-    await eventBus.publish(new FuelLogUpdatedEvent(updated, updateData, {
-      tenantId: command.tenantId,
-      userId: command.userId,
-      correlationId: command.commandName,
-    }));
+    await eventBus.publish(
+      new FuelLogUpdatedEvent(updated, updateData, {
+        tenantId: command.tenantId,
+        userId: command.userId,
+        correlationId: command.commandName,
+      })
+    );
 
     return updated;
   }

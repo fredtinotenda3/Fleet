@@ -15,6 +15,24 @@ import { Filter } from 'mongodb';
 export class TripRepository extends BaseRepository<Trip> {
   protected collectionName = 'tbltrips';
 
+  /**
+   * Mirrors VehicleRepository.isSuperAdminTenant(). BaseRepository's own
+   * findMany/findWithPagination already treat these pseudo-tenant values
+   * as "no tenant filter" internally, so the raw aggregation pipelines
+   * below (which bypass BaseRepository) must apply the exact same rule --
+   * otherwise stats endpoints undercount relative to the list endpoint
+   * for super-admin sessions, since a strict `tenantId: 'default'` match
+   * only picks up trips whose tenantId field is literally "default"
+   * instead of every tenant's data.
+   */
+  private isSuperAdminTenant(tenantId: string): boolean {
+    return (
+      tenantId === 'default' ||
+      tenantId === 'system' ||
+      tenantId === 'super_admin'
+    );
+  }
+
   async findByLicensePlate(
     licensePlate: string,
     tenantId: string,
@@ -60,10 +78,14 @@ export class TripRepository extends BaseRepository<Trip> {
     dateRange?: { startDate?: Date; endDate?: Date }
   ): Promise<TripStats> {
     const collection = await this.getCollection();
+    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+
     const filter: Record<string, unknown> = {
       isDeleted: { $ne: true },
-      tenantId,
     };
+    if (!isSuperAdmin) {
+      filter.tenantId = tenantId;
+    }
 
     if (dateRange?.startDate || dateRange?.endDate) {
       filter.date = {};
@@ -134,17 +156,20 @@ export class TripRepository extends BaseRepository<Trip> {
     days: number = 30
   ): Promise<Array<{ date: string; distance: number }>> {
     const collection = await this.getCollection();
+    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
 
+    const matchStage: Record<string, unknown> = {
+      isDeleted: { $ne: true },
+      date: { $gte: startDate },
+    };
+    if (!isSuperAdmin) {
+      matchStage.tenantId = tenantId;
+    }
+
     const pipeline = [
-      {
-        $match: {
-          isDeleted: { $ne: true },
-          tenantId,
-          date: { $gte: startDate },
-        },
-      },
+      { $match: matchStage },
       {
         $group: {
           _id: {

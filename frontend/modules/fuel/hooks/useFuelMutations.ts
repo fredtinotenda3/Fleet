@@ -61,3 +61,10 @@ export function useBulkDeleteFuelLogs() {
     onError: (error) => toast.error(errMsg(error, 'Failed to delete selected fuel entries')),
   });
 }
+
+export function useUploadReceipt() {
+  return useMutation({
+    mutationFn: (file: File) => fuelApi.uploadReceipt(file),
+    onError: (error) => toast.error(errMsg(error, 'Failed to upload receipt')),
+  });
+}

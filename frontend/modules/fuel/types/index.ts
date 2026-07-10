@@ -6,6 +6,8 @@ import type {
   FuelStats,
   FuelKpis,
   AbnormalFuelConsumptionRow,
+  FuelPaymentMethod,
+  FuelPaymentBreakdown,
 } from '@/shared/types/fuel.types';
 import type { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
 
@@ -15,9 +17,13 @@ export type {
   FuelStats,
   FuelKpis,
   AbnormalFuelConsumptionRow,
+  FuelPaymentMethod,
+  FuelPaymentBreakdown,
   PaginationParams,
   PaginatedResponse,
 };
+
+export { FUEL_PAYMENT_METHODS } from '@/shared/types/fuel.types';
 
 export type FuelTableFilters = FuelFilters;
 
@@ -28,6 +34,7 @@ export interface FuelColumnVisibility {
   odometer: boolean;
   station: boolean;
   fuel_type: boolean;
+  payment_method: boolean;
   full_tank: boolean;
   notes: boolean;
 }
@@ -39,6 +46,7 @@ export const DEFAULT_FUEL_COLUMN_VISIBILITY: FuelColumnVisibility = {
   odometer: true,
   station: true,
   fuel_type: false,
+  payment_method: true,
   full_tank: false,
   notes: false,
 };
@@ -61,3 +69,11 @@ export interface TopFuelConsumerRow {
   totalFuel: number;
   totalCost: number;
 }
+
+export const PAYMENT_METHOD_LABELS: Record<FuelPaymentMethod, string> = {
+  cash: 'Cash',
+  fuel_card: 'Fuel card',
+  credit_card: 'Credit card',
+  company_account: 'Company account',
+  other: 'Other',
+};

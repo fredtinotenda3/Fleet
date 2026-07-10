@@ -2,7 +2,7 @@
 
 import { z } from 'zod';
 
-export const fuelLogSchema = z.object({
+const fuelLogBaseSchema = z.object({
   license_plate: z
     .string()
     .min(1, 'License plate is required')
@@ -19,22 +19,26 @@ export const fuelLogSchema = z.object({
     .number({ error: 'Cost must be a number' })
     .nonnegative('Cost cannot be negative')
     .max(999_999.99, 'Cost exceeds maximum'),
-  odometer: z
-    .number()
-    .nonnegative('Odometer cannot be negative')
-    .optional()
-    .nullable(),
+  odometer: z.number().nonnegative('Odometer cannot be negative').optional().nullable(),
   station_name: z.string().max(100).optional().nullable(),
+  fuel_station_id: z.string().optional().nullable(),
   fuel_type: z.string().max(30).optional().nullable(),
   notes: z.string().max(500).optional().nullable(),
   currency: z.string().max(3).optional().nullable(),
   is_full_tank: z.boolean().optional().nullable(),
   receipt_url: z.string().url('Invalid receipt URL').max(500).optional().nullable(),
+  payment_method: z
+    .enum(['cash', 'fuel_card', 'credit_card', 'company_account', 'other'])
+    .default('cash'),
+  fuel_card_id: z.string().optional().nullable(),
 });
 
-export const fuelLogCreateSchema = fuelLogSchema;
+export const fuelLogCreateSchema = fuelLogBaseSchema.refine(
+  (data) => data.payment_method !== 'fuel_card' || Boolean(data.fuel_card_id),
+  { message: 'Select a fuel card for card payments', path: ['fuel_card_id'] }
+);
 
-export const fuelLogUpdateSchema = fuelLogSchema.partial().extend({
+export const fuelLogUpdateSchema = fuelLogBaseSchema.partial().extend({
   _id: z.string().min(1, 'Fuel log ID is required'),
 });
 
@@ -43,9 +47,12 @@ export const fuelFiltersSchema = z.object({
   unit_id: z.string().optional(),
   startDate: z.date().optional(),
   endDate: z.date().optional(),
+  payment_method: z.enum(['cash', 'fuel_card', 'credit_card', 'company_account', 'other']).optional(),
+  fuel_station_id: z.string().optional(),
+  fuel_card_id: z.string().optional(),
   page: z.number().int().positive().default(1),
   limit: z.number().int().positive().max(100).default(50),
 });
 
-export type FuelLogInput = z.infer<typeof fuelLogSchema>;
+export type FuelLogInput = z.infer<typeof fuelLogBaseSchema>;
 export type FuelLogCreateInput = z.infer<typeof fuelLogCreateSchema>;

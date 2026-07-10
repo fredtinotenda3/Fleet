@@ -2,6 +2,16 @@
 
 import { BaseEntity } from './common.types';
 
+export type FuelPaymentMethod = 'cash' | 'fuel_card' | 'credit_card' | 'company_account' | 'other';
+
+export const FUEL_PAYMENT_METHODS: FuelPaymentMethod[] = [
+  'cash',
+  'fuel_card',
+  'credit_card',
+  'company_account',
+  'other',
+];
+
 export interface FuelLog extends BaseEntity {
   license_plate: string;
   date: Date;
@@ -10,15 +20,28 @@ export interface FuelLog extends BaseEntity {
   cost: number;
   odometer?: number;
   station_name?: string;
+  fuel_station_id?: string;
   fuel_type?: string;
   notes?: string;
   currency?: string;
   is_full_tank?: boolean;
   receipt_url?: string;
+  payment_method?: FuelPaymentMethod;
+  fuel_card_id?: string;
   unit?: {
     name: string;
     symbol: string;
     unit_id: string;
+  };
+  fuel_station?: {
+    _id: string;
+    name: string;
+    brand?: string;
+  };
+  fuel_card?: {
+    _id: string;
+    card_last4: string;
+    provider: string;
   };
 }
 
@@ -30,11 +53,14 @@ export interface FuelLogCreateDTO {
   cost: number;
   odometer?: number;
   station_name?: string;
+  fuel_station_id?: string;
   fuel_type?: string;
   notes?: string;
   currency?: string;
   is_full_tank?: boolean;
   receipt_url?: string;
+  payment_method?: FuelPaymentMethod;
+  fuel_card_id?: string;
 }
 
 export interface FuelLogUpdateDTO extends Partial<FuelLogCreateDTO> {
@@ -46,6 +72,16 @@ export interface FuelFilters {
   unit_id?: string;
   startDate?: Date;
   endDate?: Date;
+  payment_method?: FuelPaymentMethod;
+  fuel_station_id?: string;
+  fuel_card_id?: string;
+}
+
+export interface FuelPaymentBreakdown {
+  method: FuelPaymentMethod;
+  totalCost: number;
+  totalVolume: number;
+  count: number;
 }
 
 export interface FuelStats {
@@ -54,15 +90,15 @@ export interface FuelStats {
   averageCostPerUnit: number;
   logCount: number;
   efficiency: number | null;
+  paymentBreakdown: FuelPaymentBreakdown[];
 }
 
-/** Enterprise analytics: fuel efficiency, cost/km, anomaly detection, freshness. */
 export interface FuelKpis {
-  averageFuelEfficiency: number; // km per L, derived from odometer deltas
+  averageFuelEfficiency: number;
   totalDistance: number;
-  efficiencyTrend: number; // current-period efficiency minus previous-period
+  efficiencyTrend: number;
   costPerKm: number;
-  costTrend: number; // current-period cost/km minus previous-period
+  costTrend: number;
   vehiclesTracked: number;
   abnormalConsumptionCount: number;
   abnormalConsumptionPercentage: number;
@@ -71,7 +107,6 @@ export interface FuelKpis {
   mostRecentPlate?: string;
 }
 
-/** Row returned by the abnormal-consumption detector: entries that exceed a vehicle's own rolling average volume by `threshold`x. */
 export interface AbnormalFuelConsumptionRow {
   _id: string;
   license_plate: string;

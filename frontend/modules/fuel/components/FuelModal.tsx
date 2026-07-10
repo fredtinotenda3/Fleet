@@ -47,9 +47,12 @@ function toFormValues(log: FuelLog | null | undefined): Partial<FuelFormValues> 
     odometer: log.odometer,
     is_full_tank: log.is_full_tank ?? false,
     station_name: log.station_name ?? '',
+    fuel_station_id: log.fuel_station_id ?? '',
     fuel_type: log.fuel_type ?? '',
     notes: log.notes ?? '',
     receipt_url: log.receipt_url ?? '',
+    payment_method: log.payment_method ?? 'cash',
+    fuel_card_id: log.fuel_card_id ?? '',
   };
 }
 

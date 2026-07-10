@@ -29,6 +29,9 @@ function buildListQuery(params: Partial<FuelListParams>) {
   return {
     license_plate: params.license_plate,
     unit_id: params.unit_id,
+    payment_method: params.payment_method,
+    fuel_station_id: params.fuel_station_id,
+    fuel_card_id: params.fuel_card_id,
     start: toIso(params.startDate),
     end: toIso(params.endDate),
     page: params.page,
@@ -81,6 +84,17 @@ export const fuelApi = {
 
   async getTopConsumers(limit: number = 5): Promise<TopFuelConsumerRow[]> {
     return apiClient.get<TopFuelConsumerRow[]>(BASE, { params: { action: 'top-consumers', limit } });
+  },
+
+  async uploadReceipt(file: File): Promise<{ url: string }> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await fetch(`${BASE}/receipt`, { method: 'POST', body: formData });
+    const body = await response.json();
+    if (!response.ok || body?.success === false) {
+      throw new Error(body?.error?.message || 'Failed to upload receipt');
+    }
+    return body.data;
   },
 };
 

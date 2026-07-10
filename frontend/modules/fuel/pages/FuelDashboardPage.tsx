@@ -1,12 +1,19 @@
+
 // frontend/modules/fuel/pages/FuelDashboardPage.tsx
 
 'use client';
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, List } from 'lucide-react';
+import { Plus, List, MapPin, CreditCard } from 'lucide-react';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { Button } from '@/frontend/shared/ui/primitives/button';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from '@/frontend/shared/ui/navigation/NestedMenu';
 import { useSessionStore } from '@/frontend/shared/store/session.store';
 import { FuelStatsCards } from '../components/FuelStatsCards';
 import { FuelKpiCards } from '../components/FuelKpiCards';
@@ -17,6 +24,8 @@ import { FuelModal, type FuelModalMode } from '../components/FuelModal';
 import { useCreateFuelLog } from '../hooks/useFuelMutations';
 import { canManageFuel } from '../utils';
 import { FUEL_ROUTES } from '../routes';
+import { FUEL_STATION_ROUTES } from '@/frontend/modules/fuel-stations/routes';
+import { FUEL_CARD_ROUTES } from '@/frontend/modules/fuel-cards/routes';
 import type { FuelFormValues } from '../schemas';
 
 export function FuelDashboardPage() {
@@ -41,9 +50,22 @@ export function FuelDashboardPage() {
         breadcrumbs={[{ label: 'Fuel' }]}
         actions={
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => router.push(FUEL_ROUTES.list)}>
-              <List className="h-3.5 w-3.5" /> All fuel logs
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm">Manage</Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => router.push(FUEL_ROUTES.list)}>
+                  <List className="mr-2 h-3.5 w-3.5" /> All fuel logs
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => router.push(FUEL_STATION_ROUTES.list)}>
+                  <MapPin className="mr-2 h-3.5 w-3.5" /> Fuel stations
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => router.push(FUEL_CARD_ROUTES.list)}>
+                  <CreditCard className="mr-2 h-3.5 w-3.5" /> Fuel cards
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             {canManage && (
               <Button size="sm" onClick={() => setModalOpen(true)}>
                 <Plus className="h-3.5 w-3.5" /> Log fuel entry
