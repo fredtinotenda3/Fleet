@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 // modules/fuel/services/fuel-query.service.ts
 
 import { queryBus } from '@/server/cqrs/query-bus';
@@ -16,6 +17,8 @@ import {
   AbnormalFuelConsumptionRow,
 } from '@/shared/types/fuel.types';
 import { PaginatedResponse, PaginationParams } from '@/shared/types/common.types';
+import { fuelRepository } from '../repositories/fuel.repository';
+import { tripRepository } from '@/modules/trips/repositories/trip.repository';
 
 export class FuelQueryService {
   async getFilteredLogs(
@@ -61,11 +64,37 @@ export class FuelQueryService {
     );
   }
 
+  /**
+   * FIX: bypasses the CQRS query bus for this one call (rather than going
+   * through GetFuelKpisQuery -> GetFuelKpisHandler -> fuelRepository) so
+   * this service can compose trip-derived distance as a fallback when
+   * fuel-log odometer data is sparse. The handler path is left intact for
+   * any other caller that still dispatches GetFuelKpisQuery directly, but
+   * the controller's getFuelKpis already calls THIS service method, so
+   * every KPI card in the app goes through the fallback.
+   */
   async getFuelKpis(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date }
   ): Promise<FuelKpis> {
-    return queryBus.execute<FuelKpis>(new GetFuelKpisQuery(tenantId, dateRange));
+    const now = new Date();
+    const rangeEnd = dateRange?.endDate ?? now;
+    const rangeStart = dateRange?.startDate ?? new Date(rangeEnd.getTime() - 90 * 24 * 60 * 60 * 1000);
+    const periodMs = rangeEnd.getTime() - rangeStart.getTime();
+    const prevRangeEnd = new Date(rangeStart.getTime() - 1);
+    const prevRangeStart = new Date(prevRangeEnd.getTime() - periodMs);
+
+    const [tripDistanceByVehicle, prevTripDistanceByVehicle] = await Promise.all([
+      tripRepository.getDistanceByVehicle(tenantId, rangeStart, rangeEnd),
+      tripRepository.getDistanceByVehicle(tenantId, prevRangeStart, prevRangeEnd),
+    ]);
+
+    return fuelRepository.getFuelKpis(
+      tenantId,
+      dateRange,
+      tripDistanceByVehicle,
+      prevTripDistanceByVehicle
+    );
   }
 
   async getAbnormalConsumption(

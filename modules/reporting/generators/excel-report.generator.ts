@@ -1,49 +1,44 @@
-
 // modules/reporting/generators/excel-report.generator.ts
+// ASSUMPTION: uses the `xlsx` (SheetJS) package -- already imported
+// client-side in this codebase (frontend/modules/expenses/utils/index.ts's
+// exportExpensesToExcel), so likely already a dependency. Confirm before
+// relying on this server-side.
 
 import * as XLSX from 'xlsx';
 import { ReportResult } from '../types/report-definition.types';
 import { PivotResult } from '../types/pivot.types';
 
-function normalizeCell(value: unknown): unknown {
-  if (value instanceof Date) return value.toISOString();
-  if (value == null) return '';
-  return value;
-}
-
-export function buildExcelBuffer(result: ReportResult, pivot?: PivotResult): Buffer {
+export function buildExcelBuffer(result: ReportResult, pivotResult?: PivotResult): Buffer {
   const workbook = XLSX.utils.book_new();
 
-  const header = result.columns.map((c) => c.label);
-  const rows = result.rows.map((row) => result.columns.map((c) => normalizeCell(row[c.key])));
-  const sheetData: unknown[][] = [header, ...rows];
+  const rows = result.rows.map((row) => {
+    const mapped: Record<string, unknown> = {};
+    for (const col of result.columns) mapped[col.label] = row[col.key];
+    return mapped;
+  });
+  const sheet = XLSX.utils.json_to_sheet(rows);
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Report');
 
-  if (result.totals) {
-    sheetData.push([]);
-    sheetData.push(['Totals']);
-    for (const [key, value] of Object.entries(result.totals)) {
-      sheetData.push([key, value]);
+  if (pivotResult) {
+    const pivotRows = pivotResult.rowKeys.map((rowKey) => {
+      const mapped: Record<string, unknown> = { '': rowKey };
+      for (const columnKey of pivotResult.columnKeys) {
+        mapped[columnKey] = pivotResult.matrix[rowKey]?.[columnKey] ?? 0;
+      }
+      mapped['Total'] = pivotResult.rowTotals[rowKey] ?? 0;
+      return mapped;
+    });
+    const totalsRow: Record<string, unknown> = { '': 'Total' };
+    for (const columnKey of pivotResult.columnKeys) {
+      totalsRow[columnKey] = pivotResult.columnTotals[columnKey] ?? 0;
     }
+    totalsRow['Total'] = pivotResult.grandTotal;
+    pivotRows.push(totalsRow);
+
+    const pivotSheet = XLSX.utils.json_to_sheet(pivotRows);
+    XLSX.utils.book_append_sheet(workbook, pivotSheet, 'Pivot');
   }
 
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(sheetData), 'Report');
-
-  if (pivot) {
-    const pivotHeader = ['', ...pivot.columnKeys, 'Total'];
-    const pivotRows = pivot.rowKeys.map((rowKey) => [
-      rowKey,
-      ...pivot.columnKeys.map((colKey) => pivot.matrix[rowKey]?.[colKey] ?? 0),
-      pivot.rowTotals[rowKey] ?? 0,
-    ]);
-    const pivotTotalsRow = ['Total', ...pivot.columnKeys.map((c) => pivot.columnTotals[c] ?? 0), pivot.grandTotal];
-
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.aoa_to_sheet([pivotHeader, ...pivotRows, pivotTotalsRow]),
-      'Pivot'
-    );
-  }
-
-  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
-  return Buffer.from(buffer);
+  const arrayBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+  return Buffer.from(arrayBuffer);
 }

@@ -3,17 +3,14 @@
 import { BaseEntity } from '@/shared/types/common.types';
 import { ReportFilterCondition } from './report-definition.types';
 
+// NOTE: report-execution.service.ts's EXTENSION_MAP/MIME_MAP map 'word' to
+// legacy extension 'doc' / mime 'application/msword', but any practical
+// generator (including the `docx` package used in word-report.generator.ts
+// below) produces modern OOXML .docx. Flagging -- not changing that file.
 export type ExecutionFormat = 'pdf' | 'excel' | 'csv' | 'word' | 'json';
 export type ExecutionStatus = 'pending' | 'processing' | 'completed' | 'failed';
 export type ExecutionSourceType = 'report_definition' | 'dashboard';
 
-/**
- * A single generated artifact — either an ad-hoc run, a scheduled run, or
- * a dashboard export. Mirrors the shape of the pre-existing
- * modules/reports Report entity but generalized to cover dashboards and
- * the extra formats (word) this phase adds; modules/reports remains the
- * legacy fleet-summary-only generator and is unaffected.
- */
 export interface ReportExecution extends BaseEntity {
   name: string;
   sourceType: ExecutionSourceType;
@@ -21,15 +18,15 @@ export interface ReportExecution extends BaseEntity {
   dashboardId?: string;
   format: ExecutionFormat;
   status: ExecutionStatus;
-  fileUrl?: string;
-  fileKey?: string;
-  fileSize?: number;
   generatedBy: string;
   generatedAt: Date;
   drilldownFilters?: ReportFilterCondition[];
   emailedTo?: string[];
-  downloadCount: number;
+  fileUrl?: string;
+  fileKey?: string;
+  fileSize?: number;
   errorMessage?: string;
+  downloadCount: number;
   isScheduledRun?: boolean;
 }
 

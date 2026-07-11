@@ -1,6 +1,3 @@
-
-// frontend/modules/expenses/components/ExpenseModal.tsx
-
 'use client';
 
 import {
@@ -47,14 +44,20 @@ function toFormValues(
     license_plate: expense.license_plate,
     amount: expense.amount,
     date: dateStr.slice(0, 10),
-    expense_type_id: expense.expense_type_id ?? '',
-    description: expense.description ?? '',
-    jobTrip: expense.jobTrip ?? '',
-    notes: expense.notes ?? '',
+    expense_type_id: expense.expense_type_id || '',
+    description: expense.description || '',
+    jobTrip: expense.jobTrip || '',
+    notes: expense.notes || '',
   };
 }
 
 export function ExpenseModal({ open, mode, expense, defaultLicensePlate, onOpenChange, onSubmit }: ExpenseModalProps) {
+  const handleSubmit = async (values: ExpenseFormValues) => {
+    console.log('ExpenseModal handleSubmit called with:', values);
+    await onSubmit(values);
+    onOpenChange(false);
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-form-wide">
@@ -63,12 +66,9 @@ export function ExpenseModal({ open, mode, expense, defaultLicensePlate, onOpenC
           <DialogDescription>{DESCRIPTIONS[mode]}</DialogDescription>
         </DialogHeader>
         <ExpenseForm
-          key={`${mode}-${expense?._id ?? 'new'}`}
+          key={`${mode}-${expense?._id ?? 'new'}-${Date.now()}`}
           defaultValues={toFormValues(expense, defaultLicensePlate)}
-          onSubmit={async (values) => {
-            await onSubmit(values);
-            onOpenChange(false);
-          }}
+          onSubmit={handleSubmit}
           onCancel={() => onOpenChange(false)}
           submitLabel={mode === 'edit' ? 'Save changes' : 'Record expense'}
         />

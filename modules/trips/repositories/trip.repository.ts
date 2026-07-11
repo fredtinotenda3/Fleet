@@ -15,16 +15,6 @@ import { Filter } from 'mongodb';
 export class TripRepository extends BaseRepository<Trip> {
   protected collectionName = 'tbltrips';
 
-  /**
-   * Mirrors VehicleRepository.isSuperAdminTenant(). BaseRepository's own
-   * findMany/findWithPagination already treat these pseudo-tenant values
-   * as "no tenant filter" internally, so the raw aggregation pipelines
-   * below (which bypass BaseRepository) must apply the exact same rule --
-   * otherwise stats endpoints undercount relative to the list endpoint
-   * for super-admin sessions, since a strict `tenantId: 'default'` match
-   * only picks up trips whose tenantId field is literally "default"
-   * instead of every tenant's data.
-   */
   private isSuperAdminTenant(tenantId: string): boolean {
     return (
       tenantId === 'default' ||
@@ -183,6 +173,47 @@ export class TripRepository extends BaseRepository<Trip> {
 
     const results = await collection.aggregate(pipeline).toArray();
     return results.map((r) => ({ date: r._id, distance: r.distance }));
+  }
+
+  /**
+   * Per-vehicle distance total within a date window, keyed by
+   * license_plate. Added specifically so FuelQueryService can fall back
+   * to trip-derived distance when a vehicle's fuel logs have sparse/zero
+   * odometer readings -- odometer-derived distance and trip-derived
+   * distance are two independent measurements of the same physical
+   * quantity, and trips are the more reliable of the two in this dataset
+   * since CreateTripHandler already rejects any trip with
+   * distance_calculated <= 0 at write time, while fuel-log odometer has
+   * no equivalent guard.
+   */
+  async getDistanceByVehicle(
+    tenantId: string,
+    startDate: Date,
+    endDate: Date
+  ): Promise<Record<string, number>> {
+    const collection = await this.getCollection();
+    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+
+    const match: Record<string, unknown> = {
+      isDeleted: { $ne: true },
+      date: { $gte: startDate, $lte: endDate },
+    };
+    if (!isSuperAdmin) {
+      match.tenantId = tenantId;
+    }
+
+    const pipeline = [
+      { $match: match },
+      {
+        $group: {
+          _id: '$license_plate',
+          distance: { $sum: '$distance_calculated' },
+        },
+      },
+    ];
+
+    const results = await collection.aggregate(pipeline).toArray();
+    return Object.fromEntries(results.map((r) => [r._id as string, r.distance as number]));
   }
 }
 

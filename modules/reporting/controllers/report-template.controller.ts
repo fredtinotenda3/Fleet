@@ -1,17 +1,48 @@
-
 // modules/reporting/controllers/report-template.controller.ts
 
 import { NextRequest } from 'next/server';
-import { reportTemplateService } from '../services/report-template.service';
 import { AuthContext } from '@/server/auth/auth-context';
+import { reportTemplateService } from '../services/report-template.service';
 import { successResponse, createdResponse, errorResponse } from '@/server/utils/response.utils';
 import { AppError } from '@/server/errors/app.errors';
-import { reportTemplateCreateSchema, reportTemplateInstantiateSchema } from '@/shared/validations/report-template.schema';
+import { validateWithZod } from '@/shared/utils/validation.utils';
+import {
+  reportTemplateCreateSchema,
+  reportTemplateInstantiateSchema,
+} from '@/shared/validations/report-template.schema';
 
 export class ReportTemplateController {
-  async list(_req: NextRequest, context: AuthContext) {
+  async list(req: NextRequest, context: AuthContext) {
     try {
       return successResponse(await reportTemplateService.listVisible(context.tenantId));
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async get(req: NextRequest, context: AuthContext, id: string) {
+    try {
+      return successResponse(await reportTemplateService.get(id, context.tenantId));
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** No route yet -- clones a template's saved definition into a live, tenant-owned ReportDefinition. */
+  async instantiate(req: NextRequest, context: AuthContext, id: string) {
+    try {
+      const body = await req.json().catch(() => ({}));
+      const result = await validateWithZod(reportTemplateInstantiateSchema, body);
+      if (!result.success) {
+        return errorResponse('Validation failed', 'VALIDATION_ERROR', 400, result.errors);
+      }
+      const definition = await reportTemplateService.instantiate(
+        id,
+        context.tenantId,
+        context.userId,
+        result.data?.name
+      );
+      return createdResponse(definition);
     } catch (error) {
       return this.handleError(error);
     }
@@ -20,37 +51,30 @@ export class ReportTemplateController {
   async create(req: NextRequest, context: AuthContext) {
     try {
       const body = await req.json();
-      const parsed = reportTemplateCreateSchema.safeParse(body);
-      if (!parsed.success) return errorResponse('Invalid report template', 'VALIDATION_ERROR', 400, parsed.error.flatten());
-      return createdResponse(await reportTemplateService.create(parsed.data, context.tenantId, context.userId));
-    } catch (error) {
-      return this.handleError(error);
-    }
-  }
-
-  async delete(_req: NextRequest, context: AuthContext, params: { id: string }) {
-    try {
-      await reportTemplateService.delete(params.id, context.tenantId, context.userId);
-      return successResponse({ deleted: true });
-    } catch (error) {
-      return this.handleError(error);
-    }
-  }
-
-  async instantiate(req: NextRequest, context: AuthContext, params: { id: string }) {
-    try {
-      const body = await req.json().catch(() => ({}));
-      const parsed = reportTemplateInstantiateSchema.safeParse(body);
-      if (!parsed.success) return errorResponse('Invalid request', 'VALIDATION_ERROR', 400, parsed.error.flatten());
-      const created = await reportTemplateService.instantiate(params.id, context.tenantId, context.userId, parsed.data.name);
+      const result = await validateWithZod(reportTemplateCreateSchema, body);
+      if (!result.success || !result.data) {
+        return errorResponse('Validation failed', 'VALIDATION_ERROR', 400, result.errors);
+      }
+      const created = await reportTemplateService.create(result.data, context.tenantId, context.userId);
       return createdResponse(created);
     } catch (error) {
       return this.handleError(error);
     }
   }
 
+  async delete(req: NextRequest, context: AuthContext, id: string) {
+    try {
+      await reportTemplateService.delete(id, context.tenantId, context.userId);
+      return successResponse({ message: 'Report template deleted successfully' });
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
   private handleError(error: unknown) {
-    if (error instanceof AppError) return errorResponse(error.message, error.code, error.statusCode, error.details);
+    if (error instanceof AppError) {
+      return errorResponse(error.message, error.code, error.statusCode, error.details);
+    }
     console.error('[ReportTemplateController] Unexpected error:', error);
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }

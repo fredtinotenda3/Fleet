@@ -20,6 +20,21 @@ import {
 
 bootstrapCqrs();
 
+/** Enterprise CSV import safety cap -- matches the client-side limit in ImportModal. */
+const MAX_IMPORT_ROWS = 2000;
+
+export interface ImportRowResult {
+  row: number;
+  success: boolean;
+  identifier?: string;
+  error?: string;
+}
+
+export interface ImportResponse {
+  summary: { total: number; succeeded: number; failed: number };
+  results: ImportRowResult[];
+}
+
 export class FuelController {
   async getFuelLogs(req: NextRequest) {
     try {
@@ -82,6 +97,75 @@ export class FuelController {
 
       const log = await fuelCommandService.createFuelLog(body, tenantId, userId);
       return createdResponse(log);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /**
+   * Enterprise CSV import. Accepts `{ records: Record<string, unknown>[] }`
+   * (already parsed/coerced client-side by ImportModal) and creates one
+   * fuel log per row through the exact same `fuelCommandService.createFuelLog`
+   * path -- and therefore the exact same `fuelLogCreateSchema` validation,
+   * vehicle/unit/station/card lookups, and FuelLoggedEvent -- as the
+   * single-log create flow. Rows are processed sequentially (not
+   * Promise.all) so duplicate checks within the same batch are correctly
+   * serialized. A row failure never aborts the batch; every row gets its
+   * own success/failure result.
+   */
+  async importFuelLogs(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const userId = await getUserIdFromRequest(req);
+
+      let body: { records?: unknown };
+      try {
+        body = await req.json();
+      } catch {
+        throw new ValidationError('Invalid JSON body');
+      }
+
+      const records = Array.isArray(body.records) ? (body.records as Record<string, unknown>[]) : null;
+      if (!records || records.length === 0) {
+        throw new ValidationError('No records provided for import');
+      }
+      if (records.length > MAX_IMPORT_ROWS) {
+        throw new ValidationError(
+          `Import exceeds the maximum of ${MAX_IMPORT_ROWS} rows per batch`
+        );
+      }
+
+      const results: ImportRowResult[] = [];
+      let succeeded = 0;
+      let failed = 0;
+
+      for (let i = 0; i < records.length; i++) {
+        const rawRow = records[i];
+        const rowNumber = i + 2; // +1 for 0-index, +1 for the CSV header row
+        const licensePlate =
+          typeof rawRow.license_plate === 'string' ? rawRow.license_plate.toUpperCase() : undefined;
+
+        try {
+          const log = await fuelCommandService.createFuelLog(rawRow, tenantId, userId);
+          succeeded += 1;
+          results.push({
+            row: rowNumber,
+            success: true,
+            identifier: `${log.license_plate} - ${new Date(log.date).toLocaleDateString()}`,
+          });
+        } catch (error) {
+          failed += 1;
+          const message =
+            error instanceof AppError ? error.message : 'Unexpected error while importing this row';
+          results.push({ row: rowNumber, success: false, identifier: licensePlate, error: message });
+        }
+      }
+
+      const response: ImportResponse = {
+        summary: { total: records.length, succeeded, failed },
+        results,
+      };
+      return successResponse(response);
     } catch (error) {
       return this.handleError(error);
     }

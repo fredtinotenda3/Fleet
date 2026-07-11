@@ -1,6 +1,7 @@
 // frontend/modules/maintenance/services/maintenance.api.ts
 
 import { apiClient } from '@/shared/utils/api-client.utils';
+import { normalizeListResponse } from '@/shared/utils/pagination.utils';
 import type { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
 import type { Reminder, MaintenanceFilters, MaintenanceStats } from '../types';
 import type { MaintenanceFormOutput } from '../schemas';
@@ -28,14 +29,30 @@ function buildListQuery(params: Partial<MaintenanceListParams>) {
   };
 }
 
+/**
+ * Every method below now targets the ACTUAL route contract exposed by
+ * app/api/reminders/route.ts: a single query-param-dispatched endpoint
+ * (?id=, ?action=stats|overdue|upcoming|complete), the same convention
+ * already used by vehicles.api.ts / trips.api.ts / fuel.api.ts.
+ *
+ * Previously this file called path-based routes like `${BASE}/stats`,
+ * `${BASE}/overdue`, `${BASE}/upcoming`, `${BASE}/${id}`, and
+ * `${BASE}/${id}/complete` -- none of which exist as Next.js route files
+ * -- which is exactly why the Maintenance page's stats cards, overdue
+ * list, and upcoming list all 404'd while the Dashboard (which calls
+ * `/api/reminders` directly with no sub-path) worked fine.
+ */
 export const maintenanceApi = {
   /** Paginated list. Omitting page/limit hits the controller's legacy unpaginated branch (used by dashboards/charts). */
   async list(params: Partial<MaintenanceListParams> = {}): Promise<PaginatedResponse<Reminder>> {
-    return apiClient.get<PaginatedResponse<Reminder>>(BASE, { params: buildListQuery(params) });
+    const response = await apiClient.get<Reminder[] | PaginatedResponse<Reminder>>(BASE, {
+      params: buildListQuery(params),
+    });
+    return normalizeListResponse(response);
   },
 
   async getById(id: string): Promise<Reminder> {
-    return apiClient.get<Reminder>(`${BASE}/${id}`);
+    return apiClient.get<Reminder>(BASE, { params: { id } });
   },
 
   async create(payload: MaintenanceFormOutput): Promise<Reminder> {
@@ -43,29 +60,31 @@ export const maintenanceApi = {
   },
 
   async update(id: string, payload: Partial<MaintenanceFormOutput>): Promise<Reminder> {
-    return apiClient.put<Reminder>(`${BASE}/${id}`, payload);
+    return apiClient.put<Reminder>(BASE, payload, { params: { id } });
   },
 
   async remove(id: string): Promise<{ message: string }> {
-    return apiClient.delete<{ message: string }>(`${BASE}/${id}`);
+    return apiClient.delete<{ message: string }>(BASE, { params: { id } });
   },
 
   async complete(id: string, completionDate?: Date): Promise<Reminder> {
-    return apiClient.post<Reminder>(`${BASE}/${id}/complete`, {
-      completion_date: completionDate ? completionDate.toISOString() : undefined,
-    });
+    return apiClient.put<Reminder>(
+      BASE,
+      { completion_date: completionDate ? completionDate.toISOString() : undefined },
+      { params: { id, action: 'complete' } }
+    );
   },
 
   async getStats(): Promise<MaintenanceStats> {
-    return apiClient.get<MaintenanceStats>(`${BASE}/stats`);
+    return apiClient.get<MaintenanceStats>(BASE, { params: { action: 'stats' } });
   },
 
   async getOverdue(): Promise<Reminder[]> {
-    return apiClient.get<Reminder[]>(`${BASE}/overdue`);
+    return apiClient.get<Reminder[]>(BASE, { params: { action: 'overdue' } });
   },
 
   async getUpcoming(daysAhead: number = 7): Promise<Reminder[]> {
-    return apiClient.get<Reminder[]>(`${BASE}/upcoming`, { params: { daysAhead } });
+    return apiClient.get<Reminder[]>(BASE, { params: { action: 'upcoming', daysAhead } });
   },
 
   async getByVehicle(licensePlate: string, pagination: Partial<PaginationParams> = {}): Promise<PaginatedResponse<Reminder>> {
@@ -74,8 +93,14 @@ export const maintenanceApi = {
     });
   },
 
-  /** Recalculates pending/overdue status fleet-wide. Hits the existing scheduled-job route. */
+  /**
+   * Recalculates pending/overdue status fleet-wide. This hits
+   * /api/reminders/update-status, which only exports GET (it's a
+   * Vercel-Cron-style scheduled job endpoint) -- the previous `.post()`
+   * call would have failed with a 405 the first time anyone clicked
+   * "Refresh statuses" on the Overdue Maintenance page.
+   */
   async recalculateOverdue(): Promise<{ updatedCount: number }> {
-    return apiClient.post<{ updatedCount: number }>(`${BASE}/update-status`);
+    return apiClient.get<{ updatedCount: number }>(`${BASE}/update-status`);
   },
 };

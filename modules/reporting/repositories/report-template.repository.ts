@@ -2,34 +2,54 @@
 
 import { Filter } from 'mongodb';
 import { BaseRepository } from '@/server/repositories/base.repository';
-import { ReportTemplate } from '../types/report-template.types';
-
-const SYSTEM_TENANT = 'system';
+import { ReportTemplate, ReportTemplateCreateDTO } from '../types/report-template.types';
 
 export class ReportTemplateRepository extends BaseRepository<ReportTemplate> {
   protected collectionName = 'tblreporttemplates';
 
+  private isSuperAdminTenant(tenantId: string): boolean {
+    return tenantId === 'default' || tenantId === 'system' || tenantId === 'super_admin';
+  }
+
   /**
-   * Returns every template visible to a tenant: their own org-created
-   * templates plus every system template (stored under the pseudo-tenant
-   * 'system', mirroring how MaintenanceRepository's overdue sweep treats
-   * 'system' as "no tenant filter" elsewhere in this codebase).
+   * System templates (tenantId 'system', isSystemTemplate: true) are
+   * visible to every tenant; a tenant's own custom templates are visible
+   * only to that tenant. Super-admin/system callers already see
+   * everything via BaseRepository's tenant-filter bypass, so the $or
+   * only matters for real tenants.
    */
   async findVisibleTo(tenantId: string): Promise<ReportTemplate[]> {
     const collection = await this.getCollection();
+    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+
+    const filter: Record<string, unknown> = isSuperAdmin
+      ? { isDeleted: { $ne: true } }
+      : { isDeleted: { $ne: true }, $or: [{ tenantId }, { isSystemTemplate: true }] };
+
     return collection
-      .find({
-        isDeleted: { $ne: true },
-        $or: [{ tenantId }, { tenantId: SYSTEM_TENANT, isSystemTemplate: true }],
-      } as Filter<ReportTemplate>)
-      .sort({ category: 1, name: 1 })
-      .toArray();
+      .find(filter as Filter<ReportTemplate>)
+      .sort({ createdAt: -1 })
+      .toArray() as unknown as Promise<ReportTemplate[]>;
   }
 
+  /**
+   * Seeds a built-in template owned by the 'system' pseudo-tenant, called
+   * from ReportTemplateService.seedSystemTemplates() at boot. No userId --
+   * system templates aren't created by any user.
+   */
   async createSystemTemplate(
-    data: Omit<ReportTemplate, '_id' | 'tenantId' | 'createdAt' | 'updatedAt' | 'isDeleted' | 'deletedAt'>
+    data: Omit<ReportTemplateCreateDTO, 'isSystemTemplate'> & { isSystemTemplate: true }
   ): Promise<ReportTemplate> {
-    return this.create({ ...data, tenantId: SYSTEM_TENANT }, SYSTEM_TENANT, 'system');
+    return this.create(
+      {
+        name: data.name,
+        description: data.description,
+        category: data.category,
+        definition: data.definition,
+        isSystemTemplate: true,
+      },
+      'system'
+    );
   }
 }
 

@@ -1,11 +1,9 @@
-
-// frontend/modules/expenses/components/ExpenseForm.tsx
-
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { Input } from '@/frontend/shared/ui/forms/input';
 import { Label } from '@/frontend/shared/ui/forms/label';
@@ -27,7 +25,7 @@ import {
   DialogDescription,
 } from '@/frontend/shared/ui/feedback/dialog';
 import { useVehiclesList } from '@/frontend/modules/vehicles/hooks/useVehicles';
-import { useExpenseTypes } from '../hooks/useExpenses';
+import { useExpenseTypes, expenseKeys } from '../hooks/useExpenses';
 import { useCreateExpenseType } from '../hooks/useExpenseMutations';
 import { expenseFormSchema, type ExpenseFormValues } from '../schemas';
 import { DEFAULT_EXPENSE_CATEGORIES } from '../types';
@@ -55,35 +53,93 @@ export function ExpenseForm({ defaultValues, onSubmit, onCancel, submitLabel = '
   const { data: vehicles } = useVehiclesList({ limit: 1000 });
   const { data: expenseTypes, isLoading: typesLoading } = useExpenseTypes();
   const createExpenseType = useCreateExpenseType();
+  const queryClient = useQueryClient();
 
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
   const [newCategoryGroup, setNewCategoryGroup] = useState<string>(DEFAULT_EXPENSE_CATEGORIES[0]);
+
+  console.log('🔍 ExpenseForm - Available expense types:', expenseTypes);
 
   const {
     register,
     control,
     handleSubmit,
     setValue,
+    watch,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm<ExpenseFormValues>({
     resolver: zodResolver(expenseFormSchema),
     defaultValues: { ...FALLBACK_DEFAULTS, ...defaultValues },
   });
 
-  const submit = handleSubmit(async (values) => {
-    await onSubmit(values);
-  });
+  // Watch all form values for debugging
+  const allValues = watch();
+  console.log('👀 Form values:', allValues);
+
+  const submit = useCallback(
+    handleSubmit(async (values) => {
+      console.log('📤 Form submit - raw values:', values);
+      console.log('📤 Form submit - expense_type_id:', values.expense_type_id);
+      console.log('📤 Form submit - expense_type_id type:', typeof values.expense_type_id);
+      
+      // FIX: Ensure expense_type_id is properly handled
+      const cleanedValues: ExpenseFormValues = {
+        ...values,
+        expense_type_id: values.expense_type_id || undefined,
+      };
+      
+      console.log('📤 Form submit - cleaned values:', cleanedValues);
+      await onSubmit(cleanedValues);
+    }),
+    [handleSubmit, onSubmit]
+  );
 
   async function handleQuickAdd() {
     if (!newCategoryName.trim()) return;
-    const created = await createExpenseType.mutateAsync({
-      name: newCategoryName.trim(),
-      category: newCategoryGroup,
-    });
-    setValue('expense_type_id', created._id, { shouldValidate: true, shouldDirty: true });
-    setNewCategoryName('');
-    setQuickAddOpen(false);
+    
+    try {
+      console.log('🆕 Creating expense type:', newCategoryName.trim(), 'in group:', newCategoryGroup);
+      
+      const created = await createExpenseType.mutateAsync({
+        name: newCategoryName.trim(),
+        category: newCategoryGroup,
+      });
+
+      console.log('✅ Created expense type response:', created);
+      console.log('✅ Created expense type _id:', created._id);
+
+      // Validate MongoDB ObjectId (24 hex characters)
+      if (!created._id || !/^[a-fA-F0-9]{24}$/.test(created._id)) {
+        console.error('❌ Invalid expense type _id:', created._id);
+        throw new Error('Invalid expense type ID received');
+      }
+
+      // Refresh the list
+      await queryClient.invalidateQueries({ queryKey: expenseKeys.types() });
+      await queryClient.refetchQueries({ queryKey: expenseKeys.types() });
+
+      // Check what's in the cache after refetch
+      const updatedTypes = queryClient.getQueryData(expenseKeys.types());
+      console.log('📋 Updated expense types in cache:', updatedTypes);
+      
+      // Set the value
+      console.log('🎯 Setting expense_type_id to:', created._id);
+      setValue('expense_type_id', created._id, { 
+        shouldValidate: true, 
+        shouldDirty: true 
+      });
+      
+      // Verify it was set
+      const currentValue = getValues('expense_type_id');
+      console.log('✔️ Current expense_type_id after setValue:', currentValue);
+      
+      setNewCategoryName('');
+      setQuickAddOpen(false);
+    } catch (error) {
+      console.error('❌ Failed to create expense type:', error);
+    }
   }
 
   return (
@@ -147,23 +203,36 @@ export function ExpenseForm({ defaultValues, onSubmit, onCancel, submitLabel = '
             <Controller
               control={control}
               name="expense_type_id"
-              render={({ field }) => (
-                <Select
-                  value={field.value || NO_TYPE}
-                  onValueChange={(v) => field.onChange(v === NO_TYPE ? '' : v)}
-                  disabled={typesLoading}
-                >
-                  <SelectTrigger id="expense_type_id" className="w-full">
-                    <SelectValue placeholder="Uncategorized" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NO_TYPE}>Uncategorized</SelectItem>
-                    {expenseTypes?.map((t) => (
-                      <SelectItem key={t._id} value={t._id!}>{t.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
+              render={({ field }) => {
+                console.log('🔘 Select field value:', field.value);
+                console.log('🔘 Select field value type:', typeof field.value);
+                
+                return (
+                  <Select
+                    value={field.value || NO_TYPE}
+                    onValueChange={(v) => {
+                      console.log('🔄 Select onValueChange - new value:', v);
+                      console.log('🔄 Select onValueChange - NO_TYPE:', NO_TYPE);
+                      const newValue = v === NO_TYPE ? '' : v;
+                      console.log('🔄 Select onValueChange - final value:', newValue);
+                      field.onChange(newValue);
+                    }}
+                  >
+                    <SelectTrigger id="expense_type_id" className="w-full" disabled={typesLoading}>
+                      <SelectValue placeholder={typesLoading ? 'Loading categories…' : 'Uncategorized'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NO_TYPE}>Uncategorized</SelectItem>
+                      {expenseTypes?.map((t) => {
+                        console.log('📋 Expense type option:', { id: t._id, name: t.name });
+                        return (
+                          <SelectItem key={t._id} value={t._id!}>{t.name}</SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                );
+              }}
             />
           </div>
 
@@ -212,7 +281,7 @@ export function ExpenseForm({ defaultValues, onSubmit, onCancel, submitLabel = '
             </div>
             <div>
               <Label htmlFor="new-category-group" className="form-label">Group</Label>
-              <Select value={newCategoryGroup} onValueChange={setNewCategoryGroup}>
+              <Select value={newCategoryGroup} onValueChange={(v) => v && setNewCategoryGroup(v)}>
                 <SelectTrigger id="new-category-group" className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {DEFAULT_EXPENSE_CATEGORIES.map((c) => (

@@ -7,26 +7,18 @@ import { ReportDefinition } from '../types/report-definition.types';
 export class ReportDefinitionRepository extends BaseRepository<ReportDefinition> {
   protected collectionName = 'tblreportdefinitions';
 
+  private isSuperAdminTenant(tenantId: string): boolean {
+    return tenantId === 'default' || tenantId === 'system' || tenantId === 'super_admin';
+  }
+
   async findByOrganization(tenantId: string): Promise<ReportDefinition[]> {
-    return this.findMany({} as Filter<ReportDefinition>, tenantId, {
-      sortBy: 'updatedAt',
-      sortOrder: 'desc',
-    });
-  }
-
-  async findScheduled(tenantId: string): Promise<ReportDefinition[]> {
     return this.findMany(
-      { 'schedule.enabled': true } as Filter<ReportDefinition>,
-      tenantId
+      {} as Filter<ReportDefinition>,
+      tenantId,
+      { sortBy: 'createdAt', sortOrder: 'desc' },
+      false,
+      this.isSuperAdminTenant(tenantId)
     );
-  }
-
-  /** Used by the recurring scheduler sweep, which runs across every tenant. */
-  async findAllScheduled(): Promise<ReportDefinition[]> {
-    const collection = await this.getCollection();
-    return collection
-      .find({ 'schedule.enabled': true, isDeleted: { $ne: true } } as Filter<ReportDefinition>)
-      .toArray();
   }
 }
 

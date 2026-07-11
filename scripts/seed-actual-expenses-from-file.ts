@@ -17,6 +17,11 @@ const VEHICLES = [
   "XYZ5678",
 ];
 
+// FIX: Add the organization's tenant ID - get this from your database
+// Run this in MongoDB to find it:
+// db.tblorganizations.findOne({ name: "Willsgrove Farm Enterprises" }, { _id: 1 })
+const ORGANIZATION_TENANT_ID = process.env.ORGANIZATION_TENANT_ID || "default";
+
 // Realistic costs for each type of repair
 const getCostRange = (itemName: string): { min: number; max: number } => {
   if (itemName.includes("Engine overhaul") || itemName.includes("New Engine") || itemName.includes("New gear box")) {
@@ -101,8 +106,10 @@ async function seedActualExpenses() {
         expense_type_id: new ObjectId(expenseType._id),
         description: `${expenseType.name}`,
         notes: `Performed on ${vehicle} - ${date.toLocaleDateString()}`,
+        tenantId: ORGANIZATION_TENANT_ID, // FIX: Add tenantId to match organization
         isDeleted: false,
         createdAt: new Date(),
+        updatedAt: new Date(),
       });
     }
     

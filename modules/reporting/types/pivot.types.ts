@@ -12,7 +12,6 @@ export interface ReportPivotConfig {
 export interface PivotResult {
   rowKeys: string[];
   columnKeys: string[];
-  /** matrix[rowKey][columnKey] = aggregated value */
   matrix: Record<string, Record<string, number>>;
   rowTotals: Record<string, number>;
   columnTotals: Record<string, number>;

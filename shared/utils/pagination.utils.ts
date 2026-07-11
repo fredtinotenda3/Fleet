@@ -75,3 +75,31 @@ export function getPaginationRange(currentPage: number, totalPages: number): num
 
   return range;
 }
+
+/**
+ * Several controllers (FuelStationController.list, FuelCardController.list,
+ * MaintenanceController.getReminders, TripController.getTrips,
+ * FuelController.getFuelLogs) return a bare `T[]` -- not `{data, pagination}`
+ * -- when the caller omits the `page` query param, as a legacy path kept
+ * for dashboard/chart consumers that want the full unpaginated set.
+ *
+ * Frontend list pages that call these APIs without `page`/`limit` were
+ * unconditionally assuming the paginated shape (`result.data`), which on
+ * a bare array is `undefined` -- e.g. Fuel Stations and Fuel Cards
+ * rendered empty tables despite the API returning real data. Rather than
+ * special-casing every call site (or changing the backend's established,
+ * intentional unpaginated contract), this normalizes the response once at
+ * the API-client boundary so callers can always treat list() results as
+ * `PaginatedResponse<T>`.
+ */
+export function normalizeListResponse<T>(
+  response: T[] | PaginatedResponse<T>
+): PaginatedResponse<T> {
+  if (Array.isArray(response)) {
+    return createPaginatedResponse(response, response.length, {
+      page: 1,
+      limit: Math.max(response.length, 1),
+    });
+  }
+  return response;
+}

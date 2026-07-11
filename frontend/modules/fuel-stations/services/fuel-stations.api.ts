@@ -1,6 +1,7 @@
 // frontend/modules/fuel-stations/services/fuel-stations.api.ts
 
 import { apiClient } from '@/shared/utils/api-client.utils';
+import { normalizeListResponse } from '@/shared/utils/pagination.utils';
 import type { PaginatedResponse } from '@/shared/types/common.types';
 import type { FuelStation, FuelStationFilters } from '../types';
 import type { FuelStationFormValues } from '../schemas';
@@ -13,8 +14,16 @@ export interface FuelStationListParams extends FuelStationFilters {
 }
 
 export const fuelStationsApi = {
+  /**
+   * NOTE: when called without `page`/`limit` (as every consumer of this
+   * list -- the Fuel Stations page and the station picker in FuelForm --
+   * currently does), the controller returns a bare `FuelStation[]`
+   * instead of `{data, pagination}`. normalizeListResponse() wraps that
+   * consistently so callers can always rely on `.data`/`.pagination`.
+   */
   async list(params: Partial<FuelStationListParams> = {}): Promise<PaginatedResponse<FuelStation>> {
-    return apiClient.get<PaginatedResponse<FuelStation>>(BASE, { params });
+    const response = await apiClient.get<FuelStation[] | PaginatedResponse<FuelStation>>(BASE, { params });
+    return normalizeListResponse(response);
   },
 
   async getById(id: string): Promise<FuelStation> {

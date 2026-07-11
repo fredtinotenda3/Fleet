@@ -31,17 +31,6 @@ const ALL_PAYMENT_METHODS: FuelPaymentMethod[] = ['cash', 'fuel_card', 'credit_c
 export class FuelRepository extends BaseRepository<FuelLog> {
   protected collectionName = 'tblfuellogs';
 
-  /**
-   * Mirrors VehicleRepository.isSuperAdminTenant(). BaseRepository's own
-   * findMany/findWithPagination/findOne already treat these pseudo-tenant
-   * values as "no tenant filter" internally, so every method below that
-   * builds its own raw aggregation pipeline (bypassing BaseRepository)
-   * must apply the exact same rule -- otherwise stats/KPI endpoints
-   * silently undercount relative to the list endpoints for super-admin
-   * sessions, since a strict `tenantId: 'default'` match only picks up
-   * rows whose tenantId field is literally the string "default" instead
-   * of every tenant's data.
-   */
   private isSuperAdminTenant(tenantId: string): boolean {
     return (
       tenantId === 'default' ||
@@ -85,20 +74,6 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     return this.findWithPagination(filter as Filter<FuelLog>, pagination, tenantId);
   }
 
-  /**
-   * Fleet-wide fuel stats. With no dateRange, this sums ALL matching fuel
-   * logs (all-time) -- callers must pass an explicit dateRange to scope to
-   * a period; there is no implicit "current month" default here.
-   *
-   * Tenant scoping now mirrors VehicleRepository / BaseRepository: for
-   * super-admin pseudo-tenants ('default' | 'system' | 'super_admin') the
-   * tenantId filter is omitted entirely so this aggregation covers the
-   * same document set as the (unscoped) list endpoint. Previously this
-   * filtered on `tenantId` by strict equality unconditionally, which
-   * silently excluded every real-tenant fuel log from the stats cards
-   * while the list/table view (going through BaseRepository) still
-   * showed them -- producing mismatched totals.
-   */
   async getFuelStats(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date }
@@ -233,14 +208,33 @@ export class FuelRepository extends BaseRepository<FuelLog> {
       { $project: { license_plate: '$_id', totalFuel: 1, totalCost: 1, _id: 0 } },
     ];
 
-    return collection.aggregate(pipeline).toArray() as Promise<
-      { license_plate: string; totalFuel: number; totalCost: number }[]
-    >;
+   return collection.aggregate(pipeline).toArray() as Promise<
+  { license_plate: string; totalFuel: number; totalCost: number }[]
+>;
   }
 
+  /**
+   * FIX (fuel efficiency chain): the previous version derived distance
+   * ONLY from `max(odometer) - min(odometer)` across each vehicle's fuel
+   * logs in the period. When fuel-log odometer readings are sparse/zero
+   * (as in this dataset -- 32,703L logged against ~0km recorded), that
+   * yields totalDistance = 0 and therefore efficiency = 0 regardless of
+   * how much fuel was actually consumed.
+   *
+   * `tripDistanceByVehicle` is an optional per-license-plate distance map
+   * for the SAME date window, supplied by FuelQueryService from
+   * tripRepository.getDistanceByVehicle(). For any vehicle whose
+   * odometer-derived distance for the period is 0 (or the odometer field
+   * is missing entirely), we substitute the trip-derived distance for
+   * that vehicle instead of silently reporting 0. This never overrides a
+   * genuine non-zero odometer reading -- it only fills the gap when fuel
+   * logs have no usable odometer data.
+   */
   async getFuelKpis(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    tripDistanceByVehicle?: Record<string, number>,
+    prevTripDistanceByVehicle?: Record<string, number>
   ): Promise<FuelKpis> {
     const collection = await this.getCollection();
     const isSuperAdmin = this.isSuperAdminTenant(tenantId);
@@ -281,24 +275,44 @@ export class FuelRepository extends BaseRepository<FuelLog> {
       collection.find({ ...baseMatch, date: { $gte: rangeStart, $lte: rangeEnd } }).sort({ date: -1 }).toArray(),
     ]);
 
-    const summarize = (byVehicle: VehiclePeriodAggregate[]) => {
+    const summarize = (
+      byVehicle: VehiclePeriodAggregate[],
+      distanceFallback?: Record<string, number>
+    ) => {
       let totalDistance = 0;
       let totalFuel = 0;
       let totalCost = 0;
+      let fallbackVehicleCount = 0;
+
       for (const v of byVehicle) {
         totalFuel += v.totalFuel || 0;
         totalCost += v.totalCost || 0;
-        if (typeof v.minOdometer === 'number' && typeof v.maxOdometer === 'number' && v.maxOdometer > v.minOdometer) {
-          totalDistance += v.maxOdometer - v.minOdometer;
+
+        let vehicleDistance = 0;
+        const hasOdometerRange =
+          typeof v.minOdometer === 'number' &&
+          typeof v.maxOdometer === 'number' &&
+          v.maxOdometer > v.minOdometer;
+
+        if (hasOdometerRange) {
+          vehicleDistance = (v.maxOdometer as number) - (v.minOdometer as number);
         }
+
+        if (vehicleDistance <= 0 && distanceFallback && distanceFallback[v._id]) {
+          vehicleDistance = distanceFallback[v._id];
+          fallbackVehicleCount += 1;
+        }
+
+        totalDistance += vehicleDistance;
       }
+
       const efficiency = totalFuel > 0 ? totalDistance / totalFuel : 0;
       const costPerKm = totalDistance > 0 ? totalCost / totalDistance : 0;
-      return { totalDistance, totalFuel, totalCost, efficiency, costPerKm };
+      return { totalDistance, totalFuel, totalCost, efficiency, costPerKm, fallbackVehicleCount };
     };
 
-    const current = summarize(currentByVehicle);
-    const previous = summarize(previousByVehicle);
+    const current = summarize(currentByVehicle, tripDistanceByVehicle);
+    const previous = summarize(previousByVehicle, prevTripDistanceByVehicle);
 
     const vehicleAvgVolume = new Map<string, number>();
     currentByVehicle.forEach((v) => vehicleAvgVolume.set(v._id, v.avgVolume || 0));

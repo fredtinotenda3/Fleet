@@ -82,85 +82,38 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
     );
   }
 
+  /**
+   * FIX: previously filtered on `status: 'pending'`, which is the exact
+   * bug `getMaintenanceStats` below was already fixed for -- once the
+   * cron (recalculateOverdueStatuses) flips a reminder's stored status
+   * to the literal string 'overdue', it stopped matching this filter and
+   * disappeared from the Overdue Maintenance page / `/api/reminders?action=overdue`
+   * while `getMaintenanceStats().overdue` (and now the dashboard widget,
+   * see useDashboardData.ts) still counted it. "Overdue" must be defined
+   * by business meaning (unresolved AND past due), independent of
+   * whichever status string currently happens to be stored -- identical
+   * rule to getMaintenanceStats, so this method, the stats cards, and the
+   * dashboard widget can never contradict each other again.
+   */
   async getOverdueReminders(tenantId: string): Promise<Reminder[]> {
     const now = new Date();
     return this.findMany(
       {
-        status: 'pending',
+        status: { $nin: ['completed', 'cancelled'] },
         due_date: { $lt: now },
       } as Filter<Reminder>,
       tenantId
     );
   }
 
-  async getMaintenanceStats(tenantId: string): Promise<MaintenanceStats> {
-    const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
-
-    const filter: Record<string, unknown> = {
-      isDeleted: { $ne: true },
-    };
-    if (!isSuperAdmin) {
-      filter.tenantId = tenantId;
-    }
-
-    const [total, completed, pending, overdue] = await Promise.all([
-      collection.countDocuments(filter as Filter<Reminder>),
-      collection.countDocuments({
-        ...filter,
-        status: 'completed',
-      } as Filter<Reminder>),
-      collection.countDocuments({
-        ...filter,
-        status: 'pending',
-        due_date: { $gte: new Date() },
-      } as Filter<Reminder>),
-      collection.countDocuments({
-        ...filter,
-        status: 'pending',
-        due_date: { $lt: new Date() },
-      } as Filter<Reminder>),
-    ]);
-
-    const completionDaysPipeline = [
-      {
-        $match: {
-          ...filter,
-          status: 'completed',
-          completion_date: { $exists: true },
-        },
-      },
-      {
-        $project: {
-          daysDiff: {
-            $dateDiff: {
-              startDate: '$due_date',
-              endDate: '$completion_date',
-              unit: 'day',
-            },
-          },
-        },
-      },
-      { $group: { _id: null, avgDays: { $avg: '$daysDiff' } } },
-    ];
-
-    const avgResult = await collection
-      .aggregate(completionDaysPipeline)
-      .toArray();
-    const averageCompletionDays = Math.round(
-      avgResult[0]?.avgDays || 0
-    );
-
-    return {
-      total,
-      completed,
-      pending,
-      overdue,
-      completionRate: total > 0 ? (completed / total) * 100 : 0,
-      averageCompletionDays,
-    };
-  }
-
+  /**
+   * FIX: same class of bug as getOverdueReminders above -- "upcoming"
+   * must mean unresolved AND not yet due, independent of the literal
+   * status string stored (a reminder legitimately becomes upcoming again
+   * after recalculateOverdueStatuses reverts it from 'overdue' back to
+   * 'pending', but should not silently disappear from this list for any
+   * other unresolved status value that might exist).
+   */
   async getUpcomingReminders(
     tenantId: string,
     daysAhead: number = 7
@@ -171,11 +124,70 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
 
     return this.findMany(
       {
-        status: 'pending',
+        status: { $nin: ['completed', 'cancelled'] },
         due_date: { $gte: now, $lte: future },
       } as Filter<Reminder>,
       tenantId
     );
+  }
+
+  /**
+   * FIX: previously counted overdue as `{status:'pending', due_date:$lt:now}`.
+   * Once the cron (recalculateOverdueStatuses) flips a record's status to
+   * the literal string 'overdue', it stops matching that filter and
+   * disappears from BOTH the pending and overdue buckets while still
+   * counting toward `total` -- producing exactly the "0 Overdue" vs
+   * "5 records show Overdue" contradiction. Overdue must be defined by
+   * business meaning (not yet resolved, past due), independent of which
+   * exact status string is currently stored.
+   */
+  async getMaintenanceStats(tenantId: string): Promise<MaintenanceStats> {
+    const collection = await this.getCollection();
+    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+
+    const filter: Record<string, unknown> = { isDeleted: { $ne: true } };
+    if (!isSuperAdmin) filter.tenantId = tenantId;
+
+    const now = new Date();
+    const UNRESOLVED = { $nin: ['completed', 'cancelled'] };
+
+    const [total, completed, overdue, pending] = await Promise.all([
+      collection.countDocuments(filter as Filter<Reminder>),
+      collection.countDocuments({ ...filter, status: 'completed' } as Filter<Reminder>),
+      collection.countDocuments({
+        ...filter,
+        status: UNRESOLVED,
+        due_date: { $lt: now },
+      } as Filter<Reminder>),
+      collection.countDocuments({
+        ...filter,
+        status: UNRESOLVED,
+        due_date: { $gte: now },
+      } as Filter<Reminder>),
+    ]);
+
+    const completionDaysPipeline = [
+      { $match: { ...filter, status: 'completed', completion_date: { $exists: true } } },
+      {
+        $project: {
+          daysDiff: {
+            $dateDiff: { startDate: '$due_date', endDate: '$completion_date', unit: 'day' },
+          },
+        },
+      },
+      { $group: { _id: null, avgDays: { $avg: '$daysDiff' } } },
+    ];
+    const avgResult = await collection.aggregate(completionDaysPipeline).toArray();
+    const averageCompletionDays = Math.round(avgResult[0]?.avgDays || 0);
+
+    return {
+      total,
+      completed,
+      pending,
+      overdue,
+      completionRate: total > 0 ? (completed / total) * 100 : 0,
+      averageCompletionDays,
+    };
   }
 
   async completeReminder(
@@ -203,7 +215,7 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
    * lib/updateReminderStatuses.ts took).
    *
    * Pass tenantId === 'system' (or 'default') to run this across ALL
-   * tenants at once — BaseRepository's tenant filter treats those values
+   * tenants at once -- BaseRepository's tenant filter treats those values
    * as "no tenant filter", which is exactly what the scheduled jobs
    * (notify-overdue, update-status) need today, since reminders aren't
    * yet partitioned per-tenant at the job-scheduling level (see Phase 7,
@@ -213,8 +225,6 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
    * (not ones already overdue) so the caller can notify their assignees
    * exactly once per transition, never on every cron tick.
    */
-  // modules/maintenance/repositories/maintenance.repository.ts
-
   async recalculateOverdueStatuses(
     tenantId: string
   ): Promise<{ updatedCount: number; newlyOverdue: Reminder[] }> {

@@ -1,4 +1,3 @@
-
 // frontend/modules/expenses/components/ExpenseStatsCards.tsx
 
 'use client';
@@ -37,7 +36,22 @@ function getRangeForPeriod(period: StatsPeriod): { startDate?: Date; endDate?: D
 }
 
 export function ExpenseStatsCards() {
-  const [period, setPeriod] = useState<StatsPeriod>('month');
+  /**
+   * FIX: this previously defaulted to 'month', which silently scoped the
+   * dashboard's KPI cards ("Total expenses", "Average expense",
+   * "Categories used", "Top category") to the current calendar month on
+   * every page load -- while the cards themselves read as if they were
+   * showing all-time figures, and the paired KPIsWidget on the main
+   * dashboard explicitly labels the same number "All recorded expenses".
+   * That mismatch (a few current-month rows vs. the full 101-record
+   * history going back to April) is exactly what produced the
+   * dashboard-vs-list-page total discrepancy. Defaulting to 'all' makes
+   * getRangeForPeriod() return `undefined`, which (paired with the fixed
+   * useExpenseStats hook) sends no date filter at all and matches the
+   * backend's own all-time aggregation. The selector still lets the
+   * person narrow to This month / Last 30 days / This year on demand.
+   */
+  const [period, setPeriod] = useState<StatsPeriod>('all');
   const dateRange = useMemo(() => getRangeForPeriod(period), [period]);
   const { data: stats, isLoading, error } = useExpenseStats(dateRange);
 

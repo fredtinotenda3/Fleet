@@ -18,7 +18,11 @@
     "db:delete-all-vehicles": "tsx scripts/cascade-delete-vehicle.ts --all",
     "db:reset-vehicles": "npm run db:delete-all-vehicles && npm run db:seed-vehicles",
     "db:make-admin": "node scripts/make-me-admin.js",
-    "db:versioning": "tsx scripts/add-versioning-indexes.ts"
+    "db:versioning": "tsx scripts/add-versioning-indexes.ts",
+    "db:audit": "tsx scripts/data-integrity-audit.ts",
+    "db:audit:apply": "tsx scripts/data-integrity-audit.ts --apply",
+     "db:fix-expense-tenants": "node scripts/update-expenses-tenant.js",
+     "db:fix-new-expenses": "node scripts/fix-new-expenses.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1079.0",

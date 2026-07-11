@@ -2,54 +2,38 @@
 
 import { BaseEntity } from '@/shared/types/common.types';
 
-export type WidgetType = 'kpi' | 'chart' | 'table' | 'pivot';
+export type DashboardWidgetType = 'kpi' | 'table' | 'chart' | 'pivot';
 
-export interface WidgetLayout {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-export interface DashboardWidget {
+export interface DashboardWidgetConfig {
   id: string;
-  type: WidgetType;
+  type: DashboardWidgetType;
   title: string;
-  /** Required for 'chart' | 'table' | 'pivot' widgets. */
-  reportDefinitionId?: string;
-  /** Required for 'kpi' widgets. */
   kpiDefinitionId?: string;
-  layout: WidgetLayout;
+  reportDefinitionId?: string;
+  layout?: { x: number; y: number; w: number; h: number };
 }
 
-/**
- * A dashboard is a saved arrangement of widgets, each bound to either a
- * ReportDefinition (chart/table/pivot) or a KPIDefinition (kpi tile).
- * `isExecutive` flags a curated, KPI-forward dashboard intended for
- * leadership consumption (drives PDF export styling and default
- * read-only sharing).
- */
 export interface Dashboard extends BaseEntity {
   name: string;
   description?: string;
   isExecutive: boolean;
-  widgets: DashboardWidget[];
+  widgets: DashboardWidgetConfig[];
 }
 
 export interface DashboardCreateDTO {
   name: string;
   description?: string;
   isExecutive?: boolean;
-  widgets?: DashboardWidget[];
+  widgets?: DashboardWidgetConfig[];
 }
 
 export interface DashboardUpdateDTO extends Partial<DashboardCreateDTO> {
-  _id: string;
+  _id?: string;
 }
 
 export interface DashboardWidgetResult {
   widgetId: string;
-  type: WidgetType;
+  type: DashboardWidgetType;
   title: string;
   data: unknown;
   error?: string;

@@ -2,21 +2,18 @@
 
 import { BaseEntity } from '@/shared/types/common.types';
 import { DataSourceKey } from './data-source.types';
-import { ReportAggregation, ReportFilterCondition } from './report-definition.types';
+import { ReportFilterCondition, ReportAggregation } from './report-definition.types';
 
-export type KPIThresholdDirection = 'higher_is_better' | 'lower_is_better';
+export type KPIStatus = 'good' | 'warning' | 'critical' | 'neutral';
 
 export interface KPIThreshold {
   warning: number;
   critical: number;
-  direction: KPIThresholdDirection;
+  // Matches kpi.engine.ts's resolveStatus(): for 'higher_is_better', value <= critical
+  // is critical, value <= warning is warning, else good. Inverted for 'lower_is_better'.
+  direction: 'higher_is_better' | 'lower_is_better';
 }
 
-/**
- * A KPI is a single aggregated number, optionally a ratio of two
- * aggregations (e.g. total fuel cost / total distance = cost per km).
- * Evaluated fresh on every request/dashboard render by KpiEngine.
- */
 export interface KPIDefinition extends BaseEntity {
   name: string;
   description?: string;
@@ -24,7 +21,7 @@ export interface KPIDefinition extends BaseEntity {
   numerator: ReportAggregation;
   denominator?: ReportAggregation;
   filters: ReportFilterCondition[];
-  unit?: string; // e.g. '$', 'km', '%'
+  unit?: string;
   threshold?: KPIThreshold;
   targetValue?: number;
 }
@@ -42,10 +39,8 @@ export interface KPIDefinitionCreateDTO {
 }
 
 export interface KPIDefinitionUpdateDTO extends Partial<KPIDefinitionCreateDTO> {
-  _id: string;
+  _id?: string;
 }
-
-export type KPIStatus = 'good' | 'warning' | 'critical' | 'neutral';
 
 export interface KPIEvaluationResult {
   kpiId: string;

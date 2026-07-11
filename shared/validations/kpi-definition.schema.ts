@@ -1,4 +1,3 @@
-
 // shared/validations/kpi-definition.schema.ts
 
 import { z } from 'zod';
@@ -35,3 +34,6 @@ export const kpiDefinitionCreateSchema = z.object({
 });
 
 export const kpiDefinitionUpdateSchema = kpiDefinitionCreateSchema.partial();
+
+export type KpiDefinitionCreateInput = z.infer<typeof kpiDefinitionCreateSchema>;
+export type KpiDefinitionUpdateInput = z.infer<typeof kpiDefinitionUpdateSchema>;

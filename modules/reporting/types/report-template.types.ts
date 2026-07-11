@@ -11,12 +11,6 @@ export type ReportTemplateCategory =
   | 'utilization'
   | 'custom';
 
-/**
- * A blueprint an organization can clone into a live ReportDefinition via
- * ReportTemplateService.instantiate(). System templates (isSystemTemplate:
- * true) ship pre-seeded and are visible to every tenant; orgs may also
- * save their own report definitions as reusable templates.
- */
 export interface ReportTemplate extends BaseEntity {
   name: string;
   description?: string;
@@ -30,4 +24,5 @@ export interface ReportTemplateCreateDTO {
   description?: string;
   category: ReportTemplateCategory;
   definition: ReportDefinitionCreateDTO;
+  isSystemTemplate?: boolean;
 }
