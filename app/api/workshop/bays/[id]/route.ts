@@ -3,5 +3,21 @@ import { withAuth } from '@/server/middleware/with-auth';
 import { workshopController } from '@/modules/workshop/controllers/workshop.controller';
 import { Permission } from '@/server/permissions/roles';
 
-export const GET = withAuth((req, ctx) => workshopController.getBay(req, (ctx as any).params.id), { permission: Permission.WORKSHOP_VIEW });
-export const PUT = withAuth((req, ctx) => workshopController.updateBay(req, (ctx as any).params.id), { permission: Permission.WORKSHOP_MANAGE });
+interface RouteParams {
+  params: Promise<{ id: string }>;
+}
+
+export const GET = withAuth<RouteParams>(
+  async (req, _ctx, { params }) => {
+    const { id } = await params;
+    return workshopController.getBay(req, id);
+  },
+  { permission: Permission.WORKSHOP_VIEW }
+);
+export const PUT = withAuth<RouteParams>(
+  async (req, _ctx, { params }) => {
+    const { id } = await params;
+    return workshopController.updateBay(req, id);
+  },
+  { permission: Permission.WORKSHOP_MANAGE }
+);

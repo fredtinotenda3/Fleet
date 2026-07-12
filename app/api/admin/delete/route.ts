@@ -1,9 +1,17 @@
 import connectToDatabase from "@/lib/mongodb";
 import { NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
+import { requireAuth } from "@/lib/requireAuth";
 
-// 📤 DELETE /api/admin/delete?id=<adminId>
+// FIX (🔴 Critical): this route had NO auth check. Any unauthenticated
+// caller could permanently hard-delete any row in tbladmin by ID —
+// including, trivially, every admin account in the system if IDs were
+// enumerated. requireAuth() closes the anonymous-access hole, matching
+// the sibling admin/route.ts, admin/register, and admin/update fixes.
 export const DELETE = async (req) => {
+  const unauth = await requireAuth();
+  if (unauth) return unauth;
+
   const { searchParams } = new URL(req.url);
   const id = searchParams.get("id");
 

@@ -3,4 +3,14 @@ import { withAuth } from '@/server/middleware/with-auth';
 import { dispatchController } from '@/modules/dispatch/controllers/dispatch.controller';
 import { Permission } from '@/server/permissions/roles';
 
-export const POST = withAuth((req, ctx) => dispatchController.assign(req, (ctx as any).params.id), { permission: Permission.DISPATCH_ASSIGN });
+interface RouteParams {
+  params: Promise<{ id: string }>;
+}
+
+export const POST = withAuth<RouteParams>(
+  async (req, _ctx, { params }) => {
+    const { id } = await params;
+    return dispatchController.assign(req, id);
+  },
+  { permission: Permission.DISPATCH_ASSIGN }
+);

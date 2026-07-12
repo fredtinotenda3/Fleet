@@ -3,5 +3,21 @@ import { withAuth } from '@/server/middleware/with-auth';
 import { schedulingController } from '@/modules/scheduling/controllers/scheduling.controller';
 import { Permission } from '@/server/permissions/roles';
 
-export const GET = withAuth((req, ctx) => schedulingController.get(req, (ctx as any).params.id), { permission: Permission.SCHEDULE_SHIFT_VIEW });
-export const PUT = withAuth((req, ctx) => schedulingController.update(req, (ctx as any).params.id), { permission: Permission.SCHEDULE_SHIFT_MANAGE });
+interface RouteParams {
+  params: Promise<{ id: string }>;
+}
+
+export const GET = withAuth<RouteParams>(
+  async (req, _ctx, { params }) => {
+    const { id } = await params;
+    return schedulingController.get(req, id);
+  },
+  { permission: Permission.SCHEDULE_SHIFT_VIEW }
+);
+export const PUT = withAuth<RouteParams>(
+  async (req, _ctx, { params }) => {
+    const { id } = await params;
+    return schedulingController.update(req, id);
+  },
+  { permission: Permission.SCHEDULE_SHIFT_MANAGE }
+);

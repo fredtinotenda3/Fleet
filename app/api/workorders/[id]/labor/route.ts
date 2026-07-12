@@ -3,4 +3,14 @@ import { withAuth } from '@/server/middleware/with-auth';
 import { workOrderController } from '@/modules/workorders/controllers/workorder.controller';
 import { Permission } from '@/server/permissions/roles';
 
-export const POST = withAuth((req, ctx) => workOrderController.recordLabor(req, (ctx as any).params.id), { permission: Permission.WORKORDER_MANAGE });
+interface RouteParams {
+  params: Promise<{ id: string }>;
+}
+
+export const POST = withAuth<RouteParams>(
+  async (req, _ctx, { params }) => {
+    const { id } = await params;
+    return workOrderController.recordLabor(req, id);
+  },
+  { permission: Permission.WORKORDER_MANAGE }
+);

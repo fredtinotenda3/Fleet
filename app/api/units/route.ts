@@ -1,16 +1,30 @@
 // app/api/units/route.ts
-import { NextResponse } from "next/server";
+//
+// FIX (High — duplicate auth strategies): converted from legacy
+// requireAuth() to withAuth + Permission.
+// NOTE 1: server/permissions/roles.ts has no dedicated units-of-measure
+// permission (the existing Permission.ORG_UNIT_* members are a
+// different concept — organizational units, not measurement units).
+// Mapped to Permission.ORG_VIEW (view) / ORG_SETTINGS (create/edit/
+// delete) as a stopgap, since unit definitions are effectively system
+// configuration. Flag for a dedicated UOM_* permission if these
+// shouldn't be gated by the same permission as org settings.
+// NOTE 2: unlike tblmeterlogs, this collection is NOT tenant-scoped.
+// That may be intentional (units like "km"/"L" are typically global
+// reference data shared across tenants) rather than the same bug
+// class as Critical #4 — flagging for confirmation rather than
+// changing data scope without knowing intent.
+
+import { NextRequest, NextResponse } from "next/server";
 import connectToDatabase from "@/lib/mongodb";
 import { ObjectId, Filter } from "mongodb";
 import { Unit } from "@/types";
-import { requireAuth } from "@/lib/requireAuth";
+import { withAuth } from "@/server/middleware/with-auth";
+import { Permission } from "@/server/permissions/roles";
 
 const COLLECTION = "tblunits";
 
-export async function GET(req: Request) {
-  const unauth = await requireAuth();
-  if (unauth) return unauth;
-
+export const GET = withAuth(async (req: NextRequest) => {
   try {
     const { searchParams } = new URL(req.url);
     const type = searchParams.get("type");
@@ -34,12 +48,9 @@ export async function GET(req: Request) {
     console.error(error);
     return NextResponse.json({ error: "Failed to fetch units" }, { status: 500 });
   }
-}
+}, { permission: Permission.ORG_VIEW });
 
-export async function POST(req: Request) {
-  const unauth = await requireAuth();
-  if (unauth) return unauth;
-
+export const POST = withAuth(async (req: NextRequest) => {
   try {
     const { unit_id, name, symbol, type } = await req.json();
     if (!unit_id || !name || !symbol || !type) {
@@ -61,12 +72,9 @@ export async function POST(req: Request) {
     console.error(error);
     return NextResponse.json({ error: "Failed to create unit" }, { status: 500 });
   }
-}
+}, { permission: Permission.ORG_SETTINGS });
 
-export async function PUT(req: Request) {
-  const unauth = await requireAuth();
-  if (unauth) return unauth;
-
+export const PUT = withAuth(async (req: NextRequest) => {
   try {
     const { _id, ...updateData } = await req.json();
     if (!_id || !ObjectId.isValid(_id)) {
@@ -84,12 +92,9 @@ export async function PUT(req: Request) {
     console.error(error);
     return NextResponse.json({ error: "Failed to update unit" }, { status: 500 });
   }
-}
+}, { permission: Permission.ORG_SETTINGS });
 
-export async function DELETE(req: Request) {
-  const unauth = await requireAuth();
-  if (unauth) return unauth;
-
+export const DELETE = withAuth(async (req: NextRequest) => {
   try {
     const { _id } = await req.json();
     if (!_id || !ObjectId.isValid(_id)) {
@@ -105,4 +110,4 @@ export async function DELETE(req: Request) {
     console.error(error);
     return NextResponse.json({ error: "Failed to delete unit" }, { status: 500 });
   }
-}
+}, { permission: Permission.ORG_SETTINGS });

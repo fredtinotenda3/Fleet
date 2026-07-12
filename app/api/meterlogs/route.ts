@@ -1,18 +1,42 @@
 // app/api/meterlogs/route.ts
+//
+// FIX (ðŸ”´ Critical â€” tenant isolation): every method in this file
+// (GET/POST/PUT/DELETE) queried tblmeterlogs and tblvehicles with no
+// tenantId filter at all. requireAuth() only proves *a* session
+// exists â€” it says nothing about which organization the caller
+// belongs to. Concretely, before this fix:
+//   - GET returned odometer logs for every organization mixed together
+//   - POST would attach a new log to any vehicle matching a
+//     license_plate, even one owned by a different tenant
+//   - PUT/DELETE could mutate or remove any org's log by ID
+// Every query below is now scoped to getTenantFromRequest(req), and
+// every insert stamps tenantId, matching the tenant-scoped pattern
+// used throughout modules/* (e.g. expense-type.repository.ts).
 
 import { NextRequest, NextResponse } from 'next/server';
 import connectToDatabase from '@/lib/mongodb';
 import { ObjectId } from 'mongodb';
-import { requireAuth } from '@/lib/requireAuth';
+import { withAuth } from '@/server/middleware/with-auth';
+import { Permission } from '@/server/permissions/roles';
+import { getTenantFromRequest } from '@/server/utils/context.utils';
+
+// FIX (High — duplicate auth strategies): converted from legacy
+// requireAuth() to withAuth + Permission, matching the rest of the
+// mature modules. Tenant scoping (the Critical fix above) is unchanged.
+// server/permissions/roles.ts has no dedicated meter-log permission,
+// so this maps to Permission.VEHICLE_VIEW / VEHICLE_EDIT (odometer
+// logs are vehicle telemetry) as a stopgap. Every role that can edit
+// vehicles (fleet_manager, organization_owner, super_admin) can also
+// log/adjust/delete odometer readings under this mapping — flag for a
+// dedicated METER_LOG_* permission if finer-grained control is wanted
+// (e.g. drivers logging readings without full vehicle-edit rights).
 
 const COLLECTION = 'tblmeterlogs';
 
-export async function GET(req: NextRequest) {
-  const unauth = await requireAuth();
-  if (unauth) return unauth;
-
+export const GET = withAuth(async (req: NextRequest) => {
   try {
     const { searchParams } = req.nextUrl;
+    const tenantId = await getTenantFromRequest(req);
     const db = await connectToDatabase();
 
     const license_plate = searchParams.get('license_plate');
@@ -28,7 +52,7 @@ export async function GET(req: NextRequest) {
     const skip = (page - 1) * limit;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const matchStage: any = {};
+    const matchStage: any = { tenantId };
 
     if (license_plate)
       matchStage.license_plate = license_plate.toUpperCase();
@@ -52,6 +76,7 @@ export async function GET(req: NextRequest) {
             {
               $match: {
                 $expr: { $eq: ['$license_plate', '$$logLicense'] },
+                tenantId,
                 isDeleted: { $ne: true },
               },
             },
@@ -120,12 +145,9 @@ export async function GET(req: NextRequest) {
       { status: 500 }
     );
   }
-}
+}, { permission: Permission.VEHICLE_VIEW });
 
-export async function POST(req: NextRequest) {
-  const unauth = await requireAuth();
-  if (unauth) return unauth;
-
+export const POST = withAuth(async (req: NextRequest) => {
   try {
     const body = await req.json();
     const requiredFields = ['license_plate', 'date', 'odometer', 'unit_id'];
@@ -138,10 +160,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const tenantId = await getTenantFromRequest(req);
     const db = await connectToDatabase();
 
     const vehicle = await db.collection('tblvehicles').findOne({
       license_plate: body.license_plate.toUpperCase(),
+      tenantId,
       isDeleted: { $ne: true },
     });
 
@@ -185,6 +209,7 @@ export async function POST(req: NextRequest) {
       date,
       unit_id: body.unit_id,
       notes: body.notes || '',
+      tenantId,
       createdAt: new Date(),
     };
 
@@ -205,12 +230,9 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
-}
+}, { permission: Permission.VEHICLE_EDIT });
 
-export async function PUT(req: NextRequest) {
-  const unauth = await requireAuth();
-  if (unauth) return unauth;
-
+export const PUT = withAuth(async (req: NextRequest) => {
   try {
     const { searchParams } = req.nextUrl;
     const id = searchParams.get('id');
@@ -223,11 +245,26 @@ export async function PUT(req: NextRequest) {
     }
 
     const body = await req.json();
+    const tenantId = await getTenantFromRequest(req);
     const db = await connectToDatabase();
+
+    // Scope the existence check to this tenant so a caller can't probe
+    // for / mutate another organization's log by ID.
+    const existing = await db
+      .collection(COLLECTION)
+      .findOne({ _id: new ObjectId(id), tenantId });
+
+    if (!existing) {
+      return NextResponse.json(
+        { error: 'Meter log not found' },
+        { status: 404 }
+      );
+    }
 
     if (body.license_plate) {
       const vehicle = await db.collection('tblvehicles').findOne({
         license_plate: body.license_plate.toUpperCase(),
+        tenantId,
         isDeleted: { $ne: true },
       });
       if (!vehicle) {
@@ -262,7 +299,7 @@ export async function PUT(req: NextRequest) {
 
     const result = await db
       .collection(COLLECTION)
-      .updateOne({ _id: new ObjectId(id) }, { $set: updateData });
+      .updateOne({ _id: new ObjectId(id), tenantId }, { $set: updateData });
 
     if (result.matchedCount === 0) {
       return NextResponse.json(
@@ -279,12 +316,9 @@ export async function PUT(req: NextRequest) {
       { status: 500 }
     );
   }
-}
+}, { permission: Permission.VEHICLE_EDIT });
 
-export async function DELETE(req: NextRequest) {
-  const unauth = await requireAuth();
-  if (unauth) return unauth;
-
+export const DELETE = withAuth(async (req: NextRequest) => {
   try {
     const { searchParams } = req.nextUrl;
     const id = searchParams.get('id');
@@ -296,10 +330,11 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
+    const tenantId = await getTenantFromRequest(req);
     const db = await connectToDatabase();
     const result = await db
       .collection(COLLECTION)
-      .deleteOne({ _id: new ObjectId(id) });
+      .deleteOne({ _id: new ObjectId(id), tenantId });
 
     if (result.deletedCount === 0) {
       return NextResponse.json(
@@ -316,4 +351,4 @@ export async function DELETE(req: NextRequest) {
       { status: 500 }
     );
   }
-}
+}, { permission: Permission.VEHICLE_EDIT });

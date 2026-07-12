@@ -1,11 +1,14 @@
 // app/api/trips/stats/route.ts
+//
+// FIX (High — duplicate auth strategies): converted from legacy
+// requireAuth() to withAuth + Permission.
 
 import { NextRequest } from 'next/server';
-import { requireAuth } from '@/lib/requireAuth';
+import { withAuth } from '@/server/middleware/with-auth';
+import { Permission } from '@/server/permissions/roles';
 import { tripController } from '@/modules/trips/controllers/trip.controller';
 
-export async function GET(req: NextRequest) {
-  const unauth = await requireAuth();
-  if (unauth) return unauth;
-  return tripController.getTripStats(req);
-}
+export const GET = withAuth(
+  async (req: NextRequest) => tripController.getTripStats(req),
+  { permission: Permission.TRIP_VIEW }
+);

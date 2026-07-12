@@ -1,13 +1,21 @@
-import { NextResponse } from "next/server";
+// app/api/meterlogs/last/route.ts
+//
+// FIX (High — duplicate auth strategies): converted from legacy
+// requireAuth() to withAuth + Permission. Tenant scoping (previously
+// fixed for the Critical cross-tenant leak) is unchanged. No dedicated
+// meter-log permission exists in server/permissions/roles.ts, so this
+// maps to Permission.VEHICLE_VIEW (see app/api/meterlogs/route.ts for
+// the same reasoning).
+
+import { NextRequest, NextResponse } from "next/server";
 import connectToDatabase from "@/lib/mongodb";
-import { requireAuth } from "@/lib/requireAuth";
+import { withAuth } from "@/server/middleware/with-auth";
+import { Permission } from "@/server/permissions/roles";
+import { getTenantFromRequest } from "@/server/utils/context.utils";
 
 const COLLECTION = "tblmeterlogs";
 
-export async function GET(req: Request) {
-  const unauth = await requireAuth();
-  if (unauth) return unauth;
-
+export const GET = withAuth(async (req: NextRequest) => {
   try {
     const { searchParams } = new URL(req.url);
     const license_plate = searchParams.get("license_plate");
@@ -16,10 +24,11 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "license_plate is required" }, { status: 400 });
     }
 
+    const tenantId = await getTenantFromRequest(req);
     const db = await connectToDatabase();
     const lastLog = await db
       .collection(COLLECTION)
-      .find({ license_plate: license_plate.toUpperCase() })
+      .find({ license_plate: license_plate.toUpperCase(), tenantId })
       .sort({ date: -1 })
       .limit(1)
       .toArray();
@@ -33,4 +42,4 @@ export async function GET(req: Request) {
     console.error("Error fetching last odometer:", error);
     return NextResponse.json({ error: "Failed to fetch last odometer" }, { status: 500 });
   }
-}
+}, { permission: Permission.VEHICLE_VIEW });
