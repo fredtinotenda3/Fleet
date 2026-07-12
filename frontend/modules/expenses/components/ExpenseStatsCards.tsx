@@ -3,8 +3,9 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Wallet, TrendingUp, Hash, Tag } from 'lucide-react';
+import { Wallet, TrendingUp, Hash, Tag, CalendarRange, AlertCircle } from 'lucide-react';
 import { StatisticCard, StatisticCards } from '@/frontend/shared/ui/data-display/StatisticCards';
+import { Badge } from '@/frontend/shared/ui/data-display/badge';
 import {
   Select,
   SelectContent,
@@ -33,6 +34,51 @@ function getRangeForPeriod(period: StatsPeriod): { startDate?: Date; endDate?: D
   if (period === '30d') start.setDate(end.getDate() - 30);
   if (period === 'year') start = new Date(end.getFullYear(), 0, 1);
   return { startDate: start, endDate: end };
+}
+
+/**
+ * Small colored icon badge, replacing the previous plain muted-foreground
+ * icon. Each stat gets a distinct semantic accent (spend = primary,
+ * average = success, category count = info, top category = accent) so
+ * the four cards are scannable at a glance rather than four identical
+ * gray icons.
+ */
+function StatIcon({
+  icon: Icon,
+  tone,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  tone: 'primary' | 'success' | 'info' | 'accent';
+}) {
+  const toneVar =
+    tone === 'primary' ? 'var(--primary)' :
+    tone === 'success' ? 'var(--success)' :
+    tone === 'info' ? 'var(--info)' :
+    'var(--accent)';
+
+  return (
+    <span
+      className="flex items-center justify-center rounded-lg h-7 w-7 shrink-0"
+      style={{ backgroundColor: `color-mix(in oklab, ${toneVar} 14%, transparent)`, color: toneVar }}
+    >
+      <Icon className="w-3.5 h-3.5" />
+    </span>
+  );
+}
+
+/**
+ * Same deterministic hash used by ExpensesTable's CategoryBadge, so the
+ * "Top category" figure here always matches the color that category
+ * shows as in the table below -- one category, one color, everywhere.
+ */
+const CHART_COLOR_COUNT = 6;
+
+function categoryColorIndex(label: string): number {
+  let hash = 0;
+  for (let i = 0; i < label.length; i++) {
+    hash = (hash * 31 + label.charCodeAt(i)) >>> 0;
+  }
+  return (hash % CHART_COLOR_COUNT) + 1;
 }
 
 export function ExpenseStatsCards() {
@@ -65,7 +111,10 @@ export function ExpenseStatsCards() {
           Fleet expense totals &middot; {PERIOD_LABELS[period]}
         </Label>
         <Select value={period} onValueChange={(v) => setPeriod(v as StatsPeriod)}>
-          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-40">
+            <CalendarRange className="w-3.5 h-3.5 text-muted-foreground" />
+            <SelectValue />
+          </SelectTrigger>
           <SelectContent>
             {(Object.keys(PERIOD_LABELS) as StatsPeriod[]).map((p) => (
               <SelectItem key={p} value={p}>{PERIOD_LABELS[p]}</SelectItem>
@@ -79,17 +128,47 @@ export function ExpenseStatsCards() {
           {[0, 1, 2, 3].map((i) => <div key={i} className="h-24 rounded-xl skeleton" />)}
         </div>
       ) : error || !stats ? (
-        <div className="text-sm text-muted-foreground">Unable to load expense statistics</div>
+        <div className="flex items-center gap-2 p-4 text-sm surface-card text-muted-foreground">
+          <AlertCircle className="w-4 h-4 shrink-0 text-danger" />
+          Unable to load expense statistics
+        </div>
       ) : (
         <StatisticCards>
-          <StatisticCard title="Total expenses" value={formatCurrency(stats.total)} icon={<Wallet className="w-4 h-4 text-muted-foreground" />} />
-          <StatisticCard title="Average expense" value={formatCurrency(stats.average)} icon={<TrendingUp className="w-4 h-4 text-muted-foreground" />} />
-          <StatisticCard title="Categories used" value={categoryCount} icon={<Hash className="w-4 h-4 text-muted-foreground" />} />
+          <StatisticCard
+            title="Total expenses"
+            value={formatCurrency(stats.total)}
+            icon={<StatIcon icon={Wallet} tone="primary" />}
+          />
+          <StatisticCard
+            title="Average expense"
+            value={formatCurrency(stats.average)}
+            icon={<StatIcon icon={TrendingUp} tone="success" />}
+          />
+          <StatisticCard
+            title="Categories used"
+            value={categoryCount}
+            icon={<StatIcon icon={Hash} tone="info" />}
+          />
           <StatisticCard
             title="Top category"
-            value={topCategory ? topCategory.name : 'N/A'}
+            value={
+              topCategory ? (
+                <Badge
+                  variant="outline"
+                  className="text-base font-semibold border-transparent"
+                  style={{
+                    backgroundColor: `color-mix(in oklab, var(--chart-${categoryColorIndex(topCategory.name)}) 14%, transparent)`,
+                    color: `var(--chart-${categoryColorIndex(topCategory.name)})`,
+                  }}
+                >
+                  {topCategory.name}
+                </Badge>
+              ) : (
+                'N/A'
+              )
+            }
             description={topCategory ? formatCurrency(topCategory.amount) : undefined}
-            icon={<Tag className="w-4 h-4 text-muted-foreground" />}
+            icon={<StatIcon icon={Tag} tone="accent" />}
           />
         </StatisticCards>
       )}

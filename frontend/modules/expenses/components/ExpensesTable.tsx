@@ -1,4 +1,3 @@
-
 // frontend/modules/expenses/components/ExpensesTable.tsx
 
 'use client';
@@ -36,6 +35,50 @@ interface ExpensesTableProps {
   canManage: boolean;
   canDelete: boolean;
   hideVehicleColumn?: boolean;
+}
+
+/**
+ * Deterministic category -> chart-color mapping so the same category
+ * always renders with the same accent (stable across pages/sessions,
+ * unlike random colors), reusing the six palette slots already defined
+ * as --chart-1..6 in app/globals.css. "Uncategorized" always gets the
+ * neutral/muted treatment rather than a color slot, so it visually
+ * reads as "no category" instead of just another category.
+ */
+const CHART_COLOR_COUNT = 6;
+
+function categoryColorIndex(label: string): number {
+  let hash = 0;
+  for (let i = 0; i < label.length; i++) {
+    hash = (hash * 31 + label.charCodeAt(i)) >>> 0;
+  }
+  return (hash % CHART_COLOR_COUNT) + 1;
+}
+
+function CategoryBadge({ expense }: { expense: Expense }) {
+  const label = expenseCategoryLabel(expense);
+
+  if (label === 'Uncategorized') {
+    return (
+      <Badge variant="outline" className="border-dashed text-muted-foreground">
+        {label}
+      </Badge>
+    );
+  }
+
+  const colorIndex = categoryColorIndex(label);
+  return (
+    <Badge
+      variant="outline"
+      className="border-transparent"
+      style={{
+        backgroundColor: `color-mix(in oklab, var(--chart-${colorIndex}) 14%, transparent)`,
+        color: `var(--chart-${colorIndex})`,
+      }}
+    >
+      {label}
+    </Badge>
+  );
 }
 
 export function ExpensesTable({
@@ -83,38 +126,62 @@ export function ExpensesTable({
       accessorKey: 'date',
       header: 'Date',
       cell: ({ row }) => (
-        <button type="button" onClick={() => onView(row.original)} className="font-medium text-primary hover:underline">
+        <button
+          type="button"
+          onClick={() => onView(row.original)}
+          className="font-medium transition-colors text-primary hover:text-primary/80 hover:underline"
+        >
           {formatDate(row.original.date)}
         </button>
       ),
     });
 
     if (!hideVehicleColumn) {
-      cols.push({ accessorKey: 'license_plate', header: 'Vehicle' });
+      cols.push({
+        accessorKey: 'license_plate',
+        header: 'Vehicle',
+        cell: ({ row }) => (
+          <span className="font-medium tabular-nums text-foreground">{row.original.license_plate}</span>
+        ),
+      });
     }
 
     cols.push(
       {
         id: 'category',
         header: 'Category',
-        cell: ({ row }) => <Badge variant="outline">{expenseCategoryLabel(row.original)}</Badge>,
+        cell: ({ row }) => <CategoryBadge expense={row.original} />,
       },
       {
         accessorKey: 'amount',
-        header: 'Amount',
-        cell: ({ row }) => <span className="tabular-nums">{formatExpenseAmount(row.original.amount)}</span>,
+        header: () => <span className="block text-right">Amount</span>,
+        cell: ({ row }) => (
+          <span className="block font-medium text-right tabular-nums text-foreground">
+            {formatExpenseAmount(row.original.amount)}
+          </span>
+        ),
       },
       {
         accessorKey: 'jobTrip',
         header: 'Job / Trip',
-        cell: ({ row }) => row.original.jobTrip || 'N/A',
+        cell: ({ row }) =>
+          row.original.jobTrip ? (
+            <span className="text-foreground">{row.original.jobTrip}</span>
+          ) : (
+            <span className="text-muted-foreground">N/A</span>
+          ),
       },
       {
         accessorKey: 'description',
         header: 'Description',
-        cell: ({ row }) => (
-          <span className="block truncate max-w-55">{row.original.description || 'N/A'}</span>
-        ),
+        cell: ({ row }) =>
+          row.original.description ? (
+            <span className="block truncate max-w-55 text-foreground" title={row.original.description}>
+              {row.original.description}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">N/A</span>
+          ),
       },
       {
         id: 'actions',

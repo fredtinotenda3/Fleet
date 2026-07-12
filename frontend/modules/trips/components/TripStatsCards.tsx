@@ -3,7 +3,7 @@
 'use client';
 
 import { Route, TrendingUp, Gauge, Users } from 'lucide-react';
-import { StatsCard } from '@/shared/ui/cards/StatsCard';
+import { StatisticCard, StatisticCards } from '@/frontend/shared/ui/data-display/StatisticCards';
 import { useTripStats } from '../hooks/useTrips';
 import { formatDistance } from '@/shared/utils/distance.utils';
 
@@ -13,36 +13,38 @@ export function TripStatsCards() {
   const driverCount = data ? Object.keys(data.byDriver).length : 0;
   const averageDistance = data?.averageDistance ?? 0;
 
+  if (isLoading) {
+    return (
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="h-24 rounded-xl skeleton" />
+        ))}
+      </div>
+    );
+  }
+
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <StatsCard
+    <StatisticCards>
+      <StatisticCard
         title="Total trips"
         value={data?.totalTrips ?? 0}
-        icon={<Route className="w-4 h-4" />}
-        loading={isLoading}
-        color="blue"
+        icon={<Route className="w-4 h-4 text-muted-foreground" />}
       />
-      <StatsCard
+      <StatisticCard
         title="Total distance"
         value={formatDistance(data?.totalDistance ?? 0)}
-        icon={<TrendingUp className="w-4 h-4" />}
-        loading={isLoading}
-        color="green"
+        icon={<TrendingUp className="w-4 h-4 text-muted-foreground" />}
       />
-      <StatsCard
+      <StatisticCard
         title="Average trip distance"
         value={formatDistance(averageDistance)}
-        icon={<Gauge className="w-4 h-4" />}
-        loading={isLoading}
-        color="purple"
+        icon={<Gauge className="w-4 h-4 text-muted-foreground" />}
       />
-      <StatsCard
+      <StatisticCard
         title="Active drivers"
         value={driverCount}
-        icon={<Users className="w-4 h-4" />}
-        loading={isLoading}
-        color="yellow"
+        icon={<Users className="w-4 h-4 text-muted-foreground" />}
       />
-    </div>
+    </StatisticCards>
   );
 }

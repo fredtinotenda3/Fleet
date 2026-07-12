@@ -51,7 +51,7 @@ export function FuelStatsCards() {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <Label className="text-sm text-muted-foreground">
-          Fleet fuel totals · {PERIOD_LABELS[period]}
+          Fleet fuel totals &middot; {PERIOD_LABELS[period]}
         </Label>
         <Select value={period} onValueChange={(v) => setPeriod(v as StatsPeriod)}>
           <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>

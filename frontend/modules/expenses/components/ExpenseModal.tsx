@@ -53,7 +53,6 @@ function toFormValues(
 
 export function ExpenseModal({ open, mode, expense, defaultLicensePlate, onOpenChange, onSubmit }: ExpenseModalProps) {
   const handleSubmit = async (values: ExpenseFormValues) => {
-    console.log('ExpenseModal handleSubmit called with:', values);
     await onSubmit(values);
     onOpenChange(false);
   };
@@ -66,7 +65,19 @@ export function ExpenseModal({ open, mode, expense, defaultLicensePlate, onOpenC
           <DialogDescription>{DESCRIPTIONS[mode]}</DialogDescription>
         </DialogHeader>
         <ExpenseForm
-          key={`${mode}-${expense?._id ?? 'new'}-${Date.now()}`}
+          /**
+           * FIX: this previously included `Date.now()`, which changes on
+           * every render -- forcing React to fully unmount/remount
+           * <ExpenseForm> (wiping all in-progress field state, including
+           * a just-picked expense_type_id) on any re-render while the
+           * modal was open, not just when it actually opened for a new/
+           * different expense. The key only needs to change when we
+           * genuinely want a fresh form: switching between create/edit,
+           * or editing a different expense record. `open` is included so
+           * closing and reopening in 'create' mode also starts clean,
+           * without needing a render-varying value like Date.now().
+           */
+          key={`${mode}-${expense?._id ?? 'new'}-${open}`}
           defaultValues={toFormValues(expense, defaultLicensePlate)}
           onSubmit={handleSubmit}
           onCancel={() => onOpenChange(false)}

@@ -33,7 +33,7 @@ export class ExpenseTypeRepository extends BaseRepository<ExpenseType> {
   async findWithCategory(tenantId: string): Promise<Array<{ category: string; types: ExpenseType[] }>> {
     const types = await this.findActive(tenantId);
     const grouped = types.reduce((acc, type) => {
-      const category = type.category || 'Uncategorized';
+      const category = type.category || 'All';
       if (!acc[category]) acc[category] = [];
       acc[category].push(type);
       return acc;
@@ -83,7 +83,7 @@ export class ExpenseTypeRepository extends BaseRepository<ExpenseType> {
 
     const results = await collection.aggregate(pipeline).toArray();
     return results.map((r) => ({
-      category: r._id || 'Uncategorized',
+      category: r._id || 'All',
       count: r.count,
       totalAmount: r.totalAmount,
     }));

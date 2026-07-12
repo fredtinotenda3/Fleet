@@ -69,7 +69,7 @@ export function FuelKpiCards() {
       <StatisticCard
         title="Days since last fill"
         value={kpis.daysSinceLastFill}
-        description={kpis.mostRecentPlate ? `${kpis.mostRecentPlate}${kpis.mostRecentVehicle ? ` Â· ${kpis.mostRecentVehicle}` : ''}` : 'N/A'}
+        description={kpis.mostRecentPlate ? `${kpis.mostRecentPlate}${kpis.mostRecentVehicle ? ` \u00B7 ${kpis.mostRecentVehicle}` : ''}` : 'N/A'}
         icon={<Calendar className="w-4 h-4 text-muted-foreground" />}
       />
     </StatisticCards>

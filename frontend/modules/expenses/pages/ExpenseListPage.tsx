@@ -1,4 +1,3 @@
-
 // frontend/modules/expenses/pages/ExpenseListPage.tsx
 
 'use client';
@@ -7,6 +6,7 @@ import { useMemo, useRef, useState } from 'react';
 import { Plus, Download, FileSpreadsheet, Trash2, Printer, Upload } from 'lucide-react';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { Button } from '@/frontend/shared/ui/primitives/button';
+import { Separator } from '@/frontend/shared/ui/data-display/separator';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -240,6 +240,7 @@ export function ExpenseListPage() {
 
       <div className="p-4 space-y-4 surface-card">
         <ExpenseFilters filters={filters} onChange={handleFiltersChange} />
+        <Separator />
         <ExpensesTable
           result={result}
           isLoading={isLoading}

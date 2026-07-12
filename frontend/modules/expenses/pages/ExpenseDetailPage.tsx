@@ -1,11 +1,10 @@
-
 // frontend/modules/expenses/pages/ExpenseDetailPage.tsx
 
 'use client';
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Pencil, Trash2 } from 'lucide-react';
+import { ArrowLeft, Pencil, Trash2, Car, Calendar, Briefcase, FileText } from 'lucide-react';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { PageLoader } from '@/frontend/shared/loading/PageLoader';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
@@ -25,11 +24,22 @@ interface ExpenseDetailPageProps {
   expenseId: string;
 }
 
-function DetailRow({ label, value }: { label: string; value: string }) {
+function DetailRow({
+  label,
+  value,
+  icon: Icon,
+}: {
+  label: string;
+  value: string;
+  icon?: React.ComponentType<{ className?: string }>;
+}) {
   return (
-    <div className="flex items-center justify-between gap-4 text-body-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-medium text-foreground">{value}</span>
+    <div className="flex items-center justify-between gap-4 py-1.5 text-body-sm">
+      <span className="flex items-center gap-2 text-muted-foreground">
+        {Icon && <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
+        {label}
+      </span>
+      <span className="font-medium text-right text-foreground">{value}</span>
     </div>
   );
 }
@@ -98,24 +108,43 @@ export function ExpenseDetailPage({ expenseId }: ExpenseDetailPageProps) {
         }
       />
 
-      <Badge variant="outline">{expenseCategoryLabel(expense)}</Badge>
+      {/* Hero summary: the amount is the single most important number on
+          this page, so it gets top billing instead of sitting as one row
+          among several in a detail list. */}
+      <Card>
+        <CardContent className="flex flex-col items-start justify-between gap-4 py-5 sm:flex-row sm:items-center">
+          <div>
+            <p className="text-caption text-muted-foreground">Amount</p>
+            <p className="mt-1 text-display tabular-nums text-foreground">
+              {formatExpenseAmount(expense.amount)}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="gap-1.5">
+              <Car className="w-3 h-3" aria-hidden="true" />
+              {expense.license_plate}
+            </Badge>
+            <Badge variant="secondary">{expenseCategoryLabel(expense)}</Badge>
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader><CardTitle>Expense overview</CardTitle></CardHeader>
-          <CardContent className="space-y-3">
-            <DetailRow label="Vehicle" value={expense.license_plate} />
-            <DetailRow label="Date" value={formatDate(expense.date)} />
+          <CardContent className="space-y-1">
+            <DetailRow icon={Car} label="Vehicle" value={expense.license_plate} />
+            <DetailRow icon={Calendar} label="Date" value={formatDate(expense.date)} />
             <DetailRow label="Amount" value={formatExpenseAmount(expense.amount)} />
             <DetailRow label="Category" value={expenseCategoryLabel(expense)} />
-            <DetailRow label="Job / Trip" value={expense.jobTrip || 'Not recorded'} />
+            <DetailRow icon={Briefcase} label="Job / Trip" value={expense.jobTrip || 'Not recorded'} />
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader><CardTitle>Additional details</CardTitle></CardHeader>
-          <CardContent className="space-y-3">
-            <DetailRow label="Description" value={expense.description || 'Not recorded'} />
+          <CardContent className="space-y-1">
+            <DetailRow icon={FileText} label="Description" value={expense.description || 'Not recorded'} />
           </CardContent>
         </Card>
 

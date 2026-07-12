@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 // modules/expenses/commands/handlers/update-expense.handler.ts
 
 import { ICommandHandler } from '@/server/cqrs/command';
@@ -78,6 +79,26 @@ export class UpdateExpenseHandler
       if (!expenseType) {
         throw new AppError('Expense type not found', 'EXPENSE_TYPE_NOT_FOUND', 400);
       }
+
+      /**
+       * FIX (editing an expense's category always reset it to
+       * "Uncategorized"): this block validated that expense_type_id was
+       * a real, existing ObjectId, but then let updateData.expense_type_id
+       * fall through to expenseRepo.update() unchanged -- still the plain
+       * string produced by expenseUpdateSchema (z.string()). tblexpense_types._id
+       * is a native MongoDB ObjectId, and ExpenseRepository's
+       * expenseTypeLookupStages() joins on
+       * { localField: 'expense_type_id', foreignField: '_id' }. $lookup
+       * requires exact BSON type equality, so the stored string never
+       * matched the ObjectId and expenseCategoryLabel() fell back to
+       * "Uncategorized" even though a valid category had just been
+       * selected and confirmed to exist above. Assigning the ObjectId
+       * itself here (matching how create-expense.handler.ts stores it)
+       * makes the join -- and category filtering -- work correctly.
+       */
+      updateData.expense_type_id = new ObjectId(
+        String(updateData.expense_type_id)
+      ) as unknown as string;
     }
 
     const updated = await this.expenseRepo.update(

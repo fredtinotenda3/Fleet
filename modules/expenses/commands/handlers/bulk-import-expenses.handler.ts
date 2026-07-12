@@ -35,7 +35,7 @@ export class BulkImportExpensesHandler
         // Find or create expense type
         let expenseTypeId: ObjectId | null = null;
         if (record.category) {
-          let expenseType = await db.collection('tblexpense_types').findOne({
+          const expenseType = await db.collection('tblexpense_types').findOne({
             name: { $regex: `^${record.category}$`, $options: 'i' },
           });
 
@@ -54,11 +54,27 @@ export class BulkImportExpensesHandler
 
         await this.expenseRepo.create(
           {
-            tenantId: command.tenantId,
             license_plate: record.vehiclePlate || 'UNKNOWN',
             amount: record.totalAmount,
             date: new Date(record.date),
-            ...(expenseTypeId && { expense_type_id: expenseTypeId.toString() }),
+            // FIX (bulk-imported expenses always showed "Uncategorized"):
+            // this previously stored `expenseTypeId.toString()` -- a plain
+            // string -- on the expense document. tblexpense_types._id is a
+            // native MongoDB ObjectId, and ExpenseRepository's
+            // expenseTypeLookupStages() joins on
+            // { localField: 'expense_type_id', foreignField: '_id' }.
+            // MongoDB's $lookup requires exact BSON type equality, so a
+            // string value NEVER matches an ObjectId value even when their
+            // hex text is identical -- the join silently returned nothing
+            // for every expense created through this import path, and
+            // expenseCategoryLabel() then fell back to "Uncategorized"
+            // even though a real category was matched/created above.
+            // Storing the ObjectId itself (matching how
+            // create-expense.handler.ts stores it, and how
+            // ExpenseRepository.getFilteredExpenses's own type filter
+            // already expects it: `new ObjectId(filters.type)`) makes the
+            // join -- and category filtering -- work correctly.
+            ...(expenseTypeId && { expense_type_id: expenseTypeId as unknown as string }),
             description: record.items.join(', '),
             notes: `Ref: ${record.reference} | Account: ${record.account} | Cost Centre: ${record.costCentre}`,
           },

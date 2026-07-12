@@ -1,6 +1,8 @@
+// frontend/modules/expenses/components/ExpenseForm.tsx
+
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQueryClient } from '@tanstack/react-query';
@@ -59,87 +61,59 @@ export function ExpenseForm({ defaultValues, onSubmit, onCancel, submitLabel = '
   const [newCategoryName, setNewCategoryName] = useState('');
   const [newCategoryGroup, setNewCategoryGroup] = useState<string>(DEFAULT_EXPENSE_CATEGORIES[0]);
 
-  console.log('🔍 ExpenseForm - Available expense types:', expenseTypes);
-
   const {
     register,
     control,
     handleSubmit,
     setValue,
-    watch,
-    getValues,
     formState: { errors, isSubmitting },
   } = useForm<ExpenseFormValues>({
     resolver: zodResolver(expenseFormSchema),
     defaultValues: { ...FALLBACK_DEFAULTS, ...defaultValues },
   });
 
-  // Watch all form values for debugging
-  const allValues = watch();
-  console.log('👀 Form values:', allValues);
+  const submit = handleSubmit(async (values) => {
+    await onSubmit(values);
+  });
 
-  const submit = useCallback(
-    handleSubmit(async (values) => {
-      console.log('📤 Form submit - raw values:', values);
-      console.log('📤 Form submit - expense_type_id:', values.expense_type_id);
-      console.log('📤 Form submit - expense_type_id type:', typeof values.expense_type_id);
-      
-      // FIX: Ensure expense_type_id is properly handled
-      const cleanedValues: ExpenseFormValues = {
-        ...values,
-        expense_type_id: values.expense_type_id || undefined,
-      };
-      
-      console.log('📤 Form submit - cleaned values:', cleanedValues);
-      await onSubmit(cleanedValues);
-    }),
-    [handleSubmit, onSubmit]
-  );
+  /**
+   * FIX (category shows raw ObjectId / "__none__" instead of a name):
+   *
+   * This app's <Select> is built on @base-ui/react/select, not Radix.
+   * Base UI's <Select.Value> does NOT automatically resolve the current
+   * `value` against the mounted <Select.Item>s to find a display label
+   * -- unlike Radix, it just renders the raw `value` string verbatim
+   * unless you pass it a children render-function that maps
+   * value -> label yourself. Every other Select in this form (Vehicle,
+   * the quick-add Group picker) "accidentally" looked correct only
+   * because their `value` already equals the text you want shown
+   * (e.g. license_plate "WILLS" is both the value and the label). The
+   * Category Select uses an id as `value` with a separate `name` as the
+   * label, which is exactly the case Base UI needs a mapper for -- and
+   * it never had one, so it fell back to showing the id (or the
+   * "__none__" sentinel when nothing was selected).
+   */
+  function getCategoryLabel(value: string | null | undefined): string {
+    if (!value || value === NO_TYPE) {
+      return typesLoading ? 'Loading categories…' : 'All';
+    }
+    const match = expenseTypes?.find((t) => t._id === value);
+    return match ? match.name : 'All';
+  }
 
   async function handleQuickAdd() {
     if (!newCategoryName.trim()) return;
-    
-    try {
-      console.log('🆕 Creating expense type:', newCategoryName.trim(), 'in group:', newCategoryGroup);
-      
-      const created = await createExpenseType.mutateAsync({
-        name: newCategoryName.trim(),
-        category: newCategoryGroup,
-      });
+    const created = await createExpenseType.mutateAsync({
+      name: newCategoryName.trim(),
+      category: newCategoryGroup,
+    });
 
-      console.log('✅ Created expense type response:', created);
-      console.log('✅ Created expense type _id:', created._id);
+    await queryClient.invalidateQueries({ queryKey: expenseKeys.types() });
+    await queryClient.refetchQueries({ queryKey: expenseKeys.types() });
 
-      // Validate MongoDB ObjectId (24 hex characters)
-      if (!created._id || !/^[a-fA-F0-9]{24}$/.test(created._id)) {
-        console.error('❌ Invalid expense type _id:', created._id);
-        throw new Error('Invalid expense type ID received');
-      }
-
-      // Refresh the list
-      await queryClient.invalidateQueries({ queryKey: expenseKeys.types() });
-      await queryClient.refetchQueries({ queryKey: expenseKeys.types() });
-
-      // Check what's in the cache after refetch
-      const updatedTypes = queryClient.getQueryData(expenseKeys.types());
-      console.log('📋 Updated expense types in cache:', updatedTypes);
-      
-      // Set the value
-      console.log('🎯 Setting expense_type_id to:', created._id);
-      setValue('expense_type_id', created._id, { 
-        shouldValidate: true, 
-        shouldDirty: true 
-      });
-      
-      // Verify it was set
-      const currentValue = getValues('expense_type_id');
-      console.log('✔️ Current expense_type_id after setValue:', currentValue);
-      
-      setNewCategoryName('');
-      setQuickAddOpen(false);
-    } catch (error) {
-      console.error('❌ Failed to create expense type:', error);
-    }
+    setValue('expense_type_id', created._id, { shouldValidate: true, shouldDirty: true });
+    setNewCategoryName('');
+    setQuickAddOpen(false);
   }
 
   return (
@@ -203,36 +177,22 @@ export function ExpenseForm({ defaultValues, onSubmit, onCancel, submitLabel = '
             <Controller
               control={control}
               name="expense_type_id"
-              render={({ field }) => {
-                console.log('🔘 Select field value:', field.value);
-                console.log('🔘 Select field value type:', typeof field.value);
-                
-                return (
-                  <Select
-                    value={field.value || NO_TYPE}
-                    onValueChange={(v) => {
-                      console.log('🔄 Select onValueChange - new value:', v);
-                      console.log('🔄 Select onValueChange - NO_TYPE:', NO_TYPE);
-                      const newValue = v === NO_TYPE ? '' : v;
-                      console.log('🔄 Select onValueChange - final value:', newValue);
-                      field.onChange(newValue);
-                    }}
-                  >
-                    <SelectTrigger id="expense_type_id" className="w-full" disabled={typesLoading}>
-                      <SelectValue placeholder={typesLoading ? 'Loading categories…' : 'Uncategorized'} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={NO_TYPE}>Uncategorized</SelectItem>
-                      {expenseTypes?.map((t) => {
-                        console.log('📋 Expense type option:', { id: t._id, name: t.name });
-                        return (
-                          <SelectItem key={t._id} value={t._id!}>{t.name}</SelectItem>
-                        );
-                      })}
-                    </SelectContent>
-                  </Select>
-                );
-              }}
+              render={({ field }) => (
+                <Select
+                  value={field.value || NO_TYPE}
+                  onValueChange={(v) => field.onChange(v === NO_TYPE ? '' : v)}
+                >
+                  <SelectTrigger id="expense_type_id" className="w-full" disabled={typesLoading}>
+                    <SelectValue>{(value: string) => getCategoryLabel(value)}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NO_TYPE}>All</SelectItem>
+                    {expenseTypes?.map((t) => (
+                      <SelectItem key={t._id} value={t._id!}>{t.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             />
           </div>
 
@@ -281,7 +241,7 @@ export function ExpenseForm({ defaultValues, onSubmit, onCancel, submitLabel = '
             </div>
             <div>
               <Label htmlFor="new-category-group" className="form-label">Group</Label>
-              <Select value={newCategoryGroup} onValueChange={(v) => v && setNewCategoryGroup(v)}>
+              <Select value={newCategoryGroup} onValueChange={setNewCategoryGroup}>
                 <SelectTrigger id="new-category-group" className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {DEFAULT_EXPENSE_CATEGORIES.map((c) => (

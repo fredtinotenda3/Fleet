@@ -77,12 +77,47 @@ export class CreateExpenseHandler
       expenseTypeId = new ObjectId(String(validated.expense_type_id));
     }
 
-    const expenseData: Omit<Expense, '_id' | 'createdAt' | 'updatedAt' | 'isDeleted' | 'deletedAt'> = {
-      tenantId: command.tenantId,
+    /**
+     * FIX (category always displays as "Uncategorized" for new
+     * expenses): this previously stored `expenseTypeId.toString()` --
+     * a plain string -- on the expense document. tblexpense_types._id
+     * is a native MongoDB ObjectId, and ExpenseRepository's
+     * expenseTypeLookupStages() joins on
+     * { localField: 'expense_type_id', foreignField: '_id' }.
+     * MongoDB's $lookup requires exact BSON type equality, so a string
+     * value NEVER matches an ObjectId value even when their hex text is
+     * identical -- the join silently returned nothing for every expense
+     * created through this handler, and expenseCategoryLabel() then
+     * correctly (but misleadingly) fell back to "Uncategorized" even
+     * though a real category had been selected and validated above.
+     * Storing the ObjectId itself (matching how
+     * scripts/seed-actual-expenses-from-file.ts has always stored it,
+     * and how ExpenseRepository.getFilteredExpenses's own type filter
+     * already expects it: `new ObjectId(filters.type)`) makes the join
+     * -- and category filtering -- work correctly for every new expense.
+     * See scripts/fix-expense-type-id-types.ts for a one-off migration
+     * that repairs existing string-typed records created before this
+     * fix.
+     */
+    // FIX: `tenantId` removed from this object. ExpenseRepository.create()
+    // takes tenantId as its own (second) argument and sets it internally --
+    // its data-parameter type is
+    // Omit<Expense, '_id' | 'isDeleted' | 'createdAt' | 'updatedAt' | 'deletedAt' | 'tenantId'>.
+    // The Omit<> annotation below previously didn't exclude 'tenantId', so this
+    // object carried a redundant (and, once assigned into a literal call site,
+    // TS-rejected -- see bulk-import-expenses.handler.ts) tenantId field. It
+    // only compiled here because expenseData is a separately-typed variable,
+    // which skips TypeScript's excess-property check; the actual tenantId
+    // used for the write was always the `command.tenantId` argument below,
+    // never this one.
+    const expenseData: Omit<
+      Expense,
+      '_id' | 'isDeleted' | 'createdAt' | 'updatedAt' | 'deletedAt' | 'tenantId'
+    > = {
       license_plate: String(validated.license_plate).toUpperCase(),
       amount: Number(validated.amount),
       date: new Date(validated.date as unknown as string),
-      ...(expenseTypeId && { expense_type_id: expenseTypeId.toString() }),
+      ...(expenseTypeId && { expense_type_id: expenseTypeId as unknown as string }),
       ...(validated.description && { description: String(validated.description).trim() }),
       ...(validated.jobTrip && { jobTrip: String(validated.jobTrip).trim() }),
       ...(validated.notes && { notes: String(validated.notes).trim() }),

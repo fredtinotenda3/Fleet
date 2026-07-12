@@ -48,7 +48,7 @@ export class ExpenseRepository extends BaseRepository<Expense> {
   /**
    * Every expense returned anywhere in the app (list, dashboard, export)
    * must carry a populated `expense_type`, or the category column falls
-   * back to "Other"/"Uncategorized" and dropdowns leak raw ObjectIds.
+   * back to "Other"/"All" and dropdowns leak raw ObjectIds.
    * This is the single shared lookup stage every read path below uses.
    */
   private expenseTypeLookupStages() {
@@ -82,7 +82,7 @@ export class ExpenseRepository extends BaseRepository<Expense> {
    * CSV/Excel export, vehicle expense history. Uses an aggregation
    * pipeline (not BaseRepository.findWithPagination) specifically so
    * expense_type is always populated -- this was previously missing,
-   * which is why category showed as "Uncategorized" or a raw ObjectId
+   * which is why category showed as "All" or a raw ObjectId
    * everywhere except the stats cards.
    */
   async getFilteredExpenses(
@@ -208,10 +208,10 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     return {
       total: totalAmount,
       average: totalCount > 0 ? totalAmount / totalCount : 0,
-      byType: Object.fromEntries(data.byType.map((t: any) => [t._id || 'Uncategorized', t.total])),
+      byType: Object.fromEntries(data.byType.map((t: any) => [t._id || 'All', t.total])),
       byMonth: Object.fromEntries(data.byMonth.map((m: any) => [m._id, m.total])),
       topCategories: data.topCategories.map((c: any) => ({
-        name: c._id || 'Uncategorized',
+        name: c._id || 'All',
         amount: c.total,
       })),
     };

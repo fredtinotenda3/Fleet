@@ -1,4 +1,3 @@
-
 // frontend/modules/expenses/utils/index.ts
 
 import { exportToCSV, type ExportColumn } from '@/shared/utils/csv.utils';
@@ -10,7 +9,7 @@ import type { Expense } from '../types';
  * Mirrors server/permissions/roles.ts's rolePermissions table for
  * EXPENSE_CREATE / EXPENSE_EDIT / EXPENSE_DELETE / EXPENSE_APPROVE.
  * fleet_manager only holds EXPENSE_VIEW server-side, so it's
- * intentionally excluded from the manage/delete/approve lists below —
+ * intentionally excluded from the manage/delete/approve lists below --
  * keeping this in sync with the backend avoids showing actions the API
  * will 403 on.
  */
@@ -30,6 +29,17 @@ export function canApproveExpenses(roles: string[]): boolean {
   return roles.some((role) => APPROVE_ROLES.includes(role));
 }
 
+/**
+ * FIX: the fallback here was the literal string 'All', not
+ * 'Uncategorized'. A record with no expense_type_id set (a perfectly
+ * legitimate, intentional "Uncategorized" expense -- see the
+ * Uncategorized sentinel option in ExpenseForm's category Select) was
+ * therefore displayed in the table/CSV/Excel exports as if its category
+ * were "All", which reads like a broken filter value rather than "no
+ * category was chosen". 'Uncategorized' matches the label already used
+ * everywhere else in the app (the Select's own "Uncategorized" option,
+ * the dashboard's "Uncategorized" byType key, etc.).
+ */
 export function expenseCategoryLabel(expense: Expense): string {
   return expense.expense_type?.name || expense.expense_type?.category || 'Uncategorized';
 }

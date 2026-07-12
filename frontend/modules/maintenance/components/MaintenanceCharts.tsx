@@ -72,7 +72,7 @@ export function MaintenanceCategoryChart() {
     for (const record of records) {
       const key = record.category
         ? MAINTENANCE_CATEGORY_LABELS[record.category as MaintenanceCategory] ?? record.category
-        : 'Uncategorized';
+        : 'All';
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
     return Array.from(counts.entries())
