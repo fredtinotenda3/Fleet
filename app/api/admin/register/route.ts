@@ -1,53 +1,68 @@
+// app/api/admin/register/route.ts
+//
+// FIX (🔴 Critical -- silent platform-wide access grant on every new
+// account): insertOne() never stamped a tenantId on the created
+// tbladmin row. lib/authOptions.ts's authorize() resolves a missing
+// tenantId as `user.tenantId || AUTH_TENANT_ID` ('default'), and
+// 'default' is the sentinel every repository treats as "skip tenant
+// filtering, return everything." Every account created through this
+// endpoint -- regardless of which organization's owner created it --
+// logged in with silent cross-tenant visibility into every other
+// organization's data. Fixed by stamping the creating caller's own
+// tenantId (or, for a literal platform SUPER_ADMIN, an optional
+// explicit tenantId in the body) onto the new row, and by allowing an
+// explicit Role to be assigned (gated so only a platform SUPER_ADMIN
+// can provision another super_admin -- otherwise identical
+// privilege-escalation risk to the admin/update bug above).
 import { NextRequest, NextResponse } from "next/server";
 import connectToDatabase from "@/lib/mongodb";
 import bcrypt from "bcryptjs";
-import { requireAuth } from "@/lib/requireAuth";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/authOptions";
+import { getAuthContext } from "@/server/auth/auth-context";
+import { Role } from "@/server/permissions/roles";
 
-// FIX (🔴 Critical): this route had NO authentication and NO
-// authorization check. Any unauthenticated request could create a new
-// row in tbladmin — i.e. anyone on the internet could self-provision
-// an admin account with a password of their choosing. requireAuth()
-// closes the anonymous-access hole; the additional isSuperAdmin check
-// below closes the privilege-escalation hole (an ordinary authenticated
-// user still shouldn't be able to mint new admins).
-//
-// NOTE: `roles` on the session token is populated by lib/authOptions.ts
-// during login (see app/api/auth/[...nextauth]/route.ts comments) and
-// mirrors modules/security's Role enum. This checks the same
-// super_admin / organization_owner roles that middleware.ts already
-// treats as the "admin surface" gate for /admin/* pages, so this route
-// is at least as strict as page-level access.
+const ASSIGNABLE_ROLES = new Set<string>(Object.values(Role));
+
 export async function POST(request: NextRequest) {
-  const unauth = await requireAuth();
-  if (unauth) return unauth;
-
-  const session = await getServerSession(authOptions);
-  const roles: string[] = (session?.user as { roles?: string[] } | undefined)?.roles ?? [];
-  const isSuperAdmin = roles.includes("super_admin") || roles.includes("organization_owner");
-
-  if (!isSuperAdmin) {
+  const context = await getAuthContext(request);
+  if (!context) {
+    return NextResponse.json({ message: "Authentication required" }, { status: 401 });
+  }
+  if (!context.isSuperAdmin) {
     return NextResponse.json(
       { message: "You do not have permission to create admin accounts" },
       { status: 403 }
     );
   }
 
-  const { firstName, email, password } = await request.json();
+  const isPlatformSuperAdmin = context.roles.includes(Role.SUPER_ADMIN);
+  const body = await request.json();
+  const { firstName, email, password, role, tenantId: requestedTenantId } = body;
 
   if (!firstName || !email || !password) {
-    return NextResponse.json(
-      { message: "All fields are required" },
-      { status: 400 }
-    );
+    return NextResponse.json({ message: "All fields are required" }, { status: 400 });
   }
-
   if (password.length < 8) {
     return NextResponse.json(
       { message: "Password must be at least 8 characters" },
       { status: 400 }
     );
+  }
+
+  // Organization owners can only provision accounts inside their own
+  // tenant. A literal platform SUPER_ADMIN may target another tenant
+  // explicitly (e.g. platform support provisioning for a customer);
+  // everyone else is pinned to their own tenant regardless of body input.
+  const tenantId = isPlatformSuperAdmin && requestedTenantId ? requestedTenantId : context.tenantId;
+
+  let assignedRole: string = Role.VIEWER;
+  if (typeof role === "string" && ASSIGNABLE_ROLES.has(role)) {
+    if (role === Role.SUPER_ADMIN && !isPlatformSuperAdmin) {
+      return NextResponse.json(
+        { message: "Only a platform super admin may create another super admin" },
+        { status: 403 }
+      );
+    }
+    assignedRole = role;
   }
 
   try {
@@ -61,10 +76,7 @@ export async function POST(request: NextRequest) {
     if (existingUser) {
       return NextResponse.json(
         {
-          message:
-            existingUser.Email === email
-              ? "Email already registered"
-              : "Name already taken",
+          message: existingUser.Email === email ? "Email already registered" : "Name already taken",
         },
         { status: 409 }
       );
@@ -76,25 +88,17 @@ export async function POST(request: NextRequest) {
       FirstName: firstName,
       Email: email,
       Password: hashedPassword,
+      Role: assignedRole,
+      tenantId,
       createdAt: new Date(),
     });
 
     if (result.insertedId) {
-      return NextResponse.json(
-        { message: "User registered successfully" },
-        { status: 201 }
-      );
-    } else {
-      return NextResponse.json(
-        { message: "Failed to create user" },
-        { status: 500 }
-      );
+      return NextResponse.json({ message: "User registered successfully" }, { status: 201 });
     }
+    return NextResponse.json({ message: "Failed to create user" }, { status: 500 });
   } catch (err) {
     console.error("Registration error:", err);
-    return NextResponse.json(
-      { message: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ message: "Internal server error" }, { status: 500 });
   }
 }

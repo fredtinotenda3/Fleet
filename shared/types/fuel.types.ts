@@ -105,6 +105,16 @@ export interface FuelKpis {
   daysSinceLastFill: number;
   mostRecentVehicle?: string;
   mostRecentPlate?: string;
+  /**
+   * FIX: previously computed in FuelRepository.getFuelKpis() but
+   * discarded before returning. Surfaces how many vehicles had
+   * zero/missing odometer data for the period and had their distance
+   * estimated from trip logs instead, so the UI can flag those figures
+   * as estimated rather than presenting a blended total as uniformly
+   * odometer-measured.
+   */
+  fallbackVehicleCount: number;
+  fallbackPlates: string[];
 }
 
 export interface AbnormalFuelConsumptionRow {

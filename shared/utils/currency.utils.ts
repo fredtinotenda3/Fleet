@@ -54,3 +54,20 @@ export function getTrendColor(change: number): string {
   if (change < 0) return 'text-green-600';
   return 'text-gray-500';
 }
+
+export function formatPercent(
+  value: number,
+  options: { signed?: boolean } = {}
+): string {
+  const formatted = new Intl.NumberFormat('en-US', {
+    style: 'percent',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 1,
+  }).format(value);
+
+  return options.signed && value > 0 ? `+${formatted}` : formatted;
+}
+
+export function formatNumber(value: number): string {
+  return new Intl.NumberFormat('en-US').format(value);
+}

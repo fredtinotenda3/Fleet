@@ -29,6 +29,36 @@ export interface QueryOptions extends FindOptions {
   limit?: number;
 }
 
+/**
+ * FIX (critical -- tenant-isolation consistency): the set of tenantId
+ * values that mean "platform-level, do not filter by tenant" used to be
+ * defined independently in three places -- this file (`'default' |
+ * 'system'`, missing 'super_admin'), ExpenseRepository.isSuperAdminTenant()
+ * and FuelRepository (`'default' | 'system' | 'super_admin'`) -- and
+ * ExpenseRepository's own comments describe that exact drift causing a
+ * real production bug (dashboard stats vs. list page disagreeing on
+ * what "see everything" meant). Exported here as the single source of
+ * truth; other repositories should import this instead of
+ * redefining it.
+ *
+ * Note: this sentinel-based bypass only does the right thing if
+ * tenantId is actually the caller's real per-tenant tenantId for
+ * non-admin users. It relied on lib/authOptions.ts, which -- until the
+ * accompanying fix there -- was assigning tenantId: 'default' to every
+ * password-authenticated user, not just real admins. That is the root
+ * cause that needed fixing; this export just makes sure every
+ * repository agrees on the sentinel set once that's fixed.
+ */
+export const PLATFORM_SENTINEL_TENANT_IDS: ReadonlySet<string> = new Set([
+  'default',
+  'system',
+  'super_admin',
+]);
+
+export function isPlatformSentinelTenant(tenantId: string): boolean {
+  return PLATFORM_SENTINEL_TENANT_IDS.has(tenantId);
+}
+
 export abstract class BaseRepository<T extends BaseEntity> {
   protected abstract collectionName: string;
   protected db: Db | null = null;
@@ -44,7 +74,7 @@ export abstract class BaseRepository<T extends BaseEntity> {
     tenantId: string,
     isSuperAdmin: boolean = false
   ): Filter<T> {
-    if (isSuperAdmin || tenantId === 'default' || tenantId === 'system') {
+    if (isSuperAdmin || isPlatformSentinelTenant(tenantId)) {
       return {} as Filter<T>;
     }
     return { tenantId } as Filter<T>;
@@ -208,7 +238,7 @@ export abstract class BaseRepository<T extends BaseEntity> {
       const result = await collection.insertOne(document as any);
       return { ...document, _id: result.insertedId.toString() };
     } catch (error) {
-      // FIX: this was the direct cause of the POST /api/vehicles 500s —
+      // FIX: this was the direct cause of the POST /api/vehicles 500s â€”
       // re-creating a vehicle with a license_plate that still belonged to
       // an (already soft-deleted) record threw a raw MongoServerError
       // (E11000) that propagated straight out of this method. See

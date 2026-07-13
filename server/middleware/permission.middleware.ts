@@ -1,73 +1,74 @@
 // server/middleware/permission.middleware.ts
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getToken } from 'next-auth/jwt';
-import { Permission, permissionService } from '@/server/permissions/roles';
+import { Permission } from '@/server/permissions/roles';
+import {
+  AuthContext,
+  getAuthContext as getCanonicalAuthContext,
+  hasPermission as contextHasPermission,
+  hasAnyPermission as contextHasAnyPermission,
+  hasRole as contextHasRole,
+} from '@/server/auth/auth-context';
 
-export interface AuthContext {
-  userId: string;
-  tenantId: string;
-  roles: string[];
-  permissions: Permission[];
+/**
+ * FIX (critical -- middleware consistency / session-revocation bypass):
+ * this module used to define its own getAuthContext() that parsed the
+ * NextAuth JWT directly, duplicating -- and drifting from -- the
+ * canonical one in server/auth/auth-context.ts. Concretely, it never
+ * checked session revocation and never supported API-key auth, so any
+ * route using requirePermission()/requireAnyPermission()/requireRole()
+ * from this file (instead of withAuth() in with-auth.ts) let a revoked
+ * session's JWT keep authenticating, and rejected valid API-key
+ * requests outright. It also exported a function literally named
+ * getAuthContext with a *different return shape* than the canonical
+ * one in auth-context.ts -- a same-named, different-shape export
+ * sitting one import path away from the real one is exactly the kind
+ * of thing that gets silently mis-imported by a future route.
+ *
+ * This file now re-exports the canonical AuthContext type and builds
+ * requirePermission/requireAnyPermission/requireRole on top of the
+ * single getAuthContext() in server/auth/auth-context.ts, so every
+ * route gets identical authentication + session-revocation behavior
+ * whether it's wrapped with withAuth() or these helpers directly.
+ *
+ * Prefer withAuth() (server/middleware/with-auth.ts) for new routes --
+ * it additionally gives rate limiting, API-version headers, and
+ * request tracing/metrics for free. These helpers remain for routes
+ * that haven't been migrated to withAuth() yet.
+ */
+export type { AuthContext };
+
+export async function getAuthContext(req: NextRequest): Promise<AuthContext | null> {
+  return getCanonicalAuthContext(req);
 }
 
-export async function getAuthContext(
-  req: NextRequest
-): Promise<AuthContext | null> {
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
+function unauthorized() {
+  return NextResponse.json(
+    {
+      success: false,
+      error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
+    },
+    { status: 401 }
+  );
+}
 
-  if (!token) return null;
-
-  const roles: string[] = (token as any).roles || ['viewer'];
-  const permissions = roles
-    .flatMap((role: string) =>
-      permissionService.getPermissionsForRole(role as any)
-    )
-    .filter((v, i, a) => a.indexOf(v) === i);
-
-  const isSuperAdminUser =
-    roles.includes('super_admin') || roles.includes('organization_owner');
-
-  return {
-    userId: token.sub as string,
-    tenantId: isSuperAdminUser
-      ? 'default'
-      : (token as any).tenantId || 'default',
-    roles,
-    permissions,
-  };
+function forbidden(message: string) {
+  return NextResponse.json(
+    { success: false, error: { code: 'FORBIDDEN', message } },
+    { status: 403 }
+  );
 }
 
 export function requirePermission(permission: Permission) {
   return async (
     req: NextRequest,
-    handler: (
-      req: NextRequest,
-      context: AuthContext
-    ) => Promise<NextResponse>
+    handler: (req: NextRequest, context: AuthContext) => Promise<NextResponse>
   ) => {
-    const context = await getAuthContext(req);
-
-    if (!context) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
-        },
-        { status: 401 }
-      );
+    const context = await getCanonicalAuthContext(req);
+    if (!context) return unauthorized();
+    if (!contextHasPermission(context, permission)) {
+      return forbidden('Insufficient permissions');
     }
-
-    if (!context.permissions.includes(permission)) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: { code: 'FORBIDDEN', message: 'Insufficient permissions' },
-        },
-        { status: 403 }
-      );
-    }
-
     return handler(req, context);
   };
 }
@@ -75,37 +76,13 @@ export function requirePermission(permission: Permission) {
 export function requireAnyPermission(permissions: Permission[]) {
   return async (
     req: NextRequest,
-    handler: (
-      req: NextRequest,
-      context: AuthContext
-    ) => Promise<NextResponse>
+    handler: (req: NextRequest, context: AuthContext) => Promise<NextResponse>
   ) => {
-    const context = await getAuthContext(req);
-
-    if (!context) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
-        },
-        { status: 401 }
-      );
+    const context = await getCanonicalAuthContext(req);
+    if (!context) return unauthorized();
+    if (!contextHasAnyPermission(context, permissions)) {
+      return forbidden('Insufficient permissions');
     }
-
-    const hasPermission = permissions.some((p) =>
-      context.permissions.includes(p)
-    );
-
-    if (!hasPermission) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: { code: 'FORBIDDEN', message: 'Insufficient permissions' },
-        },
-        { status: 403 }
-      );
-    }
-
     return handler(req, context);
   };
 }
@@ -113,35 +90,13 @@ export function requireAnyPermission(permissions: Permission[]) {
 export function requireRole(roles: string[]) {
   return async (
     req: NextRequest,
-    handler: (
-      req: NextRequest,
-      context: AuthContext
-    ) => Promise<NextResponse>
+    handler: (req: NextRequest, context: AuthContext) => Promise<NextResponse>
   ) => {
-    const context = await getAuthContext(req);
-
-    if (!context) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: { code: 'UNAUTHORIZED', message: 'Authentication required' },
-        },
-        { status: 401 }
-      );
+    const context = await getCanonicalAuthContext(req);
+    if (!context) return unauthorized();
+    if (!contextHasRole(context, roles)) {
+      return forbidden('Insufficient role');
     }
-
-    const hasRole = context.roles.some((role) => roles.includes(role));
-
-    if (!hasRole) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: { code: 'FORBIDDEN', message: 'Insufficient role' },
-        },
-        { status: 403 }
-      );
-    }
-
     return handler(req, context);
   };
 }

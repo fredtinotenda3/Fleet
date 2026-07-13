@@ -12,11 +12,12 @@ import {
   errorResponse,
   createdResponse,
 } from '@/server/utils/response.utils';
-import { AppError, ValidationError } from '@/server/errors/app.errors';
+import { AppError, ValidationError, UnauthorizedError, ForbiddenError } from '@/server/errors/app.errors';
 import {
   getTenantFromRequest,
   getUserIdFromRequest,
 } from '@/server/utils/context.utils';
+import { getAuthContext } from '@/server/auth/auth-context';
 
 bootstrapCqrs();
 
@@ -43,10 +44,8 @@ export class ExpenseController {
           : undefined,
       };
 
-      // Support both paginated and non-paginated responses
       const pageParam = searchParams.get('page');
       if (!pageParam) {
-        // Legacy non-paginated path used by dashboard/charts
         const result = await expenseQueryService.getFilteredExpenses(
           filters,
           { page: 1, limit: 10000 },
@@ -108,13 +107,29 @@ export class ExpenseController {
     }
   }
 
+  /**
+   * FIX (critical -- unauthorized hard delete): identical bug/fix to
+   * VehicleController.deleteVehicle -- `?soft=false` used to trigger a
+   * permanent, non-cascading hardDelete() (orphaning any receipt/report
+   * reference to this expense) under the same EXPENSE_DELETE permission
+   * used for an ordinary, recoverable soft delete. Now requires the
+   * caller to also be isSuperAdmin (SUPER_ADMIN or ORGANIZATION_OWNER).
+   */
   async deleteExpense(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const userId = await getUserIdFromRequest(req);
+      const authContext = await getAuthContext(req);
+      if (!authContext) {
+        throw new UnauthorizedError('Authentication required');
+      }
       const soft = req.nextUrl.searchParams.get('soft') !== 'false';
 
-      await expenseCommandService.deleteExpense(id, tenantId, userId, soft);
+      if (!soft && !authContext.isSuperAdmin) {
+        throw new ForbiddenError(
+          'Permanently deleting an expense requires organization owner or super admin access. Use a soft delete instead.'
+        );
+      }
+
+      await expenseCommandService.deleteExpense(id, authContext.tenantId, authContext.userId, soft);
       return successResponse({ message: 'Expense deleted successfully' });
     } catch (error) {
       return this.handleError(error);

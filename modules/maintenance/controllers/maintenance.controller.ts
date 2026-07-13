@@ -20,6 +20,21 @@ import {
 
 bootstrapCqrs();
 
+/** Enterprise CSV import safety cap -- matches Vehicle/Fuel import limits. */
+const MAX_IMPORT_ROWS = 2000;
+
+export interface ImportRowResult {
+  row: number;
+  success: boolean;
+  identifier?: string;
+  error?: string;
+}
+
+export interface ImportResponse {
+  summary: { total: number; succeeded: number; failed: number };
+  results: ImportRowResult[];
+}
+
 export class MaintenanceController {
   async getReminders(req: NextRequest) {
     try {
@@ -171,6 +186,63 @@ export class MaintenanceController {
       const daysAhead = Number(req.nextUrl.searchParams.get('daysAhead') || '7');
       const reminders = await maintenanceQueryService.getUpcomingReminders(tenantId, daysAhead);
       return successResponse(reminders);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /**
+   * Enterprise CSV import for maintenance reminders. Same pattern as
+   * VehicleController.importVehicles/FuelController.importFuelLogs: every
+   * row goes through maintenanceCommandService.createReminder -- the same
+   * validation, tenant scoping, and ReminderCreatedEvent as a single
+   * create. Sequential (not Promise.all) so per-row failures never abort
+   * the batch; every row gets its own success/failure result.
+   */
+  async importReminders(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const userId = await getUserIdFromRequest(req);
+
+      let body: { records?: unknown };
+      try {
+        body = await req.json();
+      } catch {
+        throw new AppError('Invalid JSON body', 'INVALID_JSON', 400);
+      }
+
+      const records = Array.isArray(body.records) ? (body.records as Record<string, unknown>[]) : null;
+      if (!records || records.length === 0) {
+        throw new AppError('No records provided for import', 'NO_RECORDS', 400);
+      }
+      if (records.length > MAX_IMPORT_ROWS) {
+        throw new AppError(`Import exceeds the maximum of ${MAX_IMPORT_ROWS} rows per batch`, 'IMPORT_TOO_LARGE', 400);
+      }
+
+      const results: ImportRowResult[] = [];
+      let succeeded = 0;
+      let failed = 0;
+
+      for (let i = 0; i < records.length; i++) {
+        const rawRow = records[i];
+        const rowNumber = i + 2;
+        const licensePlate =
+          typeof rawRow.license_plate === 'string' ? rawRow.license_plate.toUpperCase() : undefined;
+
+        try {
+          const reminder = await maintenanceCommandService.createReminder(rawRow, tenantId, userId);
+          succeeded += 1;
+          results.push({ row: rowNumber, success: true, identifier: reminder.title });
+        } catch (error) {
+          failed += 1;
+          const message =
+            error instanceof AppError ? error.message : 'Unexpected error while importing this row';
+          results.push({ row: rowNumber, success: false, identifier: licensePlate, error: message });
+        }
+      }
+
+      const response: ImportResponse = { summary: { total: records.length, succeeded, failed }, results };
+      return successResponse(response);
     } catch (error) {
       return this.handleError(error);
     }

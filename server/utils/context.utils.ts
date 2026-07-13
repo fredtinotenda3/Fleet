@@ -1,54 +1,53 @@
 // server/utils/context.utils.ts
+//
+// FIX (critical -- middleware consistency / session-revocation bypass):
+// every helper in this file used to call next-auth's getToken() and
+// rebuild tenantId/roles/isSuperAdmin from raw JWT claims directly,
+// completely bypassing the canonical getAuthContext() in
+// server/auth/auth-context.ts -- the same class of bug already fixed in
+// server/middleware/permission.middleware.ts,
+// server/middleware/tenant-isolation.ts, and
+// infrastructure/security/middleware.ts. Concretely, these helpers never
+// checked session revocation and never supported API-key auth.
+//
+// TenancyController (createOrgUnit, moveOrgUnit, getHierarchyTree) calls
+// these directly. Every route that reaches those methods currently also
+// goes through withAuth() first (which does check revocation), so this
+// was not independently exploitable end-to-end today -- but any future
+// route wired up without withAuth(), or any route added by someone who
+// reasonably assumes "the app already checked auth", would inherit the
+// gap silently. Now a thin wrapper over the single canonical
+// getAuthContext(), so there is exactly one place session validity is
+// decided.
 
 import { NextRequest } from 'next/server';
-import { getToken } from 'next-auth/jwt';
+import { getAuthContext } from '@/server/auth/auth-context';
 import { UnauthorizedError } from '@/server/errors/app.errors';
 
-export async function getTenantFromRequest(req: NextRequest): Promise<string> {
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
-
-  if (!token) {
+async function requireContext(req: NextRequest) {
+  const context = await getAuthContext(req);
+  if (!context) {
     throw new UnauthorizedError('No authentication token found');
   }
+  return context;
+}
 
-  const roles: string[] = (token as any).roles || [];
-  const isSuperAdminUser =
-    roles.includes('super_admin') || roles.includes('organization_owner');
-
-  // Super admins bypass tenant filtering
-  if (isSuperAdminUser) {
-    return 'default';
-  }
-
-  const tenantId = (token as any).tenantId || 'default';
-  return tenantId;
+export async function getTenantFromRequest(req: NextRequest): Promise<string> {
+  const context = await requireContext(req);
+  return context.tenantId;
 }
 
 export async function getUserIdFromRequest(req: NextRequest): Promise<string> {
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
-
-  if (!token) {
-    throw new UnauthorizedError('No authentication token found');
-  }
-
-  return ((token as any).sub || (token as any).id) as string;
+  const context = await requireContext(req);
+  return context.userId;
 }
 
-export async function getUserRolesFromRequest(
-  req: NextRequest
-): Promise<string[]> {
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
-
-  if (!token) {
-    throw new UnauthorizedError('No authentication token found');
-  }
-
-  return (token as any).roles || ['user'];
+export async function getUserRolesFromRequest(req: NextRequest): Promise<string[]> {
+  const context = await requireContext(req);
+  return context.roles.length > 0 ? context.roles : ['viewer'];
 }
 
 export async function isSuperAdmin(req: NextRequest): Promise<boolean> {
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
-  if (!token) return false;
-  const roles: string[] = (token as any).roles || [];
-  return roles.includes('super_admin') || roles.includes('organization_owner');
+  const context = await getAuthContext(req);
+  return context?.isSuperAdmin ?? false;
 }

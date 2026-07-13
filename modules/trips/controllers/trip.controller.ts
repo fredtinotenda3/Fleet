@@ -12,11 +12,12 @@ import {
   errorResponse,
   createdResponse,
 } from '@/server/utils/response.utils';
-import { AppError, ValidationError } from '@/server/errors/app.errors';
+import { AppError, ValidationError, UnauthorizedError, ForbiddenError } from '@/server/errors/app.errors';
 import {
   getTenantFromRequest,
   getUserIdFromRequest,
 } from '@/server/utils/context.utils';
+import { getAuthContext } from '@/server/auth/auth-context';
 
 bootstrapCqrs();
 
@@ -102,13 +103,27 @@ export class TripController {
     }
   }
 
+  /**
+   * FIX (critical -- unauthorized hard delete): same bug/fix as
+   * VehicleController.deleteVehicle. `?soft=false` used to permanently
+   * hardDelete() a trip under the same TRIP_DELETE permission as an
+   * ordinary soft delete.
+   */
   async deleteTrip(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const userId = await getUserIdFromRequest(req);
+      const authContext = await getAuthContext(req);
+      if (!authContext) {
+        throw new UnauthorizedError('Authentication required');
+      }
       const soft = req.nextUrl.searchParams.get('soft') !== 'false';
 
-      await tripCommandService.deleteTrip(id, tenantId, userId, soft);
+      if (!soft && !authContext.isSuperAdmin) {
+        throw new ForbiddenError(
+          'Permanently deleting a trip requires organization owner or super admin access. Use a soft delete instead.'
+        );
+      }
+
+      await tripCommandService.deleteTrip(id, authContext.tenantId, authContext.userId, soft);
       return successResponse({ message: 'Trip deleted successfully' });
     } catch (error) {
       return this.handleError(error);

@@ -12,20 +12,16 @@ import {
   errorResponse,
   createdResponse,
 } from '@/server/utils/response.utils';
-import { AppError, ValidationError, UnauthorizedError } from '@/server/errors/app.errors';
+import { AppError, ValidationError, UnauthorizedError, ForbiddenError, NotFoundError } from '@/server/errors/app.errors';
 import {
   getTenantFromRequest,
   getUserIdFromRequest,
 } from '@/server/utils/context.utils';
 import { getAuthContext } from '@/server/auth/auth-context';
 import { tenantContextService } from '@/modules/tenancy/services/tenant-context.service';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 import { vehicleRepository } from '../repositories/vehicle.repository';
 
-
-// Ensure CQRS handlers are registered before any controller method runs.
-// Calling this at module-evaluation time (rather than inside each method)
-// keeps the cost of the idempotency check to once per process, not once
-// per request.
 bootstrapCqrs();
 
 /** Enterprise CSV import safety cap -- matches the client-side limit in ImportModal. */
@@ -89,10 +85,56 @@ export class VehicleController {
     }
   }
 
+  /**
+   * FIX (critical -- org-unit scope bypass on single-record access):
+   * every single-record endpoint below (getVehicle, updateVehicle,
+   * deleteVehicle, updateVehicleStatus) previously checked ONLY
+   * tenantId, never org-unit membership -- while getVehicles (the list
+   * endpoint) is the only place in the entire app that applies
+   * tenantContextService/tenantScopeService. A user scoped to a single
+   * branch via UserScopeAssignment saw only their branch's vehicles in
+   * the list, but could read/edit/delete ANY vehicle in the tenant by
+   * ID, completely bypassing the org-unit boundary the Phase 7
+   * infrastructure (UserScopeAssignment, TenantScopeService,
+   * TenantScopedRepository) exists to enforce.
+   *
+   * This helper re-resolves the caller's TenantContext and verifies the
+   * target vehicle's orgUnitId is one the caller may access before
+   * returning the vehicle, and throws NotFoundError (not ForbiddenError)
+   * on a scope violation -- returning 404 rather than 403 for
+   * out-of-scope resources avoids leaking the existence of records in
+   * branches the caller isn't supposed to know about.
+   */
+  private async loadInScopeVehicle(req: NextRequest, id: string) {
+    const authContext = await getAuthContext(req);
+    if (!authContext) {
+      throw new UnauthorizedError('Authentication required');
+    }
+
+    const vehicle = await vehicleQueryService.getVehicleById(id, authContext.tenantId);
+
+    const tenantContext = await tenantContextService.resolveContext(
+      authContext.userId,
+      authContext.tenantId,
+      authContext.roles,
+      authContext.isSuperAdmin,
+      authContext.orgUnitId
+    );
+
+    const vehicleOrgUnitId = (vehicle as any).orgUnitId as string | undefined;
+    if (
+      vehicleOrgUnitId &&
+      !tenantScopeService.canAccessOrgUnit(tenantContext, vehicleOrgUnitId)
+    ) {
+      throw new NotFoundError('Vehicle not found');
+    }
+
+    return { authContext, vehicle };
+  }
+
   async getVehicle(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const vehicle = await vehicleQueryService.getVehicleById(id, tenantId);
+      const { vehicle } = await this.loadInScopeVehicle(req, id);
       return successResponse(vehicle);
     } catch (error) {
       return this.handleError(error);
@@ -135,17 +177,6 @@ export class VehicleController {
     }
   }
 
-  /**
-   * Enterprise CSV import. Accepts `{ records: Record<string, unknown>[] }`
-   * (already parsed/coerced client-side by ImportModal) and creates one
-   * vehicle per row through the exact same `vehicleCommandService.createVehicle`
-   * path -- and therefore the exact same `vehicleCreateSchema` validation,
-   * duplicate-license-plate ConflictError, and VehicleCreatedEvent -- as the
-   * single-vehicle create flow. Rows are processed sequentially (not
-   * Promise.all) so duplicate-plate checks within the same batch are
-   * correctly serialized against each other. A row failure never aborts
-   * the batch; every row gets its own success/failure result.
-   */
   async importVehicles(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
@@ -174,7 +205,7 @@ export class VehicleController {
 
       for (let i = 0; i < records.length; i++) {
         const rawRow = records[i];
-        const rowNumber = i + 2; // +1 for 0-index, +1 for the CSV header row
+        const rowNumber = i + 2;
         const licensePlate =
           typeof rawRow.license_plate === 'string' ? rawRow.license_plate.toUpperCase() : undefined;
 
@@ -202,14 +233,14 @@ export class VehicleController {
 
   async updateVehicle(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const userId = await getUserIdFromRequest(req);
+      const { authContext } = await this.loadInScopeVehicle(req, id);
+      const userId = authContext.userId;
       const body = await req.json();
 
       const vehicle = await vehicleCommandService.updateVehicle(
         id,
         body,
-        tenantId,
+        authContext.tenantId,
         userId
       );
       return successResponse(vehicle);
@@ -218,13 +249,31 @@ export class VehicleController {
     }
   }
 
+  /**
+   * FIX (critical -- unauthorized hard delete): `?soft=false` used to be
+   * enough to trigger a permanent, non-cascading hardDelete() with the
+   * SAME permission required for an ordinary soft delete. Hard delete
+   * now requires the caller to hold VEHICLE_DELETE *and* be
+   * isSuperAdmin (SUPER_ADMIN or ORGANIZATION_OWNER) -- a regular
+   * fleet_manager/dispatcher with delete rights can still soft-delete
+   * (recoverable, and orphan-safe since soft-deleted vehicles are
+   * simply excluded from active queries), but can no longer
+   * permanently destroy a vehicle and orphan its expenses/fuel logs/
+   * trips/reminders via a query string flag.
+   */
   async deleteVehicle(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const userId = await getUserIdFromRequest(req);
+      const { authContext } = await this.loadInScopeVehicle(req, id);
+      const userId = authContext.userId;
       const soft = req.nextUrl.searchParams.get('soft') !== 'false';
 
-      await vehicleCommandService.deleteVehicle(id, tenantId, userId, soft);
+      if (!soft && !authContext.isSuperAdmin) {
+        throw new ForbiddenError(
+          'Permanently deleting a vehicle requires organization owner or super admin access. Use a soft delete instead.'
+        );
+      }
+
+      await vehicleCommandService.deleteVehicle(id, authContext.tenantId, userId, soft);
       return successResponse({ message: 'Vehicle deleted successfully' });
     } catch (error) {
       return this.handleError(error);
@@ -280,12 +329,22 @@ export class VehicleController {
     }
   }
 
+  /**
+   * FIX (high -- unvalidated numeric input): `parseInt(...)` on a
+   * missing/garbage `threshold` param silently produced NaN, which
+   * flows into a MongoDB `$gte`/`$expr` comparison and matches nothing
+   * (or everything, depending on the operator) with no error surfaced
+   * to the caller. Now validated and clamped to a sane range.
+   */
   async getVehiclesDueForService(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const threshold = parseInt(
-        req.nextUrl.searchParams.get('threshold') || '10000'
-      );
+      const rawThreshold = req.nextUrl.searchParams.get('threshold');
+      const parsed = rawThreshold ? parseInt(rawThreshold, 10) : 10000;
+      if (rawThreshold && (Number.isNaN(parsed) || parsed < 0)) {
+        throw new ValidationError('threshold must be a non-negative number');
+      }
+      const threshold = Number.isNaN(parsed) ? 10000 : Math.min(parsed, 1_000_000);
 
       const vehicles = await vehicleQueryService.getVehiclesDueForService(
         threshold,
@@ -297,15 +356,28 @@ export class VehicleController {
     }
   }
 
+  /**
+   * FIX (high -- unvalidated date input): `new Date(garbageString)`
+   * produces `Invalid Date`, which MongoDB silently treats as excluding
+   * everything from date-range filters rather than raising an error --
+   * so a typo'd or malformed date param quietly returns an empty/wrong
+   * analytics result instead of a clear 400.
+   */
   async getVehicleAnalytics(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const startDate = new Date(
-        req.nextUrl.searchParams.get('startDate') || new Date().toISOString()
-      );
-      const endDate = new Date(
-        req.nextUrl.searchParams.get('endDate') || new Date().toISOString()
-      );
+      const startParam = req.nextUrl.searchParams.get('startDate');
+      const endParam = req.nextUrl.searchParams.get('endDate');
+
+      const startDate = startParam ? new Date(startParam) : new Date();
+      const endDate = endParam ? new Date(endParam) : new Date();
+
+      if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+        throw new ValidationError('startDate/endDate must be valid dates');
+      }
+      if (startDate > endDate) {
+        throw new ValidationError('startDate must not be after endDate');
+      }
 
       const analytics = await vehicleQueryService.getVehicleAnalytics(
         tenantId,
@@ -320,14 +392,14 @@ export class VehicleController {
 
   async updateVehicleStatus(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const userId = await getUserIdFromRequest(req);
+      const { authContext } = await this.loadInScopeVehicle(req, id);
+      const userId = authContext.userId;
       const { status } = await req.json();
 
       const vehicle = await vehicleCommandService.updateVehicleStatus(
         id,
         status,
-        tenantId,
+        authContext.tenantId,
         userId
       );
       return successResponse(vehicle);

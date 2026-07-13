@@ -1,61 +1,44 @@
-import { NextRequest, NextResponse } from "next/server";
-import connectToDatabase from "@/lib/mongodb";
-import { ObjectId } from "mongodb";
-import { requireAuth } from "@/lib/requireAuth";
-import { getTenantFromRequest } from "@/server/utils/context.utils";
+// app/api/expenses/[id]/route.ts
 
-const COLLECTION = "tblexpenses";
+import { expenseController } from '@/modules/expenses/controllers/expense.controller';
+import { withAuth } from '@/server/middleware/with-auth';
+import { Permission } from '@/server/permissions/roles';
 
-// FIX (🔴 Critical — tenant isolation): this legacy handler proved a
-// session existed (requireAuth) but never scoped the query by
-// tenantId, unlike every other write in this module (see
-// app/api/expenses/route.ts -> expenseController -> tenant-scoped
-// repository). That meant any authenticated user from ANY organization
-// could soft-delete an expense belonging to a DIFFERENT organization,
-// simply by knowing or guessing its ObjectId. Every query below is now
-// scoped to the caller's own tenantId, matching the rest of the
-// expenses module's trust model.
-export async function DELETE(req: NextRequest) {
-  const unauth = await requireAuth();
-  if (unauth) return unauth;
-
-  try {
-    const pathSegments = new URL(req.url).pathname.split("/");
-    const id = pathSegments[pathSegments.length - 1];
-
-    if (!id || !ObjectId.isValid(id)) {
-      return NextResponse.json({ error: "Invalid or missing ID" }, { status: 400 });
-    }
-
-    const tenantId = await getTenantFromRequest(req);
-    const db = await connectToDatabase();
-
-    const existingExpense = await db.collection(COLLECTION).findOne({
-      _id: new ObjectId(id),
-      tenantId,
-      isDeleted: { $ne: true },
-    });
-
-    if (!existingExpense) {
-      // Deliberately identical response whether the expense doesn't
-      // exist or simply belongs to a different tenant — a 404 either
-      // way avoids leaking that a given ID exists in someone else's org.
-      return NextResponse.json({ error: "Expense not found" }, { status: 404 });
-    }
-
-    const result = await db
-      .collection(COLLECTION)
-      .updateOne({ _id: new ObjectId(id), tenantId }, { $set: { isDeleted: true } });
-
-    if (result.modifiedCount === 0) {
-      return NextResponse.json({ error: "Expense not found" }, { status: 404 });
-    }
-
-    return NextResponse.json({ message: "Expense deleted successfully" });
-  } catch (error) {
-    return NextResponse.json(
-      { error: "Failed to delete expense", details: (error as Error).message },
-      { status: 500 }
-    );
-  }
+/**
+ * FIX (critical -- permission bypass + missing tenant scoping): this
+ * route used to be a hand-rolled handler that called only requireAuth()
+ * (proves a session exists, checks NOTHING about permission) and wrote
+ * directly to MongoDB, bypassing expenseCommandService entirely. Two
+ * distinct critical bugs from that:
+ *
+ *   1. Permission bypass -- app/api/expenses/route.ts's DELETE (same
+ *      logical operation, reached via `?id=` instead of a path segment)
+ *      correctly requires Permission.EXPENSE_DELETE via withAuth. This
+ *      route accepted the identical DELETE operation with NO permission
+ *      check at all -- any authenticated user of any role (viewer,
+ *      driver, anyone) could soft-delete any expense in their tenant by
+ *      hitting this path instead of the query-param one.
+ *   2. Bypassed the command service -- writing `$set: {isDeleted:true}`
+ *      directly meant deletes through this path never published
+ *      ExpenseDeletedEvent, never invalidated the analytics query
+ *      cache (see AnalyticsHandler), and never appeared in the audit
+ *      log, silently diverging from every other delete in the app.
+ *
+ * Now a thin withAuth-wrapped delegate to the same expenseController
+ * used by app/api/expenses/route.ts, so both paths to "delete this
+ * expense" go through identical permission checks, tenant scoping, and
+ * event publication. The tenant-scoping fix that was already here is
+ * preserved -- it now happens inside expenseCommandService instead of
+ * ad-hoc in this file.
+ */
+interface RouteParams {
+  params: Promise<{ id: string }>;
 }
+
+export const DELETE = withAuth<RouteParams>(
+  async (req, _context, { params }) => {
+    const { id } = await params;
+    return expenseController.deleteExpense(req, id);
+  },
+  { permission: Permission.EXPENSE_DELETE }
+);

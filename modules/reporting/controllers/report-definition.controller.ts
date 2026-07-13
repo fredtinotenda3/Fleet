@@ -1,16 +1,35 @@
 // modules/reporting/controllers/report-definition.controller.ts
+//
+// FIX (Critical): app/api/reporting/definitions/[id]/drilldown/route.ts
+// calls `reportDefinitionController.drilldown(...)`, but this class never
+// defined a `drilldown` method — every request to that route threw
+// `TypeError: reportDefinitionController.drilldown is not a function` at
+// runtime. Added `drilldown()` below, wired to the existing
+// `drilldownService.drillInto()` (modules/reporting/services/drilldown.service.ts),
+// which was fully implemented but never called from anywhere.
+//
+// FIX (Critical): the `preview` and `pivot` routes both called
+// `previewPivot(...)` (a copy-paste error in the route files, fixed
+// separately in those files) — `preview()` itself was correct and unused.
+// No change needed here; documenting for the audit trail.
 
 import { NextRequest } from 'next/server';
 import { AuthContext } from '@/server/auth/auth-context';
 import { reportBuilderService } from '../services/report-builder.service';
 import { reportSchedulerService } from '../services/report-scheduler.service';
+import { drilldownService } from '../services/drilldown.service';
 import { successResponse, createdResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError } from '@/server/errors/app.errors';
+import { AppError, ValidationError } from '@/server/errors/app.errors';
 import { validateWithZod } from '@/shared/utils/validation.utils';
 import {
   reportDefinitionCreateSchema,
   reportDefinitionUpdateSchema,
 } from '@/shared/validations/report-definition.schema';
+import { z } from 'zod';
+
+const drilldownRequestSchema = z.object({
+  groupValues: z.record(z.string(), z.unknown()),
+});
 
 export class ReportDefinitionController {
   async list(req: NextRequest, context: AuthContext) {
@@ -29,7 +48,7 @@ export class ReportDefinitionController {
     }
   }
 
-  /** No route yet -- runs the definition and returns a tabular preview for the builder UI. */
+  /** Runs the definition and returns the flat/grouped tabular preview for the builder UI. */
   async preview(req: NextRequest, context: AuthContext, id: string) {
     try {
       return successResponse(await reportBuilderService.preview(id, context.tenantId));
@@ -38,7 +57,7 @@ export class ReportDefinitionController {
     }
   }
 
-  /** No route yet -- pivot-shaped preview, only valid when the definition has a saved pivot config. */
+  /** Pivot-shaped preview, only valid when the definition has a saved pivot config. */
   async previewPivot(req: NextRequest, context: AuthContext, id: string) {
     try {
       return successResponse(await reportBuilderService.previewPivot(id, context.tenantId));
@@ -47,7 +66,28 @@ export class ReportDefinitionController {
     }
   }
 
-  /** No route yet. */
+  /**
+   * Drills into a specific group/row a user clicked on in a grouped
+   * report result, returning the ungrouped detail rows behind it.
+   * Body: `{ groupValues: Record<string, unknown> }` — the group key/value
+   * pairs identifying the clicked cell (e.g. `{ status: "active" }`).
+   */
+  async drilldown(req: NextRequest, context: AuthContext, id: string) {
+    try {
+      const body = await req.json();
+      const result = await validateWithZod(drilldownRequestSchema, body);
+      if (!result.success || !result.data) {
+        return errorResponse('Validation failed', 'VALIDATION_ERROR', 400, result.errors);
+      }
+
+      const definition = await reportBuilderService.get(id, context.tenantId);
+      const detail = await drilldownService.drillInto(definition, context.tenantId, result.data.groupValues);
+      return successResponse(detail);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
   async duplicate(req: NextRequest, context: AuthContext, id: string) {
     try {
       const duplicated = await reportBuilderService.duplicate(id, context.tenantId, context.userId);

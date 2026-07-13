@@ -12,6 +12,7 @@ import { sessionRepository, SessionRepository } from '../repositories/session.re
 import { IssuedTokenPair } from '../types/refresh-token.types';
 import { AppError, UnauthorizedError } from '@/server/errors/app.errors';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
+import { Role } from '@/server/permissions/roles';
 
 export interface IssueTokenPairParams {
   userId: string;
@@ -25,10 +26,50 @@ export interface IssueTokenPairParams {
 }
 
 /**
+ * FIX (critical -- privilege escalation on every refresh-token rotation):
+ * tbladmin stores role as a SINGULAR `Role?: string` field (see the
+ * User interface in lib/authOptions.ts) -- there is no `roles` ARRAY
+ * field anywhere in this schema. That means `admin.roles` below was
+ * `undefined` for every single account, so the fallback
+ *   admin.roles || ['super_admin', 'organization_owner']
+ * fired unconditionally: every access token minted through the
+ * refresh-token flow (mobile apps, third-party API clients -- anything
+ * not using the NextAuth cookie session) carried
+ * ['super_admin', 'organization_owner'] regardless of the account's
+ * actual role. A driver, viewer, or mechanic authenticating through
+ * this path silently became a super admin on every token refresh.
+ *
+ * Mirrors the exact same LEGACY_ROLE_MAP resolution used in
+ * lib/authOptions.ts's authorize(), so the mapping from the legacy
+ * tbladmin.Role string to the modern Role enum can never drift between
+ * the cookie-session login path and the refresh-token path. An
+ * unmapped/missing role resolves to VIEWER (least privilege), never to
+ * super_admin -- consistent with resolveRole()'s "must never fail open"
+ * rule in authOptions.ts.
+ */
+const LEGACY_ROLE_MAP: Record<string, Role> = {
+  admin: Role.ORGANIZATION_OWNER,
+  super_admin: Role.SUPER_ADMIN,
+  organization_owner: Role.ORGANIZATION_OWNER,
+  fleet_manager: Role.FLEET_MANAGER,
+  accountant: Role.ACCOUNTANT,
+  dispatcher: Role.DISPATCHER,
+  driver: Role.DRIVER,
+  mechanic: Role.MECHANIC,
+  auditor: Role.AUDITOR,
+  viewer: Role.VIEWER,
+};
+
+function resolveLegacyRole(rawRole: string | undefined | null): Role {
+  if (!rawRole) return Role.VIEWER;
+  return LEGACY_ROLE_MAP[rawRole.trim().toLowerCase()] ?? Role.VIEWER;
+}
+
+/**
  * Issues, rotates, and revokes refresh/access token pairs for
  * programmatic (non-browser) clients such as mobile apps and third-party
  * integrations. Web browser sessions continue to use NextAuth's cookie
- * based JWT strategy (see lib/authOptions.ts) â€” this service exists
+ * based JWT strategy (see lib/authOptions.ts) — this service exists
  * alongside it for clients that cannot rely on cookies.
  *
  * Rotation model (OAuth2-style refresh token rotation with reuse
@@ -111,7 +152,7 @@ export class RefreshTokenService {
     }
 
     if (existing.status !== 'active') {
-      // The token has already been rotated before â€” this presentation
+      // The token has already been rotated before — this presentation
       // is a replay of a stale token, the textbook signature of a stolen
       // refresh token. Revoke the whole family so the legitimate holder
       // is forced to re-authenticate.
@@ -187,7 +228,9 @@ export class RefreshTokenService {
     if (!admin) return null;
     return {
       email: admin.Email,
-      roles: admin.roles || ['super_admin', 'organization_owner'],
+      // FIX: resolve the real per-account role via the same legacy map
+      // authOptions.ts uses, instead of failing open to super_admin.
+      roles: [resolveLegacyRole(admin.Role)],
     };
   }
 

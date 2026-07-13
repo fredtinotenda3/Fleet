@@ -20,6 +20,20 @@ export interface FuelListParams extends FuelTableFilters {
   limit?: number;
 }
 
+// NEW: mirrors ImportRowResult / ImportResponse from
+// modules/fuel/controllers/fuel.controller.ts
+export interface FuelImportRowResult {
+  row: number;
+  success: boolean;
+  identifier?: string;
+  error?: string;
+}
+
+export interface FuelImportResponse {
+  summary: { total: number; succeeded: number; failed: number };
+  results: FuelImportRowResult[];
+}
+
 function toIso(value: Date | string | undefined): string | undefined {
   if (!value) return undefined;
   return value instanceof Date ? value.toISOString() : value;
@@ -95,6 +109,11 @@ export const fuelApi = {
       throw new Error(body?.error?.message || 'Failed to upload receipt');
     }
     return body.data;
+  },
+
+  // NEW: hits the previously-unreachable POST /api/fuellogs/import route.
+  async importLogs(records: Record<string, unknown>[]): Promise<FuelImportResponse> {
+    return apiClient.post<FuelImportResponse>(`${BASE}/import`, { records });
   },
 };
 

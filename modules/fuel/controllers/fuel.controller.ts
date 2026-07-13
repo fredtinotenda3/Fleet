@@ -12,11 +12,12 @@ import {
   errorResponse,
   createdResponse,
 } from '@/server/utils/response.utils';
-import { AppError, ValidationError } from '@/server/errors/app.errors';
+import { AppError, ValidationError, UnauthorizedError, ForbiddenError } from '@/server/errors/app.errors';
 import {
   getTenantFromRequest,
   getUserIdFromRequest,
 } from '@/server/utils/context.utils';
+import { getAuthContext } from '@/server/auth/auth-context';
 
 bootstrapCqrs();
 
@@ -184,13 +185,27 @@ export class FuelController {
     }
   }
 
+  /**
+   * FIX (critical -- unauthorized hard delete): same bug/fix as
+   * VehicleController.deleteVehicle. `?soft=false` used to permanently
+   * hardDelete() a fuel log under the same FUEL_DELETE permission as an
+   * ordinary soft delete.
+   */
   async deleteFuelLog(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const userId = await getUserIdFromRequest(req);
+      const authContext = await getAuthContext(req);
+      if (!authContext) {
+        throw new UnauthorizedError('Authentication required');
+      }
       const soft = req.nextUrl.searchParams.get('soft') !== 'false';
 
-      await fuelCommandService.deleteFuelLog(id, tenantId, userId, soft);
+      if (!soft && !authContext.isSuperAdmin) {
+        throw new ForbiddenError(
+          'Permanently deleting a fuel log requires organization owner or super admin access. Use a soft delete instead.'
+        );
+      }
+
+      await fuelCommandService.deleteFuelLog(id, authContext.tenantId, authContext.userId, soft);
       return successResponse({ message: 'Fuel log deleted successfully' });
     } catch (error) {
       return this.handleError(error);

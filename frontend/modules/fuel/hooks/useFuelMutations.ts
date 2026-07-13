@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { fuelApi } from '../services/fuel.api';
 import { fuelKeys } from './useFuel';
 import type { FuelFormOutput } from '../schemas';
+import type { FuelImportResponse } from '../services/fuel.api';
 
 function errMsg(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
@@ -66,5 +67,27 @@ export function useUploadReceipt() {
   return useMutation({
     mutationFn: (file: File) => fuelApi.uploadReceipt(file),
     onError: (error) => toast.error(errMsg(error, 'Failed to upload receipt')),
+  });
+}
+
+// NEW: drives FuelImportModal. Backend processes rows sequentially and
+// never aborts the batch on a single row failure, so success here can
+// still mean "some rows failed" — surface summary.failed accordingly.
+export function useImportFuelLogs() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (records: Record<string, unknown>[]) => fuelApi.importLogs(records),
+    onSuccess: (data: FuelImportResponse) => {
+      queryClient.invalidateQueries({ queryKey: fuelKeys.all });
+      const { total, succeeded, failed } = data.summary;
+      if (failed === 0) {
+        toast.success(`Imported ${succeeded} of ${total} fuel logs`);
+      } else if (succeeded === 0) {
+        toast.error(`Import failed for all ${total} rows`);
+      } else {
+        toast.warning(`Imported ${succeeded} of ${total} fuel logs — ${failed} row(s) failed`);
+      }
+    },
+    onError: (error) => toast.error(errMsg(error, 'Failed to import fuel logs')),
   });
 }

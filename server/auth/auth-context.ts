@@ -68,11 +68,11 @@ async function getAuthContextFromApiKey(req: NextRequest): Promise<AuthContext |
  * Single canonical place that resolves a request's auth context.
  *
  * Resolution order:
- *   1. API key (X-API-Key header or `Authorization: ApiKey <key>`) â€”
+ *   1. API key (X-API-Key header or `Authorization: ApiKey <key>`) —
  *      machine-to-machine credentials, checked first since ruling them
  *      out is a cheap prefix check that never touches the NextAuth
  *      cookie/JWT machinery.
- *   2. NextAuth session JWT â€” the browser cookie flow, hardened here
+ *   2. NextAuth session JWT — the browser cookie flow, hardened here
  *      with a live revocation check against the UserSession store via
  *      the token's `sid` claim (stamped by lib/authOptions.ts at
  *      sign-in, alongside creating the matching UserSession row).
@@ -91,14 +91,44 @@ export async function getAuthContext(req: NextRequest): Promise<AuthContext | nu
   if (!token) return null;
 
   const roles: string[] = (token as any).roles || ['viewer'];
-  const isSuperAdmin =
-    roles.includes(Role.SUPER_ADMIN) || roles.includes(Role.ORGANIZATION_OWNER);
+
+  /**
+   * FIX (critical -- total tenant-isolation bypass, reintroduced here):
+   * `isSuperAdmin` below is intentionally `true` for BOTH SUPER_ADMIN
+   * (true platform admin) AND ORGANIZATION_OWNER (full access, but only
+   * within THEIR OWN tenant) -- that split is correct for permission
+   * checks (hasPermission/hasRole/canPerform all want org owners to
+   * bypass RBAC checks within their tenant).
+   *
+   * It is NOT correct for tenantId resolution. The line that used to be
+   * here:
+   *   const tenantId = isSuperAdmin ? 'default' : (token as any).tenantId || 'default';
+   * collapsed EVERY organization_owner's tenantId down to the literal
+   * sentinel string 'default' -- discarding their real per-tenant
+   * tenantId from the JWT. BaseRepository.getTenantFilter() (and every
+   * repository's isSuperAdminTenant() copy of the same rule) treats
+   * 'default' as "skip tenant filtering entirely, return everything."
+   * The practical effect: every organization owner -- not just true
+   * platform super admins -- saw every other tenant's vehicles,
+   * expenses, fuel logs, trips, and maintenance records on every list/
+   * stats/analytics endpoint in the app. This is the exact bypass class
+   * documented as fixed in lib/authOptions.ts's jwt() callback, silently
+   * reintroduced one layer up in this canonical context resolver that
+   * every route ultimately depends on.
+   *
+   * Only a literal SUPER_ADMIN role gets the platform-wide sentinel
+   * tenant. ORGANIZATION_OWNER always keeps their real tenantId from the
+   * token, so tenant-scoped queries stay correctly scoped to their own
+   * organization while still bypassing RBAC permission checks within it.
+   */
+  const isPlatformSuperAdmin = roles.includes(Role.SUPER_ADMIN);
+  const isSuperAdmin = isPlatformSuperAdmin || roles.includes(Role.ORGANIZATION_OWNER);
 
   const permissions = roles
     .flatMap((role) => permissionService.getPermissionsForRole(role as Role))
     .filter((value, index, all) => all.indexOf(value) === index);
 
-  const tenantId = isSuperAdmin ? 'default' : (token as any).tenantId || 'default';
+  const tenantId = isPlatformSuperAdmin ? 'default' : (token as any).tenantId || 'default';
   const sessionId = (token as any).sid as string | undefined;
 
   if (sessionId) {
@@ -106,8 +136,8 @@ export async function getAuthContext(req: NextRequest): Promise<AuthContext | nu
     if (!valid) {
       // The session backing this JWT has been explicitly revoked (e.g.
       // "log out this device" from another session, or an admin forcing
-      // a logout). The JWT signature is still cryptographically valid â€”
-      // stateless JWTs can't be un-signed â€” but the session it points to
+      // a logout). The JWT signature is still cryptographically valid —
+      // stateless JWTs can't be un-signed — but the session it points to
       // no longer exists, so treat the request as unauthenticated. Fails
       // open on infrastructure errors so a session-store hiccup never
       // locks every user out of the app.

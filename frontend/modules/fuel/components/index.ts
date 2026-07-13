@@ -9,3 +9,4 @@ export { FuelKpiCards } from './FuelKpiCards';
 export { AbnormalConsumptionWidget } from './AbnormalConsumptionWidget';
 export { FuelMonthlyTrendChart } from './FuelMonthlyTrendChart';
 export { FuelTopConsumersChart } from './FuelTopConsumersChart';
+export { FuelImportModal } from './FuelImportModal';

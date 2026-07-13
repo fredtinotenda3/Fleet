@@ -3,7 +3,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Plus, Download, FileSpreadsheet, Trash2, Printer } from 'lucide-react';
+import { Plus, Download, FileSpreadsheet, Trash2, Printer, Upload } from 'lucide-react';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import {
@@ -17,6 +17,7 @@ import { FuelStatsCards } from '../components/FuelStatsCards';
 import { FuelFilters } from '../components/FuelFilters';
 import { FuelTable } from '../components/FuelTable';
 import { FuelModal, type FuelModalMode } from '../components/FuelModal';
+import { FuelImportModal } from '../components/FuelImportModal';
 import { useFuelLogsList } from '../hooks/useFuel';
 import { useCreateFuelLog, useUpdateFuelLog, useDeleteFuelLog, useBulkDeleteFuelLogs } from '../hooks/useFuelMutations';
 import { exportFuelLogsToCSV, exportFuelLogsToExcel, printFuelLogs, canManageFuel, canDeleteFuel } from '../utils';
@@ -38,6 +39,7 @@ export function FuelListPage() {
   const [modalMode, setModalMode] = useState<FuelModalMode>('create');
   const [modalOpen, setModalOpen] = useState(false);
   const [activeLog, setActiveLog] = useState<FuelLog | null>(null);
+  const [importModalOpen, setImportModalOpen] = useState(false);
 
   const listParams = useMemo(() => ({ ...filters, page, limit: PAGE_SIZE }), [filters, page]);
   const { data: result, isLoading } = useFuelLogsList(listParams);
@@ -130,6 +132,11 @@ export function FuelListPage() {
                 <Trash2 className="h-3.5 w-3.5" /> Delete ({selectedIds.size})
               </Button>
             )}
+            {canManage && (
+              <Button variant="outline" size="sm" onClick={() => setImportModalOpen(true)}>
+                <Upload className="h-3.5 w-3.5" /> Import
+              </Button>
+            )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm"><Download className="h-3.5 w-3.5" /> Export</Button>
@@ -172,6 +179,7 @@ export function FuelListPage() {
       </div>
 
       <FuelModal open={modalOpen} mode={modalMode} fuelLog={activeLog} onOpenChange={setModalOpen} onSubmit={handleSubmit} />
+      <FuelImportModal open={importModalOpen} onOpenChange={setImportModalOpen} />
     </div>
   );
 }

@@ -28,6 +28,21 @@ interface VehiclePeriodAggregate {
 
 const ALL_PAYMENT_METHODS: FuelPaymentMethod[] = ['cash', 'fuel_card', 'credit_card', 'company_account', 'other'];
 
+/**
+ * FIX (medium -- duplicated magic number): the "abnormal consumption"
+ * multiplier used to be hardcoded separately as `avg * 2` inline in
+ * getFuelKpis() and as the `threshold: number = 2` default parameter in
+ * getAbnormalConsumption(). Two independent literals expressing the same
+ * business rule will eventually drift if one gets tuned and the other
+ * doesn't -- the KPI card and the abnormal-consumption list would then
+ * silently disagree about what counts as anomalous. Single source of
+ * truth now; getFuelKpis() uses this as its default and
+ * getAbnormalConsumption() keeps accepting an explicit override (its
+ * default also comes from here) so a caller-supplied threshold still
+ * works for both.
+ */
+export const DEFAULT_ABNORMAL_CONSUMPTION_MULTIPLIER = 2;
+
 export class FuelRepository extends BaseRepository<FuelLog> {
   protected collectionName = 'tblfuellogs';
 
@@ -208,27 +223,22 @@ export class FuelRepository extends BaseRepository<FuelLog> {
       { $project: { license_plate: '$_id', totalFuel: 1, totalCost: 1, _id: 0 } },
     ];
 
-   return collection.aggregate(pipeline).toArray() as Promise<
+  return collection.aggregate(pipeline).toArray() as Promise<
   { license_plate: string; totalFuel: number; totalCost: number }[]
 >;
   }
 
   /**
-   * FIX (fuel efficiency chain): the previous version derived distance
-   * ONLY from `max(odometer) - min(odometer)` across each vehicle's fuel
-   * logs in the period. When fuel-log odometer readings are sparse/zero
-   * (as in this dataset -- 32,703L logged against ~0km recorded), that
-   * yields totalDistance = 0 and therefore efficiency = 0 regardless of
-   * how much fuel was actually consumed.
-   *
-   * `tripDistanceByVehicle` is an optional per-license-plate distance map
-   * for the SAME date window, supplied by FuelQueryService from
-   * tripRepository.getDistanceByVehicle(). For any vehicle whose
-   * odometer-derived distance for the period is 0 (or the odometer field
-   * is missing entirely), we substitute the trip-derived distance for
-   * that vehicle instead of silently reporting 0. This never overrides a
-   * genuine non-zero odometer reading -- it only fills the gap when fuel
-   * logs have no usable odometer data.
+   * FIX (medium -- fallback-derived distance not surfaced): previously
+   * computed `fallbackVehicleCount` (how many vehicles had zero/missing
+   * odometer data for the period and fell back to trip-derived
+   * distance) but discarded it before returning. The KPI response gave
+   * no signal that part of "total distance" -- and therefore
+   * "efficiency"/"cost per km" -- was estimated from trip logs rather
+   * than measured odometer deltas. Now returned on FuelKpis so the UI
+   * can show e.g. "3 vehicles estimated from trip logs" next to the
+   * efficiency card instead of presenting a blended figure as if it
+   * were uniformly odometer-derived.
    */
   async getFuelKpis(
     tenantId: string,
@@ -283,6 +293,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
       let totalFuel = 0;
       let totalCost = 0;
       let fallbackVehicleCount = 0;
+      const fallbackPlates: string[] = [];
 
       for (const v of byVehicle) {
         totalFuel += v.totalFuel || 0;
@@ -301,6 +312,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
         if (vehicleDistance <= 0 && distanceFallback && distanceFallback[v._id]) {
           vehicleDistance = distanceFallback[v._id];
           fallbackVehicleCount += 1;
+          fallbackPlates.push(v._id);
         }
 
         totalDistance += vehicleDistance;
@@ -308,7 +320,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
 
       const efficiency = totalFuel > 0 ? totalDistance / totalFuel : 0;
       const costPerKm = totalDistance > 0 ? totalCost / totalDistance : 0;
-      return { totalDistance, totalFuel, totalCost, efficiency, costPerKm, fallbackVehicleCount };
+      return { totalDistance, totalFuel, totalCost, efficiency, costPerKm, fallbackVehicleCount, fallbackPlates };
     };
 
     const current = summarize(currentByVehicle, tripDistanceByVehicle);
@@ -320,7 +332,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     let abnormalCount = 0;
     for (const log of recentLogs) {
       const avg = vehicleAvgVolume.get(log.license_plate) || 0;
-      if (avg > 0 && log.fuel_volume > avg * 2) abnormalCount += 1;
+      if (avg > 0 && log.fuel_volume > avg * DEFAULT_ABNORMAL_CONSUMPTION_MULTIPLIER) abnormalCount += 1;
     }
     const abnormalConsumptionPercentage =
       recentLogs.length > 0 ? Math.round((abnormalCount / recentLogs.length) * 1000) / 10 : 0;
@@ -342,10 +354,17 @@ export class FuelRepository extends BaseRepository<FuelLog> {
       daysSinceLastFill,
       mostRecentVehicle: mostRecent?.station_name,
       mostRecentPlate: mostRecent?.license_plate,
+      // NEW: surfaces which/how-many vehicles had their distance
+      // estimated from trip logs rather than measured via odometer.
+      fallbackVehicleCount: current.fallbackVehicleCount,
+      fallbackPlates: current.fallbackPlates,
     };
   }
 
-  async getAbnormalConsumption(tenantId: string, threshold: number = 2): Promise<AbnormalFuelConsumptionRow[]> {
+  async getAbnormalConsumption(
+    tenantId: string,
+    threshold: number = DEFAULT_ABNORMAL_CONSUMPTION_MULTIPLIER
+  ): Promise<AbnormalFuelConsumptionRow[]> {
     const collection = await this.getCollection();
     const isSuperAdmin = this.isSuperAdminTenant(tenantId);
 

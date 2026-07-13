@@ -10,6 +10,7 @@ import { randomUUID } from 'crypto';
 import { sessionService } from '@/modules/security/services/session.service';
 import { threatDetectionService } from '@/modules/security/services/threat-detection.service';
 import { mfaService } from '@/modules/security/services/mfa.service';
+import { Role } from '@/server/permissions/roles';
 
 interface User {
   _id: ObjectId;
@@ -37,10 +38,54 @@ interface CustomSessionUser {
   name: string;
   role?: string;
   roles?: string[];
+  /**
+   * FIX (critical -- total tenant-isolation bypass): authorize() now
+   * returns the user's real tenantId so the jwt() callback below can
+   * use it instead of hardcoding AUTH_TENANT_ID for every login. See
+   * the FIX note in the jwt() callback for the full story.
+   */
+  tenantId?: string;
 }
 
 const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60; // 30 days
 const AUTH_TENANT_ID = 'default';
+
+/**
+ * FIX (critical): tbladmin.Role predates the Role enum in
+ * server/permissions/roles.ts and stores a single free-text-ish string
+ * (historically just 'admin' for every account created before
+ * multi-tenancy/RBAC existed). Mapping it explicitly here -- rather
+ * than the previous behavior of ignoring it completely and hardcoding
+ * every password login to ['super_admin', 'organization_owner'] --
+ * is what actually turns RBAC and tenant isolation on.
+ *
+ * ASSUMPTION THAT NEEDS PRODUCT CONFIRMATION: legacy Role: 'admin' is
+ * mapped to ORGANIZATION_OWNER (full access within their own tenant),
+ * not SUPER_ADMIN (cross-tenant platform access). If your existing
+ * tbladmin records actually need platform-wide super_admin, update
+ * this map -- do not change the default for 'admin' to SUPER_ADMIN
+ * without confirming, since that re-opens the exact bypass this fix
+ * closes for every account still carrying the legacy value.
+ */
+const LEGACY_ROLE_MAP: Record<string, Role> = {
+  admin: Role.ORGANIZATION_OWNER,
+  super_admin: Role.SUPER_ADMIN,
+  organization_owner: Role.ORGANIZATION_OWNER,
+  fleet_manager: Role.FLEET_MANAGER,
+  accountant: Role.ACCOUNTANT,
+  dispatcher: Role.DISPATCHER,
+  driver: Role.DRIVER,
+  mechanic: Role.MECHANIC,
+  auditor: Role.AUDITOR,
+  viewer: Role.VIEWER,
+};
+
+/** Unrecognized/missing role resolves to VIEWER (least privilege), not
+ *  super_admin -- an unmapped role must never fail open. */
+function resolveRole(rawRole: string | undefined | null): Role {
+  if (!rawRole) return Role.VIEWER;
+  return LEGACY_ROLE_MAP[rawRole.trim().toLowerCase()] ?? Role.VIEWER;
+}
 
 function extractIp(req: { headers?: Record<string, unknown> } | undefined): string | undefined {
   const forwarded = req?.headers?.['x-forwarded-for'];
@@ -109,6 +154,11 @@ export const authOptions: AuthOptions = {
             return null;
           }
 
+          // FIX (critical): this is the user's real data tenant --
+          // previously computed here and then discarded, because it was
+          // never put on the returned user object and the jwt()
+          // callback hardcoded AUTH_TENANT_ID for every password login
+          // instead of reading it.
           const userTenantId = user.tenantId || AUTH_TENANT_ID;
           const userId = user._id.toString();
 
@@ -150,7 +200,10 @@ export const authOptions: AuthOptions = {
             id: userId,
             name: user.FirstName,
             email: user.Email,
-            role: user.Role || 'admin',
+            role: resolveRole(user.Role),
+            // FIX: previously omitted, so jwt() had no per-user tenant
+            // to read even though it was already computed above.
+            tenantId: userTenantId,
           };
         } catch (error) {
           console.error('Authentication error:', error);
@@ -184,15 +237,30 @@ export const authOptions: AuthOptions = {
         if (account?.provider === 'sso' && ssoUser.ssoOrganizationId) {
           // SSO-authenticated session: scoped to the connection's
           // organization with its configured default role, rather than
-          // the super-admin role the local credentials path grants.
-          customToken.role = ssoUser.ssoDefaultRole || 'viewer';
-          customToken.roles = [ssoUser.ssoDefaultRole || 'viewer'];
+          // whatever role the local credentials path resolves.
+          customToken.role = ssoUser.ssoDefaultRole || Role.VIEWER;
+          customToken.roles = [ssoUser.ssoDefaultRole || Role.VIEWER];
           customToken.tenantId = ssoUser.ssoOrganizationId;
           customToken.authSource = 'sso';
         } else {
-          customToken.role = (user as CustomSessionUser).role || 'super_admin';
-          customToken.roles = ['super_admin', 'organization_owner'];
-          customToken.tenantId = AUTH_TENANT_ID;
+          // FIX (critical -- was the root cause of a total
+          // tenant-isolation bypass): this branch used to hardcode
+          // every password login to
+          //   roles = ['super_admin', 'organization_owner']
+          //   tenantId = AUTH_TENANT_ID ('default')
+          // regardless of who the user actually was. Combined with
+          // BaseRepository.getTenantFilter() treating tenantId ===
+          // 'default' as "skip tenant filtering" and auth-context.ts
+          // treating organization_owner as isSuperAdmin, that meant
+          // every logged-in user -- not just real admins -- saw every
+          // tenant's data everywhere and passed every permission check.
+          // Now uses the actual per-user role/tenantId resolved in
+          // authorize() above.
+          const authUser = user as unknown as CustomSessionUser;
+          const resolvedRole = resolveRole(authUser.role);
+          customToken.role = resolvedRole;
+          customToken.roles = [resolvedRole];
+          customToken.tenantId = authUser.tenantId || AUTH_TENANT_ID;
           customToken.authSource = 'password';
         }
 
