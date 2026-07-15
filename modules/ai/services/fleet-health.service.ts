@@ -49,7 +49,7 @@ export class FleetHealthService extends BaseAIService {
       );
 
       // Generate trends
-      const trends = this.generateTrends(vehicleScores);
+      const trends = this.generateTrends(vehicleScores, maintenance);
 
       // Generate recommendations
       const recommendations = this.generateRecommendations(
@@ -227,24 +227,76 @@ export class FleetHealthService extends BaseAIService {
     };
   }
 
+  /**
+   * FIX (high -- fabricated data): this used to generate weekly/monthly/
+   * yearly trend arrays as Math.random() noise scattered around the
+   * *current* average score -- i.e. a fake history that had no relation
+   * to what actually happened on the fleet in prior periods.
+   *
+   * There's no historical health-score snapshot store in this codebase
+   * to read real past scores from, so each point here is instead
+   * computed from real maintenance records that fall within that
+   * window (by `created_at`), using the same completion-rate /
+   * overdue-penalty methodology as calculateMaintenanceScore /
+   * calculateComponentScore elsewhere in this file. A window with no
+   * maintenance activity falls back to the current fleet score (flat
+   * baseline) rather than inventing movement.
+   */
   private generateTrends(
-    vehicleScores: FleetHealthScore['vehicleScores']
+    vehicleScores: FleetHealthScore['vehicleScores'],
+    maintenance: MaintenanceEntity[]
   ): FleetHealthScore['trends'] {
+    const currentAvgScore =
+      vehicleScores.reduce((sum, v) => sum + v.score, 0) / Math.max(1, vehicleScores.length);
+
+    const scoreForWindow = (start: Date, end: Date): number => {
+      const windowMaintenance = maintenance.filter((m) => {
+        const ref = m.created_at ? new Date(m.created_at) : null;
+        return ref ? ref >= start && ref <= end : false;
+      });
+
+      if (windowMaintenance.length === 0) {
+        return Math.round(currentAvgScore);
+      }
+
+      const completed = windowMaintenance.filter((m) => m.status === 'completed').length;
+      const overdue = windowMaintenance.filter(
+        (m) => m.status === 'overdue' || (m.due_date && new Date(m.due_date) < end)
+      ).length;
+
+      const completionRate = completed / windowMaintenance.length;
+      const overduePenalty = Math.min(40, overdue * 8);
+
+      return Math.max(0, Math.min(100, Math.round(50 + completionRate * 50 - overduePenalty)));
+    };
+
+    const now = new Date();
+
     const weekly: number[] = [];
+    for (let i = 3; i >= 0; i--) {
+      const end = new Date(now);
+      end.setDate(end.getDate() - i * 7);
+      const start = new Date(end);
+      start.setDate(start.getDate() - 7);
+      weekly.push(scoreForWindow(start, end));
+    }
+
     const monthly: number[] = [];
+    for (let i = 2; i >= 0; i--) {
+      const end = new Date(now);
+      end.setMonth(end.getMonth() - i);
+      const start = new Date(end);
+      start.setMonth(start.getMonth() - 1);
+      monthly.push(scoreForWindow(start, end));
+    }
+
     const yearly: number[] = [];
-
-    // Generate synthetic trends based on current scores
-    const avgScore = vehicleScores.reduce((sum, v) => sum + v.score, 0) / Math.max(1, vehicleScores.length);
-
-    for (let i = 0; i < 4; i++) {
-      weekly.push(Math.max(0, Math.min(100, avgScore + (Math.random() - 0.5) * 10)));
-    }
-    for (let i = 0; i < 3; i++) {
-      monthly.push(Math.max(0, Math.min(100, avgScore + (Math.random() - 0.5) * 15)));
-    }
-    for (let i = 0; i < 2; i++) {
-      yearly.push(Math.max(0, Math.min(100, avgScore + (Math.random() - 0.5) * 20)));
+    for (let i = 1; i >= 0; i--) {
+      const end = new Date(now);
+      end.setFullYear(end.getFullYear() - i);
+      const start = new Date(end);
+      start.setFullYear(start.getFullYear() - 1);
+      yearly.push(scoreForWindow(start, end));
     }
 
     return { weekly, monthly, yearly };

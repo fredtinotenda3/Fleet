@@ -118,7 +118,7 @@ export class DriverRiskService extends BaseAIService {
 
       const riskLevel = this.determineRiskLevel(overallScore);
 
-      const trends = this.generateRiskTrends(metrics);
+      const trends = this.generateRiskTrends(trips, telematicsData);
 
       const recommendations = this.generateRecommendations(metrics, riskLevel);
 
@@ -166,15 +166,21 @@ export class DriverRiskService extends BaseAIService {
       const rawTrips = await tripRepository.findMany({ driver_id: driverId }, tenantId);
       const vehicleIds = [...new Set(rawTrips.map((t) => t.license_plate).filter(Boolean))];
 
-      const telematics: TelematicsEntity[] = [];
-      for (const plate of vehicleIds) {
-        const data = await telematicsRepository.findMany(
-          { license_plate: plate },
-          tenantId,
-          { limit: 100 }
-        );
-        telematics.push(...data);
-      }
+      if (vehicleIds.length === 0) return [];
+
+      // FIX (medium -- N+1 query): this previously issued one
+      // telematicsRepository.findMany() call per unique vehicle plate
+      // this driver used, sequentially. For a driver who's touched many
+      // vehicles (or a batch run across a whole fleet's drivers), that's
+      // a lot of avoidable round-trips. Batched into a single $in query.
+      // The overall cap approximates the previous per-vehicle limit:100
+      // so total telematics volume pulled per driver doesn't change
+      // materially, it's just fetched in one call instead of N.
+      const telematics = await telematicsRepository.findMany(
+        { license_plate: { $in: vehicleIds } } as any,
+        tenantId,
+        { limit: 100 * vehicleIds.length }
+      );
 
       return telematics;
     } catch {
@@ -297,19 +303,51 @@ export class DriverRiskService extends BaseAIService {
     return 'critical';
   }
 
-  private generateRiskTrends(metrics: DriverRiskScore['metrics']): Array<{ date: Date; score: number }> {
+  /**
+   * FIX (high -- fabricated data): this used to generate 5 trend points
+   * as `50 + (Math.random() - 0.5) * 30 + (i / 30) * 10` -- i.e. random
+   * noise with a fake baked-in "improving over time" slope, completely
+   * disconnected from the driver's actual telematics history.
+   *
+   * Now computes a real risk score per 7-day window from actual
+   * telematics events (speeding/hard-brake/hard-accel) that fall within
+   * that window, using the same calculateSafetyScore() used for the
+   * driver's overall metrics -- inverted, since a trend of "risk over
+   * time" should read higher when the driver is less safe. A window
+   * with no telematics data scores 0 rather than inventing a value.
+   */
+  private generateRiskTrends(
+    trips: TripEntity[],
+    telematics: TelematicsEntity[]
+  ): Array<{ date: Date; score: number }> {
     const trends: Array<{ date: Date; score: number }> = [];
     const now = new Date();
 
-    for (let i = 30; i >= 0; i -= 7) {
-      const date = new Date(now);
-      date.setDate(date.getDate() - i);
-      const score = Math.round(
-        50 +
-        (Math.random() - 0.5) * 30 +
-        (i / 30) * 10
-      );
-      trends.push({ date, score: Math.max(0, Math.min(100, score)) });
+    for (let i = 28; i >= 0; i -= 7) {
+      const windowEnd = new Date(now);
+      windowEnd.setDate(windowEnd.getDate() - i);
+      const windowStart = new Date(windowEnd);
+      windowStart.setDate(windowStart.getDate() - 7);
+
+      const windowTelematics = telematics.filter((t) => {
+        const ts = new Date(t.timestamp);
+        return ts >= windowStart && ts <= windowEnd;
+      });
+
+      const speedingEvents = windowTelematics.filter(
+        (t) => t.location?.speed && t.location.speed > 120
+      ).length;
+      const hardBrakes = windowTelematics.filter(
+        (t) => (t.alerts || []).some((a) => a.type === 'hard_brake')
+      ).length;
+      const hardAccelerations = windowTelematics.filter(
+        (t) => (t.alerts || []).some((a) => a.type === 'hard_accel')
+      ).length;
+
+      const safetyScore = this.calculateSafetyScore(speedingEvents, hardBrakes, hardAccelerations);
+      const riskScore = windowTelematics.length > 0 ? 100 - safetyScore : 0;
+
+      trends.push({ date: windowEnd, score: Math.max(0, Math.min(100, Math.round(riskScore))) });
     }
 
     return trends;

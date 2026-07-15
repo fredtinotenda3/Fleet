@@ -16,6 +16,7 @@ export const fuelKeys = {
   abnormal: (threshold: number) => [...fuelKeys.all, 'abnormal', threshold] as const,
   monthly: (months: number) => [...fuelKeys.all, 'monthly', months] as const,
   topConsumers: (limit: number) => [...fuelKeys.all, 'top-consumers', limit] as const,
+  byDriver: (range?: string, limit?: number) => [...fuelKeys.all, 'by-driver', range, limit] as const,
 };
 
 export function useFuelLogsList(params: Partial<FuelListParams>) {
@@ -81,6 +82,19 @@ export function useTopFuelConsumers(limit: number = 5) {
   return useQuery({
     queryKey: fuelKeys.topConsumers(limit),
     queryFn: () => fuelApi.getTopConsumers(limit),
+    staleTime: 60_000,
+  });
+}
+
+/** NEW: powers FuelByDriverChart on the dashboard. */
+export function useFuelByDriver(dateRange?: { startDate?: Date; endDate?: Date }, limit: number = 10) {
+  const rangeKey = dateRange
+    ? `${dateRange.startDate?.toISOString() ?? ''}-${dateRange.endDate?.toISOString() ?? ''}`
+    : undefined;
+
+  return useQuery({
+    queryKey: fuelKeys.byDriver(rangeKey, limit),
+    queryFn: () => fuelApi.getByDriver(dateRange, limit),
     staleTime: 60_000,
   });
 }

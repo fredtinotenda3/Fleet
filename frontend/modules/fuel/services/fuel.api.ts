@@ -10,6 +10,7 @@ import type {
   AbnormalFuelConsumptionRow,
   MonthlyFuelConsumptionPoint,
   TopFuelConsumerRow,
+  DriverFuelConsumptionRow,
 } from '../types';
 import type { FuelFormOutput } from '../schemas';
 
@@ -20,8 +21,6 @@ export interface FuelListParams extends FuelTableFilters {
   limit?: number;
 }
 
-// NEW: mirrors ImportRowResult / ImportResponse from
-// modules/fuel/controllers/fuel.controller.ts
 export interface FuelImportRowResult {
   row: number;
   success: boolean;
@@ -46,6 +45,8 @@ function buildListQuery(params: Partial<FuelListParams>) {
     payment_method: params.payment_method,
     fuel_station_id: params.fuel_station_id,
     fuel_card_id: params.fuel_card_id,
+    // NEW
+    driver_id: params.driver_id,
     start: toIso(params.startDate),
     end: toIso(params.endDate),
     page: params.page,
@@ -100,6 +101,17 @@ export const fuelApi = {
     return apiClient.get<TopFuelConsumerRow[]>(BASE, { params: { action: 'top-consumers', limit } });
   },
 
+  /** NEW: powers the Fuel-by-Driver dashboard chart. */
+  async getByDriver(
+    dateRange?: { startDate?: Date; endDate?: Date },
+    limit: number = 10
+  ): Promise<DriverFuelConsumptionRow[]> {
+    const params: Record<string, string | number | undefined> = { action: 'by-driver', limit };
+    if (dateRange?.startDate) params.startDate = dateRange.startDate.toISOString();
+    if (dateRange?.endDate) params.endDate = dateRange.endDate.toISOString();
+    return apiClient.get<DriverFuelConsumptionRow[]>(BASE, { params });
+  },
+
   async uploadReceipt(file: File): Promise<{ url: string }> {
     const formData = new FormData();
     formData.append('file', file);
@@ -111,7 +123,6 @@ export const fuelApi = {
     return body.data;
   },
 
-  // NEW: hits the previously-unreachable POST /api/fuellogs/import route.
   async importLogs(records: Record<string, unknown>[]): Promise<FuelImportResponse> {
     return apiClient.post<FuelImportResponse>(`${BASE}/import`, { records });
   },

@@ -18,6 +18,7 @@ import {
   getUserIdFromRequest,
 } from '@/server/utils/context.utils';
 import { getAuthContext } from '@/server/auth/auth-context';
+import { driverRepository } from '@/modules/drivers/repositories/driver.repository';
 
 bootstrapCqrs();
 
@@ -45,6 +46,11 @@ export class FuelController {
       const filters: FuelFilters = {
         license_plate: searchParams.get('license_plate') || undefined,
         unit_id: searchParams.get('unit_id') || undefined,
+        payment_method: (searchParams.get('payment_method') as FuelFilters['payment_method']) || undefined,
+        fuel_station_id: searchParams.get('fuel_station_id') || undefined,
+        fuel_card_id: searchParams.get('fuel_card_id') || undefined,
+        // NEW: filter fuel logs by driver
+        driver_id: searchParams.get('driver_id') || undefined,
         startDate: searchParams.get('start')
           ? new Date(searchParams.get('start')!)
           : undefined,
@@ -108,11 +114,18 @@ export class FuelController {
    * (already parsed/coerced client-side by ImportModal) and creates one
    * fuel log per row through the exact same `fuelCommandService.createFuelLog`
    * path -- and therefore the exact same `fuelLogCreateSchema` validation,
-   * vehicle/unit/station/card lookups, and FuelLoggedEvent -- as the
+   * vehicle/unit/station/card/driver lookups, and FuelLoggedEvent -- as the
    * single-log create flow. Rows are processed sequentially (not
    * Promise.all) so duplicate checks within the same batch are correctly
    * serialized. A row failure never aborts the batch; every row gets its
    * own success/failure result.
+   *
+   * NEW: rows may include a `driver` column (name, driver_code, or a raw
+   * ObjectId string). It's resolved to a driver_id here -- BEFORE calling
+   * fuelCommandService.createFuelLog -- so an unresolved driver produces a
+   * clear, row-specific import error ("Driver 'J. Moyo' not found") rather
+   * than a generic downstream validation failure. Rows with an empty/absent
+   * `driver` cell import exactly as before (driver_id omitted).
    */
   async importFuelLogs(req: NextRequest) {
     try {
@@ -141,12 +154,35 @@ export class FuelController {
       let failed = 0;
 
       for (let i = 0; i < records.length; i++) {
-        const rawRow = records[i];
+        const rawRow = { ...records[i] };
         const rowNumber = i + 2; // +1 for 0-index, +1 for the CSV header row
         const licensePlate =
           typeof rawRow.license_plate === 'string' ? rawRow.license_plate.toUpperCase() : undefined;
 
         try {
+          // Resolve the `driver` cell (name/code/id) -> driver_id before
+          // handing off to the shared create path. A non-empty cell that
+          // fails to resolve fails the row with a specific message; an
+          // empty/absent cell is simply omitted (unassigned), preserving
+          // existing import behavior for files without a driver column.
+          const driverCell = rawRow.driver;
+          delete rawRow.driver;
+
+          if (typeof driverCell === 'string' && driverCell.trim().length > 0) {
+            const driver = await driverRepository.findByNameOrCode(driverCell, tenantId);
+            if (!driver) {
+              failed += 1;
+              results.push({
+                row: rowNumber,
+                success: false,
+                identifier: licensePlate,
+                error: `Driver "${driverCell}" could not be matched to an active driver`,
+              });
+              continue;
+            }
+            rawRow.driver_id = driver._id;
+          }
+
           const log = await fuelCommandService.createFuelLog(rawRow, tenantId, userId);
           succeeded += 1;
           results.push({
@@ -250,6 +286,32 @@ export class FuelController {
       const limit = Number(req.nextUrl.searchParams.get('limit') || '5');
 
       const data = await fuelQueryService.getTopFuelConsumers(tenantId, limit);
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /**
+   * NEW: powers the "Fuel Consumption by Driver" dashboard chart. Backed
+   * by a single grouped aggregation (FuelRepository.getFuelByDriver) --
+   * no per-driver queries, scales with fleet size.
+   */
+  async getFuelByDriver(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const searchParams = req.nextUrl.searchParams;
+      const limit = Number(searchParams.get('limit') || '10');
+
+      const dateRange =
+        searchParams.get('startDate') && searchParams.get('endDate')
+          ? {
+              startDate: new Date(searchParams.get('startDate')!),
+              endDate: new Date(searchParams.get('endDate')!),
+            }
+          : undefined;
+
+      const data = await fuelQueryService.getFuelByDriver(tenantId, dateRange, limit);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);

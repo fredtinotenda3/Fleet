@@ -47,6 +47,14 @@ const COMPONENT_LIFESPAN_KM: Record<string, number> = {
   electrical: 100_000,
 };
 
+/**
+ * Typical automotive 12V battery service life. Used as the deterministic
+ * "age since last replacement/service" proxy for battery health, since
+ * this deployment has no telematics battery-voltage feed to score
+ * against directly.
+ */
+const BATTERY_EXPECTED_LIFE_DAYS = 1200;
+
 export class PredictiveMaintenanceService extends BaseAIService {
   protected readonly serviceName = 'PredictiveMaintenance';
   protected readonly predictionType = 'maintenance';
@@ -304,10 +312,30 @@ export class PredictiveMaintenanceService extends BaseAIService {
              m.title?.toLowerCase().includes('gearbox')
     );
 
+    // FIX (high -- fabricated data): this component's healthScore used
+    // to blend in Math.random() * 0.3, meaning up to 30% of the score
+    // driving failureProbability, urgency, and estimatedCost on any
+    // prediction that surfaced this component was random noise, not a
+    // computed signal. Replaced with a deterministic "recent issue"
+    // factor built the same way assessEngineHealth already computes its
+    // issueFactor -- completed transmission work in the last 180 days
+    // lowers health, same as every other real factor here.
+    const recentIssues = transmissionMaintenance.filter(
+      (m) => m.status === 'completed' &&
+             m.completion_date &&
+             new Date(m.completion_date) > new Date(Date.now() - 180 * 24 * 60 * 60 * 1000)
+    );
+
+    const ageFactor = Math.max(0, 1 - (vehicle.year ? (new Date().getFullYear() - vehicle.year) / 20 : 0));
+    const mileageFactor = Math.max(0, 1 - (totalDistance / 350_000));
+    const maintenanceFactor = Math.min(1, 1 - (transmissionMaintenance.length / 3));
+    const issueFactor = Math.max(0, 1 - (recentIssues.length / 3));
+
     const healthScore = Math.round(
-      (Math.max(0, 1 - (totalDistance / 350_000)) * 0.4 +
-       Math.min(1, 1 - (transmissionMaintenance.length / 3)) * 0.3 +
-       Math.random() * 0.3) * 100
+      (ageFactor * 0.15 +
+       mileageFactor * 0.45 +
+       maintenanceFactor * 0.25 +
+       issueFactor * 0.15) * 100
     );
 
     return {
@@ -316,7 +344,9 @@ export class PredictiveMaintenanceService extends BaseAIService {
       healthScore,
       estimatedLifeRemaining: this.estimateComponentLife('transmission', healthScore, totalDistance),
       failureProbability: 1 - (healthScore / 100),
-      symptoms: [],
+      symptoms: recentIssues.length > 0
+        ? [`${recentIssues.length} transmission repair(s) completed in the last 180 days`]
+        : [],
       historicalFailureRate: transmissionMaintenance.length / Math.max(1, (vehicle.year ? new Date().getFullYear() - vehicle.year : 1)),
     };
   }
@@ -333,11 +363,24 @@ export class PredictiveMaintenanceService extends BaseAIService {
 
     const hardBrakes = telematics?.alerts?.filter((a: any) => a.type === 'hard_brake').length || 0;
 
+    // FIX (high -- fabricated data): replaced the Math.random() * 0.2
+    // term with a deterministic "time since last completed brake
+    // service" recency factor, computed from real completion_date
+    // values already present on brakeMaintenance records.
+    const lastBrakeService = brakeMaintenance
+      .filter((m) => m.status === 'completed' && m.completion_date)
+      .sort((a, b) => new Date(b.completion_date).getTime() - new Date(a.completion_date).getTime())[0];
+
+    const daysSinceLastService = lastBrakeService
+      ? Math.floor((Date.now() - new Date(lastBrakeService.completion_date).getTime()) / (24 * 60 * 60 * 1000))
+      : 365;
+    const recencyFactor = Math.max(0, 1 - daysSinceLastService / 365);
+
     const healthScore = Math.round(
       (Math.max(0, 1 - (totalDistance / 80_000)) * 0.3 +
        Math.min(1, 1 - (hardBrakes / 50)) * 0.2 +
        Math.min(1, 1 - (brakeMaintenance.length / 5)) * 0.3 +
-       Math.random() * 0.2) * 100
+       recencyFactor * 0.2) * 100
     );
 
     return {
@@ -361,10 +404,22 @@ export class PredictiveMaintenanceService extends BaseAIService {
              m.title?.toLowerCase().includes('tyre')
     );
 
+    // FIX (high -- fabricated data): same pattern as brakes above --
+    // Math.random() * 0.2 replaced with a deterministic recency factor
+    // based on the last completed tire-related maintenance record.
+    const lastTireService = tireMaintenance
+      .filter((m) => m.status === 'completed' && m.completion_date)
+      .sort((a, b) => new Date(b.completion_date).getTime() - new Date(a.completion_date).getTime())[0];
+
+    const daysSinceLastService = lastTireService
+      ? Math.floor((Date.now() - new Date(lastTireService.completion_date).getTime()) / (24 * 60 * 60 * 1000))
+      : 365;
+    const recencyFactor = Math.max(0, 1 - daysSinceLastService / 365);
+
     const healthScore = Math.round(
       (Math.max(0, 1 - (totalDistance / 60_000)) * 0.5 +
        Math.min(1, 1 - (tireMaintenance.length / 4)) * 0.3 +
-       Math.random() * 0.2) * 100
+       recencyFactor * 0.2) * 100
     );
 
     return {
@@ -387,10 +442,35 @@ export class PredictiveMaintenanceService extends BaseAIService {
       (m) => m.title?.toLowerCase().includes('battery')
     );
 
-    const healthScore = Math.round(
-      (Math.min(1, 1 - (batteryMaintenance.length / 3)) * 0.4 +
-       Math.random() * 0.6) * 100
+    // FIX (high -- fabricated data, worst offender): this component's
+    // healthScore used to be 60% pure Math.random() (`Math.random() *
+    // 0.6`), meaning the majority of every battery prediction --
+    // severity, urgency, estimated cost -- was noise, not signal. There
+    // is no telematics battery-voltage field in this deployment to
+    // score against directly, so this now uses the strongest available
+    // real proxy: days elapsed since the last completed battery service
+    // (or, absent any battery maintenance history, since the vehicle's
+    // model year) against a typical ~1200-day (~3.3yr) battery service
+    // life, blended with maintenance frequency the same way every other
+    // component here already does.
+    const lastBatteryService = batteryMaintenance
+      .filter((m) => m.status === 'completed' && m.completion_date)
+      .sort((a, b) => new Date(b.completion_date).getTime() - new Date(a.completion_date).getTime())[0];
+
+    const referenceDate = lastBatteryService?.completion_date
+      ? new Date(lastBatteryService.completion_date)
+      : vehicle.year
+        ? new Date(vehicle.year, 0, 1)
+        : new Date();
+
+    const daysSinceReference = Math.max(
+      0,
+      Math.floor((Date.now() - referenceDate.getTime()) / (24 * 60 * 60 * 1000))
     );
+    const ageFactor = Math.max(0, 1 - daysSinceReference / BATTERY_EXPECTED_LIFE_DAYS);
+    const maintenanceFactor = Math.min(1, 1 - (batteryMaintenance.length / 3));
+
+    const healthScore = Math.round((ageFactor * 0.7 + maintenanceFactor * 0.3) * 100);
 
     return {
       component: 'Battery',
@@ -398,7 +478,9 @@ export class PredictiveMaintenanceService extends BaseAIService {
       healthScore,
       estimatedLifeRemaining: this.estimateComponentLife('battery', healthScore, 0),
       failureProbability: 1 - (healthScore / 100),
-      symptoms: [],
+      symptoms: daysSinceReference > BATTERY_EXPECTED_LIFE_DAYS
+        ? ['Battery exceeds typical service life']
+        : [],
       historicalFailureRate: batteryMaintenance.length / Math.max(1, (vehicle.year ? new Date().getFullYear() - vehicle.year : 1)),
     };
   }

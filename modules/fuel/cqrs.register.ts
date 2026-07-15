@@ -19,6 +19,7 @@ import { GetMonthlyFuelConsumptionQuery } from './queries/get-monthly-fuel-consu
 import { GetTopFuelConsumersQuery } from './queries/get-top-fuel-consumers.query';
 import { GetFuelKpisQuery } from './queries/get-fuel-kpis.query';
 import { GetAbnormalFuelConsumptionQuery } from './queries/get-abnormal-fuel-consumption.query';
+import { GetFuelByDriverQuery } from './queries/get-fuel-by-driver.query';
 
 import { GetFuelLogsHandler } from './queries/handlers/get-fuel-logs.handler';
 import { GetFuelLogByIdHandler } from './queries/handlers/get-fuel-log-by-id.handler';
@@ -27,6 +28,7 @@ import { GetMonthlyFuelConsumptionHandler } from './queries/handlers/get-monthly
 import { GetTopFuelConsumersHandler } from './queries/handlers/get-top-fuel-consumers.handler';
 import { GetFuelKpisHandler } from './queries/handlers/get-fuel-kpis.handler';
 import { GetAbnormalFuelConsumptionHandler } from './queries/handlers/get-abnormal-fuel-consumption.handler';
+import { GetFuelByDriverHandler } from './queries/handlers/get-fuel-by-driver.handler';
 
 export function registerFuelCqrsHandlers(
   commandBus: CommandBus,
@@ -45,4 +47,6 @@ export function registerFuelCqrsHandlers(
   queryBus.register(GetTopFuelConsumersQuery, new GetTopFuelConsumersHandler(fuelRepository));
   queryBus.register(GetFuelKpisQuery, new GetFuelKpisHandler(fuelRepository));
   queryBus.register(GetAbnormalFuelConsumptionQuery, new GetAbnormalFuelConsumptionHandler(fuelRepository));
+  // NEW
+  queryBus.register(GetFuelByDriverQuery, new GetFuelByDriverHandler(fuelRepository));
 }

@@ -32,17 +32,33 @@ export class BulkImportExpensesHandler
 
     for (const record of command.records) {
       try {
-        // Find or create expense type
+        // FIX (critical -- cross-tenant data leak): the expense-type
+        // lookup/create block below previously ran with NO tenantId
+        // filter on the lookup, and NEVER set tenantId on the auto-
+        // created document at all. That meant:
+        //   1) A bulk import for Tenant A could match and silently
+        //      reuse an expense type actually owned by Tenant B, purely
+        //      because the category name matched case-insensitively.
+        //   2) Any category auto-created via import had no tenant
+        //      owner, so it was invisible to the importing tenant on
+        //      every subsequent tenant-scoped read, while still being
+        //      matchable (and reusable) by any other tenant's future
+        //      import of the same category name.
+        // Both the filter and the insert now scope to command.tenantId,
+        // the same value used two lines below for expenseRepo.create().
         let expenseTypeId: ObjectId | null = null;
         if (record.category) {
           const expenseType = await db.collection('tblexpense_types').findOne({
             name: { $regex: `^${record.category}$`, $options: 'i' },
+            tenantId: command.tenantId,
+            isDeleted: { $ne: true },
           });
 
           if (!expenseType) {
             const insertResult = await db.collection('tblexpense_types').insertOne({
               name: record.category,
               category: record.category,
+              tenantId: command.tenantId,
               isDeleted: false,
               createdAt: new Date(),
             });
@@ -57,23 +73,10 @@ export class BulkImportExpensesHandler
             license_plate: record.vehiclePlate || 'UNKNOWN',
             amount: record.totalAmount,
             date: new Date(record.date),
-            // FIX (bulk-imported expenses always showed "Uncategorized"):
-            // this previously stored `expenseTypeId.toString()` -- a plain
-            // string -- on the expense document. tblexpense_types._id is a
-            // native MongoDB ObjectId, and ExpenseRepository's
-            // expenseTypeLookupStages() joins on
-            // { localField: 'expense_type_id', foreignField: '_id' }.
-            // MongoDB's $lookup requires exact BSON type equality, so a
-            // string value NEVER matches an ObjectId value even when their
-            // hex text is identical -- the join silently returned nothing
-            // for every expense created through this import path, and
-            // expenseCategoryLabel() then fell back to "Uncategorized"
-            // even though a real category was matched/created above.
-            // Storing the ObjectId itself (matching how
-            // create-expense.handler.ts stores it, and how
-            // ExpenseRepository.getFilteredExpenses's own type filter
-            // already expects it: `new ObjectId(filters.type)`) makes the
-            // join -- and category filtering -- work correctly.
+            // expense_type_id must be a real ObjectId (not a string) so
+            // ExpenseRepository's $lookup join on tblexpense_types._id
+            // resolves -- see create-expense.handler.ts for the same
+            // rule and its history.
             ...(expenseTypeId && { expense_type_id: expenseTypeId as unknown as string }),
             description: record.items.join(', '),
             notes: `Ref: ${record.reference} | Account: ${record.account} | Cost Centre: ${record.costCentre}`,

@@ -3,6 +3,16 @@
 // Paginated execution history for the Export Center. Polls while any
 // tracked execution is still pending/processing so status flips to
 // completed/failed without a manual refresh.
+//
+// FIX (Critical — same _id/id mismatch as useSavedReports.ts): raw items
+// from reportExecutionsApi.list() only have `_id` (see ReportExecution in
+// frontend/modules/reports/types/index.ts), but ReportExecutionLike
+// declared `id: string` and nothing normalized it. Every execution.id in
+// ExportJobsTable was undefined -> duplicate/missing React keys, broken
+// downloads (download(undefined, ...)), and activeIds.includes(execution.id)
+// never matching a real tracked id (since exportStore tracks the true
+// _id returned by generate()), so the "stop polling on terminal status"
+// effect could never find its row.
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -27,6 +37,10 @@ interface ReportExecutionLike {
   error?: string;
 }
 
+function withId<T extends { _id?: string; id?: string }>(item: T): T & { id: string } {
+  return { ...item, id: item.id ?? item._id ?? '' };
+}
+
 export function useExportJobs() {
   const [page, setPage] = useState(1);
   const activeIds = useActiveExportExecutionIds();
@@ -37,10 +51,14 @@ export function useExportJobs() {
     refetchInterval: activeIds.length > 0 ? POLL_INTERVAL_MS : false,
   });
 
-  const executions = ((jobsQuery.data as { items?: ReportExecutionLike[]; data?: ReportExecutionLike[] } | undefined)
+  const rawExecutions = ((jobsQuery.data as { items?: unknown[]; data?: unknown[] } | undefined)
     ?.items ??
-    (jobsQuery.data as { data?: ReportExecutionLike[] } | undefined)?.data ??
-    []) as ReportExecutionLike[];
+    (jobsQuery.data as { data?: unknown[] } | undefined)?.data ??
+    []) as Array<Record<string, unknown>>;
+
+  const executions = rawExecutions.map((e) =>
+    withId(e as { _id?: string; id?: string }),
+  ) as unknown as ReportExecutionLike[];
 
   const totalPages = Math.max(
     1,

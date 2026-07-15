@@ -17,6 +17,7 @@ export interface FuelLog extends BaseEntity {
   date: Date;
   fuel_volume: number;
   unit_id: string;
+  driver_id?: string; 
   cost: number;
   odometer?: number;
   station_name?: string;
@@ -42,6 +43,11 @@ export interface FuelLog extends BaseEntity {
     _id: string;
     card_last4: string;
     provider: string;
+  };
+  /** Added – optional driver reference so the table can display the driver name */
+  driver?: {
+    _id?: string;
+    name: string;
   };
 }
 
@@ -70,6 +76,7 @@ export interface FuelLogUpdateDTO extends Partial<FuelLogCreateDTO> {
 export interface FuelFilters {
   license_plate?: string;
   unit_id?: string;
+  driver_id?: string;
   startDate?: Date;
   endDate?: Date;
   payment_method?: FuelPaymentMethod;

@@ -19,6 +19,14 @@ interface ExpenseBaseline {
    totalCount: number;
 }
 
+/**
+ * Same-vehicle expenses recorded on the same calendar day at or above
+ * this count are flagged as a frequency anomaly. Replaces the previous
+ * `Math.random() < 0.02` placeholder, which fired on ~2% of expenses at
+ * random regardless of whether they actually clustered on a day.
+ */
+const SAME_DAY_FREQUENCY_THRESHOLD = 3;
+
 export class ExpenseAnomalyDetectionService extends BaseAIService {
   protected readonly serviceName = 'ExpenseAnomalyDetection';
   protected readonly predictionType = 'expense_anomaly';
@@ -31,6 +39,7 @@ export class ExpenseAnomalyDetectionService extends BaseAIService {
       ]);
 
       const baseline = this.calculateBaseline(expenses, expenseTypes);
+      const dailyFrequency = this.buildDailyFrequencyMap(expenses);
 
       const alerts: ExpenseAnomalyAlert[] = [];
       const results: AIBatchResult<ExpenseAnomalyAlert> = {
@@ -43,7 +52,7 @@ export class ExpenseAnomalyDetectionService extends BaseAIService {
       };
 
       for (const expense of expenses) {
-        const anomalies = this.detectSingleAnomaly(expense, baseline);
+        const anomalies = this.detectSingleAnomaly(expense, baseline, dailyFrequency);
         if (anomalies.length > 0) {
           const alert = this.createAlert(expense, anomalies, tenantId);
           alerts.push(alert);
@@ -129,7 +138,28 @@ export class ExpenseAnomalyDetectionService extends BaseAIService {
     };
   }
 
-  private detectSingleAnomaly(expense: any, baseline: ExpenseBaseline): ExpenseAnomaly[] {
+  /**
+   * Builds a real `license_plate|day` -> count map across all expenses,
+   * used by detectSingleAnomaly's frequency check below. Replaces the
+   * previous `Math.random() < 0.02` placeholder, which produced
+   * "Multiple expenses recorded on same day" alerts with no relationship
+   * to whether that was actually true.
+   */
+  private buildDailyFrequencyMap(expenses: any[]): Map<string, number> {
+    const map = new Map<string, number>();
+    for (const expense of expenses) {
+      if (!expense.date) continue;
+      const key = `${expense.license_plate || 'unknown'}|${new Date(expense.date).toDateString()}`;
+      map.set(key, (map.get(key) || 0) + 1);
+    }
+    return map;
+  }
+
+  private detectSingleAnomaly(
+    expense: any,
+    baseline: ExpenseBaseline,
+    dailyFrequency: Map<string, number>
+  ): ExpenseAnomaly[] {
     const anomalies: ExpenseAnomaly[] = [];
 
     // Check amount anomaly
@@ -199,18 +229,21 @@ export class ExpenseAnomalyDetectionService extends BaseAIService {
       }
     }
 
-    // Check frequency anomaly (multiple expenses in same day)
+    // FIX (high -- fabricated data): replaced `Math.random() < 0.02`
+    // with a real same-day, same-vehicle count lookup against
+    // dailyFrequency, built once per detectAnomalies() run from actual
+    // expense dates rather than fired randomly on ~2% of expenses.
     if (expense.date) {
-      const dateStr = new Date(expense.date).toDateString();
-      // This would need a separate query - simplified for now
-      if (Math.random() < 0.02) { // Placeholder for actual frequency check
+      const key = `${expense.license_plate || 'unknown'}|${new Date(expense.date).toDateString()}`;
+      const countThatDay = dailyFrequency.get(key) || 1;
+      if (countThatDay >= SAME_DAY_FREQUENCY_THRESHOLD) {
         anomalies.push({
           type: 'frequency',
           expected: 1,
-          actual: 3,
-          deviation: 2,
-          percentageDeviation: 200,
-          description: 'Multiple expenses recorded on same day',
+          actual: countThatDay,
+          deviation: countThatDay - 1,
+          percentageDeviation: (countThatDay - 1) * 100,
+          description: `${countThatDay} expenses recorded for this vehicle on the same day`,
         });
       }
     }
@@ -301,10 +334,14 @@ export class ExpenseAnomalyDetectionService extends BaseAIService {
     return 'Monitor expense pattern for further anomalies';
   }
 
-  // Add this to fix the baseline.totalCount reference
-  private getBaselineTotalCount(baseline: ExpenseBaseline): number {
-    return Object.values(baseline.categoryDistribution).reduce((sum, val) => sum + val, 0);
-  }
+  // FIX (medium -- dead & incorrect helper removed): getBaselineTotalCount()
+  // summed baseline.categoryDistribution values, which are normalized
+  // frequencies that sum to ~1.0 across all categories, not a count.
+  // It was never called anywhere in this codebase; if it had been wired
+  // in later it would have silently returned ~1 instead of an actual
+  // expense count. baseline.totalCount (set correctly in
+  // calculateBaseline above) is the real count and is what every other
+  // method in this file already uses.
 }
 
 export const expenseAnomalyDetectionService = new ExpenseAnomalyDetectionService();

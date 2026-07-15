@@ -26,10 +26,12 @@ import { useFuelVolumeUnits } from '../hooks/useFuel';
 import { useUploadReceipt } from '../hooks/useFuelMutations';
 import { useFuelStationsList } from '@/frontend/modules/fuel-stations/hooks/useFuelStations';
 import { useFuelCardsList } from '@/frontend/modules/fuel-cards/hooks/useFuelCards';
+import { useDriversList } from '@/frontend/modules/drivers/hooks/useDrivers';
 
 const CURRENCIES = ['USD', 'ZWG', 'ZAR', 'EUR', 'GBP'];
 const FUEL_TYPES = ['diesel', 'petrol', 'electric', 'hybrid'];
 const NO_STATION = '__none__';
+const NO_DRIVER = '__unassigned__';
 
 interface FuelFormProps {
   defaultValues?: Partial<FuelFormValues>;
@@ -55,6 +57,7 @@ const FALLBACK_DEFAULTS: FuelFormValues = {
   receipt_url: '',
   payment_method: 'cash',
   fuel_card_id: '',
+  driver_id: '',
 };
 
 export function FuelForm({
@@ -68,6 +71,7 @@ export function FuelForm({
   const { data: volumeUnits } = useFuelVolumeUnits();
   const { data: stations } = useFuelStationsList({ isActive: true });
   const { data: cards } = useFuelCardsList({ status: 'active' });
+  const { data: drivers } = useDriversList({ status: 'active', limit: 1000 });
   const uploadReceipt = useUploadReceipt();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadedName, setUploadedName] = useState<string | null>(null);
@@ -80,7 +84,9 @@ export function FuelForm({
     watch,
     formState: { errors, isSubmitting },
   } = useForm<FuelFormValues>({
-    resolver: zodResolver(fuelFormSchema),
+    // Type casting the resolver is necessary because ZodEffects (.refine) inference 
+    // can break RHF's generic constraints. Form values remain fully strictly-typed.
+    resolver: zodResolver(fuelFormSchema) as any,
     defaultValues: { ...FALLBACK_DEFAULTS, ...defaultValues },
   });
 
@@ -261,6 +267,34 @@ export function FuelForm({
           {errors.odometer && <p className="form-error" role="alert">{errors.odometer.message}</p>}
         </div>
 
+        {/* NEW: Driver -- optional, matches existing app's driver picker
+            pattern used elsewhere (Trips module). Storing driver_id,
+            displaying driver name, exactly like fuel_station_id/
+            fuel_card_id above. */}
+        <div>
+          <Label htmlFor="driver_id" className="form-label">Driver</Label>
+          <Controller
+            control={control}
+            name="driver_id"
+            render={({ field }) => (
+              <Select
+                value={field.value || NO_DRIVER}
+                onValueChange={(v) => field.onChange(v === NO_DRIVER ? '' : v)}
+                disabled={readOnly}
+              >
+                <SelectTrigger id="driver_id" className="w-full"><SelectValue placeholder="Unassigned" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_DRIVER}>Unassigned</SelectItem>
+                  {drivers?.data?.map((d) => (
+                    <SelectItem key={d._id} value={d._id!}>{d.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          />
+          {errors.driver_id && <p className="form-error" role="alert">{String(errors.driver_id.message)}</p>}
+        </div>
+
         <div>
           <Label htmlFor="fuel_station_id" className="form-label">Fuel station</Label>
           <Controller
@@ -314,7 +348,7 @@ export function FuelForm({
             <Checkbox id="is_full_tank" checked={field.value} onCheckedChange={field.onChange} disabled={readOnly} />
           )}
         />
-        <Label htmlFor="is_full_tank" className="form-label !mb-0">Full tank fill-up</Label>
+        <Label htmlFor="is_full_tank" className="form-label mb-0!">Full tank fill-up</Label>
       </div>
 
       <div>

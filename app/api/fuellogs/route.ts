@@ -1,6 +1,6 @@
-// app/api/fuellogs/route.ts
+ //app/api/fuellogs/route.ts
 //
-// FIX (High — duplicate auth strategies): this route used the legacy
+// FIX (High -- duplicate auth strategies): this route used the legacy
 // requireAuth() helper, which only proves a session exists and does not
 // enforce permission checks. Every other mature module (expenses,
 // maintenance, bookings, etc.) is gated with withAuth + Permission.
@@ -8,6 +8,10 @@
 //
 // Permission.FUEL_VIEW / FUEL_CREATE / FUEL_EDIT / FUEL_DELETE
 // confirmed against server/permissions/roles.ts.
+//
+// NEW: `action=by-driver` routes to the driver-consumption analytics
+// endpoint (GET /api/fuellogs?action=by-driver), same pattern as the
+// existing stats/kpis/abnormal/monthly/top-consumers actions.
 
 import { NextRequest } from 'next/server';
 import { withAuth } from '@/server/middleware/with-auth';
@@ -26,6 +30,7 @@ export const GET = withAuth(
     if (action === 'abnormal') return fuelController.getAbnormalConsumption(req);
     if (action === 'monthly') return fuelController.getMonthlyConsumption(req);
     if (action === 'top-consumers') return fuelController.getTopConsumers(req);
+    if (action === 'by-driver') return fuelController.getFuelByDriver(req);
     if (id) return fuelController.getFuelLog(req, id);
 
     return fuelController.getFuelLogs(req);

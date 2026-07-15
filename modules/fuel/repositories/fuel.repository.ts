@@ -9,12 +9,14 @@ import {
   AbnormalFuelConsumptionRow,
   FuelPaymentMethod,
   FuelPaymentBreakdown,
+  DriverFuelConsumptionRow,
 } from '@/shared/types/fuel.types';
 import {
   PaginationParams,
   PaginatedResponse,
 } from '@/shared/types/common.types';
-import { Filter } from 'mongodb';
+import { Filter, ObjectId } from 'mongodb';
+import connectToDatabase from '@/infrastructure/database/mongodb';
 
 interface VehiclePeriodAggregate {
   _id: string;
@@ -54,16 +56,50 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     );
   }
 
+  /**
+   * NEW: batch-resolves driver_id -> {_id, name, driver_code} for a page
+   * of fuel logs in a single query (no N+1), and attaches it as `.driver`.
+   * Logs with no driver_id, or a driver_id that no longer resolves (soft
+   * deleted / dangling reference), are left with `driver` undefined --
+   * this is a display-only enrichment, never a hard failure.
+   */
+  private async enrichWithDrivers(logs: FuelLog[]): Promise<FuelLog[]> {
+    const driverIds = Array.from(
+      new Set(logs.map((l) => l.driver_id).filter((id): id is string => Boolean(id)))
+    );
+    if (driverIds.length === 0) return logs;
+
+    const objectIds = driverIds
+      .filter((id) => ObjectId.isValid(id))
+      .map((id) => new ObjectId(id));
+    if (objectIds.length === 0) return logs;
+
+    const db = await connectToDatabase();
+    const drivers = await db
+      .collection('tbldrivers')
+      .find({ _id: { $in: objectIds } }, { projection: { name: 1, driver_code: 1 } })
+      .toArray();
+
+    const driverMap = new Map(drivers.map((d) => [String(d._id), { _id: String(d._id), name: d.name as string, driver_code: d.driver_code as string | undefined }]));
+
+    return logs.map((log) => {
+      if (!log.driver_id) return log;
+      const driver = driverMap.get(log.driver_id);
+      return driver ? { ...log, driver } : log;
+    });
+  }
+
   async findByLicensePlate(
     licensePlate: string,
     tenantId: string,
     pagination: PaginationParams
   ): Promise<PaginatedResponse<FuelLog>> {
-    return this.findWithPagination(
+    const result = await this.findWithPagination(
       { license_plate: licensePlate.toUpperCase() } as Filter<FuelLog>,
       pagination,
       tenantId
     );
+    return { ...result, data: await this.enrichWithDrivers(result.data) };
   }
 
   async getFilteredLogs(
@@ -80,13 +116,24 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     if (filters.payment_method) filter.payment_method = filters.payment_method;
     if (filters.fuel_station_id) filter.fuel_station_id = filters.fuel_station_id;
     if (filters.fuel_card_id) filter.fuel_card_id = filters.fuel_card_id;
+    // NEW: filter fuel logs by driver
+    if (filters.driver_id) filter.driver_id = filters.driver_id;
     if (filters.startDate || filters.endDate) {
       filter.date = {};
       if (filters.startDate) (filter.date as any).$gte = filters.startDate;
       if (filters.endDate) (filter.date as any).$lte = filters.endDate;
     }
 
-    return this.findWithPagination(filter as Filter<FuelLog>, pagination, tenantId);
+    const result = await this.findWithPagination(filter as Filter<FuelLog>, pagination, tenantId);
+    return { ...result, data: await this.enrichWithDrivers(result.data) };
+  }
+
+  /** Override so single-record reads (detail page, edit modal) also carry `driver`. */
+  async findById(id: string, tenantId: string): Promise<FuelLog | null> {
+    const log = await super.findById(id, tenantId);
+    if (!log) return null;
+    const [enriched] = await this.enrichWithDrivers([log]);
+    return enriched;
   }
 
   async getFuelStats(
@@ -229,6 +276,79 @@ export class FuelRepository extends BaseRepository<FuelLog> {
   }
 
   /**
+   * NEW: "Fuel Consumption by Driver" -- single aggregation pipeline
+   * (no N+1) that groups fuel logs by driver_id, sums volume/cost, and
+   * counts distinct vehicles per driver. Logs without a driver_id (all
+   * pre-existing records, plus any new record where driver is left
+   * blank) are grouped into a single "Unassigned" bucket rather than
+   * being dropped, so totals still reconcile against getFuelStats().
+   *
+   * Driver names are resolved in a second, single batched query against
+   * tbldrivers (not per-row), keeping this index-friendly and O(1)
+   * round trips regardless of fleet size.
+   */
+  async getFuelByDriver(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date },
+    limit: number = 10
+  ): Promise<DriverFuelConsumptionRow[]> {
+    const collection = await this.getCollection();
+    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+
+    const matchStage: Record<string, unknown> = { isDeleted: { $ne: true } };
+    if (!isSuperAdmin) matchStage.tenantId = tenantId;
+    if (dateRange?.startDate || dateRange?.endDate) {
+      matchStage.date = {};
+      if (dateRange.startDate) (matchStage.date as any).$gte = dateRange.startDate;
+      if (dateRange.endDate) (matchStage.date as any).$lte = dateRange.endDate;
+    }
+
+    const pipeline = [
+      { $match: matchStage },
+      {
+        $group: {
+          _id: { $ifNull: ['$driver_id', null] },
+          totalFuel: { $sum: '$fuel_volume' },
+          totalCost: { $sum: '$cost' },
+          count: { $sum: 1 },
+          vehicles: { $addToSet: '$license_plate' },
+        },
+      },
+      { $sort: { totalFuel: -1 } },
+      { $limit: limit },
+    ];
+
+    const grouped = await collection.aggregate(pipeline).toArray();
+
+    const driverIds = grouped
+      .map((g) => g._id)
+      .filter((id): id is string => Boolean(id) && ObjectId.isValid(id));
+
+    let driverNameMap = new Map<string, string>();
+    if (driverIds.length > 0) {
+      const db = await connectToDatabase();
+      const drivers = await db
+        .collection('tbldrivers')
+        .find({ _id: { $in: driverIds.map((id) => new ObjectId(id)) } }, { projection: { name: 1 } })
+        .toArray();
+      driverNameMap = new Map(drivers.map((d) => [String(d._id), d.name as string]));
+    }
+
+    return grouped.map((g) => {
+      const driverId: string | null = g._id ?? null;
+      return {
+        driver_id: driverId,
+        driverName: driverId ? driverNameMap.get(driverId) ?? 'Unknown driver' : 'Unassigned',
+        totalFuel: g.totalFuel,
+        totalCost: g.totalCost,
+        logCount: g.count,
+        vehicleCount: Array.isArray(g.vehicles) ? g.vehicles.length : 0,
+        averageCostPerUnit: g.totalFuel > 0 ? g.totalCost / g.totalFuel : 0,
+      };
+    });
+  }
+
+  /**
    * FIX (medium -- fallback-derived distance not surfaced): previously
    * computed `fallbackVehicleCount` (how many vehicles had zero/missing
    * odometer data for the period and fell back to trip-derived
@@ -354,8 +474,6 @@ export class FuelRepository extends BaseRepository<FuelLog> {
       daysSinceLastFill,
       mostRecentVehicle: mostRecent?.station_name,
       mostRecentPlate: mostRecent?.license_plate,
-      // NEW: surfaces which/how-many vehicles had their distance
-      // estimated from trip logs rather than measured via odometer.
       fallbackVehicleCount: current.fallbackVehicleCount,
       fallbackPlates: current.fallbackPlates,
     };

@@ -9,12 +9,14 @@ import { GetMonthlyFuelConsumptionQuery } from '../queries/get-monthly-fuel-cons
 import { GetTopFuelConsumersQuery } from '../queries/get-top-fuel-consumers.query';
 import { GetFuelKpisQuery } from '../queries/get-fuel-kpis.query';
 import { GetAbnormalFuelConsumptionQuery } from '../queries/get-abnormal-fuel-consumption.query';
+import { GetFuelByDriverQuery } from '../queries/get-fuel-by-driver.query';
 import {
   FuelLog,
   FuelFilters,
   FuelStats,
   FuelKpis,
   AbnormalFuelConsumptionRow,
+  DriverFuelConsumptionRow,
 } from '@/shared/types/fuel.types';
 import { PaginatedResponse, PaginationParams } from '@/shared/types/common.types';
 import { fuelRepository } from '../repositories/fuel.repository';
@@ -61,6 +63,22 @@ export class FuelQueryService {
   ): Promise<Array<{ license_plate: string; totalFuel: number; totalCost: number }>> {
     return queryBus.execute<Array<{ license_plate: string; totalFuel: number; totalCost: number }>>(
       new GetTopFuelConsumersQuery(tenantId, limit)
+    );
+  }
+
+  /**
+   * NEW: powers the "Fuel Consumption by Driver" chart. Dispatched
+   * through the query bus like every other read here (unlike getFuelKpis
+   * below, this one needs no extra composition, so it doesn't bypass
+   * the bus).
+   */
+  async getFuelByDriver(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date },
+    limit: number = 10
+  ): Promise<DriverFuelConsumptionRow[]> {
+    return queryBus.execute<DriverFuelConsumptionRow[]>(
+      new GetFuelByDriverQuery(tenantId, dateRange, limit)
     );
   }
 

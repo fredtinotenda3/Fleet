@@ -6,8 +6,13 @@
 // every create/update, and removeSchedule() on delete
 // (modules/reporting/services/report-scheduler.service.ts). This hook does
 // not call a separate scheduling endpoint; it reads/writes the schedule
-// field on the definitions the user already owns, which is the exact
-// mechanism the backend controller implements.
+// field on the definitions the user already owns.
+//
+// FIX (Critical — same _id/id mismatch as useSavedReports.ts):
+// ReportDefinitionLike was cast directly onto raw ReportDefinition[] data
+// (which only has `_id`), leaving report.id undefined for every scheduled
+// report shown in ScheduledReports.tsx — breaking edit/pause/resume/remove
+// (all keyed off report.id) and the schedule-form's locked report id.
 
 import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -22,6 +27,10 @@ interface ReportDefinitionLike {
   schedule?: { cron?: string; timezone?: string; recipients?: string[]; enabled?: boolean };
 }
 
+function withId<T extends { _id?: string; id?: string }>(item: T): T & { id: string } {
+  return { ...item, id: item.id ?? item._id ?? '' };
+}
+
 export function useScheduledReports() {
   const queryClient = useQueryClient();
 
@@ -31,7 +40,9 @@ export function useScheduledReports() {
   });
 
   const scheduledReports = useMemo(() => {
-    const all = (definitionsQuery.data ?? []) as unknown as ReportDefinitionLike[];
+    const all = ((definitionsQuery.data ?? []) as unknown as Array<Record<string, unknown>>).map((r) =>
+      withId(r as { _id?: string; id?: string }),
+    ) as unknown as ReportDefinitionLike[];
     return all.filter((r) => !!r.schedule?.cron);
   }, [definitionsQuery.data]);
 

@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from '@/frontend/shared/ui/forms/select';
 import { useVehiclesList } from '@/frontend/modules/vehicles/hooks/useVehicles';
+import { useDriversList } from '@/frontend/modules/drivers/hooks/useDrivers';
 import type { FuelTableFilters } from '../types';
 
 interface FuelFiltersProps {
@@ -23,7 +24,7 @@ interface FuelFiltersProps {
 
 const ALL = '__all__';
 
-function toDateInputValue(value: Date | string | undefined): string {
+function toDateInputValue(value: Date | string | null | undefined): string {
   if (!value) return '';
   const date = value instanceof Date ? value : new Date(value);
   if (isNaN(date.getTime())) return '';
@@ -32,7 +33,10 @@ function toDateInputValue(value: Date | string | undefined): string {
 
 export function FuelFilters({ filters, onChange }: FuelFiltersProps) {
   const { data: vehicles } = useVehiclesList({ limit: 1000 });
-  const hasFilters = Boolean(filters.license_plate || filters.unit_id || filters.startDate || filters.endDate);
+  const { data: drivers } = useDriversList({ limit: 1000 });
+  const hasFilters = Boolean(
+    filters.license_plate || filters.unit_id || filters.startDate || filters.endDate || filters.driver_id
+  );
 
   function handleChange<K extends keyof FuelTableFilters>(key: K, value: FuelTableFilters[K]) {
     onChange({ ...filters, [key]: value });
@@ -65,6 +69,23 @@ export function FuelFilters({ filters, onChange }: FuelFiltersProps) {
             <SelectItem value={ALL}>All vehicles</SelectItem>
             {vehicles?.data?.map((v) => (
               <SelectItem key={v._id} value={v._id!}>{v.license_plate} - {v.make} {v.model}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* NEW: filter fuel logs by driver */}
+      <div className="w-55">
+        <Label htmlFor="driver_id" className="text-sm">Driver</Label>
+        <Select
+          value={filters.driver_id ?? ALL}
+          onValueChange={(value) => handleChange('driver_id', value === ALL ? undefined : value)}
+        >
+          <SelectTrigger id="driver_id"><SelectValue placeholder="All drivers" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>All drivers</SelectItem>
+            {drivers?.data?.map((d) => (
+              <SelectItem key={d._id} value={d._id!}>{d.name}</SelectItem>
             ))}
           </SelectContent>
         </Select>

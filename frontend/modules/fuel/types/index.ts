@@ -8,7 +8,9 @@ import type {
   AbnormalFuelConsumptionRow,
   FuelPaymentMethod,
   FuelPaymentBreakdown,
+  DriverFuelConsumptionRow,
 } from '@/shared/types/fuel.types';
+import type { DriverRef } from '@/shared/types/driver.types';
 import type { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
 
 export type {
@@ -19,6 +21,8 @@ export type {
   AbnormalFuelConsumptionRow,
   FuelPaymentMethod,
   FuelPaymentBreakdown,
+  DriverFuelConsumptionRow,
+  DriverRef,
   PaginationParams,
   PaginatedResponse,
 };
@@ -37,6 +41,8 @@ export interface FuelColumnVisibility {
   payment_method: boolean;
   full_tank: boolean;
   notes: boolean;
+  // NEW
+  driver: boolean;
 }
 
 export const DEFAULT_FUEL_COLUMN_VISIBILITY: FuelColumnVisibility = {
@@ -49,6 +55,7 @@ export const DEFAULT_FUEL_COLUMN_VISIBILITY: FuelColumnVisibility = {
   payment_method: true,
   full_tank: false,
   notes: false,
+  driver: true,
 };
 
 export interface FuelVolumeUnitOption {

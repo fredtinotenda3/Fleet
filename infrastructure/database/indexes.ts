@@ -29,6 +29,13 @@ import connectToDatabase from './mongodb';
 import { ensureDigitalTwinIndexes } from './indexes.digital-twin-addendum';
 import { SESSION_INDEXES } from './indexes.session-addendum';
 import { SECURITY_INDEXES } from './indexes.security-addendum';
+import { BILLING_INDEXES } from './indexes.billing-addendum';
+import { DRIVER_INDEXES } from './indexes.drivers-addendum';
+import { FUEL_DRIVER_INDEXES } from './indexes.fuel-driver-addendum';
+import { REPORTING_INDEXES } from './indexes.reporting-addendum';
+import { RULES_INDEXES } from './indexes.rules-addendum';
+import { TELEMATICS_INDEXES } from './indexes.telematics-addendum';
+import { WORKFLOWS_INDEXES } from './indexes.workflows-addendum';
 
 const BASE_INDEXES = {
   // ── Domain collections ──────────────────────────────────────────
@@ -37,9 +44,10 @@ const BASE_INDEXES = {
       key: { tenantId: 1, license_plate: 1 },
       name: 'idx_vehicle_tenant_plate',
       unique: true,
-      // Only enforce uniqueness among non-deleted vehicles, so a soft-deleted
-      // vehicle's plate can be reused by a new/other vehicle.
-      partialFilterExpression: { isDeleted: { $ne: true } },
+      // Only enforce uniqueness among non-deleted vehicles.
+      // Use { isDeleted: false } or { isDeleted: { $exists: false } } 
+      // if your implementation of soft-delete uses false/missing instead of true.
+      partialFilterExpression: { isDeleted: false },
     },
     {
       key: { tenantId: 1, status: 1, isDeleted: 1 },
@@ -252,9 +260,6 @@ const BASE_INDEXES = {
     { key: { email: 1, tenantId: 1 }, name: 'idx_lockout_email_tenant', unique: true },
     { key: { lockedUntil: 1 }, name: 'idx_lockout_locked_until' },
   ],
-  // NOTE: also added { tenantId, status } here — previously only
-  // { userId, status } existed, but sessionService/mfaService lookups
-  // in this codebase are tenant-scoped first (see permission.middleware.ts).
   tblmfafactors: [
     { key: { userId: 1, status: 1 }, name: 'idx_mfa_factor_user_status' },
     { key: { tenantId: 1, userId: 1 }, name: 'idx_mfa_factor_tenant_user' },
@@ -397,97 +402,54 @@ const BASE_INDEXES = {
   ],
 } as const;
 
-// FIX: merge in the session/security addendum indexes. tblorgunits exists
-// in both BASE_INDEXES and SECURITY_INDEXES with different index names, so
-// it's merged explicitly (a plain spread would have silently dropped one
-// set — that was actually part of the same class of bug as the missing
-// session indexes).
 export const INDEXES = {
   ...BASE_INDEXES,
   ...SESSION_INDEXES,
   ...SECURITY_INDEXES,
+  ...BILLING_INDEXES,
+  ...DRIVER_INDEXES,
+  ...FUEL_DRIVER_INDEXES,
+  ...REPORTING_INDEXES,
+  ...RULES_INDEXES,
+  ...TELEMATICS_INDEXES,
+  ...WORKFLOWS_INDEXES,
   tblorgunits: [
     ...BASE_INDEXES.tblorgunits,
     ...SECURITY_INDEXES.tblorgunits,
   ],
+  tblfuellogs: [
+    ...BASE_INDEXES.tblfuellogs,
+    ...FUEL_DRIVER_INDEXES.tblfuellogs,
+  ],
 } as const;
-
-/**
- * IMPORTANT INTEGRITY NOTES:
- *
- * 1. The `{ organizationId, pluginId }` unique index on tblplugininstallations
- *    is the integrity constraint that makes PluginService.install()'s pre-check
- *    ("findByOrgAndPluginId then reject if found") race-safe under
- *    concurrent installs — without it, two simultaneous POST /api/plugins
- *    requests for the same pluginId could both pass the pre-check and
- *    insert duplicate installation rows.
- *
- * 2. The `{ organizationId, status, events }` compound index on
- *    tblwebhooksubscriptions is the hot-path query: every single domain
- *    event that fires calls WebhookSubscriptionRepository.findActiveSubscribers(),
- *    which filters on exactly these three fields. At fleet scale (thousands of orgs,
- *    many events/minute) this must stay index-covered rather than scanning
- *    every subscription document per event.
- *
- * 3. The `{ clientId, status, expiresAt }` compound index on tbloauth_tokens
- *    supports the hot-path token introspection query during API authentication:
- *    lookup by clientId, filter active tokens, and prune expired ones in a
- *    single index-covered scan. At high request volumes this avoids a full
- *    collection scan on every authenticated request.
- *
- * 4. FleetOps indexes (tbldispatchjobs, tbldrivershifts, tblbookings, tblworkorders,
- *    tblworkshopbays, tblspareparts, tblstockmovements, tblpurchaserequests,
- *    tblpurchaseorders, tblvendors, tblslapolicies, tblslatrackings,
- *    tblcompliancerules, tblcompliancerecords) are designed for multi-tenant
- *    isolation (tenantId prefix) plus domain-specific hot-path queries.
- *
- * 5. tblusersessions / tblrefreshtokens / tblapikeys (SESSION_INDEXES) and
- *    tblorgunits / tblcustomroles / tblresourcepermissions /
- *    tbluser_scope_assignments (SECURITY_INDEXES) are merged in above.
- *    These were previously defined but unused — run `npm run db:indexes`
- *    after pulling this fix to actually create them on your Atlas cluster.
- *
- * 6. idx_vehicle_tenant_plate is now a PARTIAL unique index
- *    (partialFilterExpression: { isDeleted: { $ne: true } }). Because its
- *    name and key are unchanged from before but its options changed,
- *    MongoDB will reject an in-place alteration (IndexOptionsConflict,
- *    code 85 — already handled by the catch below). You must drop the old
- *    index once before this will take effect:
- *      db.tblvehicles.dropIndex("idx_vehicle_tenant_plate")
- *    then restart the app (or re-run `npm run db:indexes`) so it gets
- *    recreated with the partial filter.
- */
 
 export async function ensureIndexes(): Promise<void> {
   const db = await connectToDatabase();
 
   for (const [collectionName, indexes] of Object.entries(INDEXES)) {
     const collection = db.collection(collectionName);
-    for (const indexDef of indexes) {
+    for (const indexDef of indexes as any[]) {
       try {
-        await collection.createIndex(
-          (indexDef as any).key,
-          {
-            name: (indexDef as any).name,
-            unique: (indexDef as any).unique || false,
-            partialFilterExpression: (indexDef as any).partialFilterExpression,
-            background: true,
-          }
-        );
+        const options: any = {
+          name: indexDef.name,
+          unique: !!indexDef.unique,
+          background: true,
+        };
+
+        if (indexDef.partialFilterExpression) {
+          options.partialFilterExpression = indexDef.partialFilterExpression;
+        }
+
+        await collection.createIndex(indexDef.key, options);
       } catch (err: any) {
-        // Index already exists or name conflict — log and continue
+        // 85: IndexOptionsConflict, 86: IndexKeySpecsConflict
         if (err?.code !== 85 && err?.code !== 86) {
-          console.error(
-            `[Indexes] Failed to create ${(indexDef as any).name}:`,
-            err.message
-          );
+          console.error(`[Indexes] Failed to create ${indexDef.name}:`, err.message);
         }
       }
     }
   }
 
-  // Phase 13 — Digital Twin projection indexes
   await ensureDigitalTwinIndexes(db);
-
   console.log('[Indexes] All indexes ensured');
 }

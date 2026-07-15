@@ -53,6 +53,8 @@ function toFormValues(log: FuelLog | null | undefined): Partial<FuelFormValues> 
     receipt_url: log.receipt_url ?? '',
     payment_method: log.payment_method ?? 'cash',
     fuel_card_id: log.fuel_card_id ?? '',
+    // NEW: falls back to '' (Unassigned) for legacy records with no driver.
+    driver_id: log.driver_id ?? '',
   };
 }
 

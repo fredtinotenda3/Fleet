@@ -97,6 +97,19 @@ export function FuelTable({
       },
       { accessorKey: 'license_plate', header: 'Vehicle' },
       {
+        // NEW: Driver column. Shows "Unassigned" (muted) for legacy or
+        // driver-less records rather than a blank cell, so it reads as
+        // an intentional state, not missing data.
+        id: 'driver',
+        header: 'Driver',
+        cell: ({ row }) =>
+          row.original.driver?.name ? (
+            <span>{row.original.driver.name}</span>
+          ) : (
+            <span className="text-muted-foreground">Unassigned</span>
+          ),
+      },
+      {
         accessorKey: 'fuel_volume',
         header: 'Volume',
         cell: ({ row }) => (
