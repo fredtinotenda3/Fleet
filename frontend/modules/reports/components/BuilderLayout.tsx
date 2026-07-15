@@ -10,6 +10,7 @@ const STEP_LABELS: Record<BuilderStep, string> = {
   filters: 'Filters',
   groupBy: 'Group by',
   sort: 'Sort',
+  chart: 'Chart',
   preview: 'Preview',
   save: 'Save',
 };

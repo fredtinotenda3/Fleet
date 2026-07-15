@@ -1,89 +1,80 @@
 // frontend/modules/reports/pages/ExecutiveDashboard.tsx
-//
-// Top-level Executive Dashboard for the Reports module. Renders the
-// tenant's executive dashboard (dashboardsApi) through the existing shared
-// widget system (frontend/shared/dashboards/{DashboardGrid,DashboardWidget}),
-// with an org/date/vehicle filter bar and the tenant's evaluated KPI set on
-// top. No mock data - every value comes from dashboardsApi.render() and
-// kpisApi.evaluateAll(), both of which hit the real reporting backend.
-
 'use client';
 
 import { useState } from 'react';
-import { RefreshCw, PinOff, Pin, X } from 'lucide-react';
+import Link from 'next/link';
+import { RefreshCw } from 'lucide-react';
 import { useExecutiveDashboard } from '../hooks/useExecutiveDashboard';
 import { useDashboardWidgets } from '../hooks/useDashboardWidgets';
-import {
-  defaultExecutiveDashboardFilter,
-  type ExecutiveDashboardFilter,
-} from '../schemas/executiveDashboard';
-import { DashboardWidget } from '@/frontend/shared/dashboards/DashboardWidget';
+import { useFuelTrendsWidget } from '@/frontend/modules/dashboard/hooks/useDashboardData';
+import { useExpenseBreakdownWidget } from '@/frontend/modules/dashboard/hooks/useDashboardData';
+import { useMaintenanceWidget } from '@/frontend/modules/dashboard/hooks/useDashboardData';
+import { useFleetKPIs } from '@/modules/analytics/hooks/useAnalytics';
 import { StatsCard } from '@/shared/ui/cards/StatsCard';
-import { EmptyState } from '@/shared/ui/feedback/EmptyState';
+import { FuelTrendChart } from '../components/charts/FuelTrendChart';
+import { ExpenseBreakdownChart } from '../components/charts/ExpenseBreakdownChart';
+import { MaintenanceChart } from '../components/charts/MaintenanceChart';
+import { FleetHealthGauge } from '../components/charts/FleetHealthGauge';
+import { DashboardWidget } from '@/frontend/shared/dashboards/DashboardWidget';
 import { LoadingState } from '@/shared/ui/feedback/LoadingState';
-import { FilterBar } from '@/shared/ui/filters/FilterBar';
-import { formatCurrency, formatPercent, formatNumber } from '@/shared/utils/currency.utils';
-
-interface KpiEvaluationResultLike {
-  id?: string;
-  kpiDefinitionId?: string;
-  name: string;
-  value: number;
-  target?: number | null;
-  unit?: 'currency' | 'percent' | 'number' | string;
-  trend?: 'up' | 'down' | 'flat';
-  changeVsPreviousPeriod?: number | null;
-}
-
-function formatKpiValue(kpi: KpiEvaluationResultLike): string {
-  switch (kpi.unit) {
-    case 'currency':
-      return formatCurrency(kpi.value);
-    case 'percent':
-      return formatPercent(kpi.value);
-    default:
-      return formatNumber(kpi.value);
-  }
-}
+import { formatCurrency, formatNumber, formatPercent } from '@/shared/utils/currency.utils';
+import { formatDistance } from '@/shared/utils/distance.utils';
+import { REPORTS_ROUTES } from '../routes';
+import type { ExecutiveDashboardFilter } from '../schemas/executiveDashboard';
+import { defaultExecutiveDashboardFilter } from '../schemas/executiveDashboard';
 
 export default function ExecutiveDashboard() {
-  const [filter, setFilter] = useState<ExecutiveDashboardFilter>(defaultExecutiveDashboardFilter);
+  const [filter] = useState<ExecutiveDashboardFilter>(defaultExecutiveDashboardFilter);
 
   const {
     widgets: rawWidgets,
     kpis,
     isLoading,
-    isFetching,
     isError,
     error,
-    hasNoDashboard,
     refresh,
   } = useExecutiveDashboard(filter);
+  const { widgets } = useDashboardWidgets(rawWidgets);
 
-  const { widgets, isPinned, togglePin, dismissWidget } = useDashboardWidgets(rawWidgets);
+  // Independent data hooks for default analytics charts
+  const fleetKPIs = useFleetKPIs();
+  const fuelTrends = useFuelTrendsWidget();
+  const expenseBreakdown = useExpenseBreakdownWidget();
+  const maintenanceWidget = useMaintenanceWidget();
 
-  if (isLoading) {
+  if (isLoading || fleetKPIs.isLoading || fuelTrends.isLoading || expenseBreakdown.isLoading || maintenanceWidget.isLoading) {
     return <LoadingState />;
   }
 
-  if (isError) {
+  if (isError || fleetKPIs.isError || fuelTrends.isError || expenseBreakdown.isError || maintenanceWidget.isError) {
     return (
-      <EmptyState
-        title="Couldn't load the executive dashboard"
-        description={error instanceof Error ? error.message : 'An unexpected error occurred.'}
-        action={{ label: 'Retry', onClick: refresh }}
-      />
+      <div className="flex flex-col gap-4 items-center justify-center py-12">
+        <p className="text-destructive">Failed to load dashboard data.</p>
+        <p className="text-sm text-muted-foreground">{error instanceof Error ? error.message : 'An error occurred.'}</p>
+        <button
+          onClick={refresh}
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium border rounded-md hover:bg-accent"
+        >
+          <RefreshCw className="h-4 w-4" /> Retry
+        </button>
+      </div>
     );
   }
 
-  if (hasNoDashboard) {
-    return (
-      <EmptyState
-        title="No executive dashboard configured"
-        description="An administrator needs to mark a dashboard as executive in Dashboard Settings before it appears here."
-      />
-    );
-  }
+  // KPI cards from reporting/KPI engine (may be empty if no KPIs defined)
+  const kpiCards = kpis.map((kpi: any) => ({
+    name: kpi.name,
+    value: formatKpiValue(kpi),
+    target: kpi.targetValue,
+    change: kpi.changeVsPreviousPeriod,
+  }));
+
+  // Maintenance chart data
+  const maintenanceChartData = [
+    { name: 'Overdue', count: fleetKPIs.data?.overdueMaintenance ?? maintenanceWidget.data?.overdueCount ?? 0 },
+    { name: 'Pending', count: fleetKPIs.data?.pendingMaintenance ?? 0 },
+    { name: 'Upcoming', count: maintenanceWidget.data?.upcoming?.length ?? 0 },
+  ];
 
   return (
     <div className="flex flex-col gap-6">
@@ -97,92 +88,122 @@ export default function ExecutiveDashboard() {
         <button
           type="button"
           onClick={refresh}
-          disabled={isFetching}
-          className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium border rounded-md hover:bg-accent disabled:opacity-50"
+          className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium border rounded-md hover:bg-accent"
         >
-          <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
-          Refresh
+          <RefreshCw className="h-4 w-4" /> Refresh
         </button>
       </div>
 
-      <FilterBar
-        searchValue=""
-        onSearchChange={() => {}}
-        filters={<span className="text-sm text-muted-foreground">Advanced filters are applied via API in this view.</span>}
-      />
-
-      {kpis.length > 0 && (
-        <section aria-label="Key performance indicators" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {kpis.map((kpi: KpiEvaluationResultLike) => (
+      {/* Default analytics KPIs – always shown */}
+      {fleetKPIs.data && (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <StatsCard title="Total Vehicles" value={fleetKPIs.data.totalVehicles} color="blue" />
+            <StatsCard title="Active" value={fleetKPIs.data.activeVehicles} color="green" />
+            <StatsCard title="In Maintenance" value={fleetKPIs.data.maintenanceVehicles} color="yellow" />
+            <StatsCard title="Total Expenses" value={formatCurrency(fleetKPIs.data.totalExpenses)} color="red" />
+            <StatsCard title="Total Fuel Cost" value={formatCurrency(fleetKPIs.data.totalFuelCost)} color="orange" />
+            <StatsCard title="Total Distance" value={formatDistance(fleetKPIs.data.totalDistance)} color="purple" />
             <StatsCard
-              key={kpi.id ?? kpi.kpiDefinitionId ?? kpi.name}
-              title={kpi.name}
-              value={formatKpiValue(kpi)}
-              description={kpi.target != null ? `Target: ${formatKpiValue({ ...kpi, value: kpi.target })}` : undefined}
-              trend={
-                typeof kpi.changeVsPreviousPeriod === 'number'
-                  ? {
-                      value: Number((Math.abs(kpi.changeVsPreviousPeriod) * 100).toFixed(1)),
-                      isPositive: kpi.changeVsPreviousPeriod >= 0,
-                    }
-                  : undefined
-              }
+              title="Avg Fuel Efficiency"
+              value={fleetKPIs.data.averageFuelEfficiency != null ? `${fleetKPIs.data.averageFuelEfficiency.toFixed(2)} km/L` : 'N/A'}
+              color="indigo"
             />
-          ))}
-        </section>
+            <StatsCard
+              title="Cost per Km"
+              value={fleetKPIs.data.costPerKm != null ? formatCurrency(fleetKPIs.data.costPerKm) : 'N/A'}
+              color="pink"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <FuelTrendChart
+              data={fuelTrends.data?.points}
+              isLoading={false}
+              totalVolume={fuelTrends.data?.totalVolume ?? 0}
+              totalCost={fuelTrends.data?.totalCost ?? 0}
+            />
+            <ExpenseBreakdownChart
+              data={expenseBreakdown.data?.categories}
+              isLoading={false}
+              total={expenseBreakdown.data?.total ?? 0}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <MaintenanceChart
+              data={maintenanceChartData}
+              isLoading={false}
+            />
+            <FleetHealthGauge
+              score={fleetKPIs.data.averageFuelEfficiency ? 75 : 65} // simple heuristic, can be replaced with real AI health score
+              isLoading={false}
+            />
+          </div>
+        </>
       )}
 
-      {widgets.length === 0 ? (
-        <EmptyState
-          title="This dashboard has no widgets yet"
-          description="Add widgets from Dashboard Settings to populate the executive view."
-        />
-      ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {widgets.map((widget) => (
-            <div 
-              key={widget.id} 
-              className="relative group"
-              style={{
-                gridColumn: widget.gridPosition?.w ? `span ${Math.min(widget.gridPosition.w, 4)}` : undefined,
-                gridRow: widget.gridPosition?.h ? `span ${widget.gridPosition.h}` : undefined,
-              }}
-            >
-              <div className="absolute z-10 hidden gap-1 right-2 top-2 group-hover:flex">
-                <button
-                  type="button"
-                  onClick={() => togglePin(widget.id)}
-                  className="rounded-md bg-background/90 p-1.5 shadow-sm hover:bg-accent"
-                  aria-label={isPinned(widget.id) ? 'Unpin widget' : 'Pin widget'}
-                  title={isPinned(widget.id) ? 'Unpin widget' : 'Pin widget'}
-                >
-                  {isPinned(widget.id) ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => dismissWidget(widget.id)}
-                  className="rounded-md bg-background/90 p-1.5 shadow-sm hover:bg-accent"
-                  aria-label="Dismiss widget"
-                  title="Dismiss widget"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
+      {/* KPIs from the reporting engine (if defined) */}
+      {kpiCards.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {kpiCards.map((kpi: any) => (
+            <StatsCard
+              key={kpi.name}
+              title={kpi.name}
+              value={kpi.value}
+              description={kpi.target ? `Target: ${kpi.target}` : undefined}
+              trend={kpi.change != null ? { value: Math.abs(kpi.change * 100), isPositive: kpi.change >= 0 } : undefined}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Custom executive widgets (if configured) */}
+      {widgets.length > 0 && (
+        <div>
+          <h2 className="text-lg font-medium mb-3">Custom Widgets</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+            {widgets.map((widget) => (
               <DashboardWidget
+                key={widget.id}
                 title={widget.title}
                 isLoading={widget.isLoading}
                 isError={!!widget.error}
                 errorMessage={widget.error || undefined}
-                className="h-full"
               >
-                <div className="w-full h-full min-h-37.5 p-2 overflow-auto text-xs font-mono bg-muted/20 text-muted-foreground whitespace-pre-wrap rounded-md">
-                  {widget.data ? JSON.stringify(widget.data, null, 2) : 'No data available'}
-                </div>
+                {widget.data ? <pre className="text-xs max-h-60 overflow-auto">{JSON.stringify(widget.data, null, 2)}</pre> : <p className="text-sm text-muted-foreground">No data</p>}
               </DashboardWidget>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
+
+      {/* Quick links to AI Insights and Report Builder */}
+      <div className="flex flex-wrap gap-4 text-sm">
+        <Link
+          href={REPORTS_ROUTES.builder.new}
+          className="text-primary hover:underline"
+        >
+          Create a custom report
+        </Link>
+        <Link
+          href="/reports/ai"
+          className="text-primary hover:underline"
+        >
+          AI‑Powered Insights
+        </Link>
+      </div>
     </div>
   );
+}
+
+function formatKpiValue(kpi: any): string {
+  switch (kpi.unit) {
+    case 'currency':
+      return formatCurrency(kpi.value);
+    case 'percent':
+      return formatPercent(kpi.value);
+    default:
+      return formatNumber(kpi.value);
+  }
 }

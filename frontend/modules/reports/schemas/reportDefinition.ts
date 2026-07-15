@@ -42,6 +42,18 @@ export const reportScheduleSchema = z
   });
 export type ReportScheduleConfig = z.infer<typeof reportScheduleSchema>;
 
+// Chart types supported by ReportChartView
+export const CHART_TYPES = ['none', 'bar', 'line', 'pie'] as const;
+export type ChartType = (typeof CHART_TYPES)[number];
+
+export const chartConfigSchema = z.object({
+  chartType: z.enum(CHART_TYPES).default('none'),
+  chartXField: z.string().optional(),
+  chartYField: z.string().optional(),
+});
+
+export type ChartConfig = z.infer<typeof chartConfigSchema>;
+
 export const reportDefinitionFormSchema = z.object({
   name: z.string().min(1, 'Name is required.').max(120),
   description: z.string().max(500).optional(),
@@ -55,6 +67,8 @@ export const reportDefinitionFormSchema = z.object({
   pivotRowField: z.string().optional(),
   pivotColumnField: z.string().optional(),
   pivotValueField: z.string().optional(),
+  // Chart configuration
+  chart: chartConfigSchema.default({ chartType: 'none' }),
   schedule: reportScheduleSchema.optional(),
   isShared: z.boolean().default(false),
   tags: z.array(z.string()).default([]),
@@ -71,6 +85,7 @@ export const defaultReportDefinitionForm: ReportDefinitionForm = {
   sort: [],
   limit: 1000,
   isPivot: false,
+  chart: { chartType: 'none' },
   isShared: false,
   tags: [],
 };

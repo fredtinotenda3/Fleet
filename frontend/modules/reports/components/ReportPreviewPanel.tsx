@@ -1,21 +1,15 @@
 // frontend/modules/reports/components/ReportPreviewPanel.tsx
-//
-// Renders the result of useReportPreview: a flat table via the shared
-// DataTable for standard reports, or a pivot grid for pivot reports. Row
-// click triggers drilldown (report-definition.controller.ts#drilldown ->
-// drilldownService.drillInto) which returns the ungrouped detail rows
-// behind an aggregated cell.
-
 'use client';
 
 import { DataTable } from '@/shared/ui/tables/DataTable';
 import { LoadingState } from '@/shared/ui/feedback/LoadingState';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
+import { ReportChartView } from './charts/ReportChartView';
 import type { ReportColumn } from '../schemas/reportColumn';
 
 interface ReportResultLike {
   rows: Record<string, unknown>[];
-  totalCount: number;
+  totalCount?: number;
   aggregates?: Record<string, number>;
 }
 
@@ -28,6 +22,12 @@ interface PivotResultLike {
   grandTotal: number;
 }
 
+interface ChartViewConfig {
+  type: 'bar' | 'line' | 'pie';
+  xField: string;
+  yField: string;
+}
+
 interface ReportPreviewPanelProps {
   columns: ReportColumn[];
   isPivot: boolean;
@@ -35,6 +35,7 @@ interface ReportPreviewPanelProps {
   isLoading: boolean;
   isError: boolean;
   onRowClick?: (row: Record<string, unknown>) => void;
+  chartConfig?: ChartViewConfig;
 }
 
 export function ReportPreviewPanel({
@@ -44,6 +45,7 @@ export function ReportPreviewPanel({
   isLoading,
   isError,
   onRowClick,
+  chartConfig,
 }: ReportPreviewPanelProps) {
   if (isLoading) {
     return <LoadingState />;
@@ -63,6 +65,25 @@ export function ReportPreviewPanel({
       <EmptyState
         title="No preview yet"
         description="Give the report a name and at least one column to see live results."
+      />
+    );
+  }
+
+  // If chartConfig is provided, render chart instead of table
+  if (chartConfig && !isPivot) {
+    const flat = result as ReportResultLike;
+    if (!flat.rows || flat.rows.length === 0) {
+      return (
+        <EmptyState
+          title="No data for chart"
+          description="Try a different field combination."
+        />
+      );
+    }
+    return (
+      <ReportChartView
+        result={{ columns: columns.map((c) => ({ key: c.field, label: c.label })), rows: flat.rows }}
+        chartConfig={chartConfig}
       />
     );
   }
@@ -116,8 +137,10 @@ export function ReportPreviewPanel({
 
   const flat = result as ReportResultLike;
   const visibleColumns = columns.filter((c) => c.visible);
+  const rowCount = flat.rows?.length ?? 0;
+  const totalCount = flat.totalCount ?? rowCount;
 
-  if (flat.rows.length === 0) {
+  if (rowCount === 0) {
     return (
       <EmptyState
         title="No records match these filters"
@@ -132,13 +155,16 @@ export function ReportPreviewPanel({
         columns={visibleColumns.map((c) => ({
           key: c.field,
           header: c.label,
-          align: c.dataType === 'number' || c.dataType === 'currency' || c.dataType === 'percent' ? 'right' : 'left',
+          align:
+            c.dataType === 'number' || c.dataType === 'currency' || c.dataType === 'percent'
+              ? 'right'
+              : 'left',
         }))}
         data={flat.rows}
         onRowClick={onRowClick}
       />
       <p className="text-xs text-muted-foreground">
-        Showing {flat.rows.length.toLocaleString()} of {flat.totalCount.toLocaleString()} rows
+        Showing {rowCount.toLocaleString()} of {totalCount.toLocaleString()} rows
       </p>
     </div>
   );

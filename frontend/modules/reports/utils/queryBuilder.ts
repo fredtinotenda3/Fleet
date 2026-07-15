@@ -1,25 +1,4 @@
 // frontend/modules/reports/utils/queryBuilder.ts
-//
-// Translates the builder's client-side draft (ReportDefinitionForm) into the
-// ReportDefinitionCreateDTO/UpdateDTO shape reportDefinitionsApi.create/update
-// send to report-definition.controller.ts.
-//
-// FIX (Critical - payload shape mismatch causing 400s): this used to send
-// `columns` (each carrying its own dataType/aggregation), a `filters` object
-// wrapped in `{ logic, conditions }`, `groupBy` as a plain string[], a
-// `limit` field, and a pivot shape with a single `rowField`. None of that
-// matches ReportDefinitionCreateDTO in frontend/modules/reports/types/index.ts
-// (the file that explicitly mirrors the backend's real DTO), which requires:
-//   - fields: string[]                (required - was missing entirely)
-//   - aggregations?: { field, fn, alias }[]   (separate from field selection)
-//   - groupBy?: { field, label? }[]   (objects, not bare strings)
-//   - filters?: { field, operator, value, value2? }[]  (flat array, no
-//     logic wrapper, and only the operator set report-query.engine.ts
-//     actually supports)
-//   - pivot?: { rowFields: string[], columnField, valueField, aggregator }
-// Sending `columns` instead of the required `fields` was the direct cause of
-// the "POST /api/reporting/definitions 400" seen in the console - the
-// request never satisfied the backend's validation schema.
 
 import type { ReportDefinitionForm } from '../schemas/reportDefinition';
 import type { ReportColumn } from '../schemas/reportColumn';
@@ -32,7 +11,6 @@ import type {
   DataSourceKey,
 } from '../types';
 
-/** Operators report-query.engine.ts actually accepts on the wire (see types/index.ts#ReportFilterOperator). */
 const DTO_SUPPORTED_OPERATORS: ReadonlySet<ReportFilterOperator> = new Set([
   'eq',
   'neq',
@@ -53,8 +31,6 @@ function toDtoAggregationFn(aggregation: ReportColumn['aggregation']): ReportAgg
     case 'min':
     case 'max':
       return aggregation;
-    // The backend DTO has no distinct "count distinct" function - fold it
-    // into a regular count rather than dropping the column's intent.
     case 'countDistinct':
       return 'count';
     case 'none':
@@ -105,15 +81,19 @@ export function buildReportDefinitionPayload(
         }
       : undefined;
 
+  // Chart config: only include if chartType is not 'none' and required fields are set
+  const chart =
+    form.chart.chartType !== 'none' && form.chart.chartXField && form.chart.chartYField
+      ? {
+          type: form.chart.chartType as 'bar' | 'line' | 'pie',
+          xField: form.chart.chartXField,
+          yField: form.chart.chartYField,
+        }
+      : undefined;
+
   return {
     name: form.name,
     description: form.description,
-    // NOTE: the backend's DataSourceKey does not include "organizations" -
-    // that data source is only registered for the executive dashboard's
-    // Organization Reports today, not the ad-hoc builder. The builder still
-    // offers it in the UI (REPORT_DATA_SOURCES); if a definition is saved
-    // against it the backend will reject it until that registry entry is
-    // added server-side, which is outside this module's scope.
     dataSource: form.dataSource as DataSourceKey,
     fields,
     filters,
@@ -121,19 +101,16 @@ export function buildReportDefinitionPayload(
     aggregations,
     sort: form.sort,
     pivot,
+    chart,
   };
 }
 
 export function buildReportDefinitionUpdatePayload(
   form: ReportDefinitionForm,
 ): ReportDefinitionUpdateDTO {
-  // The backend treats update as a partial replace of the same shape as
-  // create (see report-definition.controller.ts#update ->
-  // reportBuilderService.update), so we reuse the same mapping.
   return buildReportDefinitionPayload(form) as ReportDefinitionUpdateDTO;
 }
 
-/** Reverse mapping: hydrates the builder draft from a saved ReportDefinition. */
 export function mapDefinitionToForm(
   definition: Record<string, unknown>,
 ): Partial<ReportDefinitionForm> {
@@ -147,6 +124,7 @@ export function mapDefinitionToForm(
     groupBy?: Array<{ field: string; label?: string }>;
     sort?: Array<{ field: string; direction: 'asc' | 'desc' }>;
     pivot?: { rowFields?: string[]; columnField?: string; valueField?: string; aggregator?: string };
+    chart?: { type?: string; xField?: string; yField?: string };
     isShared?: boolean;
     tags?: string[];
   };
@@ -154,19 +132,29 @@ export function mapDefinitionToForm(
   const dataSource = (raw.dataSource ?? 'vehicles') as ReportDefinitionForm['dataSource'];
   const aggregationByField = new Map((raw.aggregations ?? []).map((a) => [a.field, a]));
 
-  const columns: ReportDefinitionForm['columns'] = (raw.fields ?? []).map((field) => {
+  const validFields = (raw.fields ?? []).filter((field) => !!resolveField(dataSource, field));
+
+  const columns: ReportDefinitionForm['columns'] = validFields.map((field) => {
     const aggregation = aggregationByField.get(field);
-    const resolved = resolveField(dataSource, field);
+    const resolved = resolveField(dataSource, field)!;
     return {
       id: `${dataSource}.${field}`,
       field,
-      label: aggregation?.alias ?? resolved?.label ?? field,
+      label: aggregation?.alias ?? resolved.label ?? field,
       dataSource,
-      dataType: resolved?.dataType ?? 'string',
+      dataType: resolved.dataType,
       aggregation: (aggregation?.fn ?? 'none') as ReportColumn['aggregation'],
       visible: true,
     };
   });
+
+  const chartConfig: ReportDefinitionForm['chart'] = raw.chart
+    ? {
+        chartType: (raw.chart.type as ReportDefinitionForm['chart']['chartType']) ?? 'none',
+        chartXField: raw.chart.xField,
+        chartYField: raw.chart.yField,
+      }
+    : { chartType: 'none' };
 
   return {
     name: raw.name ?? '',
@@ -180,18 +168,20 @@ export function mapDefinitionToForm(
         field: f.field,
         dataSource,
         operator: f.operator as ReportDefinitionForm['filters']['conditions'][number]['operator'],
-        value: (f.operator === 'between' && f.value2 !== undefined
-          ? [f.value, f.value2]
-          : f.value) as never,
+        value:
+          f.operator === 'between' && f.value2 !== undefined
+            ? [f.value, f.value2]
+            : f.value,
       })),
     },
-    groupBy: (raw.groupBy ?? []).map((g) => g.field),
-    sort: raw.sort ?? [],
+    groupBy: (raw.groupBy ?? []).map((g) => g.field).filter((field) => columns.some((c) => c.field === field)),
+    sort: (raw.sort ?? []).filter((s) => columns.some((c) => c.field === s.field)),
     limit: 1000,
     isPivot: !!raw.pivot,
     pivotRowField: raw.pivot?.rowFields?.[0],
     pivotColumnField: raw.pivot?.columnField,
     pivotValueField: raw.pivot?.valueField,
+    chart: chartConfig,
     isShared: raw.isShared ?? false,
     tags: raw.tags ?? [],
   };

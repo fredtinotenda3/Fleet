@@ -12,6 +12,7 @@ import { ColumnPicker } from '../components/ColumnPicker';
 import { FilterBuilder } from '../components/FilterBuilder';
 import { GroupBySelector } from '../components/GroupBySelector';
 import { SortControls } from '../components/SortControls';
+import { ChartConfigurator } from '../components/ChartConfigurator';
 import { ReportPreviewPanel } from '../components/ReportPreviewPanel';
 import { SaveReportDialog } from '../components/SaveReportDialog';
 import { ReportList } from '../components/ReportList';
@@ -54,6 +55,9 @@ export default function ReportBuilder({ reportId }: ReportBuilderPageProps) {
       router.push(REPORTS_ROUTES.builder.edit(result.id));
     }
   }
+
+  // Determine if chart should be displayed in preview
+  const showChart = form.chart.chartType !== 'none' && form.chart.chartXField && form.chart.chartYField;
 
   return (
     <div className="flex flex-col gap-6">
@@ -132,14 +136,41 @@ export default function ReportBuilder({ reportId }: ReportBuilderPageProps) {
           />
         )}
 
-        {step === 'preview' && (
-          <ReportPreviewPanel
+        {step === 'chart' && (
+          <ChartConfigurator
             columns={form.columns}
-            isPivot={form.isPivot}
-            result={preview.result as never}
-            isLoading={preview.isLoading}
-            isError={preview.isError}
+            config={form.chart}
+            onChange={(chart) => reportBuilderStore.setChartConfig(chart)}
           />
+        )}
+
+        {step === 'preview' && (
+          <div className="space-y-6">
+            <ReportPreviewPanel
+              columns={form.columns}
+              isPivot={form.isPivot}
+              result={preview.result as never}
+              isLoading={preview.isLoading}
+              isError={preview.isError}
+            />
+            {showChart && preview.result && !preview.isLoading && !preview.isError && (
+              <div className="p-4 border rounded-lg">
+                <h3 className="mb-3 text-sm font-medium">Chart Preview</h3>
+                <ReportPreviewPanel
+                  columns={form.columns}
+                  isPivot={false}
+                  result={preview.result as never}
+                  isLoading={false}
+                  isError={false}
+                  chartConfig={{
+                    type: form.chart.chartType as 'bar' | 'line' | 'pie',
+                    xField: form.chart.chartXField!,
+                    yField: form.chart.chartYField!,
+                  }}
+                />
+              </div>
+            )}
+          </div>
         )}
 
         {step === 'save' && (
@@ -165,6 +196,10 @@ export default function ReportBuilder({ reportId }: ReportBuilderPageProps) {
               <div>
                 <dt className="text-xs text-muted-foreground">Sort levels</dt>
                 <dd className="font-medium">{form.sort.length || 'None'}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">Chart</dt>
+                <dd className="font-medium">{form.chart.chartType === 'none' ? 'None' : form.chart.chartType}</dd>
               </div>
             </dl>
             <button

@@ -12,6 +12,6 @@ export const BUILDER_QUERY_PARAMS = {
   step: 'step',
 } as const;
 
-export type BuilderStep = 'columns' | 'filters' | 'groupBy' | 'sort' | 'preview' | 'save';
+export type BuilderStep = 'columns' | 'filters' | 'groupBy' | 'sort' | 'chart' | 'preview' | 'save';
 
-export const BUILDER_STEPS: BuilderStep[] = ['columns', 'filters', 'groupBy', 'sort', 'preview', 'save'];
+export const BUILDER_STEPS: BuilderStep[] = ['columns', 'filters', 'groupBy', 'sort', 'chart', 'preview', 'save'];

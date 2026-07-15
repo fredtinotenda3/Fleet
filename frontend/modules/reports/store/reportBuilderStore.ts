@@ -2,7 +2,7 @@
 //
 // Holds the in-progress, unsaved report-definition draft while the user
 // works through the builder steps (columns -> filters -> group by -> sort ->
-// preview -> save). Implemented as a plain external store (no state-
+// chart -> preview -> save). Implemented as a plain external store (no state-
 // management dependency assumed) consumed via React's built-in
 // useSyncExternalStore, so it works regardless of which state library (if
 // any) the rest of the app has installed.
@@ -11,6 +11,7 @@ import { useSyncExternalStore } from 'react';
 import {
   defaultReportDefinitionForm,
   type ReportDefinitionForm,
+  type ChartConfig,
 } from '../schemas/reportDefinition';
 import type { ReportColumn } from '../schemas/reportColumn';
 import type { ReportFilterCondition, ReportFilterGroup } from '../schemas/reportFilter';
@@ -59,7 +60,13 @@ class ReportBuilderStore {
   }
 
   setDataSource(dataSource: ReportDefinitionForm['dataSource']) {
-    this.state = { ...this.state, dataSource, columns: [] as unknown as ReportColumn[], filters: { logic: 'and', conditions: [] } };
+    this.state = {
+      ...this.state,
+      dataSource,
+      columns: [] as unknown as ReportColumn[],
+      filters: { logic: 'and', conditions: [] },
+      chart: { chartType: 'none' }, // reset chart when data source changes
+    };
     this.emit();
   }
 
@@ -118,6 +125,14 @@ class ReportBuilderStore {
 
   setPivot(config: Pick<ReportDefinitionForm, 'isPivot' | 'pivotRowField' | 'pivotColumnField' | 'pivotValueField'>) {
     this.state = { ...this.state, ...config };
+    this.emit();
+  }
+
+  setChartConfig(chart: Partial<ChartConfig>) {
+    this.state = {
+      ...this.state,
+      chart: { ...this.state.chart, ...chart },
+    };
     this.emit();
   }
 }

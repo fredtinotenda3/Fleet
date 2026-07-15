@@ -18,7 +18,8 @@ export type {
   MaintenanceForecast,
 };
 
-const BASE_URL = '/analytics';
+// FIX: added /api prefix to match the actual API route
+const BASE_URL = '/api/analytics';
 
 export const analyticsApi = {
   async getFleetKPIs(dateRange?: DateRange): Promise<FleetKPIs> {
