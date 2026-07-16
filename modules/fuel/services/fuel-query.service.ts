@@ -9,7 +9,15 @@ import { GetMonthlyFuelConsumptionQuery } from '../queries/get-monthly-fuel-cons
 import { GetTopFuelConsumersQuery } from '../queries/get-top-fuel-consumers.query';
 import { GetFuelKpisQuery } from '../queries/get-fuel-kpis.query';
 import { GetAbnormalFuelConsumptionQuery } from '../queries/get-abnormal-fuel-consumption.query';
-import { GetFuelByDriverQuery } from '../queries/get-fuel-by-driver.query';
+import { GetFuelByDriverQuery, FuelByDriverSort } from '../queries/get-fuel-by-driver.query';
+import { GetVehicleFuelTimelineQuery, VehicleFuelTimelineFilters } from '../queries/get-vehicle-fuel-timeline.query';
+import { GetFuelByStationQuery } from '../queries/get-fuel-by-station.query';
+import { GetFuelActivityTrendQuery } from '../queries/get-fuel-activity-trend.query';
+import { GetAverageFuelPriceTrendQuery } from '../queries/get-average-fuel-price-trend.query';
+import { GetFuelTypeDistributionQuery } from '../queries/get-fuel-type-distribution.query';
+import { GetFuelingFrequencyByVehicleQuery } from '../queries/get-fueling-frequency-by-vehicle.query';
+import { GetFuelCostDistributionQuery } from '../queries/get-fuel-cost-distribution.query';
+import { GetFuelEntryHeatmapQuery } from '../queries/get-fuel-entry-heatmap.query';
 import {
   FuelLog,
   FuelFilters,
@@ -17,6 +25,15 @@ import {
   FuelKpis,
   AbnormalFuelConsumptionRow,
   DriverFuelConsumptionRow,
+  FuelTrendGranularity,
+  VehicleFuelTimelinePoint,
+  FuelByStationRow,
+  FuelActivityTrendPoint,
+  FuelPriceTrendPoint,
+  FuelTypeDistributionRow,
+  FuelFrequencyByVehicleRow,
+  FuelCostDistributionBucket,
+  FuelHeatmapCell,
 } from '@/shared/types/fuel.types';
 import { PaginatedResponse, PaginationParams } from '@/shared/types/common.types';
 import { fuelRepository } from '../repositories/fuel.repository';
@@ -66,31 +83,17 @@ export class FuelQueryService {
     );
   }
 
-  /**
-   * NEW: powers the "Fuel Consumption by Driver" chart. Dispatched
-   * through the query bus like every other read here (unlike getFuelKpis
-   * below, this one needs no extra composition, so it doesn't bypass
-   * the bus).
-   */
   async getFuelByDriver(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    limit: number = 10
+    limit: number = 10,
+    sortBy: FuelByDriverSort = 'volume'
   ): Promise<DriverFuelConsumptionRow[]> {
     return queryBus.execute<DriverFuelConsumptionRow[]>(
-      new GetFuelByDriverQuery(tenantId, dateRange, limit)
+      new GetFuelByDriverQuery(tenantId, dateRange, limit, sortBy)
     );
   }
 
-  /**
-   * FIX: bypasses the CQRS query bus for this one call (rather than going
-   * through GetFuelKpisQuery -> GetFuelKpisHandler -> fuelRepository) so
-   * this service can compose trip-derived distance as a fallback when
-   * fuel-log odometer data is sparse. The handler path is left intact for
-   * any other caller that still dispatches GetFuelKpisQuery directly, but
-   * the controller's getFuelKpis already calls THIS service method, so
-   * every KPI card in the app goes through the fallback.
-   */
   async getFuelKpis(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date }
@@ -121,6 +124,84 @@ export class FuelQueryService {
   ): Promise<AbnormalFuelConsumptionRow[]> {
     return queryBus.execute<AbnormalFuelConsumptionRow[]>(
       new GetAbnormalFuelConsumptionQuery(tenantId, threshold)
+    );
+  }
+
+  // ---- Enterprise analytics ----
+
+  async getVehicleFuelTimeline(
+    tenantId: string,
+    filters: VehicleFuelTimelineFilters
+  ): Promise<VehicleFuelTimelinePoint[]> {
+    return queryBus.execute<VehicleFuelTimelinePoint[]>(
+      new GetVehicleFuelTimelineQuery(tenantId, filters)
+    );
+  }
+
+  async getFuelByStation(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date },
+    limit: number = 15
+  ): Promise<FuelByStationRow[]> {
+    return queryBus.execute<FuelByStationRow[]>(
+      new GetFuelByStationQuery(tenantId, dateRange, limit)
+    );
+  }
+
+  async getFuelActivityTrend(
+    tenantId: string,
+    granularity: FuelTrendGranularity,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<FuelActivityTrendPoint[]> {
+    return queryBus.execute<FuelActivityTrendPoint[]>(
+      new GetFuelActivityTrendQuery(tenantId, granularity, dateRange)
+    );
+  }
+
+  async getAverageFuelPriceTrend(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date },
+    granularity: FuelTrendGranularity = 'month'
+  ): Promise<FuelPriceTrendPoint[]> {
+    return queryBus.execute<FuelPriceTrendPoint[]>(
+      new GetAverageFuelPriceTrendQuery(tenantId, dateRange, granularity)
+    );
+  }
+
+  async getFuelTypeDistribution(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<FuelTypeDistributionRow[]> {
+    return queryBus.execute<FuelTypeDistributionRow[]>(
+      new GetFuelTypeDistributionQuery(tenantId, dateRange)
+    );
+  }
+
+  async getFuelingFrequencyByVehicle(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date },
+    limit: number = 20
+  ): Promise<FuelFrequencyByVehicleRow[]> {
+    return queryBus.execute<FuelFrequencyByVehicleRow[]>(
+      new GetFuelingFrequencyByVehicleQuery(tenantId, dateRange, limit)
+    );
+  }
+
+  async getFuelCostDistribution(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<FuelCostDistributionBucket[]> {
+    return queryBus.execute<FuelCostDistributionBucket[]>(
+      new GetFuelCostDistributionQuery(tenantId, dateRange)
+    );
+  }
+
+  async getFuelEntryHeatmap(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<FuelHeatmapCell[]> {
+    return queryBus.execute<FuelHeatmapCell[]>(
+      new GetFuelEntryHeatmapQuery(tenantId, dateRange)
     );
   }
 }

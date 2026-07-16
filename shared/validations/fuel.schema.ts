@@ -14,7 +14,7 @@ const fuelLogBaseSchema = z.object({
     .number({ error: 'Fuel volume must be a number' })
     .positive('Fuel volume must be positive')
     .max(10_000, 'Fuel volume exceeds maximum'),
-  unit_id: z.string().min(1, 'Unit is required'),
+  unit_id: z.string().optional(),
   cost: z
     .number({ error: 'Cost must be a number' })
     .nonnegative('Cost cannot be negative')

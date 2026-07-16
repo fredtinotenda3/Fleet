@@ -7,4 +7,5 @@ export const FUEL_ROUTES = {
   edit: (id: string) => `/fuel/logs/${id}/edit`,
   create: '/fuel/logs/create',
   vehicleHistory: (plate: string) => `/fuel/vehicles/${encodeURIComponent(plate)}`,
+  analytics: '/fuel/analytics',
 } as const;

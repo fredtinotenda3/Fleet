@@ -1,17 +1,4 @@
- //app/api/fuellogs/route.ts
-//
-// FIX (High -- duplicate auth strategies): this route used the legacy
-// requireAuth() helper, which only proves a session exists and does not
-// enforce permission checks. Every other mature module (expenses,
-// maintenance, bookings, etc.) is gated with withAuth + Permission.
-// Converted to match that convention.
-//
-// Permission.FUEL_VIEW / FUEL_CREATE / FUEL_EDIT / FUEL_DELETE
-// confirmed against server/permissions/roles.ts.
-//
-// NEW: `action=by-driver` routes to the driver-consumption analytics
-// endpoint (GET /api/fuellogs?action=by-driver), same pattern as the
-// existing stats/kpis/abnormal/monthly/top-consumers actions.
+// app/api/fuellogs/route.ts
 
 import { NextRequest } from 'next/server';
 import { withAuth } from '@/server/middleware/with-auth';
@@ -31,6 +18,17 @@ export const GET = withAuth(
     if (action === 'monthly') return fuelController.getMonthlyConsumption(req);
     if (action === 'top-consumers') return fuelController.getTopConsumers(req);
     if (action === 'by-driver') return fuelController.getFuelByDriver(req);
+
+    // NEW -- enterprise Fuel Analytics Enhancement
+    if (action === 'vehicle-timeline') return fuelController.getVehicleFuelTimeline(req);
+    if (action === 'by-station') return fuelController.getFuelByStation(req);
+    if (action === 'activity-trend') return fuelController.getFuelActivityTrend(req);
+    if (action === 'price-trend') return fuelController.getAverageFuelPriceTrend(req);
+    if (action === 'type-distribution') return fuelController.getFuelTypeDistribution(req);
+    if (action === 'frequency-by-vehicle') return fuelController.getFuelingFrequencyByVehicle(req);
+    if (action === 'cost-distribution') return fuelController.getFuelCostDistribution(req);
+    if (action === 'heatmap') return fuelController.getFuelEntryHeatmap(req);
+
     if (id) return fuelController.getFuelLog(req, id);
 
     return fuelController.getFuelLogs(req);

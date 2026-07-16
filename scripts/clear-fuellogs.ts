@@ -1,3 +1,5 @@
+//scripts/clear-fuellogs.ts
+
 import { MongoClient } from "mongodb";
 import * as dotenv from "dotenv";
 import path from "path";

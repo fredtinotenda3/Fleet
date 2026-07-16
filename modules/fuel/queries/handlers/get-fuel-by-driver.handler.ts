@@ -1,4 +1,3 @@
-
 // modules/fuel/queries/handlers/get-fuel-by-driver.handler.ts
 
 import { IQueryHandler } from '@/server/cqrs/query';
@@ -12,6 +11,6 @@ export class GetFuelByDriverHandler
   constructor(private readonly fuelRepo: FuelRepository) {}
 
   async execute(query: GetFuelByDriverQuery): Promise<DriverFuelConsumptionRow[]> {
-    return this.fuelRepo.getFuelByDriver(query.tenantId, query.dateRange, query.limit);
+    return this.fuelRepo.getFuelByDriver(query.tenantId, query.dateRange, query.limit, query.sortBy);
   }
 }

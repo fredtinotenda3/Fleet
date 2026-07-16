@@ -1,10 +1,13 @@
 // modules/fuel/controllers/fuel.controller.ts
 
 import { NextRequest } from 'next/server';
+import { ObjectId } from 'mongodb';
 import { bootstrapCqrs } from '@/server/cqrs/cqrs.module';
 import { fuelCommandService } from '../services/fuel-command.service';
 import { fuelQueryService } from '../services/fuel-query.service';
 import { FuelFilters } from '@/shared/types/fuel.types';
+import type { FuelByDriverSort } from '../queries/get-fuel-by-driver.query';
+import type { FuelTrendGranularity } from '@/shared/types/fuel.types';
 import { validatePaginationParams } from '@/shared/utils/pagination.utils';
 import {
   successResponse,
@@ -19,22 +22,186 @@ import {
 } from '@/server/utils/context.utils';
 import { getAuthContext } from '@/server/auth/auth-context';
 import { driverRepository } from '@/modules/drivers/repositories/driver.repository';
+import connectToDatabase from '@/infrastructure/database/mongodb';
 
 bootstrapCqrs();
 
-/** Enterprise CSV import safety cap -- matches the client-side limit in ImportModal. */
 const MAX_IMPORT_ROWS = 2000;
+const VALID_GRANULARITIES: FuelTrendGranularity[] = ['week', 'month', 'quarter', 'year'];
 
 export interface ImportRowResult {
   row: number;
   success: boolean;
   identifier?: string;
   error?: string;
+  /** True when this row was skipped because it duplicates an existing
+   *  fuel log or another row earlier in the same file. Always false
+   *  when `success` is true. */
+  duplicate?: boolean;
 }
 
 export interface ImportResponse {
-  summary: { total: number; succeeded: number; failed: number };
+  summary: { total: number; succeeded: number; duplicates: number; failed: number };
   results: ImportRowResult[];
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Shared helper: parses the optional startDate/endDate query params used by every analytics action. */
+function parseDateRange(searchParams: URLSearchParams): { startDate?: Date; endDate?: Date } | undefined {
+  const startDate = searchParams.get('startDate');
+  const endDate = searchParams.get('endDate');
+  if (!startDate && !endDate) return undefined;
+  return {
+    startDate: startDate ? new Date(startDate) : undefined,
+    endDate: endDate ? new Date(endDate) : undefined,
+  };
+}
+
+/**
+ * FIX (ðŸŸ  perf / timeout root cause): the import loop used to call
+ * driverRepository.findByNameOrCode(...) and a one-off fuel-station regex
+ * query PER ROW. Resolving both ONCE before the loop into in-memory maps
+ * removes ~2 DB round trips Ã— row count.
+ */
+interface DriverLookupEntry {
+  id: string;
+}
+
+async function buildDriverLookup(tenantId: string): Promise<{
+  byKey: Map<string, DriverLookupEntry>;
+  ambiguousKeys: Set<string>;
+  byId: Map<string, DriverLookupEntry>;
+}> {
+  const drivers = await driverRepository.findAll(tenantId);
+  const byKey = new Map<string, DriverLookupEntry>();
+  const ambiguousKeys = new Set<string>();
+  const byId = new Map<string, DriverLookupEntry>();
+
+  for (const d of drivers) {
+    const id = String(d._id);
+    byId.set(id, { id });
+
+    const keys = [d.name, (d as { driver_code?: string }).driver_code]
+      .filter((k): k is string => Boolean(k && k.trim()))
+      .map((k) => k.trim().toLowerCase());
+
+    for (const key of keys) {
+      const existing = byKey.get(key);
+      if (existing && existing.id !== id) {
+        ambiguousKeys.add(key);
+      } else {
+        byKey.set(key, { id });
+      }
+    }
+  }
+
+  return { byKey, ambiguousKeys, byId };
+}
+
+async function buildStationLookup(tenantId: string): Promise<Map<string, string>> {
+  const db = await connectToDatabase();
+  const stations = await db
+    .collection('tblfuelstations')
+    .find(
+      { tenantId, isDeleted: { $ne: true } },
+      { projection: { name: 1, brand: 1 } }
+    )
+    .toArray();
+
+  const map = new Map<string, string>();
+  for (const s of stations) {
+    const id = String(s._id);
+    if (s.name) map.set(String(s.name).trim().toLowerCase(), id);
+    if (s.brand) map.set(String(s.brand).trim().toLowerCase(), id);
+  }
+  return map;
+}
+
+// ---------------------------------------------------------------------
+// NEW: duplicate detection for bulk fuel-log imports.
+//
+// A "duplicate" is defined as the SAME vehicle + SAME calendar day +
+// SAME fuel volume + SAME cost -- matching the exact criteria the
+// person's own upstream data-cleaning tooling already used for
+// cross-sheet dedup (see their Transformation Log: "Exact duplicate of
+// a transaction already present on an earlier sheet (same plate/date/
+// volume/cost/driver/fuel type)"). We intentionally key on
+// plate+date+volume+cost only (not driver/fuel_type) so this also
+// catches duplicates against records already sitting in the database
+// from a prior manual entry or an earlier import run, where those extra
+// fields may not always be populated consistently.
+// ---------------------------------------------------------------------
+
+function normalizeDedupDate(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '';
+  const d = value instanceof Date ? value : new Date(value as string | number);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toISOString().slice(0, 10); // calendar day only
+}
+
+function normalizeDedupNumber(value: unknown): string {
+  const n = typeof value === 'string' ? Number(value) : (value as number);
+  if (typeof n !== 'number' || Number.isNaN(n)) return String(value ?? '');
+  return (Math.round(n * 100) / 100).toFixed(2);
+}
+
+/** Returns null if there isn't enough data on the row to form a reliable key (missing plate). */
+function buildFuelDedupKey(row: {
+  license_plate?: unknown;
+  date?: unknown;
+  fuel_volume?: unknown;
+  cost?: unknown;
+}): string | null {
+  const plate = typeof row.license_plate === 'string' ? row.license_plate.trim().toUpperCase() : '';
+  if (!plate) return null;
+  return [plate, normalizeDedupDate(row.date), normalizeDedupNumber(row.fuel_volume), normalizeDedupNumber(row.cost)].join('|');
+}
+
+/**
+ * Pre-fetches every existing (non-deleted) fuel log for the vehicles
+ * touched by this batch, scoped to the batch's own date range, and
+ * reduces them to a Set of dedup keys. One query for the whole import
+ * instead of one per row.
+ */
+async function buildExistingFuelLogKeys(
+  tenantId: string,
+  plates: string[],
+  dateRange: { min: Date; max: Date } | null
+): Promise<Set<string>> {
+  if (plates.length === 0) return new Set();
+
+  const db = await connectToDatabase();
+  const match: Record<string, unknown> = {
+    tenantId,
+    isDeleted: { $ne: true },
+    license_plate: { $in: plates },
+  };
+  if (dateRange) {
+    // Small buffer on either side to be safe against timezone-boundary rounding.
+    const bufferedMin = new Date(dateRange.min.getTime() - 24 * 60 * 60 * 1000);
+    const bufferedMax = new Date(dateRange.max.getTime() + 24 * 60 * 60 * 1000);
+    match.date = { $gte: bufferedMin, $lte: bufferedMax };
+  }
+
+  const existing = await db
+    .collection('tblfuellogs')
+    .find(match, { projection: { license_plate: 1, date: 1, fuel_volume: 1, cost: 1 } })
+    .toArray();
+
+  const keys = new Set<string>();
+  for (const log of existing) {
+    const key = buildFuelDedupKey({
+      license_plate: log.license_plate,
+      date: log.date,
+      fuel_volume: log.fuel_volume,
+      cost: log.cost,
+    });
+    if (key) keys.add(key);
+  }
+  return keys;
 }
 
 export class FuelController {
@@ -49,7 +216,6 @@ export class FuelController {
         payment_method: (searchParams.get('payment_method') as FuelFilters['payment_method']) || undefined,
         fuel_station_id: searchParams.get('fuel_station_id') || undefined,
         fuel_card_id: searchParams.get('fuel_card_id') || undefined,
-        // NEW: filter fuel logs by driver
         driver_id: searchParams.get('driver_id') || undefined,
         startDate: searchParams.get('start')
           ? new Date(searchParams.get('start')!)
@@ -109,24 +275,6 @@ export class FuelController {
     }
   }
 
-  /**
-   * Enterprise CSV import. Accepts `{ records: Record<string, unknown>[] }`
-   * (already parsed/coerced client-side by ImportModal) and creates one
-   * fuel log per row through the exact same `fuelCommandService.createFuelLog`
-   * path -- and therefore the exact same `fuelLogCreateSchema` validation,
-   * vehicle/unit/station/card/driver lookups, and FuelLoggedEvent -- as the
-   * single-log create flow. Rows are processed sequentially (not
-   * Promise.all) so duplicate checks within the same batch are correctly
-   * serialized. A row failure never aborts the batch; every row gets its
-   * own success/failure result.
-   *
-   * NEW: rows may include a `driver` column (name, driver_code, or a raw
-   * ObjectId string). It's resolved to a driver_id here -- BEFORE calling
-   * fuelCommandService.createFuelLog -- so an unresolved driver produces a
-   * clear, row-specific import error ("Driver 'J. Moyo' not found") rather
-   * than a generic downstream validation failure. Rows with an empty/absent
-   * `driver` cell import exactly as before (driver_id omitted).
-   */
   async importFuelLogs(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
@@ -149,42 +297,116 @@ export class FuelController {
         );
       }
 
+      // Batch-resolve drivers + stations ONCE for the whole import.
+      const [{ byKey: driverByKey, ambiguousKeys: ambiguousDriverKeys, byId: driverById }, stationLookup] =
+        await Promise.all([buildDriverLookup(tenantId), buildStationLookup(tenantId)]);
+
+      // NEW: pre-fetch existing fuel logs for the vehicles in this batch so
+      // we can detect duplicates against data already in the database,
+      // without querying per row.
+      const distinctPlates = Array.from(
+        new Set(
+          records
+            .map((r) => (typeof r.license_plate === 'string' ? r.license_plate.trim().toUpperCase() : ''))
+            .filter(Boolean)
+        )
+      );
+
+      let batchDateRange: { min: Date; max: Date } | null = null;
+      for (const r of records) {
+        if (!r.date) continue;
+        const d = new Date(r.date as string | number);
+        if (Number.isNaN(d.getTime())) continue;
+        if (!batchDateRange) {
+          batchDateRange = { min: d, max: d };
+        } else {
+          if (d < batchDateRange.min) batchDateRange.min = d;
+          if (d > batchDateRange.max) batchDateRange.max = d;
+        }
+      }
+
+      const existingKeys = await buildExistingFuelLogKeys(tenantId, distinctPlates, batchDateRange);
+      // Tracks keys created earlier in THIS SAME batch, to catch
+      // duplicates within the file itself (e.g. the same transaction
+      // appearing on two source sheets, or the file being uploaded twice
+      // in one go).
+      const seenInBatch = new Set<string>();
+
       const results: ImportRowResult[] = [];
       let succeeded = 0;
+      let duplicates = 0;
       let failed = 0;
 
       for (let i = 0; i < records.length; i++) {
         const rawRow = { ...records[i] };
-        const rowNumber = i + 2; // +1 for 0-index, +1 for the CSV header row
+        const rowNumber = i + 2;
         const licensePlate =
           typeof rawRow.license_plate === 'string' ? rawRow.license_plate.toUpperCase() : undefined;
 
         try {
-          // Resolve the `driver` cell (name/code/id) -> driver_id before
-          // handing off to the shared create path. A non-empty cell that
-          // fails to resolve fails the row with a specific message; an
-          // empty/absent cell is simply omitted (unassigned), preserving
-          // existing import behavior for files without a driver column.
+          // --- Duplicate check happens before any DB write for this row ---
+          const dedupKey = buildFuelDedupKey(rawRow);
+          if (dedupKey && (existingKeys.has(dedupKey) || seenInBatch.has(dedupKey))) {
+            duplicates += 1;
+            results.push({
+              row: rowNumber,
+              success: false,
+              duplicate: true,
+              identifier: licensePlate,
+              error: 'Skipped -- duplicate of an existing fuel log or another row in this file (same plate, date, volume, and cost)',
+            });
+            continue;
+          }
+
           const driverCell = rawRow.driver;
           delete rawRow.driver;
 
           if (typeof driverCell === 'string' && driverCell.trim().length > 0) {
-            const driver = await driverRepository.findByNameOrCode(driverCell, tenantId);
-            if (!driver) {
-              failed += 1;
-              results.push({
-                row: rowNumber,
-                success: false,
-                identifier: licensePlate,
-                error: `Driver "${driverCell}" could not be matched to an active driver`,
-              });
-              continue;
+            const trimmed = driverCell.trim();
+
+            if (ObjectId.isValid(trimmed) && driverById.has(trimmed)) {
+              rawRow.driver_id = trimmed;
+            } else {
+              const key = trimmed.toLowerCase();
+              if (ambiguousDriverKeys.has(key)) {
+                failed += 1;
+                results.push({
+                  row: rowNumber,
+                  success: false,
+                  identifier: licensePlate,
+                  error: `Driver "${driverCell}" matches more than one active driver -- use a driver ID instead`,
+                });
+                continue;
+              }
+              const match = driverByKey.get(key);
+              if (!match) {
+                failed += 1;
+                results.push({
+                  row: rowNumber,
+                  success: false,
+                  identifier: licensePlate,
+                  error: `Driver "${driverCell}" could not be matched to an active driver`,
+                });
+                continue;
+              }
+              rawRow.driver_id = match.id;
             }
-            rawRow.driver_id = driver._id;
+          }
+
+          if (
+            !rawRow.fuel_station_id &&
+            typeof rawRow.station_name === 'string' &&
+            rawRow.station_name.trim().length > 0
+          ) {
+            const resolvedStationId = stationLookup.get(rawRow.station_name.trim().toLowerCase());
+            if (resolvedStationId) {
+              rawRow.fuel_station_id = resolvedStationId;
+            }
           }
 
           const log = await fuelCommandService.createFuelLog(rawRow, tenantId, userId);
           succeeded += 1;
+          if (dedupKey) seenInBatch.add(dedupKey);
           results.push({
             row: rowNumber,
             success: true,
@@ -199,7 +421,7 @@ export class FuelController {
       }
 
       const response: ImportResponse = {
-        summary: { total: records.length, succeeded, failed },
+        summary: { total: records.length, succeeded, duplicates, failed },
         results,
       };
       return successResponse(response);
@@ -221,12 +443,6 @@ export class FuelController {
     }
   }
 
-  /**
-   * FIX (critical -- unauthorized hard delete): same bug/fix as
-   * VehicleController.deleteVehicle. `?soft=false` used to permanently
-   * hardDelete() a fuel log under the same FUEL_DELETE permission as an
-   * ordinary soft delete.
-   */
   async deleteFuelLog(req: NextRequest, id: string) {
     try {
       const authContext = await getAuthContext(req);
@@ -251,16 +467,7 @@ export class FuelController {
   async getFuelStats(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const searchParams = req.nextUrl.searchParams;
-
-      const dateRange =
-        searchParams.get('startDate') && searchParams.get('endDate')
-          ? {
-              startDate: new Date(searchParams.get('startDate')!),
-              endDate: new Date(searchParams.get('endDate')!),
-            }
-          : undefined;
-
+      const dateRange = parseDateRange(req.nextUrl.searchParams);
       const stats = await fuelQueryService.getFuelStats(tenantId, dateRange);
       return successResponse(stats);
     } catch (error) {
@@ -272,7 +479,6 @@ export class FuelController {
     try {
       const tenantId = await getTenantFromRequest(req);
       const months = Number(req.nextUrl.searchParams.get('months') || '12');
-
       const data = await fuelQueryService.getMonthlyFuelConsumption(tenantId, months);
       return successResponse(data);
     } catch (error) {
@@ -284,7 +490,6 @@ export class FuelController {
     try {
       const tenantId = await getTenantFromRequest(req);
       const limit = Number(req.nextUrl.searchParams.get('limit') || '5');
-
       const data = await fuelQueryService.getTopFuelConsumers(tenantId, limit);
       return successResponse(data);
     } catch (error) {
@@ -292,26 +497,15 @@ export class FuelController {
     }
   }
 
-  /**
-   * NEW: powers the "Fuel Consumption by Driver" dashboard chart. Backed
-   * by a single grouped aggregation (FuelRepository.getFuelByDriver) --
-   * no per-driver queries, scales with fleet size.
-   */
   async getFuelByDriver(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
       const searchParams = req.nextUrl.searchParams;
       const limit = Number(searchParams.get('limit') || '10');
+      const sortBy = (searchParams.get('sortBy') as FuelByDriverSort) || 'volume';
+      const dateRange = parseDateRange(searchParams);
 
-      const dateRange =
-        searchParams.get('startDate') && searchParams.get('endDate')
-          ? {
-              startDate: new Date(searchParams.get('startDate')!),
-              endDate: new Date(searchParams.get('endDate')!),
-            }
-          : undefined;
-
-      const data = await fuelQueryService.getFuelByDriver(tenantId, dateRange, limit);
+      const data = await fuelQueryService.getFuelByDriver(tenantId, dateRange, limit, sortBy);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -321,16 +515,7 @@ export class FuelController {
   async getFuelKpis(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const searchParams = req.nextUrl.searchParams;
-
-      const dateRange =
-        searchParams.get('startDate') && searchParams.get('endDate')
-          ? {
-              startDate: new Date(searchParams.get('startDate')!),
-              endDate: new Date(searchParams.get('endDate')!),
-            }
-          : undefined;
-
+      const dateRange = parseDateRange(req.nextUrl.searchParams);
       const kpis = await fuelQueryService.getFuelKpis(tenantId, dateRange);
       return successResponse(kpis);
     } catch (error) {
@@ -342,8 +527,128 @@ export class FuelController {
     try {
       const tenantId = await getTenantFromRequest(req);
       const threshold = Number(req.nextUrl.searchParams.get('threshold') || '2');
-
       const data = await fuelQueryService.getAbnormalConsumption(tenantId, threshold);
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  // ---- Enterprise analytics ----
+
+  /** #1 Vehicle Fuel Activity Timeline */
+  async getVehicleFuelTimeline(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const searchParams = req.nextUrl.searchParams;
+      const dateRange = parseDateRange(searchParams);
+      const licensePlate = searchParams.get('license_plate') || undefined;
+
+      const data = await fuelQueryService.getVehicleFuelTimeline(tenantId, {
+        license_plate: licensePlate,
+        startDate: dateRange?.startDate,
+        endDate: dateRange?.endDate,
+      });
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** #4 Fuel Spend by Station + #8 Top Fuel Stations (same data, sorted client-side) */
+  async getFuelByStation(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const searchParams = req.nextUrl.searchParams;
+      const limit = Number(searchParams.get('limit') || '15');
+      const dateRange = parseDateRange(searchParams);
+
+      const data = await fuelQueryService.getFuelByStation(tenantId, dateRange, limit);
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** #3 Fuel Activity Trend */
+  async getFuelActivityTrend(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const searchParams = req.nextUrl.searchParams;
+      const granularityParam = searchParams.get('granularity') as FuelTrendGranularity | null;
+      const granularity: FuelTrendGranularity =
+        granularityParam && VALID_GRANULARITIES.includes(granularityParam) ? granularityParam : 'month';
+      const dateRange = parseDateRange(searchParams);
+
+      const data = await fuelQueryService.getFuelActivityTrend(tenantId, granularity, dateRange);
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** #5 Average Fuel Price Trend */
+  async getAverageFuelPriceTrend(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const searchParams = req.nextUrl.searchParams;
+      const granularityParam = searchParams.get('granularity') as FuelTrendGranularity | null;
+      const granularity: FuelTrendGranularity =
+        granularityParam && VALID_GRANULARITIES.includes(granularityParam) ? granularityParam : 'month';
+      const dateRange = parseDateRange(searchParams);
+
+      const data = await fuelQueryService.getAverageFuelPriceTrend(tenantId, dateRange, granularity);
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** #6 Fuel Type Distribution */
+  async getFuelTypeDistribution(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const dateRange = parseDateRange(req.nextUrl.searchParams);
+      const data = await fuelQueryService.getFuelTypeDistribution(tenantId, dateRange);
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** #7 Fueling Frequency by Vehicle */
+  async getFuelingFrequencyByVehicle(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const searchParams = req.nextUrl.searchParams;
+      const limit = Number(searchParams.get('limit') || '20');
+      const dateRange = parseDateRange(searchParams);
+
+      const data = await fuelQueryService.getFuelingFrequencyByVehicle(tenantId, dateRange, limit);
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** #9 Fuel Cost Distribution */
+  async getFuelCostDistribution(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const dateRange = parseDateRange(req.nextUrl.searchParams);
+      const data = await fuelQueryService.getFuelCostDistribution(tenantId, dateRange);
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** #10 Fuel Entry Heatmap */
+  async getFuelEntryHeatmap(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const dateRange = parseDateRange(req.nextUrl.searchParams);
+      const data = await fuelQueryService.getFuelEntryHeatmap(tenantId, dateRange);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);

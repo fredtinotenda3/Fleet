@@ -17,7 +17,7 @@ export interface FuelLog extends BaseEntity {
   date: Date;
   fuel_volume: number;
   unit_id: string;
-  driver_id?: string; 
+  driver_id?: string;
   cost: number;
   odometer?: number;
   station_name?: string;
@@ -44,7 +44,6 @@ export interface FuelLog extends BaseEntity {
     card_last4: string;
     provider: string;
   };
-  /** Added – optional driver reference so the table can display the driver name */
   driver?: {
     _id?: string;
     name: string;
@@ -112,14 +111,6 @@ export interface FuelKpis {
   daysSinceLastFill: number;
   mostRecentVehicle?: string;
   mostRecentPlate?: string;
-  /**
-   * FIX: previously computed in FuelRepository.getFuelKpis() but
-   * discarded before returning. Surfaces how many vehicles had
-   * zero/missing odometer data for the period and had their distance
-   * estimated from trip logs instead, so the UI can flag those figures
-   * as estimated rather than presenting a blended total as uniformly
-   * odometer-measured.
-   */
   fallbackVehicleCount: number;
   fallbackPlates: string[];
 }
@@ -132,4 +123,75 @@ export interface AbnormalFuelConsumptionRow {
   date: Date | string;
   anomalyScore: number;
   threshold: number;
+}
+
+export interface DriverFuelConsumptionRow {
+  driver_id: string | null;
+  driverName: string;
+  totalFuel: number;
+  totalCost: number;
+  logCount: number;
+  vehicleCount: number;
+  averageCostPerUnit: number;
+}
+
+/** Fuel analytics granularity shared by trend-style charts. */
+export type FuelTrendGranularity = 'week' | 'month' | 'quarter' | 'year';
+
+/** #1 Vehicle Fuel Activity Timeline */
+export interface VehicleFuelTimelinePoint {
+  date: string;
+  count: number;
+}
+
+/** #4 Fuel Spend by Station / #8 Top Fuel Stations (same source, sorted differently) */
+export interface FuelByStationRow {
+  station_id: string | null;
+  stationName: string;
+  totalSpend: number;
+  totalLitres: number;
+  visits: number;
+}
+
+/** #3 Fuel Activity Trend (combined bar + line) */
+export interface FuelActivityTrendPoint {
+  period: string;
+  entries: number;
+  volume: number;
+  cost: number;
+  avgCostPerLitre: number;
+}
+
+/** #5 Average Fuel Price Trend */
+export interface FuelPriceTrendPoint {
+  period: string;
+  avgCostPerLitre: number;
+}
+
+/** #6 Fuel Type Distribution */
+export interface FuelTypeDistributionRow {
+  fuelType: string;
+  litres: number;
+  cost: number;
+  percentage: number;
+}
+
+/** #7 Fueling Frequency by Vehicle */
+export interface FuelFrequencyByVehicleRow {
+  license_plate: string;
+  count: number;
+}
+
+/** #9 Fuel Cost Distribution (histogram) */
+export interface FuelCostDistributionBucket {
+  min: number;
+  max: number;
+  count: number;
+}
+
+/** #10 Fuel Entry Heatmap. dayOfWeek: 0=Sunday..6=Saturday */
+export interface FuelHeatmapCell {
+  dayOfWeek: number;
+  hour: number;
+  count: number;
 }

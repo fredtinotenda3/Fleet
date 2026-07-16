@@ -10,6 +10,7 @@ import { validateWithZod } from '@/shared/utils/validation.utils';
 import connectToDatabase from '@/infrastructure/database/mongodb';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { FuelLoggedEvent } from '@/modules/fuel/events/FuelLoggedEvent';
+import { monitoring } from '@/infrastructure/monitoring/logger';
 
 export class CreateFuelLogHandler implements ICommandHandler<CreateFuelLogCommand, FuelLog> {
   constructor(private readonly fuelRepo: FuelRepository) {}
@@ -33,6 +34,7 @@ export class CreateFuelLogHandler implements ICommandHandler<CreateFuelLogComman
       receipt_url: raw.receipt_url,
       payment_method: raw.payment_method || 'cash',
       fuel_card_id: raw.fuel_card_id,
+      driver_id: raw.driver_id,
     };
 
     const payload = Object.fromEntries(
@@ -97,28 +99,47 @@ export class CreateFuelLogHandler implements ICommandHandler<CreateFuelLogComman
       unit_id: String(validated.unit_id),
       cost: Number(validated.cost),
       payment_method: validated.payment_method,
-      ...(validated.odometer != null && { odometer: Number(validated.odometer) }),
-      ...(validated.station_name && { station_name: String(validated.station_name) }),
-      ...(validated.fuel_station_id && { fuel_station_id: String(validated.fuel_station_id) }),
-      ...(validated.fuel_type && { fuel_type: String(validated.fuel_type) }),
-      ...(validated.notes && { notes: String(validated.notes) }),
-      ...(validated.currency && { currency: String(validated.currency) }),
-      ...(validated.is_full_tank !== undefined &&
-        validated.is_full_tank !== null && { is_full_tank: Boolean(validated.is_full_tank) }),
-      ...(validated.receipt_url && { receipt_url: String(validated.receipt_url) }),
-      ...(validated.fuel_card_id && { fuel_card_id: String(validated.fuel_card_id) }),
+      ...(validated.odometer != null ? { odometer: Number(validated.odometer) } : undefined),
+      ...(validated.station_name ? { station_name: String(validated.station_name) } : undefined),
+      ...(validated.fuel_station_id ? { fuel_station_id: String(validated.fuel_station_id) } : undefined),
+      ...(validated.fuel_type ? { fuel_type: String(validated.fuel_type) } : undefined),
+      ...(validated.notes ? { notes: String(validated.notes) } : undefined),
+      ...(validated.currency ? { currency: String(validated.currency) } : undefined),
+      ...(validated.is_full_tank !== undefined && validated.is_full_tank !== null
+        ? { is_full_tank: Boolean(validated.is_full_tank) }
+        : undefined),
+      ...(validated.receipt_url ? { receipt_url: String(validated.receipt_url) } : undefined),
+      ...(validated.fuel_card_id ? { fuel_card_id: String(validated.fuel_card_id) } : undefined),
+      ...((validated as Record<string, unknown>).driver_id
+        ? { driver_id: String((validated as Record<string, unknown>).driver_id) }
+        : undefined),
     };
 
     const created = await this.fuelRepo.create(fuelData, command.tenantId, command.userId);
 
-    const eventBus = EventBusFactory.getInstance();
-    await eventBus.publish(
-      new FuelLoggedEvent(created, {
+    // FIX (🔴 critical): this is a side-effect (AI insights, webhooks,
+    // notifications, analytics, digital-twin projection, etc.) that fires
+    // AFTER the fuel log has already been durably written above. It must
+    // never be able to fail the create operation itself. The event bus
+    // (InMemoryEventBus.publish) has also been hardened so it can no
+    // longer reject, but this try/catch is kept as defense-in-depth so
+    // this handler's correctness never depends on the bus implementation
+    // staying that way.
+    try {
+      const eventBus = EventBusFactory.getInstance();
+      await eventBus.publish(
+        new FuelLoggedEvent(created, {
+          tenantId: command.tenantId,
+          userId: command.userId,
+          correlationId: command.commandName,
+        })
+      );
+    } catch (eventError) {
+      monitoring.logError('FUEL_LOGGED event publish failed (non-fatal)', eventError as Error, {
+        fuelLogId: created._id,
         tenantId: command.tenantId,
-        userId: command.userId,
-        correlationId: command.commandName,
-      })
-    );
+      });
+    }
 
     return created;
   }

@@ -1,11 +1,10 @@
-
 // frontend/modules/fuel/pages/FuelDashboardPage.tsx
 
 'use client';
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, List, MapPin, CreditCard } from 'lucide-react';
+import { Plus, List, MapPin, CreditCard, BarChart3 } from 'lucide-react';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import {
@@ -50,6 +49,9 @@ export function FuelDashboardPage() {
         breadcrumbs={[{ label: 'Fuel' }]}
         actions={
           <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => router.push(FUEL_ROUTES.analytics)}>
+              <BarChart3 className="h-3.5 w-3.5" /> Analytics
+            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm">Manage</Button>

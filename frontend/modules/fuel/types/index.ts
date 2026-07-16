@@ -9,6 +9,15 @@ import type {
   FuelPaymentMethod,
   FuelPaymentBreakdown,
   DriverFuelConsumptionRow,
+  FuelTrendGranularity,
+  VehicleFuelTimelinePoint,
+  FuelByStationRow,
+  FuelActivityTrendPoint,
+  FuelPriceTrendPoint,
+  FuelTypeDistributionRow,
+  FuelFrequencyByVehicleRow,
+  FuelCostDistributionBucket,
+  FuelHeatmapCell,
 } from '@/shared/types/fuel.types';
 import type { DriverRef } from '@/shared/types/driver.types';
 import type { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
@@ -25,9 +34,19 @@ export type {
   DriverRef,
   PaginationParams,
   PaginatedResponse,
+  FuelTrendGranularity,
+  VehicleFuelTimelinePoint,
+  FuelByStationRow,
+  FuelActivityTrendPoint,
+  FuelPriceTrendPoint,
+  FuelTypeDistributionRow,
+  FuelFrequencyByVehicleRow,
+  FuelCostDistributionBucket,
+  FuelHeatmapCell,
 };
 
 export { FUEL_PAYMENT_METHODS } from '@/shared/types/fuel.types';
+export type { FuelByDriverSort } from '@/shared/types/fuel-by-driver-sort';
 
 export type FuelTableFilters = FuelFilters;
 
@@ -41,7 +60,6 @@ export interface FuelColumnVisibility {
   payment_method: boolean;
   full_tank: boolean;
   notes: boolean;
-  // NEW
   driver: boolean;
 }
 

@@ -10,6 +10,15 @@ import {
   FuelPaymentMethod,
   FuelPaymentBreakdown,
   DriverFuelConsumptionRow,
+  FuelTrendGranularity,
+  VehicleFuelTimelinePoint,
+  FuelByStationRow,
+  FuelActivityTrendPoint,
+  FuelPriceTrendPoint,
+  FuelTypeDistributionRow,
+  FuelFrequencyByVehicleRow,
+  FuelCostDistributionBucket,
+  FuelHeatmapCell,
 } from '@/shared/types/fuel.types';
 import {
   PaginationParams,
@@ -30,19 +39,6 @@ interface VehiclePeriodAggregate {
 
 const ALL_PAYMENT_METHODS: FuelPaymentMethod[] = ['cash', 'fuel_card', 'credit_card', 'company_account', 'other'];
 
-/**
- * FIX (medium -- duplicated magic number): the "abnormal consumption"
- * multiplier used to be hardcoded separately as `avg * 2` inline in
- * getFuelKpis() and as the `threshold: number = 2` default parameter in
- * getAbnormalConsumption(). Two independent literals expressing the same
- * business rule will eventually drift if one gets tuned and the other
- * doesn't -- the KPI card and the abnormal-consumption list would then
- * silently disagree about what counts as anomalous. Single source of
- * truth now; getFuelKpis() uses this as its default and
- * getAbnormalConsumption() keeps accepting an explicit override (its
- * default also comes from here) so a caller-supplied threshold still
- * works for both.
- */
 export const DEFAULT_ABNORMAL_CONSUMPTION_MULTIPLIER = 2;
 
 export class FuelRepository extends BaseRepository<FuelLog> {
@@ -56,36 +52,103 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     );
   }
 
+  /** Shared tenant + date-range match stage builder used by every analytics aggregation below. */
+  private buildBaseMatch(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Record<string, unknown> {
+    const match: Record<string, unknown> = { isDeleted: { $ne: true } };
+    if (!this.isSuperAdminTenant(tenantId)) match.tenantId = tenantId;
+    if (dateRange?.startDate || dateRange?.endDate) {
+      match.date = {};
+      if (dateRange.startDate) (match.date as any).$gte = dateRange.startDate;
+      if (dateRange.endDate) (match.date as any).$lte = dateRange.endDate;
+    }
+    return match;
+  }
+
   /**
-   * NEW: batch-resolves driver_id -> {_id, name, driver_code} for a page
-   * of fuel logs in a single query (no N+1), and attaches it as `.driver`.
-   * Logs with no driver_id, or a driver_id that no longer resolves (soft
-   * deleted / dangling reference), are left with `driver` undefined --
-   * this is a display-only enrichment, never a hard failure.
+   * Single source of truth for period bucketing, shared by getFuelActivityTrend
+   * and getAverageFuelPriceTrend so the two charts can never disagree about
+   * what a "week"/"quarter" boundary is.
    */
-  private async enrichWithDrivers(logs: FuelLog[]): Promise<FuelLog[]> {
+  private buildPeriodExpr(granularity: FuelTrendGranularity): Record<string, unknown> {
+    switch (granularity) {
+      case 'week':
+        return { $dateToString: { format: '%G-W%V', date: '$date' } };
+      case 'quarter':
+        return {
+          $concat: [
+            { $toString: { $year: '$date' } },
+            '-Q',
+            { $toString: { $ceil: { $divide: [{ $month: '$date' }, 3] } } },
+          ],
+        };
+      case 'year':
+        return { $dateToString: { format: '%Y', date: '$date' } };
+      case 'month':
+      default:
+        return { $dateToString: { format: '%Y-%m', date: '$date' } };
+    }
+  }
+
+  private async enrichFuelLogs(logs: FuelLog[]): Promise<FuelLog[]> {
     const driverIds = Array.from(
       new Set(logs.map((l) => l.driver_id).filter((id): id is string => Boolean(id)))
     );
-    if (driverIds.length === 0) return logs;
+    const stationIds = Array.from(
+      new Set(logs.map((l) => l.fuel_station_id).filter((id): id is string => Boolean(id)))
+    );
 
-    const objectIds = driverIds
-      .filter((id) => ObjectId.isValid(id))
-      .map((id) => new ObjectId(id));
-    if (objectIds.length === 0) return logs;
+    if (driverIds.length === 0 && stationIds.length === 0) return logs;
 
     const db = await connectToDatabase();
-    const drivers = await db
-      .collection('tbldrivers')
-      .find({ _id: { $in: objectIds } }, { projection: { name: 1, driver_code: 1 } })
-      .toArray();
 
-    const driverMap = new Map(drivers.map((d) => [String(d._id), { _id: String(d._id), name: d.name as string, driver_code: d.driver_code as string | undefined }]));
+    const driverMap = new Map<string, { _id: string; name: string; driver_code?: string }>();
+    const validDriverObjectIds = driverIds.filter((id) => ObjectId.isValid(id)).map((id) => new ObjectId(id));
+    if (validDriverObjectIds.length > 0) {
+      const drivers = await db
+        .collection('tbldrivers')
+        .find({ _id: { $in: validDriverObjectIds } }, { projection: { name: 1, driver_code: 1 } })
+        .toArray();
+      for (const d of drivers) {
+        driverMap.set(String(d._id), {
+          _id: String(d._id),
+          name: d.name as string,
+          driver_code: d.driver_code as string | undefined,
+        });
+      }
+    }
+
+    const stationMap = new Map<string, { _id: string; name: string; brand?: string }>();
+    const validStationObjectIds = stationIds.filter((id) => ObjectId.isValid(id)).map((id) => new ObjectId(id));
+    if (validStationObjectIds.length > 0) {
+      const stations = await db
+        .collection('tblfuelstations')
+        .find({ _id: { $in: validStationObjectIds } }, { projection: { name: 1, brand: 1 } })
+        .toArray();
+      for (const s of stations) {
+        stationMap.set(String(s._id), {
+          _id: String(s._id),
+          name: s.name as string,
+          brand: s.brand as string | undefined,
+        });
+      }
+    }
+
+    if (driverMap.size === 0 && stationMap.size === 0) return logs;
 
     return logs.map((log) => {
-      if (!log.driver_id) return log;
-      const driver = driverMap.get(log.driver_id);
-      return driver ? { ...log, driver } : log;
+      let enriched = log;
+      if (log.driver_id) {
+        const driver = driverMap.get(log.driver_id);
+        if (driver) enriched = { ...enriched, driver };
+      }
+      if (log.fuel_station_id) {
+        const station = stationMap.get(log.fuel_station_id);
+        if (station) enriched = { ...enriched, fuel_station: station };
+      }
+      return enriched;
     });
   }
 
@@ -99,7 +162,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
       pagination,
       tenantId
     );
-    return { ...result, data: await this.enrichWithDrivers(result.data) };
+    return { ...result, data: await this.enrichFuelLogs(result.data) };
   }
 
   async getFilteredLogs(
@@ -116,7 +179,6 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     if (filters.payment_method) filter.payment_method = filters.payment_method;
     if (filters.fuel_station_id) filter.fuel_station_id = filters.fuel_station_id;
     if (filters.fuel_card_id) filter.fuel_card_id = filters.fuel_card_id;
-    // NEW: filter fuel logs by driver
     if (filters.driver_id) filter.driver_id = filters.driver_id;
     if (filters.startDate || filters.endDate) {
       filter.date = {};
@@ -125,14 +187,13 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     }
 
     const result = await this.findWithPagination(filter as Filter<FuelLog>, pagination, tenantId);
-    return { ...result, data: await this.enrichWithDrivers(result.data) };
+    return { ...result, data: await this.enrichFuelLogs(result.data) };
   }
 
-  /** Override so single-record reads (detail page, edit modal) also carry `driver`. */
   async findById(id: string, tenantId: string): Promise<FuelLog | null> {
     const log = await super.findById(id, tenantId);
     if (!log) return null;
-    const [enriched] = await this.enrichWithDrivers([log]);
+    const [enriched] = await this.enrichFuelLogs([log]);
     return enriched;
   }
 
@@ -141,17 +202,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     dateRange?: { startDate?: Date; endDate?: Date }
   ): Promise<FuelStats> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
-
-    const filter: Record<string, unknown> = {
-      isDeleted: { $ne: true },
-    };
-    if (!isSuperAdmin) {
-      filter.tenantId = tenantId;
-    }
-
-    if (dateRange?.startDate) (filter.date as any) = { $gte: dateRange.startDate };
-    if (dateRange?.endDate) filter.date = { ...(filter.date as any), $lte: dateRange.endDate };
+    const filter = this.buildBaseMatch(tenantId, dateRange);
 
     const pipeline = [
       { $match: filter },
@@ -216,17 +267,9 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     months: number = 12
   ): Promise<Array<{ month: string; fuel: number; cost: number }>> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
     const startDate = new Date();
     startDate.setMonth(startDate.getMonth() - months);
-
-    const matchStage: Record<string, unknown> = {
-      isDeleted: { $ne: true },
-      date: { $gte: startDate },
-    };
-    if (!isSuperAdmin) {
-      matchStage.tenantId = tenantId;
-    }
+    const matchStage = this.buildBaseMatch(tenantId, { startDate });
 
     const pipeline = [
       { $match: matchStage },
@@ -249,12 +292,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     limit: number = 5
   ): Promise<Array<{ license_plate: string; totalFuel: number; totalCost: number }>> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
-
-    const matchStage: Record<string, unknown> = { isDeleted: { $ne: true } };
-    if (!isSuperAdmin) {
-      matchStage.tenantId = tenantId;
-    }
+    const matchStage = this.buildBaseMatch(tenantId);
 
     const pipeline = [
       { $match: matchStage },
@@ -270,38 +308,26 @@ export class FuelRepository extends BaseRepository<FuelLog> {
       { $project: { license_plate: '$_id', totalFuel: 1, totalCost: 1, _id: 0 } },
     ];
 
-  return collection.aggregate(pipeline).toArray() as Promise<
+    return collection.aggregate(pipeline).toArray() as Promise<
   { license_plate: string; totalFuel: number; totalCost: number }[]
 >;
   }
 
   /**
-   * NEW: "Fuel Consumption by Driver" -- single aggregation pipeline
-   * (no N+1) that groups fuel logs by driver_id, sums volume/cost, and
-   * counts distinct vehicles per driver. Logs without a driver_id (all
-   * pre-existing records, plus any new record where driver is left
-   * blank) are grouped into a single "Unassigned" bucket rather than
-   * being dropped, so totals still reconcile against getFuelStats().
-   *
-   * Driver names are resolved in a second, single batched query against
-   * tbldrivers (not per-row), keeping this index-friendly and O(1)
-   * round trips regardless of fleet size.
+   * "Fuel Consumption by Driver" / "Fuel Cost by Driver" (enterprise spec #2)
+   * -- same aggregation, `sortBy` picks which figure ranks the result so we
+   * don't stand up a second near-identical pipeline for the dashboard's
+   * existing widget vs. the new enterprise chart.
    */
   async getFuelByDriver(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    limit: number = 10
+    limit: number = 10,
+    sortBy: 'volume' | 'cost' = 'volume'
   ): Promise<DriverFuelConsumptionRow[]> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
-
-    const matchStage: Record<string, unknown> = { isDeleted: { $ne: true } };
-    if (!isSuperAdmin) matchStage.tenantId = tenantId;
-    if (dateRange?.startDate || dateRange?.endDate) {
-      matchStage.date = {};
-      if (dateRange.startDate) (matchStage.date as any).$gte = dateRange.startDate;
-      if (dateRange.endDate) (matchStage.date as any).$lte = dateRange.endDate;
-    }
+    const matchStage = this.buildBaseMatch(tenantId, dateRange);
+    const sortField = sortBy === 'cost' ? 'totalCost' : 'totalFuel';
 
     const pipeline = [
       { $match: matchStage },
@@ -314,7 +340,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
           vehicles: { $addToSet: '$license_plate' },
         },
       },
-      { $sort: { totalFuel: -1 } },
+      { $sort: { [sortField]: -1 } },
       { $limit: limit },
     ];
 
@@ -348,18 +374,6 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     });
   }
 
-  /**
-   * FIX (medium -- fallback-derived distance not surfaced): previously
-   * computed `fallbackVehicleCount` (how many vehicles had zero/missing
-   * odometer data for the period and fell back to trip-derived
-   * distance) but discarded it before returning. The KPI response gave
-   * no signal that part of "total distance" -- and therefore
-   * "efficiency"/"cost per km" -- was estimated from trip logs rather
-   * than measured odometer deltas. Now returned on FuelKpis so the UI
-   * can show e.g. "3 vehicles estimated from trip logs" next to the
-   * efficiency card instead of presenting a blended figure as if it
-   * were uniformly odometer-derived.
-   */
   async getFuelKpis(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
@@ -367,7 +381,6 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     prevTripDistanceByVehicle?: Record<string, number>
   ): Promise<FuelKpis> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
     const now = new Date();
 
     const rangeEnd = dateRange?.endDate ?? now;
@@ -376,10 +389,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     const prevRangeEnd = new Date(rangeStart.getTime() - 1);
     const prevRangeStart = new Date(prevRangeEnd.getTime() - periodMs);
 
-    const baseMatch: Record<string, unknown> = { isDeleted: { $ne: true } };
-    if (!isSuperAdmin) {
-      baseMatch.tenantId = tenantId;
-    }
+    const baseMatch = this.buildBaseMatch(tenantId);
 
     const aggregateByVehicle = async (start: Date, end: Date): Promise<VehiclePeriodAggregate[]> => {
       const pipeline = [
@@ -484,12 +494,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     threshold: number = DEFAULT_ABNORMAL_CONSUMPTION_MULTIPLIER
   ): Promise<AbnormalFuelConsumptionRow[]> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
-
-    const matchStage: Record<string, unknown> = { isDeleted: { $ne: true } };
-    if (!isSuperAdmin) {
-      matchStage.tenantId = tenantId;
-    }
+    const matchStage = this.buildBaseMatch(tenantId);
 
     const pipeline = [
       { $match: matchStage },
@@ -520,6 +525,269 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     return rows
       .sort((a, b) => new Date(b.date as string).getTime() - new Date(a.date as string).getTime())
       .slice(0, 50);
+  }
+
+  // ------------------------------------------------------------------
+  // Enterprise analytics additions (Fuel Analytics Enhancement)
+  // ------------------------------------------------------------------
+
+  /** #1 Vehicle Fuel Activity Timeline -- entries per day, optionally scoped to one vehicle. */
+  async getVehicleFuelTimeline(
+    tenantId: string,
+    filters: { license_plate?: string; startDate?: Date; endDate?: Date }
+  ): Promise<VehicleFuelTimelinePoint[]> {
+    const collection = await this.getCollection();
+    const matchStage = this.buildBaseMatch(tenantId, filters);
+    if (filters.license_plate) {
+      matchStage.license_plate = filters.license_plate.toUpperCase();
+    }
+
+    const pipeline = [
+      { $match: matchStage },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$date' } },
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ];
+
+    const results = await collection.aggregate(pipeline).toArray();
+    return results.map((r) => ({ date: r._id, count: r.count }));
+  }
+
+  /**
+   * #4 Fuel Spend by Station + #8 Top Fuel Stations -- one grouped
+   * aggregation keyed by fuel_station_id (falling back to the free-text
+   * station_name for unregistered entries), resolving registered station
+   * names in a single batched follow-up query. Callers sort the returned
+   * rows by totalSpend or visits depending on which chart is rendering.
+   */
+  async getFuelByStation(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date },
+    limit: number = 15
+  ): Promise<FuelByStationRow[]> {
+    const collection = await this.getCollection();
+    const matchStage = this.buildBaseMatch(tenantId, dateRange);
+
+    const pipeline = [
+      { $match: matchStage },
+      {
+        $group: {
+          _id: { $ifNull: ['$fuel_station_id', { $ifNull: ['$station_name', 'Unknown station'] }] },
+          isRegistered: { $max: { $cond: [{ $ifNull: ['$fuel_station_id', false] }, true, false] } },
+          fallbackName: { $first: '$station_name' },
+          totalSpend: { $sum: '$cost' },
+          totalLitres: { $sum: '$fuel_volume' },
+          visits: { $sum: 1 },
+        },
+      },
+      { $sort: { totalSpend: -1 } },
+      { $limit: Math.max(limit, 50) }, // fetch a wider pool so callers can re-sort by visits client-side
+    ];
+
+    const grouped = await collection.aggregate(pipeline).toArray();
+
+    const stationIds = grouped
+      .filter((g) => g.isRegistered && ObjectId.isValid(g._id))
+      .map((g) => new ObjectId(g._id));
+
+    let stationNameMap = new Map<string, string>();
+    if (stationIds.length > 0) {
+      const db = await connectToDatabase();
+      const stations = await db
+        .collection('tblfuelstations')
+        .find({ _id: { $in: stationIds } }, { projection: { name: 1 } })
+        .toArray();
+      stationNameMap = new Map(stations.map((s) => [String(s._id), s.name as string]));
+    }
+
+    return grouped.map((g) => ({
+      station_id: g.isRegistered ? String(g._id) : null,
+      stationName: g.isRegistered
+        ? stationNameMap.get(String(g._id)) ?? 'Unknown station'
+        : (g.fallbackName as string) || 'Unregistered station',
+      totalSpend: Math.round(g.totalSpend * 100) / 100,
+      totalLitres: Math.round(g.totalLitres * 100) / 100,
+      visits: g.visits,
+    }));
+  }
+
+  /** #3 Fuel Activity Trend -- entries (bar) + volume/cost/avg-price (switchable line), by period. */
+  async getFuelActivityTrend(
+    tenantId: string,
+    granularity: FuelTrendGranularity,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<FuelActivityTrendPoint[]> {
+    const collection = await this.getCollection();
+    const matchStage = this.buildBaseMatch(tenantId, dateRange);
+
+    const pipeline = [
+      { $match: matchStage },
+      {
+        $group: {
+          _id: this.buildPeriodExpr(granularity),
+          entries: { $sum: 1 },
+          volume: { $sum: '$fuel_volume' },
+          cost: { $sum: '$cost' },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ];
+
+    const results = await collection.aggregate(pipeline).toArray();
+    return results.map((r) => ({
+      period: r._id,
+      entries: r.entries,
+      volume: Math.round(r.volume * 100) / 100,
+      cost: Math.round(r.cost * 100) / 100,
+      avgCostPerLitre: r.volume > 0 ? Math.round((r.cost / r.volume) * 100) / 100 : 0,
+    }));
+  }
+
+  /** #5 Average Fuel Price Trend -- weighted (totalCost/totalVolume) average per period. */
+  async getAverageFuelPriceTrend(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date },
+    granularity: FuelTrendGranularity = 'month'
+  ): Promise<FuelPriceTrendPoint[]> {
+    const collection = await this.getCollection();
+    const matchStage = this.buildBaseMatch(tenantId, dateRange);
+
+    const pipeline = [
+      { $match: { ...matchStage, fuel_volume: { $gt: 0 } } },
+      {
+        $group: {
+          _id: this.buildPeriodExpr(granularity),
+          totalCost: { $sum: '$cost' },
+          totalVolume: { $sum: '$fuel_volume' },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ];
+
+    const results = await collection.aggregate(pipeline).toArray();
+    return results.map((r) => ({
+      period: r._id,
+      avgCostPerLitre: r.totalVolume > 0 ? Math.round((r.totalCost / r.totalVolume) * 100) / 100 : 0,
+    }));
+  }
+
+  /** #6 Fuel Type Distribution -- litres/cost/percentage per fuel_type. */
+  async getFuelTypeDistribution(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<FuelTypeDistributionRow[]> {
+    const collection = await this.getCollection();
+    const matchStage = this.buildBaseMatch(tenantId, dateRange);
+
+    const pipeline = [
+      { $match: matchStage },
+      {
+        $group: {
+          _id: { $ifNull: ['$fuel_type', 'unspecified'] },
+          litres: { $sum: '$fuel_volume' },
+          cost: { $sum: '$cost' },
+        },
+      },
+    ];
+
+    const results = await collection.aggregate(pipeline).toArray();
+    const totalLitres = results.reduce((sum, r) => sum + r.litres, 0);
+
+    return results
+      .map((r) => ({
+        fuelType: r._id as string,
+        litres: Math.round(r.litres * 100) / 100,
+        cost: Math.round(r.cost * 100) / 100,
+        percentage: totalLitres > 0 ? Math.round((r.litres / totalLitres) * 1000) / 10 : 0,
+      }))
+      .sort((a, b) => b.litres - a.litres);
+  }
+
+  /** #7 Fueling Frequency by Vehicle -- entry count per license plate. */
+  async getFuelingFrequencyByVehicle(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date },
+    limit: number = 20
+  ): Promise<FuelFrequencyByVehicleRow[]> {
+    const collection = await this.getCollection();
+    const matchStage = this.buildBaseMatch(tenantId, dateRange);
+
+    const pipeline = [
+      { $match: matchStage },
+      { $group: { _id: '$license_plate', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: limit },
+      { $project: { license_plate: '$_id', count: 1, _id: 0 } },
+    ];
+
+    return collection.aggregate(pipeline).toArray() as Promise<FuelFrequencyByVehicleRow[]>;
+  }
+
+  /** #9 Fuel Cost Distribution -- histogram buckets via $bucketAuto (server picks even boundaries). */
+  async getFuelCostDistribution(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<FuelCostDistributionBucket[]> {
+    const collection = await this.getCollection();
+    const matchStage = this.buildBaseMatch(tenantId, dateRange);
+
+    const count = await collection.countDocuments(matchStage as Filter<FuelLog>);
+    if (count === 0) return [];
+
+    const bucketCount = Math.min(8, count);
+    const pipeline = [
+      { $match: matchStage },
+      {
+        $bucketAuto: {
+          groupBy: '$cost',
+          buckets: bucketCount,
+          output: { count: { $sum: 1 } },
+        },
+      },
+    ];
+
+    const results = await collection.aggregate(pipeline).toArray();
+    return results.map((r) => ({
+      min: Math.round((r._id.min ?? 0) * 100) / 100,
+      max: Math.round((r._id.max ?? 0) * 100) / 100,
+      count: r.count,
+    }));
+  }
+
+  /**
+   * #10 Fuel Entry Heatmap -- day-of-week x hour-of-day entry counts.
+   * Note: entries logged via the date-only form input default to midnight,
+   * so the hour dimension is only meaningful for records that carry a real
+   * timestamp (e.g. imported data with full datetimes).
+   */
+  async getFuelEntryHeatmap(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<FuelHeatmapCell[]> {
+    const collection = await this.getCollection();
+    const matchStage = this.buildBaseMatch(tenantId, dateRange);
+
+    const pipeline = [
+      { $match: matchStage },
+      {
+        $group: {
+          _id: { dayOfWeek: { $dayOfWeek: '$date' }, hour: { $hour: '$date' } },
+          count: { $sum: 1 },
+        },
+      },
+    ];
+
+    const results = await collection.aggregate(pipeline).toArray();
+    // Mongo $dayOfWeek: 1=Sunday..7=Saturday -> normalize to 0=Sunday..6=Saturday
+    return results.map((r) => ({
+      dayOfWeek: r._id.dayOfWeek - 1,
+      hour: r._id.hour,
+      count: r.count,
+    }));
   }
 }
 

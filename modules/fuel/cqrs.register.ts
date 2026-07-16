@@ -20,6 +20,14 @@ import { GetTopFuelConsumersQuery } from './queries/get-top-fuel-consumers.query
 import { GetFuelKpisQuery } from './queries/get-fuel-kpis.query';
 import { GetAbnormalFuelConsumptionQuery } from './queries/get-abnormal-fuel-consumption.query';
 import { GetFuelByDriverQuery } from './queries/get-fuel-by-driver.query';
+import { GetVehicleFuelTimelineQuery } from './queries/get-vehicle-fuel-timeline.query';
+import { GetFuelByStationQuery } from './queries/get-fuel-by-station.query';
+import { GetFuelActivityTrendQuery } from './queries/get-fuel-activity-trend.query';
+import { GetAverageFuelPriceTrendQuery } from './queries/get-average-fuel-price-trend.query';
+import { GetFuelTypeDistributionQuery } from './queries/get-fuel-type-distribution.query';
+import { GetFuelingFrequencyByVehicleQuery } from './queries/get-fueling-frequency-by-vehicle.query';
+import { GetFuelCostDistributionQuery } from './queries/get-fuel-cost-distribution.query';
+import { GetFuelEntryHeatmapQuery } from './queries/get-fuel-entry-heatmap.query';
 
 import { GetFuelLogsHandler } from './queries/handlers/get-fuel-logs.handler';
 import { GetFuelLogByIdHandler } from './queries/handlers/get-fuel-log-by-id.handler';
@@ -29,6 +37,14 @@ import { GetTopFuelConsumersHandler } from './queries/handlers/get-top-fuel-cons
 import { GetFuelKpisHandler } from './queries/handlers/get-fuel-kpis.handler';
 import { GetAbnormalFuelConsumptionHandler } from './queries/handlers/get-abnormal-fuel-consumption.handler';
 import { GetFuelByDriverHandler } from './queries/handlers/get-fuel-by-driver.handler';
+import { GetVehicleFuelTimelineHandler } from './queries/handlers/get-vehicle-fuel-timeline.handler';
+import { GetFuelByStationHandler } from './queries/handlers/get-fuel-by-station.handler';
+import { GetFuelActivityTrendHandler } from './queries/handlers/get-fuel-activity-trend.handler';
+import { GetAverageFuelPriceTrendHandler } from './queries/handlers/get-average-fuel-price-trend.handler';
+import { GetFuelTypeDistributionHandler } from './queries/handlers/get-fuel-type-distribution.handler';
+import { GetFuelingFrequencyByVehicleHandler } from './queries/handlers/get-fueling-frequency-by-vehicle.handler';
+import { GetFuelCostDistributionHandler } from './queries/handlers/get-fuel-cost-distribution.handler';
+import { GetFuelEntryHeatmapHandler } from './queries/handlers/get-fuel-entry-heatmap.handler';
 
 export function registerFuelCqrsHandlers(
   commandBus: CommandBus,
@@ -47,6 +63,18 @@ export function registerFuelCqrsHandlers(
   queryBus.register(GetTopFuelConsumersQuery, new GetTopFuelConsumersHandler(fuelRepository));
   queryBus.register(GetFuelKpisQuery, new GetFuelKpisHandler(fuelRepository));
   queryBus.register(GetAbnormalFuelConsumptionQuery, new GetAbnormalFuelConsumptionHandler(fuelRepository));
-  // NEW
   queryBus.register(GetFuelByDriverQuery, new GetFuelByDriverHandler(fuelRepository));
+
+  // NEW -- enterprise analytics
+  queryBus.register(GetVehicleFuelTimelineQuery, new GetVehicleFuelTimelineHandler(fuelRepository));
+  queryBus.register(GetFuelByStationQuery, new GetFuelByStationHandler(fuelRepository));
+  queryBus.register(GetFuelActivityTrendQuery, new GetFuelActivityTrendHandler(fuelRepository));
+  queryBus.register(GetAverageFuelPriceTrendQuery, new GetAverageFuelPriceTrendHandler(fuelRepository));
+  queryBus.register(GetFuelTypeDistributionQuery, new GetFuelTypeDistributionHandler(fuelRepository));
+  queryBus.register(
+    GetFuelingFrequencyByVehicleQuery,
+    new GetFuelingFrequencyByVehicleHandler(fuelRepository)
+  );
+  queryBus.register(GetFuelCostDistributionQuery, new GetFuelCostDistributionHandler(fuelRepository));
+  queryBus.register(GetFuelEntryHeatmapQuery, new GetFuelEntryHeatmapHandler(fuelRepository));
 }

@@ -16,6 +16,15 @@ export {
   FuelStatsCards,
   FuelMonthlyTrendChart,
   FuelTopConsumersChart,
+  VehicleFuelActivityTimelineChart,
+  FuelCostByDriverChart,
+  FuelActivityTrendChart,
+  FuelByStationChart,
+  AverageFuelPriceTrendChart,
+  FuelTypeDistributionChart,
+  FuelFrequencyByVehicleChart,
+  FuelCostDistributionChart,
+  FuelEntryHeatmapChart,
 } from './components';
 export type { FuelModalMode } from './components';
 

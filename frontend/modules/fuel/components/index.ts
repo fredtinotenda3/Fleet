@@ -10,3 +10,15 @@ export { AbnormalConsumptionWidget } from './AbnormalConsumptionWidget';
 export { FuelMonthlyTrendChart } from './FuelMonthlyTrendChart';
 export { FuelTopConsumersChart } from './FuelTopConsumersChart';
 export { FuelImportModal } from './FuelImportModal';
+
+// Enterprise analytics
+export { FuelAnalyticsFilterBar, type FuelAnalyticsDateRange } from './FuelAnalyticsFilterBar';
+export { VehicleFuelActivityTimelineChart } from './VehicleFuelActivityTimelineChart';
+export { FuelCostByDriverChart } from './FuelCostByDriverChart';
+export { FuelActivityTrendChart } from './FuelActivityTrendChart';
+export { FuelByStationChart } from './FuelByStationChart';
+export { AverageFuelPriceTrendChart } from './AverageFuelPriceTrendChart';
+export { FuelTypeDistributionChart } from './FuelTypeDistributionChart';
+export { FuelFrequencyByVehicleChart } from './FuelFrequencyByVehicleChart';
+export { FuelCostDistributionChart } from './FuelCostDistributionChart';
+export { FuelEntryHeatmapChart } from './FuelEntryHeatmapChart';

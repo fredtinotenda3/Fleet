@@ -32,6 +32,7 @@ import { SECURITY_INDEXES } from './indexes.security-addendum';
 import { BILLING_INDEXES } from './indexes.billing-addendum';
 import { DRIVER_INDEXES } from './indexes.drivers-addendum';
 import { FUEL_DRIVER_INDEXES } from './indexes.fuel-driver-addendum';
+import { FUEL_ANALYTICS_INDEXES } from './indexes.fuel-analytics-addendum';
 import { REPORTING_INDEXES } from './indexes.reporting-addendum';
 import { RULES_INDEXES } from './indexes.rules-addendum';
 import { TELEMATICS_INDEXES } from './indexes.telematics-addendum';
@@ -420,6 +421,7 @@ export const INDEXES = {
   tblfuellogs: [
     ...BASE_INDEXES.tblfuellogs,
     ...FUEL_DRIVER_INDEXES.tblfuellogs,
+    ...FUEL_ANALYTICS_INDEXES.tblfuellogs,
   ],
 } as const;
 

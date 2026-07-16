@@ -11,6 +11,16 @@ import type {
   MonthlyFuelConsumptionPoint,
   TopFuelConsumerRow,
   DriverFuelConsumptionRow,
+  FuelByDriverSort,
+  FuelTrendGranularity,
+  VehicleFuelTimelinePoint,
+  FuelByStationRow,
+  FuelActivityTrendPoint,
+  FuelPriceTrendPoint,
+  FuelTypeDistributionRow,
+  FuelFrequencyByVehicleRow,
+  FuelCostDistributionBucket,
+  FuelHeatmapCell,
 } from '../types';
 import type { FuelFormOutput } from '../schemas';
 
@@ -26,10 +36,12 @@ export interface FuelImportRowResult {
   success: boolean;
   identifier?: string;
   error?: string;
+  /** True when the row was skipped as a duplicate rather than failing validation. */
+  duplicate?: boolean;
 }
 
 export interface FuelImportResponse {
-  summary: { total: number; succeeded: number; failed: number };
+  summary: { total: number; succeeded: number; duplicates: number; failed: number };
   results: FuelImportRowResult[];
 }
 
@@ -45,12 +57,18 @@ function buildListQuery(params: Partial<FuelListParams>) {
     payment_method: params.payment_method,
     fuel_station_id: params.fuel_station_id,
     fuel_card_id: params.fuel_card_id,
-    // NEW
     driver_id: params.driver_id,
     start: toIso(params.startDate),
     end: toIso(params.endDate),
     page: params.page,
     limit: params.limit,
+  };
+}
+
+function buildRangeParams(dateRange?: { startDate?: Date; endDate?: Date }) {
+  return {
+    startDate: dateRange?.startDate ? dateRange.startDate.toISOString() : undefined,
+    endDate: dateRange?.endDate ? dateRange.endDate.toISOString() : undefined,
   };
 }
 
@@ -76,17 +94,11 @@ export const fuelApi = {
   },
 
   async getStats(dateRange?: { startDate?: Date; endDate?: Date }): Promise<FuelStats> {
-    const params: Record<string, string | undefined> = { action: 'stats' };
-    if (dateRange?.startDate) params.startDate = dateRange.startDate.toISOString();
-    if (dateRange?.endDate) params.endDate = dateRange.endDate.toISOString();
-    return apiClient.get<FuelStats>(BASE, { params });
+    return apiClient.get<FuelStats>(BASE, { params: { action: 'stats', ...buildRangeParams(dateRange) } });
   },
 
   async getKpis(dateRange?: { startDate?: Date; endDate?: Date }): Promise<FuelKpis> {
-    const params: Record<string, string | undefined> = { action: 'kpis' };
-    if (dateRange?.startDate) params.startDate = dateRange.startDate.toISOString();
-    if (dateRange?.endDate) params.endDate = dateRange.endDate.toISOString();
-    return apiClient.get<FuelKpis>(BASE, { params });
+    return apiClient.get<FuelKpis>(BASE, { params: { action: 'kpis', ...buildRangeParams(dateRange) } });
   },
 
   async getAbnormalConsumption(threshold: number = 2): Promise<AbnormalFuelConsumptionRow[]> {
@@ -101,15 +113,14 @@ export const fuelApi = {
     return apiClient.get<TopFuelConsumerRow[]>(BASE, { params: { action: 'top-consumers', limit } });
   },
 
-  /** NEW: powers the Fuel-by-Driver dashboard chart. */
   async getByDriver(
     dateRange?: { startDate?: Date; endDate?: Date },
-    limit: number = 10
+    limit: number = 10,
+    sortBy: FuelByDriverSort = 'volume'
   ): Promise<DriverFuelConsumptionRow[]> {
-    const params: Record<string, string | number | undefined> = { action: 'by-driver', limit };
-    if (dateRange?.startDate) params.startDate = dateRange.startDate.toISOString();
-    if (dateRange?.endDate) params.endDate = dateRange.endDate.toISOString();
-    return apiClient.get<DriverFuelConsumptionRow[]>(BASE, { params });
+    return apiClient.get<DriverFuelConsumptionRow[]>(BASE, {
+      params: { action: 'by-driver', limit, sortBy, ...buildRangeParams(dateRange) },
+    });
   },
 
   async uploadReceipt(file: File): Promise<{ url: string }> {
@@ -124,7 +135,87 @@ export const fuelApi = {
   },
 
   async importLogs(records: Record<string, unknown>[]): Promise<FuelImportResponse> {
-    return apiClient.post<FuelImportResponse>(`${BASE}/import`, { records });
+    // FIX: this call was using apiClient's default 30000ms timeout, so the
+    // browser aborted the fetch (surfacing as "Request timeout") right as
+    // the server was still working through the batch -- the server itself
+    // finished fine (see the `200 in 30390ms` log), the client just wasn't
+    // waiting long enough. Import is a bulk op scaling with row count
+    // (MAX_IMPORT_ROWS = 2000), so it needs its own generous timeout.
+    return apiClient.post<FuelImportResponse>(`${BASE}/import`, { records }, { timeout: 180_000 });
+  },
+
+  // ---- Enterprise analytics ----
+
+  async getVehicleFuelTimeline(params: {
+    license_plate?: string;
+    startDate?: Date;
+    endDate?: Date;
+  }): Promise<VehicleFuelTimelinePoint[]> {
+    return apiClient.get<VehicleFuelTimelinePoint[]>(BASE, {
+      params: {
+        action: 'vehicle-timeline',
+        license_plate: params.license_plate,
+        ...buildRangeParams(params),
+      },
+    });
+  },
+
+  async getFuelByStation(
+    dateRange?: { startDate?: Date; endDate?: Date },
+    limit: number = 15
+  ): Promise<FuelByStationRow[]> {
+    return apiClient.get<FuelByStationRow[]>(BASE, {
+      params: { action: 'by-station', limit, ...buildRangeParams(dateRange) },
+    });
+  },
+
+  async getFuelActivityTrend(
+    granularity: FuelTrendGranularity,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<FuelActivityTrendPoint[]> {
+    return apiClient.get<FuelActivityTrendPoint[]>(BASE, {
+      params: { action: 'activity-trend', granularity, ...buildRangeParams(dateRange) },
+    });
+  },
+
+  async getAverageFuelPriceTrend(
+    dateRange?: { startDate?: Date; endDate?: Date },
+    granularity: FuelTrendGranularity = 'month'
+  ): Promise<FuelPriceTrendPoint[]> {
+    return apiClient.get<FuelPriceTrendPoint[]>(BASE, {
+      params: { action: 'price-trend', granularity, ...buildRangeParams(dateRange) },
+    });
+  },
+
+  async getFuelTypeDistribution(
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<FuelTypeDistributionRow[]> {
+    return apiClient.get<FuelTypeDistributionRow[]>(BASE, {
+      params: { action: 'type-distribution', ...buildRangeParams(dateRange) },
+    });
+  },
+
+  async getFuelingFrequencyByVehicle(
+    dateRange?: { startDate?: Date; endDate?: Date },
+    limit: number = 20
+  ): Promise<FuelFrequencyByVehicleRow[]> {
+    return apiClient.get<FuelFrequencyByVehicleRow[]>(BASE, {
+      params: { action: 'frequency-by-vehicle', limit, ...buildRangeParams(dateRange) },
+    });
+  },
+
+  async getFuelCostDistribution(
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<FuelCostDistributionBucket[]> {
+    return apiClient.get<FuelCostDistributionBucket[]>(BASE, {
+      params: { action: 'cost-distribution', ...buildRangeParams(dateRange) },
+    });
+  },
+
+  async getFuelEntryHeatmap(dateRange?: { startDate?: Date; endDate?: Date }): Promise<FuelHeatmapCell[]> {
+    return apiClient.get<FuelHeatmapCell[]>(BASE, {
+      params: { action: 'heatmap', ...buildRangeParams(dateRange) },
+    });
   },
 };
 
