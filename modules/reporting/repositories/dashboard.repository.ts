@@ -1,15 +1,19 @@
 // modules/reporting/repositories/dashboard.repository.ts
+//
+// FIX (Consistency/drift-prevention): replaced the locally-duplicated
+// isSuperAdminTenant() with base.repository.ts's exported
+// isPlatformSentinelTenant(), the single source of truth introduced
+// specifically to prevent the kind of tenant-scope drift documented in
+// that file's own comments (a real prior bug where dashboard stats and
+// list pages disagreed on what "see everything" meant because the
+// sentinel set was defined independently in multiple repositories).
 
 import { Filter } from 'mongodb';
-import { BaseRepository } from '@/server/repositories/base.repository';
+import { BaseRepository, isPlatformSentinelTenant } from '@/server/repositories/base.repository';
 import { Dashboard } from '../types/dashboard.types';
 
 export class DashboardRepository extends BaseRepository<Dashboard> {
   protected collectionName = 'tbldashboards';
-
-  private isSuperAdminTenant(tenantId: string): boolean {
-    return tenantId === 'default' || tenantId === 'system' || tenantId === 'super_admin';
-  }
 
   async findByOrganization(tenantId: string): Promise<Dashboard[]> {
     return this.findMany(
@@ -17,7 +21,7 @@ export class DashboardRepository extends BaseRepository<Dashboard> {
       tenantId,
       { sortBy: 'createdAt', sortOrder: 'desc' },
       false,
-      this.isSuperAdminTenant(tenantId)
+      isPlatformSentinelTenant(tenantId)
     );
   }
 
@@ -27,7 +31,7 @@ export class DashboardRepository extends BaseRepository<Dashboard> {
       tenantId,
       {},
       false,
-      this.isSuperAdminTenant(tenantId)
+      isPlatformSentinelTenant(tenantId)
     );
   }
 }

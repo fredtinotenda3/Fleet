@@ -60,13 +60,23 @@ export function useExportJobs() {
     withId(e as { _id?: string; id?: string }),
   ) as unknown as ReportExecutionLike[];
 
+  // FIX (Critical — pager silently disappeared past 20 executions):
+  // apiClient.handleResponse() unwraps a paginated envelope as
+  // `{ data, pagination: { page, limit, total, totalPages } }` (see
+  // shared/utils/api-client.utils.ts). This previously read `total`/
+  // `totalCount` off the *top level* of jobsQuery.data, which never
+  // exists there — it always fell through to `executions.length`
+  // (≤ PAGE_SIZE), so totalPages was always 1 and the "Page X of Y"
+  // controls in ExportJobsTable never rendered for any tenant with
+  // more than one page of export history, even though the backend
+  // (report-execution.controller.ts#list -> paginatedResponse) already
+  // returns correct pagination metadata.
+  const paginationMeta = (jobsQuery.data as { pagination?: { total?: number; totalPages?: number } } | undefined)
+    ?.pagination;
   const totalPages = Math.max(
     1,
-    Math.ceil(
-      (((jobsQuery.data as { total?: number; totalCount?: number } | undefined)?.total ??
-        (jobsQuery.data as { totalCount?: number } | undefined)?.totalCount ??
-        executions.length) as number) / PAGE_SIZE,
-    ),
+    paginationMeta?.totalPages ??
+      Math.ceil((paginationMeta?.total ?? executions.length) / PAGE_SIZE),
   );
 
   return {

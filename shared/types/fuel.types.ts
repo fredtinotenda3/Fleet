@@ -140,8 +140,10 @@ export type FuelTrendGranularity = 'week' | 'month' | 'quarter' | 'year';
 
 /** #1 Vehicle Fuel Activity Timeline */
 export interface VehicleFuelTimelinePoint {
-  date: string;
-  count: number;
+   date: string;
+   count: number;
+   volume: number;
+   cost: number;
 }
 
 /** #4 Fuel Spend by Station / #8 Top Fuel Stations (same source, sorted differently) */
@@ -180,6 +182,8 @@ export interface FuelTypeDistributionRow {
 export interface FuelFrequencyByVehicleRow {
   license_plate: string;
   count: number;
+  totalVolume: number;
+  totalCost: number;
 }
 
 /** #9 Fuel Cost Distribution (histogram) */

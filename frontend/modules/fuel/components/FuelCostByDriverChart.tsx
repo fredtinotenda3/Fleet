@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 // frontend/modules/fuel/components/FuelCostByDriverChart.tsx
 // Enterprise analytics #2 -- reuses useFuelByDriver (sortBy='cost')
 // rather than a separate query, matching FuelRepository.getFuelByDriver.
@@ -10,11 +9,34 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/fro
 import { useFuelByDriver } from '../hooks/useFuel';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { FuelAnalyticsDateRange } from './FuelAnalyticsFilterBar';
+import type { DriverFuelConsumptionRow } from '../types';
 
 const BAR_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)'];
 
 interface FuelCostByDriverChartProps {
   dateRange: FuelAnalyticsDateRange;
+}
+
+function DriverCostTooltip({ active, payload }: any) {
+  if (!active || !payload || !payload.length) return null;
+  const row = payload[0].payload as DriverFuelConsumptionRow;
+  return (
+    <div
+      style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 }}
+      className="p-2.5 space-y-0.5"
+    >
+      <p className="text-sm font-medium">{row.driverName}</p>
+      <p className="text-xs text-muted-foreground">
+        Total cost: <span className="font-medium text-foreground">{formatCurrency(row.totalCost)}</span>
+      </p>
+      <p className="text-xs text-muted-foreground">
+        Total volume: <span className="font-medium text-foreground">{row.totalFuel.toFixed(1)} L</span>
+      </p>
+      <p className="text-xs text-muted-foreground">
+        Fuel entries: <span className="font-medium text-foreground">{row.logCount}</span>
+      </p>
+    </div>
+  );
 }
 
 export function FuelCostByDriverChart({ dateRange }: FuelCostByDriverChartProps) {
@@ -38,16 +60,7 @@ export function FuelCostByDriverChart({ dateRange }: FuelCostByDriverChartProps)
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
                 <XAxis type="number" stroke="var(--muted-foreground)" fontSize={11} tickFormatter={(v) => formatCurrency(v)} />
                 <YAxis type="category" dataKey="driverName" stroke="var(--muted-foreground)" fontSize={11} width={120} />
-                <Tooltip<number, string>
-                  contentStyle={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 }}
-                  formatter={(value: number, name: string, props) => [
-                    name === 'totalCost'
-                      ? formatCurrency(value)
-                      : `${value.toFixed(1)} L`,
-                    name === 'totalCost' ? 'Total cost' : 'Total litres',
-                  ]}
-                  labelFormatter={(_, payload) => payload?.[0]?.payload?.driverName ?? ''}
-                />
+                <Tooltip content={<DriverCostTooltip />} />
                 <Bar dataKey="totalCost" radius={[0, 4, 4, 0]}>
                   {data.map((_, i) => (
                     <Cell key={i} fill={BAR_COLORS[i % BAR_COLORS.length]} />

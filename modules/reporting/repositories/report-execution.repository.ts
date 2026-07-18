@@ -1,16 +1,14 @@
 // modules/reporting/repositories/report-execution.repository.ts
+//
+// FIX (Consistency/drift-prevention): same rationale as dashboard.repository.ts.
 
 import { Filter, ObjectId } from 'mongodb';
-import { BaseRepository } from '@/server/repositories/base.repository';
+import { BaseRepository, isPlatformSentinelTenant } from '@/server/repositories/base.repository';
 import { ReportExecution, ExecutionStatus } from '../types/report-execution.types';
 import { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
 
 export class ReportExecutionRepository extends BaseRepository<ReportExecution> {
   protected collectionName = 'tblreportexecutions';
-
-  private isSuperAdminTenant(tenantId: string): boolean {
-    return tenantId === 'default' || tenantId === 'system' || tenantId === 'super_admin';
-  }
 
   async findByOrganization(
     tenantId: string,
@@ -21,7 +19,7 @@ export class ReportExecutionRepository extends BaseRepository<ReportExecution> {
       pagination,
       tenantId,
       false,
-      this.isSuperAdminTenant(tenantId)
+      isPlatformSentinelTenant(tenantId)
     );
   }
 
@@ -43,7 +41,7 @@ export class ReportExecutionRepository extends BaseRepository<ReportExecution> {
       { status, ...extra } as Partial<Omit<ReportExecution, '_id' | 'tenantId' | 'createdAt' | 'createdBy'>>,
       tenantId,
       undefined,
-      this.isSuperAdminTenant(tenantId)
+      isPlatformSentinelTenant(tenantId)
     );
   }
 
@@ -51,7 +49,7 @@ export class ReportExecutionRepository extends BaseRepository<ReportExecution> {
     if (!ObjectId.isValid(id)) return;
     const collection = await this.getCollection();
     const filter: Record<string, unknown> = { _id: new ObjectId(id) };
-    if (!this.isSuperAdminTenant(tenantId)) filter.tenantId = tenantId;
+    if (!isPlatformSentinelTenant(tenantId)) filter.tenantId = tenantId;
 
     await collection.updateOne(filter as Filter<ReportExecution>, {
       $inc: { downloadCount: 1 },

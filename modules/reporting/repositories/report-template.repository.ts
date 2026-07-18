@@ -1,15 +1,13 @@
 // modules/reporting/repositories/report-template.repository.ts
+//
+// FIX (Consistency/drift-prevention): same rationale as dashboard.repository.ts.
 
 import { Filter } from 'mongodb';
-import { BaseRepository } from '@/server/repositories/base.repository';
+import { BaseRepository, isPlatformSentinelTenant } from '@/server/repositories/base.repository';
 import { ReportTemplate, ReportTemplateCreateDTO } from '../types/report-template.types';
 
 export class ReportTemplateRepository extends BaseRepository<ReportTemplate> {
   protected collectionName = 'tblreporttemplates';
-
-  private isSuperAdminTenant(tenantId: string): boolean {
-    return tenantId === 'default' || tenantId === 'system' || tenantId === 'super_admin';
-  }
 
   /**
    * System templates (tenantId 'system', isSystemTemplate: true) are
@@ -20,7 +18,7 @@ export class ReportTemplateRepository extends BaseRepository<ReportTemplate> {
    */
   async findVisibleTo(tenantId: string): Promise<ReportTemplate[]> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+    const isSuperAdmin = isPlatformSentinelTenant(tenantId);
 
     const filter: Record<string, unknown> = isSuperAdmin
       ? { isDeleted: { $ne: true } }

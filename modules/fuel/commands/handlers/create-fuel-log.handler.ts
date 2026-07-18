@@ -8,6 +8,7 @@ import { FuelLog } from '@/shared/types/fuel.types';
 import { ValidationError, AppError } from '@/server/errors/app.errors';
 import { validateWithZod } from '@/shared/utils/validation.utils';
 import connectToDatabase from '@/infrastructure/database/mongodb';
+import { ObjectId } from 'mongodb';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { FuelLoggedEvent } from '@/modules/fuel/events/FuelLoggedEvent';
 import { monitoring } from '@/infrastructure/monitoring/logger';
@@ -67,8 +68,17 @@ export class CreateFuelLogHandler implements ICommandHandler<CreateFuelLogComman
     }
 
     if (validated.fuel_station_id) {
+      // FIX: fuel_station_id arrives as a string from validation, but
+      // tblfuelstations._id is a real ObjectId. The raw driver never
+      // auto-casts, so this lookup previously always missed for a
+      // genuinely registered station -- every create with a station
+      // selected from the dropdown incorrectly 400'd as "not found".
+      const stationIdStr = String(validated.fuel_station_id);
+      if (!ObjectId.isValid(stationIdStr)) {
+        throw new AppError('Selected fuel station was not found', 'FUEL_STATION_NOT_FOUND', 400);
+      }
       const station = await db.collection('tblfuelstations').findOne({
-        _id: validated.fuel_station_id as any,
+        _id: new ObjectId(stationIdStr),
         tenantId: command.tenantId,
         isDeleted: { $ne: true },
       });
@@ -78,8 +88,13 @@ export class CreateFuelLogHandler implements ICommandHandler<CreateFuelLogComman
     }
 
     if (validated.payment_method === 'fuel_card' && validated.fuel_card_id) {
+      // FIX: same ObjectId-vs-string mismatch as fuel_station_id above.
+      const cardIdStr = String(validated.fuel_card_id);
+      if (!ObjectId.isValid(cardIdStr)) {
+        throw new AppError('Selected fuel card was not found', 'FUEL_CARD_NOT_FOUND', 400);
+      }
       const card = await db.collection('tblfuelcards').findOne({
-        _id: validated.fuel_card_id as any,
+        _id: new ObjectId(cardIdStr),
         tenantId: command.tenantId,
         isDeleted: { $ne: true },
       });

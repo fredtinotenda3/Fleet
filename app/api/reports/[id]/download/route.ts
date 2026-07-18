@@ -1,22 +1,21 @@
 // app/api/reports/[id]/download/route.ts
 //
-// FIX (🔴 Critical -- no authentication at all, on a raw file download):
-// this is the most serious of the four -- an unauthenticated report ID
-// was enough to download report content (fleet expense/cost data) for
-// any tenant, with no auth check anywhere in the request path.
-import { NextRequest } from 'next/server';
-import { reportController } from '@/modules/reports/controllers/report.controller';
+// Legacy alias for downloading a generated report file. This maps [id] to
+// a ReportExecution id and reuses reportExecutionController.download,
+// which already returns the raw binary (not the JSON envelope) with the
+// correct Content-Type/Content-Disposition headers.
 import { withAuth } from '@/server/middleware/with-auth';
 import { Permission } from '@/server/permissions/roles';
+import { reportExecutionController } from '@/modules/reporting/controllers/report-execution.controller';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
 export const GET = withAuth<RouteParams>(
-  async (req, _context, { params }) => {
+  async (req, context, { params }) => {
     const { id } = await params;
-    return reportController.downloadReport(req, id);
+    return reportExecutionController.download(req, context, id);
   },
   { permission: Permission.REPORT_VIEW }
 );

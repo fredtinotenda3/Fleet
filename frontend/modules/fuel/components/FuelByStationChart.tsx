@@ -18,6 +18,7 @@ import {
 import { useFuelByStation } from '../hooks/useFuel';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { FuelAnalyticsDateRange } from './FuelAnalyticsFilterBar';
+import type { FuelByStationRow } from '../types';
 
 type SortMode = 'spend' | 'visits';
 
@@ -25,6 +26,28 @@ const BAR_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(-
 
 interface FuelByStationChartProps {
   dateRange: FuelAnalyticsDateRange;
+}
+
+function StationTooltip({ active, payload }: any) {
+  if (!active || !payload || !payload.length) return null;
+  const row = payload[0].payload as FuelByStationRow;
+  return (
+    <div
+      style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 }}
+      className="p-2.5 space-y-0.5"
+    >
+      <p className="text-sm font-medium">{row.stationName}</p>
+      <p className="text-xs text-muted-foreground">
+        Total spend: <span className="font-medium text-foreground">{formatCurrency(row.totalSpend)}</span>
+      </p>
+      <p className="text-xs text-muted-foreground">
+        Total volume: <span className="font-medium text-foreground">{row.totalLitres.toFixed(1)} L</span>
+      </p>
+      <p className="text-xs text-muted-foreground">
+        Transactions: <span className="font-medium text-foreground">{row.visits}</span>
+      </p>
+    </div>
+  );
 }
 
 export function FuelByStationChart({ dateRange }: FuelByStationChartProps) {
@@ -72,14 +95,7 @@ export function FuelByStationChart({ dateRange }: FuelByStationChartProps) {
                   tickFormatter={(v) => (sortMode === 'spend' ? formatCurrency(v) : String(v))}
                 />
                 <YAxis type="category" dataKey="stationName" stroke="var(--muted-foreground)" fontSize={11} width={130} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 }}
-                  formatter={(value: number, name: string) => {
-                    if (name === 'totalSpend') return [formatCurrency(value), 'Total spend'];
-                    if (name === 'totalLitres') return [`${value.toFixed(1)} L`, 'Total litres'];
-                    return [value, 'Visits'];
-                  }}
-                />
+                <Tooltip content={<StationTooltip />} />
                 <Bar dataKey={sortMode === 'spend' ? 'totalSpend' : 'visits'} radius={[0, 4, 4, 0]}>
                   {sorted.map((_, i) => (
                     <Cell key={i} fill={BAR_COLORS[i % BAR_COLORS.length]} />

@@ -27,7 +27,21 @@ const workflowConfigSchema = z.object({
   allowSelfApproval: z.boolean().optional(),
 });
 
-export const workflowCreateSchema = z.object({
+// FIX (Critical — ".partial() cannot be used on object schemas containing
+// refinements"): workflowCreateSchema used to be defined as
+// z.object({...}).superRefine(...) directly, which returns a ZodEffects
+// wrapper, not a plain ZodObject. workflowUpdateSchema then called
+// `.partial()` on that ZodEffects instance, which Zod does not support —
+// this threw at *module load time* (not just when a bad payload came in),
+// which is why every route importing this schema failed to even collect
+// page data at build time, with the failure surfacing in whichever route
+// happened to be evaluated first (my-tasks / [id]/steps/[stepId] /
+// instances). Fixed by keeping the plain object schema (`workflowBaseSchema`)
+// separate from its refinement, so `.partial()` has a real ZodObject to
+// operate on. The step-reference refinement is then reattached to both the
+// create schema (steps required) and the update schema (steps optional —
+// only validated if the caller is actually updating steps in this call).
+const workflowBaseSchema = z.object({
   name: z.string().min(1, 'Name is required').max(200),
   type: z.enum(['expense_approval', 'maintenance_approval', 'onboarding', 'incident']),
   steps: z.array(workflowStepSchema).min(1, 'At least one step is required'),
@@ -35,7 +49,19 @@ export const workflowCreateSchema = z.object({
   config: workflowConfigSchema.default({}),
   status: z.enum(['active', 'inactive', 'draft']).default('draft'),
   version: z.number().int().positive().default(1),
-}).superRefine((data, ctx) => {
+});
+
+/**
+ * Shared "every nextSteps id must point at a step that actually exists in
+ * this payload" check. Used by both the create schema (steps always
+ * present) and the update schema (steps present only if the caller sent
+ * a new steps array).
+ */
+function validateStepReferences(
+  data: { steps?: { id: string; nextSteps: string[] }[] },
+  ctx: z.RefinementCtx
+) {
+  if (!data.steps) return;
   const stepIds = new Set(data.steps.map((s) => s.id));
   data.steps.forEach((step, index) => {
     step.nextSteps.forEach((nextId) => {
@@ -48,9 +74,15 @@ export const workflowCreateSchema = z.object({
       }
     });
   });
-});
+}
 
-export const workflowUpdateSchema = workflowCreateSchema.partial();
+export const workflowCreateSchema = workflowBaseSchema.superRefine(validateStepReferences);
+
+// Built from the plain object schema (workflowBaseSchema), not from
+// workflowCreateSchema, so .partial() is valid here. The step-reference
+// refinement is reapplied afterward, and now tolerates a missing `steps`
+// field since partial updates may not touch steps at all.
+export const workflowUpdateSchema = workflowBaseSchema.partial().superRefine(validateStepReferences);
 
 export const workflowStartSchema = z.object({
   workflowId: z.string().min(1),

@@ -318,6 +318,16 @@ export class FuelRepository extends BaseRepository<FuelLog> {
    * -- same aggregation, `sortBy` picks which figure ranks the result so we
    * don't stand up a second near-identical pipeline for the dashboard's
    * existing widget vs. the new enterprise chart.
+   *
+   * FIX (root cause of duplicate/fragmented "Unassigned" rows): the group
+   * key previously used `$ifNull: ['$driver_id', null]`, which does NOT
+   * treat an empty-string driver_id ("") as absent -- only true null/missing
+   * is caught by $ifNull. Since "" is truthy in Mongo aggregation, rows with
+   * driver_id === "" formed their own group distinct from true-null rows,
+   * producing two separate "Unassigned" entries in the output instead of
+   * one merged total. Normalized both null and "" to a single `null` key
+   * via $addFields before grouping so unattributed fuel logs are always
+   * merged into exactly one bucket.
    */
   async getFuelByDriver(
     tenantId: string,
@@ -332,8 +342,19 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     const pipeline = [
       { $match: matchStage },
       {
+        $addFields: {
+          __driverKey: {
+            $cond: [
+              { $and: [{ $ne: ['$driver_id', null] }, { $ne: ['$driver_id', ''] }] },
+              '$driver_id',
+              null,
+            ],
+          },
+        },
+      },
+      {
         $group: {
-          _id: { $ifNull: ['$driver_id', null] },
+          _id: '$__driverKey',
           totalFuel: { $sum: '$fuel_volume' },
           totalCost: { $sum: '$cost' },
           count: { $sum: 1 },
@@ -548,13 +569,20 @@ export class FuelRepository extends BaseRepository<FuelLog> {
         $group: {
           _id: { $dateToString: { format: '%Y-%m-%d', date: '$date' } },
           count: { $sum: 1 },
+          volume: { $sum: '$fuel_volume' },
+          cost: { $sum: '$cost' },
         },
       },
       { $sort: { _id: 1 } },
     ];
 
     const results = await collection.aggregate(pipeline).toArray();
-    return results.map((r) => ({ date: r._id, count: r.count }));
+    return results.map((r) => ({
+      date: r._id,
+      count: r.count,
+      volume: Math.round((r.volume || 0) * 100) / 100,
+      cost: Math.round((r.cost || 0) * 100) / 100,
+    }));
   }
 
   /**
@@ -563,6 +591,19 @@ export class FuelRepository extends BaseRepository<FuelLog> {
    * station_name for unregistered entries), resolving registered station
    * names in a single batched follow-up query. Callers sort the returned
    * rows by totalSpend or visits depending on which chart is rendering.
+   *
+   * FIX (root cause of "Unregistered station" mislabeling): the previous
+   * `_id`/`isRegistered` computation used `$ifNull: ['$fuel_station_id', ...]`
+   * and `$cond: [{ $ifNull: ['$fuel_station_id', false] }, true, false]`.
+   * $ifNull only catches true null/missing -- an empty-string fuel_station_id
+   * ("", the value a controlled <Select> submits when nothing is chosen)
+   * is truthy in Mongo's $cond, so those rows were incorrectly marked
+   * isRegistered=true with an unresolvable _id of "", which then failed
+   * ObjectId.isValid() downstream and fell through to a generic fallback
+   * instead of the real station name. Normalized both fuel_station_id and
+   * station_name via $addFields (treating null AND "" as absent) before
+   * grouping, so registered/unregistered detection and the display name
+   * are computed consistently.
    */
   async getFuelByStation(
     tenantId: string,
@@ -575,9 +616,25 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     const pipeline = [
       { $match: matchStage },
       {
+        $addFields: {
+          __hasStationId: {
+            $and: [{ $ne: ['$fuel_station_id', null] }, { $ne: ['$fuel_station_id', ''] }],
+          },
+          __hasStationName: {
+            $and: [{ $ne: ['$station_name', null] }, { $ne: ['$station_name', ''] }],
+          },
+        },
+      },
+      {
         $group: {
-          _id: { $ifNull: ['$fuel_station_id', { $ifNull: ['$station_name', 'Unknown station'] }] },
-          isRegistered: { $max: { $cond: [{ $ifNull: ['$fuel_station_id', false] }, true, false] } },
+          _id: {
+            $cond: [
+              '$__hasStationId',
+              '$fuel_station_id',
+              { $cond: ['$__hasStationName', '$station_name', 'Unregistered station'] },
+            ],
+          },
+          isRegistered: { $max: '$__hasStationId' },
           fallbackName: { $first: '$station_name' },
           totalSpend: { $sum: '$cost' },
           totalLitres: { $sum: '$fuel_volume' },
@@ -608,7 +665,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
       station_id: g.isRegistered ? String(g._id) : null,
       stationName: g.isRegistered
         ? stationNameMap.get(String(g._id)) ?? 'Unknown station'
-        : (g.fallbackName as string) || 'Unregistered station',
+        : (g.fallbackName && String(g.fallbackName).trim()) || 'Unregistered station',
       totalSpend: Math.round(g.totalSpend * 100) / 100,
       totalLitres: Math.round(g.totalLitres * 100) / 100,
       visits: g.visits,
@@ -707,7 +764,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
       .sort((a, b) => b.litres - a.litres);
   }
 
-  /** #7 Fueling Frequency by Vehicle -- entry count per license plate. */
+  /** #7 Fueling Frequency by Vehicle -- entry count + volume/cost totals per license plate. */
   async getFuelingFrequencyByVehicle(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
@@ -718,10 +775,25 @@ export class FuelRepository extends BaseRepository<FuelLog> {
 
     const pipeline = [
       { $match: matchStage },
-      { $group: { _id: '$license_plate', count: { $sum: 1 } } },
+      {
+        $group: {
+          _id: '$license_plate',
+          count: { $sum: 1 },
+          totalVolume: { $sum: '$fuel_volume' },
+          totalCost: { $sum: '$cost' },
+        },
+      },
       { $sort: { count: -1 } },
       { $limit: limit },
-      { $project: { license_plate: '$_id', count: 1, _id: 0 } },
+      {
+        $project: {
+          license_plate: '$_id',
+          count: 1,
+          totalVolume: { $round: [{ $ifNull: ['$totalVolume', 0] }, 2] },
+          totalCost: { $round: [{ $ifNull: ['$totalCost', 0] }, 2] },
+          _id: 0,
+        },
+      },
     ];
 
     return collection.aggregate(pipeline).toArray() as Promise<FuelFrequencyByVehicleRow[]>;

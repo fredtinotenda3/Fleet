@@ -15,12 +15,36 @@ import {
 } from '@/frontend/shared/ui/forms/select';
 import { useVehiclesList } from '@/frontend/modules/vehicles/hooks/useVehicles';
 import { useVehicleFuelTimeline } from '../hooks/useFuel';
+import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { FuelAnalyticsDateRange } from './FuelAnalyticsFilterBar';
+import type { VehicleFuelTimelinePoint } from '../types';
 
 const ALL_VEHICLES = '__all__';
 
 interface VehicleFuelActivityTimelineChartProps {
   dateRange: FuelAnalyticsDateRange;
+}
+
+function TimelineTooltip({ active, payload, label }: any) {
+  if (!active || !payload || !payload.length) return null;
+  const row = payload[0].payload as VehicleFuelTimelinePoint;
+  return (
+    <div
+      style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 }}
+      className="p-2.5 space-y-0.5"
+    >
+      <p className="text-sm font-medium">{label}</p>
+      <p className="text-xs text-muted-foreground">
+        Fuel entries: <span className="font-medium text-foreground">{row.count}</span>
+      </p>
+      <p className="text-xs text-muted-foreground">
+        Fuel volume: <span className="font-medium text-foreground">{row.volume.toFixed(1)} L</span>
+      </p>
+      <p className="text-xs text-muted-foreground">
+        Fuel cost: <span className="font-medium text-foreground">{formatCurrency(row.cost)}</span>
+      </p>
+    </div>
+  );
 }
 
 export function VehicleFuelActivityTimelineChart({ dateRange }: VehicleFuelActivityTimelineChartProps) {
@@ -60,10 +84,7 @@ export function VehicleFuelActivityTimelineChart({ dateRange }: VehicleFuelActiv
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                 <XAxis dataKey="date" stroke="var(--muted-foreground)" fontSize={11} />
                 <YAxis stroke="var(--muted-foreground)" fontSize={11} allowDecimals={false} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 }}
-                  formatter={(value: number) => [value, 'Entries']}
-                />
+                <Tooltip content={<TimelineTooltip />} />
                 <Line type="monotone" dataKey="count" stroke="var(--chart-1)" strokeWidth={2} dot={false} name="Entries" />
               </LineChart>
             </ResponsiveContainer>

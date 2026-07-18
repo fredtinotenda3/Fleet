@@ -16,7 +16,7 @@ import {
 import { useFuelActivityTrend } from '../hooks/useFuel';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { FuelAnalyticsDateRange } from './FuelAnalyticsFilterBar';
-import type { FuelTrendGranularity } from '../types';
+import type { FuelTrendGranularity, FuelActivityTrendPoint } from '../types';
 
 type LineMetric = 'volume' | 'cost' | 'avgCostPerLitre';
 
@@ -35,6 +35,28 @@ const METRIC_LABELS: Record<LineMetric, string> = {
 
 interface FuelActivityTrendChartProps {
   dateRange: FuelAnalyticsDateRange;
+}
+
+function ActivityTrendTooltip({ active, payload, label }: any) {
+  if (!active || !payload || !payload.length) return null;
+  const row = payload[0].payload as FuelActivityTrendPoint;
+  return (
+    <div
+      style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 }}
+      className="p-2.5 space-y-0.5"
+    >
+      <p className="text-sm font-medium">{label}</p>
+      <p className="text-xs text-muted-foreground">
+        Entries: <span className="font-medium text-foreground">{row.entries}</span>
+      </p>
+      <p className="text-xs text-muted-foreground">
+        Fuel volume: <span className="font-medium text-foreground">{row.volume.toFixed(1)} L</span>
+      </p>
+      <p className="text-xs text-muted-foreground">
+        Fuel cost: <span className="font-medium text-foreground">{formatCurrency(row.cost)}</span>
+      </p>
+    </div>
+  );
 }
 
 export function FuelActivityTrendChart({ dateRange }: FuelActivityTrendChartProps) {
@@ -83,12 +105,7 @@ export function FuelActivityTrendChart({ dateRange }: FuelActivityTrendChartProp
                 <XAxis dataKey="period" stroke="var(--muted-foreground)" fontSize={11} />
                 <YAxis yAxisId="entries" stroke="var(--muted-foreground)" fontSize={11} allowDecimals={false} />
                 <YAxis yAxisId="metric" orientation="right" stroke="var(--muted-foreground)" fontSize={11} tickFormatter={formatMetric} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 }}
-                  formatter={(value: number, name: string) =>
-                    name === 'entries' ? [value, 'Entries'] : [formatMetric(value), METRIC_LABELS[metric]]
-                  }
-                />
+                <Tooltip content={<ActivityTrendTooltip />} />
                 <Bar yAxisId="entries" dataKey="entries" fill="var(--chart-2)" radius={[4, 4, 0, 0]} name="entries" />
                 <Line yAxisId="metric" type="monotone" dataKey={metric} stroke="var(--chart-1)" strokeWidth={2} dot={false} name={metric} />
               </ComposedChart>

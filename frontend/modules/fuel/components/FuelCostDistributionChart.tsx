@@ -14,17 +14,45 @@ interface FuelCostDistributionChartProps {
   dateRange: FuelAnalyticsDateRange;
 }
 
+interface BucketDatum {
+  min: number;
+  max: number;
+  count: number;
+  label: string;
+  percentage: number;
+}
+
+function DistributionTooltip({ active, payload }: any) {
+  if (!active || !payload || !payload.length) return null;
+  const row = payload[0].payload as BucketDatum;
+  return (
+    <div
+      style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 }}
+      className="p-2.5 space-y-0.5"
+    >
+      <p className="text-sm font-medium">{row.label}</p>
+      <p className="text-xs text-muted-foreground">
+        Transactions: <span className="font-medium text-foreground">{row.count}</span>
+      </p>
+      <p className="text-xs text-muted-foreground">
+        Share of total: <span className="font-medium text-foreground">{row.percentage}%</span>
+      </p>
+    </div>
+  );
+}
+
 export function FuelCostDistributionChart({ dateRange }: FuelCostDistributionChartProps) {
   const { data, isLoading, error } = useFuelCostDistribution(dateRange);
 
-  const chartData = useMemo(
-    () =>
-      (data ?? []).map((bucket) => ({
-        ...bucket,
-        label: `${formatCurrency(bucket.min)}\u2013${formatCurrency(bucket.max)}`,
-      })),
-    [data]
-  );
+  const chartData = useMemo<BucketDatum[]>(() => {
+    const buckets = data ?? [];
+    const total = buckets.reduce((sum, b) => sum + b.count, 0);
+    return buckets.map((bucket) => ({
+      ...bucket,
+      label: `${formatCurrency(bucket.min)}\u2013${formatCurrency(bucket.max)}`,
+      percentage: total > 0 ? Math.round((bucket.count / total) * 1000) / 10 : 0,
+    }));
+  }, [data]);
 
   return (
     <Card>
@@ -44,10 +72,7 @@ export function FuelCostDistributionChart({ dateRange }: FuelCostDistributionCha
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                 <XAxis dataKey="label" stroke="var(--muted-foreground)" fontSize={10} interval={0} angle={-30} textAnchor="end" height={60} />
                 <YAxis stroke="var(--muted-foreground)" fontSize={11} allowDecimals={false} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 }}
-                  formatter={(value: number) => [value, 'Transactions']}
-                />
+                <Tooltip content={<DistributionTooltip />} />
                 <Bar dataKey="count" fill="var(--chart-5)" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>

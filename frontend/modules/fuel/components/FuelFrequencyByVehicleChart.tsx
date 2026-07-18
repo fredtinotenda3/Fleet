@@ -6,10 +6,34 @@
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/frontend/shared/ui/data-display/card';
 import { useFuelingFrequencyByVehicle } from '../hooks/useFuel';
+import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { FuelAnalyticsDateRange } from './FuelAnalyticsFilterBar';
+import type { FuelFrequencyByVehicleRow } from '../types';
 
 interface FuelFrequencyByVehicleChartProps {
   dateRange: FuelAnalyticsDateRange;
+}
+
+function FrequencyTooltip({ active, payload }: any) {
+  if (!active || !payload || !payload.length) return null;
+  const row = payload[0].payload as FuelFrequencyByVehicleRow;
+  return (
+    <div
+      style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 }}
+      className="p-2.5 space-y-0.5"
+    >
+      <p className="text-sm font-medium">{row.license_plate}</p>
+      <p className="text-xs text-muted-foreground">
+        Fuel events: <span className="font-medium text-foreground">{row.count}</span>
+      </p>
+      <p className="text-xs text-muted-foreground">
+        Total volume: <span className="font-medium text-foreground">{row.totalVolume.toFixed(1)} L</span>
+      </p>
+      <p className="text-xs text-muted-foreground">
+        Total cost: <span className="font-medium text-foreground">{formatCurrency(row.totalCost)}</span>
+      </p>
+    </div>
+  );
 }
 
 export function FuelFrequencyByVehicleChart({ dateRange }: FuelFrequencyByVehicleChartProps) {
@@ -33,10 +57,7 @@ export function FuelFrequencyByVehicleChart({ dateRange }: FuelFrequencyByVehicl
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                 <XAxis dataKey="license_plate" stroke="var(--muted-foreground)" fontSize={11} interval={0} angle={-35} textAnchor="end" height={60} />
                 <YAxis stroke="var(--muted-foreground)" fontSize={11} allowDecimals={false} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 }}
-                  formatter={(value: number) => [value, 'Fuel events']}
-                />
+                <Tooltip content={<FrequencyTooltip />} />
                 <Bar dataKey="count" fill="var(--chart-4)" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>

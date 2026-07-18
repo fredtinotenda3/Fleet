@@ -9,6 +9,7 @@ import { FuelLog } from '@/shared/types/fuel.types';
 import { NotFoundError, ValidationError, AppError } from '@/server/errors/app.errors';
 import { validateWithZod } from '@/shared/utils/validation.utils';
 import connectToDatabase from '@/infrastructure/database/mongodb';
+import { ObjectId } from 'mongodb';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { FuelLogUpdatedEvent } from '@/modules/fuel/events/FuelLogUpdatedEvent';
 
@@ -28,6 +29,11 @@ const UPDATABLE_FIELDS = [
   'receipt_url',
   'payment_method',
   'fuel_card_id',
+  // FIX: driver_id was missing from this list entirely -- a fuel log's
+  // driver could be set at creation but never corrected, cleared, or
+  // reassigned via update. Any log created with the wrong (or no)
+  // driver stayed that way permanently.
+  'driver_id',
 ] as const;
 
 export class UpdateFuelLogHandler implements ICommandHandler<UpdateFuelLogCommand, FuelLog> {
@@ -74,8 +80,15 @@ export class UpdateFuelLogHandler implements ICommandHandler<UpdateFuelLogComman
     }
 
     if (updateData.fuel_station_id) {
+      // FIX: same ObjectId-vs-string mismatch as the create handler --
+      // tblfuelstations._id is an ObjectId, updateData.fuel_station_id
+      // is a string, and the raw MongoDB driver does not auto-cast.
+      const stationIdStr = String(updateData.fuel_station_id);
+      if (!ObjectId.isValid(stationIdStr)) {
+        throw new AppError('Selected fuel station was not found', 'FUEL_STATION_NOT_FOUND', 400);
+      }
       const station = await db.collection('tblfuelstations').findOne({
-        _id: updateData.fuel_station_id as any,
+        _id: new ObjectId(stationIdStr),
         tenantId: command.tenantId,
         isDeleted: { $ne: true },
       });
@@ -85,8 +98,13 @@ export class UpdateFuelLogHandler implements ICommandHandler<UpdateFuelLogComman
     }
 
     if (updateData.payment_method === 'fuel_card' && updateData.fuel_card_id) {
+      // FIX: same ObjectId-vs-string mismatch.
+      const cardIdStr = String(updateData.fuel_card_id);
+      if (!ObjectId.isValid(cardIdStr)) {
+        throw new AppError('Selected fuel card was not found', 'FUEL_CARD_NOT_FOUND', 400);
+      }
       const card = await db.collection('tblfuelcards').findOne({
-        _id: updateData.fuel_card_id as any,
+        _id: new ObjectId(cardIdStr),
         tenantId: command.tenantId,
         isDeleted: { $ne: true },
       });

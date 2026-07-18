@@ -1,24 +1,19 @@
 // app/api/reports/route.ts
 //
-// FIX (🔴 Critical -- no authentication at all): this route had zero
-// auth of any kind -- no withAuth, no session check, nothing. Anyone
-// on the internet could list or create reports for any tenant. This is
-// the legacy modules/reports subsystem, distinct from the properly
-// secured modules/reporting (app/api/reporting/**, which already uses
-// withAuth + Permission.REPORT_VIEW/CREATE consistently) -- flagging
-// the duplication for a follow-up consolidation pass, but closing the
-// auth hole here first since it's live right now.
+// Legacy alias for the report list/create endpoints. Proxies straight to
+// the real reporting system (modules/reporting) instead of the removed
+// modules/reports module.
 import { NextRequest } from 'next/server';
-import { reportController } from '@/modules/reports/controllers/report.controller';
 import { withAuth } from '@/server/middleware/with-auth';
 import { Permission } from '@/server/permissions/roles';
+import { reportDefinitionController } from '@/modules/reporting/controllers/report-definition.controller';
 
 export const GET = withAuth(
-  async (req: NextRequest) => reportController.listReports(req),
+  async (req: NextRequest, context) => reportDefinitionController.list(req, context),
   { permission: Permission.REPORT_VIEW }
 );
 
 export const POST = withAuth(
-  async (req: NextRequest) => reportController.createReport(req),
+  async (req: NextRequest, context) => reportDefinitionController.create(req, context),
   { permission: Permission.REPORT_CREATE }
 );
