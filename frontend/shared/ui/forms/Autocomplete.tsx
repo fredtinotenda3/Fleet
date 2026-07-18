@@ -1,8 +1,8 @@
-﻿'use client';
+'use client';
 
 import * as React from 'react';
 import { Command, CommandGroup, CommandItem } from '@/frontend/shared/ui/navigation/command';
-import { Popover, PopoverContent, PopoverTrigger } from '@/frontend/shared/ui/feedback/popover';
+import { Popover, PopoverContent, PopoverTrigger } from '@/frontend/shared/ui/navigation/popover';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { Check, ChevronsUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
