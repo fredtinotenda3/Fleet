@@ -1,11 +1,13 @@
 // modules/security/controllers/token.controller.ts
 
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { compare } from 'bcryptjs';
 import connectToDatabase from '@/infrastructure/database/mongodb';
 import { refreshTokenService } from '../services/refresh-token.service';
 import { threatDetectionService } from '../services/threat-detection.service';
 import { mfaService } from '../services/mfa.service';
+import { tokenService } from '@/infrastructure/security/token.service';
+import { ACCESS_TOKEN_COOKIE_NAME } from '@/infrastructure/security/edge-token-verify';
 import { tokenLoginSchema, tokenRefreshSchema, tokenRevokeSchema } from '@/shared/validations/auth-token.schema';
 import { successResponse, errorResponse } from '@/server/utils/response.utils';
 import { AppError, UnauthorizedError, ValidationError } from '@/server/errors/app.errors';
@@ -16,12 +18,52 @@ function getClientIp(req: NextRequest): string | undefined {
 }
 
 /**
+ * FIX (critical -- login loop / auth-model mismatch): this endpoint
+ * used to return the access/refresh token pair ONLY in the JSON body.
+ * The browser client stored it in a Zustand store persisted to
+ * localStorage (frontend/shared/store/session.store.ts) -- which is
+ * invisible to Edge middleware and to any server-rendered/RSC request,
+ * since neither can read localStorage. Middleware (middleware.ts) only
+ * ever recognized a NextAuth cookie session, which this flow never
+ * creates, so every successful login here still bounced back to
+ * /auth/login when the client tried to navigate to a protected page.
+ *
+ * Fix: on every successful login (and refresh/revoke), also set/clear
+ * an httpOnly cookie carrying the access token, using the SAME cookie
+ * name middleware.ts and getAuthContext() now check
+ * (ACCESS_TOKEN_COOKIE_NAME). The JSON body still returns the full
+ * token pair unchanged, for API/mobile clients that manage tokens
+ * themselves -- this is additive, not a breaking change to the
+ * response shape.
+ */
+function setAccessTokenCookie(response: NextResponse, accessToken: string): void {
+  response.cookies.set(ACCESS_TOKEN_COOKIE_NAME, accessToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: tokenService.getAccessTokenTtlSeconds(),
+  });
+}
+
+function clearAccessTokenCookie(response: NextResponse): void {
+  response.cookies.set(ACCESS_TOKEN_COOKIE_NAME, '', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 0,
+  });
+}
+
+/**
  * Issues/rotates/revokes OAuth2-style token pairs for programmatic API
- * clients (mobile apps, third-party integrations). See
+ * clients (mobile apps, third-party integrations) AND -- as of this
+ * fix -- for the browser app itself via the httpOnly cookie above. See
  * modules/security/services/refresh-token.service.ts for the rotation
  * model. As of Slice 6d, `login` also gates on MFA: if the account has
  * a verified TOTP factor, a login request without `code`/`backupCode`
- * returns `{ mfaRequired: true }` instead of tokens — the client
+ * returns `{ mfaRequired: true }` instead of tokens â€” the client
  * resubmits the SAME login body with the code added. There is no
  * separate challenge id to track or expire: every attempt re-verifies
  * the password from scratch, so there is nothing extra to leak.
@@ -95,7 +137,7 @@ export class TokenController {
       if (mfaEnabled) {
         if (!parsed.data.code && !parsed.data.backupCode) {
           // Password stage succeeded but the second factor is still
-          // outstanding — issue nothing, and don't count this as a
+          // outstanding â€” issue nothing, and don't count this as a
           // failed attempt against the lockout counter.
           return successResponse({ mfaRequired: true });
         }
@@ -135,7 +177,9 @@ export class TokenController {
         deviceLabel: parsed.data.deviceLabel,
       });
 
-      return successResponse(pair);
+      const response = successResponse(pair);
+      setAccessTokenCookie(response, pair.accessToken);
+      return response;
     } catch (error) {
       return this.handleError(error);
     }
@@ -154,7 +198,9 @@ export class TokenController {
         userAgent: req.headers.get('user-agent') || undefined,
       });
 
-      return successResponse(pair);
+      const response = successResponse(pair);
+      setAccessTokenCookie(response, pair.accessToken);
+      return response;
     } catch (error) {
       return this.handleError(error);
     }
@@ -169,7 +215,10 @@ export class TokenController {
       }
 
       await refreshTokenService.revoke(parsed.data.refreshToken, parsed.data.tenantId || 'default', 'User logout');
-      return successResponse({ message: 'Logged out successfully' });
+
+      const response = successResponse({ message: 'Logged out successfully' });
+      clearAccessTokenCookie(response);
+      return response;
     } catch (error) {
       return this.handleError(error);
     }

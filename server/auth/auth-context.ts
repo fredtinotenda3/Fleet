@@ -8,6 +8,8 @@ import { permissionEngineService } from '@/modules/security/services/permission-
 import { PermissionDecision, ResourceContext } from '@/modules/security/types/resource-permission.types';
 import { sessionService } from '@/modules/security/services/session.service';
 import { apiKeyService } from '@/modules/security/services/api-key.service';
+import { tokenService } from '@/infrastructure/security/token.service';
+import { ACCESS_TOKEN_COOKIE_NAME } from '@/infrastructure/security/edge-token-verify';
 
 export interface AuthContext {
   userId: string;
@@ -20,8 +22,9 @@ export interface AuthContext {
    * resolved from the `x-org-unit-id` header or `orgUnitId` query param.
    */
   orgUnitId?: string;
-  /** Present only for NextAuth cookie-based sessions; ties this request
-   *  back to a revocable UserSession record (see modules/security). */
+  /** Present for both NextAuth cookie-based sessions and custom
+   *  access-token sessions; ties this request back to a revocable
+   *  UserSession record (see modules/security). */
   sessionId?: string;
   /** True when this request was authenticated via an API key rather
    *  than a user session. */
@@ -65,26 +68,117 @@ async function getAuthContextFromApiKey(req: NextRequest): Promise<AuthContext |
 }
 
 /**
+ * FIX (critical -- custom token system was never actually accepted by
+ * any regular API route): getAuthContext() previously resolved only
+ * two credential types -- API key, or NextAuth's cookie session via
+ * getToken(). The custom access-token system
+ * (infrastructure/security/token.service.ts, issued by
+ * /api/auth/token and stored client-side in
+ * frontend/shared/store/session.store.ts) was never checked here at
+ * all. That means every protected API route -- /api/vehicles,
+ * /api/expenses, etc. -- silently rejected a perfectly valid, freshly
+ * issued access token unless the request also happened to carry a
+ * NextAuth cookie, which the app's real login flow never creates.
+ *
+ * This resolves the token from either:
+ *   1. The httpOnly cookie set by token.controller.ts on login/refresh
+ *      (ACCESS_TOKEN_COOKIE_NAME) -- covers browser navigation and any
+ *      same-origin fetch, since browsers attach cookies automatically.
+ *   2. An `Authorization: Bearer <token>` header -- covers API/mobile
+ *      clients that manage the token themselves, per
+ *      frontend/modules/auth/services/auth.api.ts's `request()` helper.
+ * Falls through to the existing NextAuth branch if neither is present,
+ * so any code path that still uses NextAuth's own signIn() (e.g. an
+ * SSO provider) keeps working unchanged.
+ */
+async function getAuthContextFromAccessToken(req: NextRequest): Promise<AuthContext | null> {
+  let rawToken = req.cookies.get(ACCESS_TOKEN_COOKIE_NAME)?.value;
+
+  if (!rawToken) {
+    const header = req.headers.get('authorization');
+    if (header?.toLowerCase().startsWith('bearer ')) {
+      rawToken = header.slice('bearer '.length).trim();
+    }
+  }
+
+  if (!rawToken) return null;
+
+  let verified;
+  try {
+    verified = await tokenService.verifyAccessToken(rawToken);
+  } catch {
+    // Expired/invalid/malformed -- treat as "no credential", not an
+    // error, so a stale cookie never 500s a request; it just falls
+    // through to unauthenticated (or the NextAuth branch, if present).
+    return null;
+  }
+
+  const roles = verified.roles || [];
+  const isPlatformSuperAdmin = roles.includes(Role.SUPER_ADMIN);
+  const isSuperAdmin = isPlatformSuperAdmin || roles.includes(Role.ORGANIZATION_OWNER);
+
+  const permissions = roles
+    .flatMap((role) => permissionService.getPermissionsForRole(role as Role))
+    .filter((value, index, all) => all.indexOf(value) === index);
+
+  const tenantId = isPlatformSuperAdmin ? 'default' : verified.tenantId || 'default';
+
+  if (verified.sessionId) {
+    const valid = await sessionService.isSessionValid(verified.sessionId, tenantId).catch(() => true);
+    if (!valid) {
+      // Same revocation semantics as the NextAuth branch below: the
+      // JWT signature is still valid but the session it points to has
+      // been explicitly revoked (logout, admin-forced logout, etc.).
+      return null;
+    }
+    sessionService.touchSession(verified.sessionId, tenantId).catch(() => undefined);
+  }
+
+  const orgUnitId =
+    req.headers.get('x-org-unit-id') || req.nextUrl.searchParams.get('orgUnitId') || undefined;
+
+  return {
+    userId: verified.userId,
+    tenantId,
+    roles,
+    permissions,
+    isSuperAdmin,
+    orgUnitId: orgUnitId || undefined,
+    sessionId: verified.sessionId,
+  };
+}
+
+/**
  * Single canonical place that resolves a request's auth context.
  *
  * Resolution order:
- *   1. API key (X-API-Key header or `Authorization: ApiKey <key>`) —
+ *   1. API key (X-API-Key header or `Authorization: ApiKey <key>`) â€”
  *      machine-to-machine credentials, checked first since ruling them
- *      out is a cheap prefix check that never touches the NextAuth
- *      cookie/JWT machinery.
- *   2. NextAuth session JWT — the browser cookie flow, hardened here
+ *      out is a cheap prefix check that never touches token/cookie
+ *      verification machinery.
+ *   2. Custom access token (httpOnly cookie or `Authorization: Bearer`)
+ *      â€” this app's actual login flow (see fix note above).
+ *   3. NextAuth session JWT â€” the browser cookie flow, hardened here
  *      with a live revocation check against the UserSession store via
  *      the token's `sid` claim (stamped by lib/authOptions.ts at
- *      sign-in, alongside creating the matching UserSession row).
+ *      sign-in, alongside creating the matching UserSession row). Kept
+ *      as a fallback for any path that still authenticates through
+ *      NextAuth's own signIn() (e.g. SSO).
  *
- * Both paths converge on the same AuthContext shape so every downstream
- * consumer (withAuth, canPerform, controllers) works identically
- * regardless of which credential type authenticated the request.
+ * All three paths converge on the same AuthContext shape so every
+ * downstream consumer (withAuth, canPerform, controllers) works
+ * identically regardless of which credential type authenticated the
+ * request.
  */
 export async function getAuthContext(req: NextRequest): Promise<AuthContext | null> {
   const apiKeyContext = await getAuthContextFromApiKey(req);
   if (apiKeyContext) {
     return apiKeyContext;
+  }
+
+  const accessTokenContext = await getAuthContextFromAccessToken(req);
+  if (accessTokenContext) {
+    return accessTokenContext;
   }
 
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
@@ -136,8 +230,8 @@ export async function getAuthContext(req: NextRequest): Promise<AuthContext | nu
     if (!valid) {
       // The session backing this JWT has been explicitly revoked (e.g.
       // "log out this device" from another session, or an admin forcing
-      // a logout). The JWT signature is still cryptographically valid —
-      // stateless JWTs can't be un-signed — but the session it points to
+      // a logout). The JWT signature is still cryptographically valid â€”
+      // stateless JWTs can't be un-signed â€” but the session it points to
       // no longer exists, so treat the request as unauthenticated. Fails
       // open on infrastructure errors so a session-store hiccup never
       // locks every user out of the app.
