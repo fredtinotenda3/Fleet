@@ -25,9 +25,26 @@ export class FuelFraudDetectionService extends BaseAIService {
   protected readonly serviceName = 'FuelFraudDetection';
   protected readonly predictionType = 'fuel_fraud';
 
+  /**
+   * FIX (perf, Vercel timeout): this used to call detectVehicleFraud()
+   * per vehicle inside a sequential for-loop, and detectVehicleFraud()
+   * ran its own vehicleRepository.findById + fuelRepository.findMany
+   * query EVERY iteration. For 75 vehicles that's 150 sequential DB
+   * round-trips, which is exactly what the "Slow MongoDB query" log
+   * spam on /api/ai/dashboard was showing (each tblfuellogs find taking
+   * 100ms-2s, one after another). Locally, Next dev has no timeout so it
+   * eventually finished in ~40s; on Vercel the function gets killed
+   * before that, and the dashboard renders zero/blank stats.
+   *
+   * Fix: fetch every vehicle's fuel logs in ONE query using
+   * { license_plate: { $in: [...] } }, group them into a Map, then run
+   * the (pure, in-memory) analysis per vehicle with no further DB calls.
+   * This collapses 75 queries into 1.
+   */
   async detectFraud(tenantId: string): Promise<AIBatchResult<FuelFraudAlert>> {
     try {
       const vehicles = await vehicleRepository.findMany({ isDeleted: { $ne: true } }, tenantId);
+
       const results: AIBatchResult<FuelFraudAlert> = {
         success: true,
         results: [],
@@ -37,9 +54,36 @@ export class FuelFraudDetectionService extends BaseAIService {
         timestamp: new Date(),
       };
 
+      if (vehicles.length === 0) {
+        return results;
+      }
+
+      const plates = vehicles.map((v) => v.license_plate).filter(Boolean);
+
+      // Single batched query instead of one findMany() per vehicle.
+      const allFuelLogs = await fuelRepository.findMany(
+        { license_plate: { $in: plates } },
+        tenantId
+      );
+
+      const logsByPlate = new Map<string, any[]>();
+      for (const log of allFuelLogs) {
+        const list = logsByPlate.get(log.license_plate) ?? [];
+        list.push(log);
+        logsByPlate.set(log.license_plate, list);
+      }
+      // Preserve the same "most recent 100" cap the single-vehicle path
+      // used (fuelRepository.findMany(..., { limit: 100 })), applied
+      // in-memory now that everything's already fetched.
+      for (const [plate, list] of logsByPlate) {
+        logsByPlate.set(plate, list.slice(0, 100));
+      }
+
       for (const vehicle of vehicles) {
         try {
-          const alert = await this.detectVehicleFraud(vehicle._id!, tenantId);
+          const fuelLogs = logsByPlate.get(vehicle.license_plate) ?? [];
+          const alert = this.buildFraudAlert(vehicle, fuelLogs);
+
           if (alert.success && alert.data) {
             results.results.push({
               entityId: vehicle._id!,
@@ -81,7 +125,9 @@ export class FuelFraudDetectionService extends BaseAIService {
 
   // Made public: server/events/handlers/ai/AIPredictionTriggerHandler.ts
   // calls this directly in response to FuelLogged events, not just the
-  // batch detectFraud() entry point above.
+  // batch detectFraud() entry point above. Single-vehicle path is
+  // unchanged -- it's not the bottleneck, it's only ever called once
+  // per event.
   async detectVehicleFraud(
     vehicleId: string,
     tenantId: string
@@ -102,62 +148,7 @@ export class FuelFraudDetectionService extends BaseAIService {
         { limit: 100 }
       );
 
-      if (fuelLogs.length < 10) {
-        return {
-          success: false,
-          error: 'Insufficient fuel data for analysis',
-          timestamp: new Date(),
-        };
-      }
-
-      const baseline = this.calculateBaseline(fuelLogs, vehicle);
-      const anomalies = this.detectAnomalies(fuelLogs, baseline);
-      const patterns = this.detectPatterns(fuelLogs, baseline);
-
-      if (anomalies.length === 0 && patterns.length === 0) {
-        return {
-          success: false,
-          error: 'No anomalies detected',
-          timestamp: new Date(),
-        };
-      }
-
-      const confidence = this.calculateConfidence([
-        { weight: 0.4, value: Math.min(1, anomalies.length / 3) },
-        { weight: 0.3, value: Math.min(1, patterns.length / 2) },
-        { weight: 0.3, value: Math.min(1, fuelLogs.length / 50) },
-      ]);
-
-      const severity = this.determineSeverity(confidence, Math.min(1, anomalies.length / 5));
-
-      const alert: FuelFraudAlert = {
-        alertId: `fraud_${vehicleId}_${Date.now()}`,
-        vehicleId,
-        licensePlate: vehicle.license_plate,
-        confidence,
-        severity,
-        timestamp: new Date(),
-        anomalies,
-        patterns,
-        recommendation: this.generateRecommendation(anomalies, patterns),
-        status: 'open',
-      };
-
-      this.logPrediction({
-        vehicleId,
-        licensePlate: vehicle.license_plate,
-        anomalyCount: anomalies.length,
-        patternCount: patterns.length,
-        confidence,
-      });
-
-      return {
-        success: true,
-        data: alert,
-        predictionId: alert.alertId,
-        confidence,
-        timestamp: new Date(),
-      };
+      return this.buildFraudAlert(vehicle, fuelLogs);
     } catch (error) {
       this.logError(`Failed to detect fraud for vehicle ${vehicleId}`, error as Error);
       return {
@@ -166,6 +157,72 @@ export class FuelFraudDetectionService extends BaseAIService {
         timestamp: new Date(),
       };
     }
+  }
+
+  /**
+   * Pure, in-memory analysis extracted from what used to be the tail
+   * end of detectVehicleFraud(). Takes already-fetched fuel logs so the
+   * batch path (detectFraud) never has to hit the DB per vehicle.
+   */
+  private buildFraudAlert(vehicle: any, fuelLogs: any[]): AIResult<FuelFraudAlert> {
+    const vehicleId = vehicle._id!;
+
+    if (fuelLogs.length < 10) {
+      return {
+        success: false,
+        error: 'Insufficient fuel data for analysis',
+        timestamp: new Date(),
+      };
+    }
+
+    const baseline = this.calculateBaseline(fuelLogs, vehicle);
+    const anomalies = this.detectAnomalies(fuelLogs, baseline);
+    const patterns = this.detectPatterns(fuelLogs, baseline);
+
+    if (anomalies.length === 0 && patterns.length === 0) {
+      return {
+        success: false,
+        error: 'No anomalies detected',
+        timestamp: new Date(),
+      };
+    }
+
+    const confidence = this.calculateConfidence([
+      { weight: 0.4, value: Math.min(1, anomalies.length / 3) },
+      { weight: 0.3, value: Math.min(1, patterns.length / 2) },
+      { weight: 0.3, value: Math.min(1, fuelLogs.length / 50) },
+    ]);
+
+    const severity = this.determineSeverity(confidence, Math.min(1, anomalies.length / 5));
+
+    const alert: FuelFraudAlert = {
+      alertId: `fraud_${vehicleId}_${Date.now()}`,
+      vehicleId,
+      licensePlate: vehicle.license_plate,
+      confidence,
+      severity,
+      timestamp: new Date(),
+      anomalies,
+      patterns,
+      recommendation: this.generateRecommendation(anomalies, patterns),
+      status: 'open',
+    };
+
+    this.logPrediction({
+      vehicleId,
+      licensePlate: vehicle.license_plate,
+      anomalyCount: anomalies.length,
+      patternCount: patterns.length,
+      confidence,
+    });
+
+    return {
+      success: true,
+      data: alert,
+      predictionId: alert.alertId,
+      confidence,
+      timestamp: new Date(),
+    };
   }
 
   private calculateBaseline(fuelLogs: any[], vehicle: any): FuelBaseline {

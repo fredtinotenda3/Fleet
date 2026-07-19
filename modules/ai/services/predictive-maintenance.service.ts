@@ -47,21 +47,32 @@ const COMPONENT_LIFESPAN_KM: Record<string, number> = {
   electrical: 100_000,
 };
 
-/**
- * Typical automotive 12V battery service life. Used as the deterministic
- * "age since last replacement/service" proxy for battery health, since
- * this deployment has no telematics battery-voltage feed to score
- * against directly.
- */
 const BATTERY_EXPECTED_LIFE_DAYS = 1200;
 
 export class PredictiveMaintenanceService extends BaseAIService {
   protected readonly serviceName = 'PredictiveMaintenance';
   protected readonly predictionType = 'maintenance';
 
+  /**
+   * FIX (perf, Vercel timeout): predictAll() used to call predictVehicle()
+   * per vehicle inside a sequential for-loop, and predictVehicle() ran
+   * FOUR queries every iteration (maintenance, trips, fuel, telematics).
+   * For 75 vehicles that's 300 sequential round-trips -- the exact
+   * pattern in the slow-query log spam on /api/ai/dashboard, taking 40s+
+   * locally and hitting Vercel's function timeout in production (so the
+   * dashboard stats cards render blank).
+   *
+   * Fix: batch-fetch maintenance/trips/fuel for ALL vehicles in one
+   * query each (via license_plate $in), grouped into Maps. Telematics
+   * has no natural single-query batch here, so it's fetched with
+   * Promise.all so all 75 lookups run concurrently instead of one after
+   * another -- this alone turns "75 x up to 2.2s sequential" into
+   * "~1 x up to 2.2s total".
+   */
   async predictAll(tenantId: string): Promise<AIBatchResult<PredictiveMaintenancePrediction>> {
     try {
       const vehicles = await vehicleRepository.findMany({ isDeleted: { $ne: true } }, tenantId);
+
       const results: AIBatchResult<PredictiveMaintenancePrediction> = {
         success: true,
         results: [],
@@ -71,9 +82,45 @@ export class PredictiveMaintenanceService extends BaseAIService {
         timestamp: new Date(),
       };
 
+      if (vehicles.length === 0) {
+        return results;
+      }
+
+      const plates = vehicles.map((v) => v.license_plate).filter(Boolean);
+
+      const [allMaintenance, allTrips, allFuel, telematicsList] = await Promise.all([
+        maintenanceRepository.findMany(
+          { license_plate: { $in: plates }, status: { $ne: 'pending' } },
+          tenantId
+        ),
+        tripRepository.findMany({ license_plate: { $in: plates } }, tenantId),
+        fuelRepository.findMany({ license_plate: { $in: plates } }, tenantId),
+        // Concurrent, not sequential -- was the single biggest source of
+        // latency (tbltelematics queries up to 2.2s each).
+        Promise.all(
+          vehicles.map((v) =>
+            telematicsRepository
+              .getLatestTelematicsData(v._id!, tenantId)
+              .then((data) => ({ vehicleId: v._id!, data }))
+              .catch(() => ({ vehicleId: v._id!, data: null }))
+          )
+        ),
+      ]);
+
+      const maintenanceByPlate = this.groupBy(allMaintenance, (m) => m.license_plate);
+      const tripsByPlate = this.groupBy(allTrips, (t) => t.license_plate);
+      const fuelByPlate = this.groupBy(allFuel, (f) => f.license_plate);
+      const telematicsByVehicleId = new Map(telematicsList.map((t) => [t.vehicleId, t.data]));
+
       for (const vehicle of vehicles) {
         try {
-          const prediction = await this.predictVehicle(vehicle._id!, tenantId);
+          const maintenance = maintenanceByPlate.get(vehicle.license_plate) ?? [];
+          const trips = tripsByPlate.get(vehicle.license_plate) ?? [];
+          const fuel = fuelByPlate.get(vehicle.license_plate) ?? [];
+          const telematics = telematicsByVehicleId.get(vehicle._id!) ?? null;
+
+          const prediction = this.buildPredictionResult(vehicle, maintenance, trips, fuel, telematics);
+
           if (prediction.success && prediction.data) {
             results.results.push({
               entityId: vehicle._id!,
@@ -113,6 +160,20 @@ export class PredictiveMaintenanceService extends BaseAIService {
     }
   }
 
+  private groupBy<T>(items: T[], keyFn: (item: T) => string): Map<string, T[]> {
+    const map = new Map<string, T[]>();
+    for (const item of items) {
+      const key = keyFn(item);
+      const list = map.get(key) ?? [];
+      list.push(item);
+      map.set(key, list);
+    }
+    return map;
+  }
+
+  // Single-vehicle path -- unchanged behavior, still used by
+  // GET /api/ai/predictive-maintenance?vehicleId=... and any real-time
+  // per-vehicle trigger. Not the bottleneck; only called once per request.
   async predictVehicle(
     vehicleId: string,
     tenantId: string
@@ -127,7 +188,6 @@ export class PredictiveMaintenanceService extends BaseAIService {
         };
       }
 
-      // Gather data
       const [maintenance, trips, fuel, telematics] = await Promise.all([
         maintenanceRepository.findMany(
           { license_plate: vehicle.license_plate, status: { $ne: 'pending' } },
@@ -138,44 +198,7 @@ export class PredictiveMaintenanceService extends BaseAIService {
         telematicsRepository.getLatestTelematicsData(vehicleId, tenantId),
       ]);
 
-      // Calculate component health
-      const componentHealth = this.calculateComponentHealth(
-        vehicle,
-        maintenance,
-        trips,
-        fuel,
-        telematics
-      );
-
-      // Find the most critical component
-      const criticalComponent = this.findCriticalComponent(componentHealth);
-
-      if (!criticalComponent) {
-        return {
-          success: false,
-          error: 'No critical components found',
-          timestamp: new Date(),
-        };
-      }
-
-      // Build prediction with predictionId
-      const predictionId = randomUUID();
-      const prediction = this.buildPrediction(vehicle, criticalComponent, componentHealth, predictionId);
-
-      this.logPrediction({
-        vehicleId,
-        licensePlate: vehicle.license_plate,
-        component: prediction.component,
-        confidence: prediction.confidence,
-      });
-
-      return {
-        success: true,
-        data: prediction,
-        predictionId: predictionId, // Use the generated predictionId
-        confidence: prediction.confidence,
-        timestamp: new Date(),
-      };
+      return this.buildPredictionResult(vehicle, maintenance, trips, fuel, telematics);
     } catch (error) {
       this.logError(`Failed to predict for vehicle ${vehicleId}`, error as Error);
       return {
@@ -184,6 +207,48 @@ export class PredictiveMaintenanceService extends BaseAIService {
         timestamp: new Date(),
       };
     }
+  }
+
+  /**
+   * Pure, in-memory prediction logic extracted from what used to be the
+   * tail end of predictVehicle(). Takes already-fetched data so the
+   * batch path (predictAll) never hits the DB per vehicle.
+   */
+  private buildPredictionResult(
+    vehicle: any,
+    maintenance: any[],
+    trips: any[],
+    fuel: any[],
+    telematics: any
+  ): AIResult<PredictiveMaintenancePrediction> {
+    const componentHealth = this.calculateComponentHealth(vehicle, maintenance, trips, fuel, telematics);
+    const criticalComponent = this.findCriticalComponent(componentHealth);
+
+    if (!criticalComponent) {
+      return {
+        success: false,
+        error: 'No critical components found',
+        timestamp: new Date(),
+      };
+    }
+
+    const predictionId = randomUUID();
+    const prediction = this.buildPrediction(vehicle, criticalComponent, componentHealth, predictionId);
+
+    this.logPrediction({
+      vehicleId: vehicle._id!,
+      licensePlate: vehicle.license_plate,
+      component: prediction.component,
+      confidence: prediction.confidence,
+    });
+
+    return {
+      success: true,
+      data: prediction,
+      predictionId,
+      confidence: prediction.confidence,
+      timestamp: new Date(),
+    };
   }
 
   private calculateComponentHealth(
@@ -199,48 +264,13 @@ export class PredictiveMaintenanceService extends BaseAIService {
 
     const components: ComponentHealth[] = [];
 
-    // Engine health
-    const engineHealth = this.assessEngineHealth(
-      vehicle,
-      maintenance,
-      telematics,
-      totalDistance,
-      avgFuelEfficiency
+    components.push(
+      this.assessEngineHealth(vehicle, maintenance, telematics, totalDistance, avgFuelEfficiency)
     );
-    components.push(engineHealth);
-
-    // Transmission health
-    const transmissionHealth = this.assessTransmissionHealth(
-      vehicle,
-      maintenance,
-      totalDistance
-    );
-    components.push(transmissionHealth);
-
-    // Brakes health
-    const brakesHealth = this.assessBrakesHealth(
-      vehicle,
-      maintenance,
-      totalDistance,
-      telematics
-    );
-    components.push(brakesHealth);
-
-    // Tires health
-    const tiresHealth = this.assessTiresHealth(
-      vehicle,
-      maintenance,
-      totalDistance
-    );
-    components.push(tiresHealth);
-
-    // Battery health
-    const batteryHealth = this.assessBatteryHealth(
-      vehicle,
-      maintenance,
-      telematics
-    );
-    components.push(batteryHealth);
+    components.push(this.assessTransmissionHealth(vehicle, maintenance, totalDistance));
+    components.push(this.assessBrakesHealth(vehicle, maintenance, totalDistance, telematics));
+    components.push(this.assessTiresHealth(vehicle, maintenance, totalDistance));
+    components.push(this.assessBatteryHealth(vehicle, maintenance, telematics));
 
     return components.filter(c => c !== null);
   }
@@ -263,18 +293,15 @@ export class PredictiveMaintenanceService extends BaseAIService {
              new Date(m.completion_date) > new Date(Date.now() - 180 * 24 * 60 * 60 * 1000)
     );
 
-    // Calculate health factors
     const ageFactor = Math.max(0, 1 - (vehicle.year ? (new Date().getFullYear() - vehicle.year) / 20 : 0));
     const mileageFactor = Math.max(0, 1 - (totalDistance / 500_000));
     const maintenanceFactor = Math.min(1, engineMaintenance.length / 10);
     const issueFactor = Math.max(0, 1 - (recentEngineIssues.length / 5));
 
-    // Telematics factors
     const engineTemp = telematics?.engine?.coolantTemp || 90;
     const tempFactor = engineTemp < 105 ? 1 : Math.max(0, 1 - (engineTemp - 105) / 20);
     const rpmFactor = telematics?.engine?.rpm ? Math.min(1, 3000 / (telematics.engine.rpm || 3000)) : 0.8;
 
-    // Fuel efficiency factor
     const efficiencyFactor = avgFuelEfficiency > 0
       ? Math.min(1, avgFuelEfficiency / 10)
       : 0.5;
@@ -312,14 +339,6 @@ export class PredictiveMaintenanceService extends BaseAIService {
              m.title?.toLowerCase().includes('gearbox')
     );
 
-    // FIX (high -- fabricated data): this component's healthScore used
-    // to blend in Math.random() * 0.3, meaning up to 30% of the score
-    // driving failureProbability, urgency, and estimatedCost on any
-    // prediction that surfaced this component was random noise, not a
-    // computed signal. Replaced with a deterministic "recent issue"
-    // factor built the same way assessEngineHealth already computes its
-    // issueFactor -- completed transmission work in the last 180 days
-    // lowers health, same as every other real factor here.
     const recentIssues = transmissionMaintenance.filter(
       (m) => m.status === 'completed' &&
              m.completion_date &&
@@ -363,10 +382,6 @@ export class PredictiveMaintenanceService extends BaseAIService {
 
     const hardBrakes = telematics?.alerts?.filter((a: any) => a.type === 'hard_brake').length || 0;
 
-    // FIX (high -- fabricated data): replaced the Math.random() * 0.2
-    // term with a deterministic "time since last completed brake
-    // service" recency factor, computed from real completion_date
-    // values already present on brakeMaintenance records.
     const lastBrakeService = brakeMaintenance
       .filter((m) => m.status === 'completed' && m.completion_date)
       .sort((a, b) => new Date(b.completion_date).getTime() - new Date(a.completion_date).getTime())[0];
@@ -404,9 +419,6 @@ export class PredictiveMaintenanceService extends BaseAIService {
              m.title?.toLowerCase().includes('tyre')
     );
 
-    // FIX (high -- fabricated data): same pattern as brakes above --
-    // Math.random() * 0.2 replaced with a deterministic recency factor
-    // based on the last completed tire-related maintenance record.
     const lastTireService = tireMaintenance
       .filter((m) => m.status === 'completed' && m.completion_date)
       .sort((a, b) => new Date(b.completion_date).getTime() - new Date(a.completion_date).getTime())[0];
@@ -442,17 +454,6 @@ export class PredictiveMaintenanceService extends BaseAIService {
       (m) => m.title?.toLowerCase().includes('battery')
     );
 
-    // FIX (high -- fabricated data, worst offender): this component's
-    // healthScore used to be 60% pure Math.random() (`Math.random() *
-    // 0.6`), meaning the majority of every battery prediction --
-    // severity, urgency, estimated cost -- was noise, not signal. There
-    // is no telematics battery-voltage field in this deployment to
-    // score against directly, so this now uses the strongest available
-    // real proxy: days elapsed since the last completed battery service
-    // (or, absent any battery maintenance history, since the vehicle's
-    // model year) against a typical ~1200-day (~3.3yr) battery service
-    // life, blended with maintenance frequency the same way every other
-    // component here already does.
     const lastBatteryService = batteryMaintenance
       .filter((m) => m.status === 'completed' && m.completion_date)
       .sort((a, b) => new Date(b.completion_date).getTime() - new Date(a.completion_date).getTime())[0];
@@ -516,7 +517,6 @@ export class PredictiveMaintenanceService extends BaseAIService {
   }
 
   private findCriticalComponent(components: ComponentHealth[]): ComponentHealth | null {
-    // Sort by health score (lowest first) and failure probability (highest first)
     const sorted = [...components].sort((a, b) => {
       const scoreA = (1 - a.healthScore / 100) * 0.6 + a.failureProbability * 0.4;
       const scoreB = (1 - b.healthScore / 100) * 0.6 + b.failureProbability * 0.4;
@@ -562,7 +562,7 @@ export class PredictiveMaintenanceService extends BaseAIService {
     const estimatedCost = this.estimateRepairCost(component.componentType);
 
     const prediction: PredictiveMaintenancePrediction = {
-      predictionId, // Add predictionId to the prediction object
+      predictionId,
       vehicleId: vehicle._id!,
       licensePlate: vehicle.license_plate,
       component: component.component,
