@@ -61,9 +61,12 @@ export interface JobData {
   correlationId?: string; // NEW — propagated to the worker's execution context
 }
 
-// Lazy Redis / Queue accessors so the module can be imported anywhere
-// without crashing when REDIS_URL is missing.
+// ──────────────────── PATCH START: Redis connection with timeouts ────────────────────
+const REDIS_CONNECT_TIMEOUT_MS = 1500;
+const REDIS_MAX_CONNECTION_RETRIES = 2;
+
 let _redisPromise: Promise<any> | null = null;
+let _redisDisabled = false;
 
 async function getRedis(): Promise<any> {
   if (!process.env.REDIS_URL) {
@@ -71,13 +74,31 @@ async function getRedis(): Promise<any> {
       'REDIS_URL is not configured. Queue operations are unavailable.'
     );
   }
+  if (_redisDisabled) {
+    throw new Error('Redis is currently unreachable. Queue operations are unavailable.');
+  }
   if (_redisPromise) return _redisPromise;
 
   _redisPromise = (async () => {
     const { default: Redis } = await import('ioredis');
-    return new Redis(process.env.REDIS_URL!, {
+    const client = new Redis(process.env.REDIS_URL!, {
+      // BullMQ requirement -- do not change.
       maxRetriesPerRequest: null,
+      connectTimeout: REDIS_CONNECT_TIMEOUT_MS,
+      retryStrategy: (times: number) => {
+        if (times > REDIS_MAX_CONNECTION_RETRIES) {
+          _redisDisabled = true;
+          return null; // stop retrying -- connection is considered dead
+        }
+        return Math.min(times * 200, 1000);
+      },
     });
+
+    client.on('error', (err: Error) => {
+      console.warn('[QueueService] Redis connection error:', err.message);
+    });
+
+    return client;
   })();
 
   return _redisPromise;
@@ -96,6 +117,7 @@ export const redisConnection = new Proxy(
     },
   }
 );
+// ──────────────────── PATCH END ──────────────────────────────────────────────────────
 
 /**
  * Maps a JobType to the underlying queue it runs on. Several JobTypes

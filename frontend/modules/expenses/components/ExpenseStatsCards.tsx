@@ -102,7 +102,17 @@ export function ExpenseStatsCards() {
   const { data: stats, isLoading, error } = useExpenseStats(dateRange);
 
   const topCategory = stats?.topCategories?.[0];
-  const categoryCount = stats ? Object.keys(stats.byType).length : 0;
+
+  // FIX (crash -- "Cannot convert undefined or null to object"):
+  // `stats ? Object.keys(stats.byType).length : 0` only guarded against
+  // `stats` itself being undefined -- it did not check whether `byType`
+  // was present ON `stats`. If the response resolved but `byType` was
+  // missing (stale cached response, partial envelope, or any shape drift
+  // between deploys), `Object.keys(undefined)` threw and took down the
+  // whole page. Guarding `stats?.byType` directly (not just `stats`)
+  // makes this impossible regardless of what the rest of the object
+  // looks like.
+  const categoryCount = stats?.byType ? Object.keys(stats.byType).length : 0;
 
   return (
     <div className="space-y-3">

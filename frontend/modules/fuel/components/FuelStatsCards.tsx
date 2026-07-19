@@ -41,9 +41,20 @@ export function FuelStatsCards() {
   const dateRange = useMemo(() => getRangeForPeriod(period), [period]);
   const { data: stats, isLoading, error } = useFuelStats(dateRange);
 
-  const cashRow = stats?.paymentBreakdown.find((p) => p.method === 'cash');
-  const cardRow = stats?.paymentBreakdown.find((p) => p.method === 'fuel_card');
-  const otherTotal = (stats?.paymentBreakdown ?? [])
+  // FIX (crash -- "Cannot read properties of undefined (reading 'find')"):
+  // `stats?.paymentBreakdown.find(...)` only guarded against `stats` itself
+  // being undefined. If `stats` resolves but `paymentBreakdown` is missing
+  // (a stale cached response, a partial response shape, or any envelope
+  // that doesn't carry every field the current UI expects), `.find` was
+  // called directly on `undefined` and crashed the whole page instead of
+  // just rendering zeros. Every access to `paymentBreakdown` below now
+  // goes through a single `?? []` fallback so this can never happen again,
+  // matching the defensive pattern already used elsewhere in this app
+  // (see TripStatsCards.tsx's `data?.byDriver ?? {}`).
+  const paymentBreakdown = stats?.paymentBreakdown ?? [];
+  const cashRow = paymentBreakdown.find((p) => p.method === 'cash');
+  const cardRow = paymentBreakdown.find((p) => p.method === 'fuel_card');
+  const otherTotal = paymentBreakdown
     .filter((p) => p.method !== 'cash' && p.method !== 'fuel_card')
     .reduce((sum, p) => sum + p.totalCost, 0);
 
@@ -78,7 +89,7 @@ export function FuelStatsCards() {
             <StatisticCard title="Entries" value={stats.logCount} icon={<Hash className="w-4 h-4 text-muted-foreground" />} />
           </StatisticCards>
 
-          {stats.paymentBreakdown.length > 0 && (
+          {paymentBreakdown.length > 0 && (
             <div className="flex flex-wrap items-center gap-4 px-1 text-sm text-muted-foreground">
               <span className="flex items-center gap-1.5">
                 <Banknote className="w-3.5 h-3.5" />
