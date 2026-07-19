@@ -5,7 +5,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
+} from '@/frontend/shared/ui/feedback/dialog';
 import VehicleForm from './VehicleForm';
 import { Vehicle } from '@/shared/types/vehicle.types';
 

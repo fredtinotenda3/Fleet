@@ -10,7 +10,17 @@ import { formatDistance } from '@/shared/utils/distance.utils';
 export function TripStatsCards() {
   const { data, isLoading } = useTripStats();
 
-  const driverCount = data ? Object.keys(data.byDriver).length : 0;
+  // FIX (crash, all list pages): Object.keys(data.byDriver) threw
+  // "Cannot convert undefined or null to object" whenever byDriver was
+  // undefined -- during the loading->data transition, or if the stats
+  // response envelope isn't shaped exactly as expected. Every other
+  // stats consumer in this codebase (dashboard's expense/fuel widgets)
+  // defensively falls back to {} before calling Object.keys/entries;
+  // this component was the one place that didn't, and it took down the
+  // whole page via the nearest error boundary instead of just rendering
+  // "0 active drivers".
+  const byDriver = data?.byDriver ?? {};
+  const driverCount = Object.keys(byDriver).length;
   const averageDistance = data?.averageDistance ?? 0;
 
   if (isLoading) {

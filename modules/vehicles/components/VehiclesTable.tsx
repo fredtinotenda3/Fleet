@@ -5,8 +5,8 @@
 import { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '@/shared/ui/tables/DataTable';
 import { Vehicle } from '@/shared/types/vehicle.types';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Badge } from '@/frontend/shared/ui/data-display/badge';
+import { Button } from '@/frontend/shared/ui/primitives/button';
 import { Edit, Trash2, Eye } from 'lucide-react';
 import { getStatusConfig } from '@/shared/utils/status.utils';
 

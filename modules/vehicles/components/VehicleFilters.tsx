@@ -2,15 +2,15 @@
 
 'use client';
 
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { Input } from '@/frontend/shared/ui/forms/input';
+import { Label } from '@/frontend/shared/ui/forms/label';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from '@/frontend/shared/ui/forms/select';
 import { VehicleFilters as VehicleFiltersType } from '@/shared/types/vehicle.types';
 
 interface VehicleFiltersProps {

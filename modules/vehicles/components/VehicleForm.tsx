@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
+import { Input } from "@/frontend/shared/ui/forms/input";
+import { Button } from "@/frontend/shared/ui/primitives/button";
+import { Label } from "@/frontend/shared/ui/forms/label";
 import { toast } from "sonner";
 import {
   Select,
@@ -11,7 +11,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/frontend/shared/ui/forms/select";
 import { Car, Calendar, Fuel, Palette, Hash, Gauge } from "lucide-react";
 
 interface VehicleFormData {
