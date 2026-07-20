@@ -1,10 +1,17 @@
-
 // frontend/modules/expenses/services/expenses.api.ts
 
 import { apiClient } from '@/shared/utils/api-client.utils';
 import type { PaginatedResponse } from '@/shared/types/common.types';
 import type { Expense, ExpenseType, ExpenseTableFilters, ExpenseStats } from '../types';
 import type { ExpenseFormOutput } from '../schemas';
+import type {
+  ExpenseCategoryOverTimePoint,
+  TopVehicleExpenseRow,
+  VehicleExpenseBreakdownRow,
+  ExpenseAmountDistributionBucket,
+  JobTripExpenseRow,
+} from '@/shared/types/expense.types';
+import type { ImportResponse } from '@/frontend/shared/import/ImportModal';
 
 const BASE = '/api/expenses';
 
@@ -21,6 +28,8 @@ export interface BulkImportResult {
     errorDetails: string[];
   };
 }
+
+type DateRange = { startDate?: Date; endDate?: Date } | undefined;
 
 function toIso(value: Date | string | undefined): string | undefined {
   if (!value) return undefined;
@@ -40,6 +49,13 @@ function buildListQuery(params: Partial<ExpenseListParams>) {
   };
 }
 
+function rangeParams(dateRange?: DateRange) {
+  return {
+    startDate: dateRange?.startDate ? dateRange.startDate.toISOString() : undefined,
+    endDate: dateRange?.endDate ? dateRange.endDate.toISOString() : undefined,
+  };
+}
+
 export const expensesApi = {
   async list(params: Partial<ExpenseListParams> = {}): Promise<PaginatedResponse<Expense>> {
     return apiClient.get<PaginatedResponse<Expense>>(BASE, { params: buildListQuery(params) });
@@ -49,7 +65,7 @@ export const expensesApi = {
     return apiClient.get<Expense>(BASE, { params: { id } });
   },
 
-  async getStats(dateRange?: { startDate?: Date; endDate?: Date }): Promise<ExpenseStats> {
+  async getStats(dateRange?: DateRange): Promise<ExpenseStats> {
     const params: Record<string, string | undefined> = { action: 'stats' };
     if (dateRange?.startDate) params.startDate = dateRange.startDate.toISOString();
     if (dateRange?.endDate) params.endDate = dateRange.endDate.toISOString();
@@ -71,6 +87,36 @@ export const expensesApi = {
     });
   },
 
+  async getCategoryOverTime(dateRange?: DateRange): Promise<ExpenseCategoryOverTimePoint[]> {
+    return apiClient.get<ExpenseCategoryOverTimePoint[]>(BASE, {
+      params: { action: 'category-over-time', ...rangeParams(dateRange) },
+    });
+  },
+
+  async getTopVehicles(dateRange?: DateRange, limit: number = 10): Promise<TopVehicleExpenseRow[]> {
+    return apiClient.get<TopVehicleExpenseRow[]>(BASE, {
+      params: { action: 'top-vehicles', limit, ...rangeParams(dateRange) },
+    });
+  },
+
+  async getVehicleBreakdown(dateRange?: DateRange, vehicleLimit: number = 8): Promise<VehicleExpenseBreakdownRow[]> {
+    return apiClient.get<VehicleExpenseBreakdownRow[]>(BASE, {
+      params: { action: 'vehicle-breakdown', vehicleLimit, ...rangeParams(dateRange) },
+    });
+  },
+
+  async getAmountDistribution(dateRange?: DateRange): Promise<ExpenseAmountDistributionBucket[]> {
+    return apiClient.get<ExpenseAmountDistributionBucket[]>(BASE, {
+      params: { action: 'amount-distribution', ...rangeParams(dateRange) },
+    });
+  },
+
+  async getJobTripExpense(dateRange?: DateRange, jobLimit: number = 10): Promise<JobTripExpenseRow[]> {
+    return apiClient.get<JobTripExpenseRow[]>(BASE, {
+      params: { action: 'job-trip', jobLimit, ...rangeParams(dateRange) },
+    });
+  },
+
   async create(payload: ExpenseFormOutput): Promise<Expense> {
     return apiClient.post<Expense>(BASE, payload);
   },
@@ -85,6 +131,11 @@ export const expensesApi = {
 
   async bulkImport(records: Array<Record<string, unknown>>): Promise<BulkImportResult> {
     return apiClient.post<BulkImportResult>(`${BASE}/bulk`, { records });
+  },
+
+  /** Standard-column enterprise import (date/vehicle/category/amount/jobTrip/description). */
+  async importStandard(rows: Array<Record<string, unknown>>): Promise<ImportResponse> {
+    return apiClient.post<ImportResponse>(`${BASE}/import`, { rows });
   },
 
   async getExpenseTypes(grouped: boolean = false): Promise<ExpenseType[]> {

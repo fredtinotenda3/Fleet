@@ -3,7 +3,7 @@
 'use client';
 
 import { useMemo, useRef, useState } from 'react';
-import { Plus, Download, FileSpreadsheet, Trash2, Printer, Upload } from 'lucide-react';
+import { Plus, Download, FileSpreadsheet, Trash2, Printer, Upload, UploadCloud } from 'lucide-react';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { Separator } from '@/frontend/shared/ui/data-display/separator';
@@ -14,6 +14,7 @@ import {
   DropdownMenuItem,
 } from '@/frontend/shared/ui/navigation/NestedMenu';
 import { useSessionStore } from '@/frontend/shared/store/session.store';
+import { ImportModal, type ImportColumnDef, type ImportResponse } from '@/frontend/shared/import/ImportModal';
 import { ExpenseStatsCards } from '../components/ExpenseStatsCards';
 import { ExpenseFilters } from '../components/ExpenseFilters';
 import { ExpensesTable } from '../components/ExpensesTable';
@@ -26,6 +27,7 @@ import {
   useBulkDeleteExpenses,
   useBulkImportExpenses,
 } from '../hooks/useExpenseMutations';
+import { expensesApi } from '../services/expenses.api';
 import { exportExpensesToCSV, exportExpensesToExcel, printExpenses, canManageExpenses, canDeleteExpenses } from '../utils';
 import { EXPENSE_ROUTES } from '../routes';
 import type { Expense, ExpenseTableFilters } from '../types';
@@ -33,12 +35,19 @@ import type { ExpenseFormValues } from '../schemas';
 
 const PAGE_SIZE = 10;
 
+const STANDARD_IMPORT_COLUMNS: ImportColumnDef[] = [
+  { key: 'date', label: 'Date', required: true, type: 'date', example: '2026-07-18' },
+  { key: 'license_plate', label: 'Vehicle', required: true, type: 'string', example: 'AFK4234' },
+  { key: 'amount', label: 'Amount', required: true, type: 'number', example: '420.00' },
+  { key: 'category', label: 'Category', required: false, type: 'string', example: 'Maintenance' },
+  { key: 'jobTrip', label: 'Job / Trip', required: false, type: 'string', example: 'Trip-203' },
+  { key: 'description', label: 'Description', required: false, type: 'string', example: 'Brake pads' },
+];
+
 /**
- * Minimal CSV -> BulkExpenseRecord parser. Expects a header row with (any
- * casing/order of) date, reference, account, amount, costCentre,
- * description, license_plate, category. Maps 1:1 onto
- * BulkExpenseRecord (modules/expenses/commands/bulk-import-expenses.command.ts)
- * which the /api/expenses/bulk route already validates row-by-row.
+ * Legacy vendor-statement CSV parser (reference/account/costCentre style),
+ * kept as-is -- feeds /api/expenses/bulk, unrelated to the new standard
+ * import below.
  */
 function parseCSVFile(file: File): Promise<Array<Record<string, unknown>>> {
   return new Promise((resolve, reject) => {
@@ -87,6 +96,7 @@ export function ExpenseListPage() {
   const [modalMode, setModalMode] = useState<ExpenseModalMode>('create');
   const [modalOpen, setModalOpen] = useState(false);
   const [activeExpense, setActiveExpense] = useState<Expense | null>(null);
+  const [importModalOpen, setImportModalOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const listParams = useMemo(() => ({ ...filters, page, limit: PAGE_SIZE }), [filters, page]);
@@ -168,7 +178,7 @@ export function ExpenseListPage() {
     setSelectedIds(new Set());
   }
 
-  async function handleImportFile(event: React.ChangeEvent<HTMLInputElement>) {
+  async function handleLegacyImportFile(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
@@ -177,6 +187,10 @@ export function ExpenseListPage() {
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
+  }
+
+  async function handleStandardImport(records: Array<Record<string, unknown>>): Promise<ImportResponse> {
+    return expensesApi.importStandard(records);
   }
 
   return (
@@ -193,16 +207,23 @@ export function ExpenseListPage() {
                 Delete ({selectedIds.size})
               </Button>
             )}
-            <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleImportFile} />
+            {canManage && (
+              <Button size="sm" onClick={() => setImportModalOpen(true)}>
+                <UploadCloud className="h-3.5 w-3.5" />
+                Import expenses
+              </Button>
+            )}
+            <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleLegacyImportFile} />
             {canManage && (
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={bulkImportExpenses.isPending}
+                title="Legacy vendor-statement CSV import"
               >
                 <Upload className="h-3.5 w-3.5" />
-                Import CSV
+                Import statement (legacy)
               </Button>
             )}
             <DropdownMenu>
@@ -258,6 +279,15 @@ export function ExpenseListPage() {
       </div>
 
       <ExpenseModal open={modalOpen} mode={modalMode} expense={activeExpense} onOpenChange={setModalOpen} onSubmit={handleSubmit} />
+
+      <ImportModal
+        open={importModalOpen}
+        onOpenChange={setImportModalOpen}
+        title="Import expenses"
+        description="Upload a CSV or Excel file with your expense records. Download the template below to see the expected columns."
+        columns={STANDARD_IMPORT_COLUMNS}
+        onImport={handleStandardImport}
+      />
     </div>
   );
 }

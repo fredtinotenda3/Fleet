@@ -1,17 +1,17 @@
-
 // frontend/modules/expenses/pages/ExpenseDashboardPage.tsx
 
 'use client';
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, List } from 'lucide-react';
+import { Plus, List, BarChart3 } from 'lucide-react';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { useSessionStore } from '@/frontend/shared/store/session.store';
 import { ExpenseStatsCards } from '../components/ExpenseStatsCards';
 import { ExpenseMonthlyTrendChart } from '../components/ExpenseMonthlyTrendChart';
 import { ExpenseCategoryChart } from '../components/ExpenseCategoryChart';
+import { ExpenseTopCategoriesChart } from '../components/ExpenseTopCategoriesChart';
 import { ExpenseModal, type ExpenseModalMode } from '../components/ExpenseModal';
 import { useCreateExpense } from '../hooks/useExpenseMutations';
 import { canManageExpenses } from '../utils';
@@ -40,6 +40,9 @@ export function ExpenseDashboardPage() {
         breadcrumbs={[{ label: 'Expenses' }]}
         actions={
           <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => router.push(EXPENSE_ROUTES.analytics)}>
+              <BarChart3 className="h-3.5 w-3.5" /> Full analytics
+            </Button>
             <Button variant="outline" size="sm" onClick={() => router.push(EXPENSE_ROUTES.list)}>
               <List className="h-3.5 w-3.5" /> All expenses
             </Button>
@@ -58,6 +61,8 @@ export function ExpenseDashboardPage() {
         <ExpenseMonthlyTrendChart />
         <ExpenseCategoryChart />
       </div>
+
+      <ExpenseTopCategoriesChart dateRange={{}} />
 
       <ExpenseModal open={modalOpen} mode={modalMode} onOpenChange={setModalOpen} onSubmit={handleSubmit} />
     </div>

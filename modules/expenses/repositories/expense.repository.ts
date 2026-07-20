@@ -6,6 +6,11 @@ import {
   Expense,
   ExpenseFilters,
   ExpenseStats,
+  ExpenseCategoryOverTimePoint,
+  TopVehicleExpenseRow,
+  VehicleExpenseBreakdownRow,
+  ExpenseAmountDistributionBucket,
+  JobTripExpenseRow,
 } from '@/shared/types/expense.types';
 import {
   PaginationParams,
@@ -16,27 +21,6 @@ import {
 export class ExpenseRepository extends BaseRepository<Expense> {
   protected collectionName = 'tblexpenses';
 
-  /**
-   * FIX (dashboard/stats showing $0 or wrong totals while the list page
-   * is correct): getFilteredExpenses() below has always treated
-   * tenantId === 'default' | 'system' | 'super_admin' as a sentinel
-   * meaning "org owner / super admin -- do not filter by tenantId at
-   * all", matching the same pattern used by VehicleRepository,
-   * FuelRepository, MaintenanceRepository, and TripRepository.
-   * getExpenseStats(), getMonthlyTrends(), and getExpenseAnalytics()
-   * did NOT apply this same bypass -- they always did a strict
-   * `tenantId` equality match. That's a silent, structural
-   * inconsistency: whenever the literal tenantId returned by
-   * getTenantFromRequest() (the sentinel 'default') doesn't exactly
-   * match what's stored on a given expense document's `tenantId`
-   * field, the list page (bypassed, sees everything) and the stats/
-   * trend/category-chart endpoints (strictly filtered) silently
-   * disagree -- exactly the "$190 in stats vs 101 in the list" and
-   * later "$0 in stats vs however many are actually in the list"
-   * symptoms this app hit. This single helper is now shared by every
-   * read method in this repository so they can never drift apart
-   * again.
-   */
   private isSuperAdminTenant(tenantId: string): boolean {
     return (
       tenantId === 'default' ||
@@ -45,12 +29,6 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     );
   }
 
-  /**
-   * Every expense returned anywhere in the app (list, dashboard, export)
-   * must carry a populated `expense_type`, or the category column falls
-   * back to "Other"/"All" and dropdowns leak raw ObjectIds.
-   * This is the single shared lookup stage every read path below uses.
-   */
   private expenseTypeLookupStages() {
     return [
       {
@@ -65,6 +43,21 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     ];
   }
 
+  /** Shared tenant + date-range match builder for every analytics aggregation below. */
+  private buildBaseMatch(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Record<string, unknown> {
+    const match: Record<string, unknown> = { isDeleted: { $ne: true } };
+    if (!this.isSuperAdminTenant(tenantId)) match.tenantId = tenantId;
+    if (dateRange?.startDate || dateRange?.endDate) {
+      match.date = {};
+      if (dateRange.startDate) (match.date as any).$gte = dateRange.startDate;
+      if (dateRange.endDate) (match.date as any).$lte = dateRange.endDate;
+    }
+    return match;
+  }
+
   async findByLicensePlate(
     licensePlate: string,
     tenantId: string,
@@ -77,14 +70,6 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     );
   }
 
-  /**
-   * Powers: /api/expenses (list + legacy non-paginated dashboard path),
-   * CSV/Excel export, vehicle expense history. Uses an aggregation
-   * pipeline (not BaseRepository.findWithPagination) specifically so
-   * expense_type is always populated -- this was previously missing,
-   * which is why category showed as "All" or a raw ObjectId
-   * everywhere except the stats cards.
-   */
   async getFilteredExpenses(
     filters: ExpenseFilters,
     tenantId: string,
@@ -145,13 +130,6 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     };
   }
 
-  /**
-   * FIX: now applies the same isSuperAdminTenant() bypass as
-   * getFilteredExpenses() above. Powers the "Total expenses",
-   * "Average expense", "Categories used", and "Top category" cards on
-   * both the Expenses dashboard (ExpenseStatsCards) and the main
-   * Fleet dashboard (KPIsWidget / useExpenseBreakdownWidget).
-   */
   async getExpenseStats(
     tenantId: string,
     dateRange?: DateRange
@@ -217,10 +195,6 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     };
   }
 
-  /**
-   * FIX: now applies the same isSuperAdminTenant() bypass. Powers the
-   * "Monthly expense trend" chart on the Expenses dashboard.
-   */
   async getMonthlyTrends(
     tenantId: string,
     months: number = 12
@@ -254,10 +228,6 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     return results.map((r) => ({ month: r._id, total: r.total }));
   }
 
-  /**
-   * FIX: now applies the same isSuperAdminTenant() bypass. Powers the
-   * "Expense distribution" / category chart on the Expenses dashboard.
-   */
   async getExpenseAnalytics(
     tenantId: string,
     startDate: Date,
@@ -290,6 +260,249 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     ];
 
     return collection.aggregate(pipeline).toArray();
+  }
+
+  // ------------------------------------------------------------------
+  // Enterprise analytics additions
+  // ------------------------------------------------------------------
+
+  /**
+   * Category totals per month. Powers both the stacked
+   * category-over-time chart and the category x month heatmap -- same
+   * shape, two visualizations, so we aggregate it once.
+   */
+  async getExpenseCategoryOverTime(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<ExpenseCategoryOverTimePoint[]> {
+    const collection = await this.getCollection();
+    const match = this.buildBaseMatch(tenantId, dateRange);
+
+    const pipeline = [
+      { $match: match },
+      ...this.expenseTypeLookupStages(),
+      {
+        $group: {
+          _id: {
+            category: { $ifNull: ['$expense_type.name', 'Uncategorized'] },
+            month: { $dateToString: { format: '%Y-%m', date: '$date' } },
+          },
+          amount: { $sum: '$amount' },
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { '_id.month': 1 } },
+      {
+        $project: {
+          _id: 0,
+          category: '$_id.category',
+          month: '$_id.month',
+          amount: { $round: ['$amount', 2] },
+          count: 1,
+        },
+      },
+    ];
+
+    return collection.aggregate<ExpenseCategoryOverTimePoint>(pipeline).toArray();
+  }
+
+  /**
+   * Top vehicles by total expense spend, with each vehicle's single
+   * biggest category. Uses $sortArray (Mongo 5.2+) to pick the top
+   * category from a pushed per-category array rather than a second
+   * round-trip query.
+   */
+  async getTopVehiclesByExpense(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date },
+    limit: number = 10
+  ): Promise<TopVehicleExpenseRow[]> {
+    const collection = await this.getCollection();
+    const match = this.buildBaseMatch(tenantId, dateRange);
+
+    const pipeline = [
+      { $match: match },
+      ...this.expenseTypeLookupStages(),
+      {
+        $group: {
+          _id: {
+            plate: '$license_plate',
+            category: { $ifNull: ['$expense_type.name', 'Uncategorized'] },
+          },
+          amount: { $sum: '$amount' },
+          count: { $sum: 1 },
+        },
+      },
+      {
+        $group: {
+          _id: '$_id.plate',
+          totalAmount: { $sum: '$amount' },
+          expenseCount: { $sum: '$count' },
+          categories: { $push: { category: '$_id.category', amount: '$amount' } },
+        },
+      },
+      {
+        $addFields: {
+          sortedCategories: { $sortArray: { input: '$categories', sortBy: { amount: -1 } } },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          license_plate: '$_id',
+          totalAmount: { $round: ['$totalAmount', 2] },
+          expenseCount: 1,
+          topCategory: { $arrayElemAt: ['$sortedCategories.category', 0] },
+        },
+      },
+      { $sort: { totalAmount: -1 } },
+      { $limit: limit },
+    ];
+
+    return collection.aggregate<TopVehicleExpenseRow>(pipeline).toArray();
+  }
+
+  /**
+   * Per-category spend for the top N vehicles by total spend -- powers
+   * the vehicle x category stacked bar. Two-stage: first find the top
+   * vehicle plates, then aggregate their category breakdown in a single
+   * follow-up query (no N+1: one query per stage, not per vehicle).
+   */
+  async getVehicleExpenseBreakdown(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date },
+    vehicleLimit: number = 8
+  ): Promise<VehicleExpenseBreakdownRow[]> {
+    const collection = await this.getCollection();
+    const match = this.buildBaseMatch(tenantId, dateRange);
+
+    const topPlatesPipeline = [
+      { $match: match },
+      { $group: { _id: '$license_plate', totalAmount: { $sum: '$amount' } } },
+      { $sort: { totalAmount: -1 } },
+      { $limit: vehicleLimit },
+    ];
+    const topPlates = await collection.aggregate(topPlatesPipeline).toArray();
+    const plates = topPlates.map((p) => p._id as string);
+    if (plates.length === 0) return [];
+
+    const pipeline = [
+      { $match: { ...match, license_plate: { $in: plates } } },
+      ...this.expenseTypeLookupStages(),
+      {
+        $group: {
+          _id: {
+            plate: '$license_plate',
+            category: { $ifNull: ['$expense_type.name', 'Uncategorized'] },
+          },
+          amount: { $sum: '$amount' },
+          count: { $sum: 1 },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          license_plate: '$_id.plate',
+          category: '$_id.category',
+          amount: { $round: ['$amount', 2] },
+          count: 1,
+        },
+      },
+    ];
+
+    return collection.aggregate<VehicleExpenseBreakdownRow>(pipeline).toArray();
+  }
+
+  /** Histogram buckets via $bucketAuto -- mirrors FuelRepository.getFuelCostDistribution. */
+  async getExpenseAmountDistribution(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<ExpenseAmountDistributionBucket[]> {
+    const collection = await this.getCollection();
+    const match = this.buildBaseMatch(tenantId, dateRange);
+
+    const count = await collection.countDocuments(match as Filter<Expense>);
+    if (count === 0) return [];
+
+    const bucketCount = Math.min(8, count);
+    const pipeline = [
+      { $match: match },
+      {
+        $bucketAuto: {
+          groupBy: '$amount',
+          buckets: bucketCount,
+          output: { count: { $sum: 1 } },
+        },
+      },
+    ];
+
+    const results = await collection.aggregate(pipeline).toArray();
+    return results.map((r) => ({
+      min: Math.round((r._id.min ?? 0) * 100) / 100,
+      max: Math.round((r._id.max ?? 0) * 100) / 100,
+      count: r.count,
+    }));
+  }
+
+  /**
+   * Job/Trip spend broken down by category, for the top N jobs/trips
+   * by total spend. Same two-stage shape as getVehicleExpenseBreakdown.
+   * Records with no jobTrip are grouped under "No Job/Trip".
+   */
+  async getJobTripExpenseAnalysis(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date },
+    jobLimit: number = 10
+  ): Promise<JobTripExpenseRow[]> {
+    const collection = await this.getCollection();
+    const match = this.buildBaseMatch(tenantId, dateRange);
+
+    const jobKeyExpr = {
+      $cond: [
+        { $and: [{ $ne: ['$jobTrip', null] }, { $ne: ['$jobTrip', ''] }] },
+        '$jobTrip',
+        'No Job/Trip',
+      ],
+    };
+
+    const topJobsPipeline = [
+      { $match: match },
+      { $addFields: { __job: jobKeyExpr } },
+      { $group: { _id: '$__job', totalAmount: { $sum: '$amount' } } },
+      { $sort: { totalAmount: -1 } },
+      { $limit: jobLimit },
+    ];
+    const topJobs = await collection.aggregate(topJobsPipeline).toArray();
+    const jobs = topJobs.map((j) => j._id as string);
+    if (jobs.length === 0) return [];
+
+    const pipeline = [
+      { $match: match },
+      { $addFields: { __job: jobKeyExpr } },
+      { $match: { __job: { $in: jobs } } },
+      ...this.expenseTypeLookupStages(),
+      {
+        $group: {
+          _id: {
+            job: '$__job',
+            category: { $ifNull: ['$expense_type.name', 'Uncategorized'] },
+          },
+          amount: { $sum: '$amount' },
+          count: { $sum: 1 },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          jobTrip: '$_id.job',
+          category: '$_id.category',
+          amount: { $round: ['$amount', 2] },
+          count: 1,
+        },
+      },
+    ];
+
+    return collection.aggregate<JobTripExpenseRow>(pipeline).toArray();
   }
 }
 

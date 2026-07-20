@@ -8,8 +8,10 @@ import {
   BulkImportExpensesCommand,
   BulkExpenseRecord,
 } from '../commands/bulk-import-expenses.command';
+import { ImportExpensesCommand, ImportExpenseRow } from '../commands/import-expenses.command';
 import { Expense } from '@/shared/types/expense.types';
 import type { BulkImportResult } from '../commands/handlers/bulk-import-expenses.handler';
+import type { ImportExpensesResult } from '../commands/handlers/import-expenses.handler';
 
 export class ExpenseCommandService {
   async createExpense(
@@ -51,6 +53,17 @@ export class ExpenseCommandService {
   ): Promise<BulkImportResult> {
     return commandBus.execute<BulkImportResult>(
       new BulkImportExpensesCommand(records, tenantId, userId)
+    );
+  }
+
+  /** Standard-column enterprise import (date/vehicle/category/amount/jobTrip/description). */
+  async importExpenses(
+    rows: ImportExpenseRow[],
+    tenantId: string,
+    userId?: string
+  ): Promise<ImportExpensesResult> {
+    return commandBus.execute<ImportExpensesResult>(
+      new ImportExpensesCommand(rows, tenantId, userId)
     );
   }
 }

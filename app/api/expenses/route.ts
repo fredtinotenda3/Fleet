@@ -1,4 +1,3 @@
-
 // app/api/expenses/route.ts
 
 import { NextRequest } from 'next/server';
@@ -16,6 +15,11 @@ export const GET = withAuth(
     if (action === 'stats') return expenseController.getExpenseStats(req);
     if (action === 'monthly') return expenseController.getMonthlyTrends(req);
     if (action === 'analytics') return expenseController.getExpenseAnalytics(req);
+    if (action === 'category-over-time') return expenseController.getCategoryOverTime(req);
+    if (action === 'top-vehicles') return expenseController.getTopVehicles(req);
+    if (action === 'vehicle-breakdown') return expenseController.getVehicleBreakdown(req);
+    if (action === 'amount-distribution') return expenseController.getAmountDistribution(req);
+    if (action === 'job-trip') return expenseController.getJobTripExpense(req);
     if (id) return expenseController.getExpense(req, id);
 
     return expenseController.getExpenses(req);

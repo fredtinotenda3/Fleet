@@ -50,3 +50,42 @@ export interface ExpenseStats {
   byMonth: Record<string, number>;
   topCategories: Array<{ name: string; amount: number }>;
 }
+
+/** Powers the stacked category-over-time chart AND the category x month heatmap (same shape, two views). */
+export interface ExpenseCategoryOverTimePoint {
+  category: string;
+  month: string;
+  amount: number;
+  count: number;
+}
+
+/** Powers "Top Vehicles by Expense" horizontal bar. */
+export interface TopVehicleExpenseRow {
+  license_plate: string;
+  totalAmount: number;
+  expenseCount: number;
+  topCategory: string;
+}
+
+/** Powers "Vehicle Expense Breakdown" stacked bar (vehicle x category). */
+export interface VehicleExpenseBreakdownRow {
+  license_plate: string;
+  category: string;
+  amount: number;
+  count: number;
+}
+
+/** Powers the expense amount histogram. */
+export interface ExpenseAmountDistributionBucket {
+  min: number;
+  max: number;
+  count: number;
+}
+
+/** Powers "Job / Trip Expense Analysis" stacked bar (job/trip x category). */
+export interface JobTripExpenseRow {
+  jobTrip: string;
+  category: string;
+  amount: number;
+  count: number;
+}

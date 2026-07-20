@@ -1,18 +1,4 @@
 // frontend/shared/import/ImportModal.tsx
-//
-// Generic, entity-agnostic CSV import UI. Each entity (Vehicles, Fuel
-// Logs, and -- via the same component -- Trips/Maintenance/Expenses in
-// future) supplies a column template and an `onImport` callback; this
-// component owns file selection, client-side parsing/preview, lightweight
-// required-field checks, submission, and the success/failure report.
-//
-// Row-level business validation (duplicate license plates, invalid
-// dates/numbers, missing vehicle references, etc.) is intentionally NOT
-// duplicated here -- it already lives in the Zod schemas backing each
-// entity's create command handler (vehicleCreateSchema,
-// fuelLogCreateSchema, ...). This modal submits every parsed row and
-// renders whatever per-row result the server reports, so there is a
-// single source of truth for "what is a valid record."
 
 'use client';
 
@@ -35,12 +21,12 @@ import {
   TableRow,
 } from '@/frontend/shared/ui/data-display/table';
 import { UploadCloud, FileText, X, CheckCircle2, AlertTriangle, Download } from 'lucide-react';
-import { readCsvFile, buildCsvText, downloadCsvText } from '@/shared/utils/csv-parser.utils';
+import { buildCsvText, downloadCsvText } from '@/shared/utils/csv-parser.utils';
+import { readTabularFile, IMPORT_FILE_ACCEPT } from '@/shared/utils/excel-parser.utils';
 
 export type ImportColumnType = 'string' | 'number' | 'boolean' | 'date';
 
 export interface ImportColumnDef {
-  /** Must match the CSV header exactly (case-insensitive match is applied). */
   key: string;
   label: string;
   required?: boolean;
@@ -53,7 +39,13 @@ export interface ImportRowResult {
   row: number;
   success: boolean;
   identifier?: string;
+  /** Column that failed validation, when known. */
+  column?: string;
+  /** The raw value that failed validation, when known. */
+  invalidValue?: string;
   error?: string;
+  /** A suggested fix for the person reviewing the failed-row report. */
+  suggestedFix?: string;
 }
 
 export interface ImportSummary {
@@ -149,14 +141,10 @@ export function ImportModal({
   const handleFile = useCallback(
     async (file: File) => {
       setParseError(null);
-      if (!file.name.toLowerCase().endsWith('.csv')) {
-        setParseError('Please select a .csv file.');
-        return;
-      }
       try {
-        const parsed = await readCsvFile(file);
+        const parsed = await readTabularFile(file);
         if (parsed.headers.length === 0 || parsed.rows.length === 0) {
-          setParseError('The file appears to be empty or could not be parsed as CSV.');
+          setParseError('The file appears to be empty or could not be parsed.');
           return;
         }
         if (parsed.rows.length > maxRows) {
@@ -167,8 +155,8 @@ export function ImportModal({
         setHeaders(parsed.headers);
         setRows(parsed.rows);
         setStage('preview');
-      } catch {
-        setParseError('Failed to read or parse this file. Please check it is a valid CSV.');
+      } catch (error) {
+        setParseError(error instanceof Error ? error.message : 'Failed to read or parse this file.');
       }
     },
     [maxRows]
@@ -187,8 +175,8 @@ export function ImportModal({
   }
 
   function buildRecordsForSubmission(): Array<Record<string, unknown>> {
-    return rows.map((row) => {
-      const record: Record<string, unknown> = {};
+    return rows.map((row, index) => {
+      const record: Record<string, unknown> = { rowNumber: index + 2 }; // +2: header row is row 1
       columns.forEach((col) => {
         const headerMatch = headers.find((h) => h.toLowerCase() === col.key.toLowerCase());
         const rawValue = headerMatch ? row[headerMatch] : '';
@@ -217,8 +205,15 @@ export function ImportModal({
     if (!response) return;
     const failedRows = response.results.filter((r) => !r.success);
     const csv = buildCsvText(
-      ['row', 'identifier', 'error'],
-      failedRows.map((r) => ({ row: r.row, identifier: r.identifier ?? '', error: r.error ?? '' }))
+      ['row', 'column', 'value', 'identifier', 'error', 'suggestedFix'],
+      failedRows.map((r) => ({
+        row: r.row,
+        column: r.column ?? '',
+        value: r.invalidValue ?? '',
+        identifier: r.identifier ?? '',
+        error: r.error ?? '',
+        suggestedFix: r.suggestedFix ?? '',
+      }))
     );
     downloadCsvText(csv, `${title.toLowerCase().replace(/\s+/g, '-')}-import-errors.csv`);
   }
@@ -227,6 +222,11 @@ export function ImportModal({
     if (!nextOpen) reset();
     onOpenChange(nextOpen);
   }
+
+  const hasDetailedErrors = useMemo(
+    () => (response?.results ?? []).some((r) => !r.success && (r.column || r.suggestedFix)),
+    [response]
+  );
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -256,12 +256,12 @@ export function ImportModal({
               }`}
             >
               <UploadCloud className="w-8 h-8 text-muted-foreground" aria-hidden="true" />
-              <p className="font-medium text-body-sm text-foreground">Drag and drop a CSV file, or click to browse</p>
-              <p className="text-caption text-muted-foreground">Up to {maxRows.toLocaleString()} rows per import</p>
+              <p className="font-medium text-body-sm text-foreground">Drag and drop a CSV or Excel file, or click to browse</p>
+              <p className="text-caption text-muted-foreground">Up to {maxRows.toLocaleString()} rows per import &middot; .csv, .xlsx, .xls</p>
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".csv,text/csv"
+                accept={IMPORT_FILE_ACCEPT}
                 className="hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
@@ -392,7 +392,7 @@ export function ImportModal({
         {stage === 'submitting' && (
           <div className="flex flex-col items-center justify-center gap-3 py-12">
             <div className="w-8 h-8 border-2 rounded-full animate-spin border-primary border-t-transparent" />
-            <p className="text-body-sm text-muted-foreground">Importing {rows.length} row(s)…</p>
+            <p className="text-body-sm text-muted-foreground">Importing {rows.length} row(s)&hellip;</p>
           </div>
         )}
 
@@ -428,7 +428,10 @@ export function ImportModal({
                       <TableRow>
                         <TableHead>Row</TableHead>
                         <TableHead>Identifier</TableHead>
-                        <TableHead>Error</TableHead>
+                        {hasDetailedErrors && <TableHead>Column</TableHead>}
+                        {hasDetailedErrors && <TableHead>Value</TableHead>}
+                        <TableHead>Reason</TableHead>
+                        {hasDetailedErrors && <TableHead>Suggested fix</TableHead>}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -437,8 +440,13 @@ export function ImportModal({
                         .map((r) => (
                           <TableRow key={r.row}>
                             <TableCell>{r.row}</TableCell>
-                            <TableCell>{r.identifier ?? '—'}</TableCell>
+                            <TableCell>{r.identifier ?? '\u2014'}</TableCell>
+                            {hasDetailedErrors && <TableCell>{r.column ?? '\u2014'}</TableCell>}
+                            {hasDetailedErrors && <TableCell>{r.invalidValue ?? '\u2014'}</TableCell>}
                             <TableCell className="text-destructive">{r.error}</TableCell>
+                            {hasDetailedErrors && (
+                              <TableCell className="text-muted-foreground">{r.suggestedFix ?? '\u2014'}</TableCell>
+                            )}
                           </TableRow>
                         ))}
                     </TableBody>

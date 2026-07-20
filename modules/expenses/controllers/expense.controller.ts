@@ -21,6 +21,17 @@ import { getAuthContext } from '@/server/auth/auth-context';
 
 bootstrapCqrs();
 
+function parseDateRangeParams(req: NextRequest): { startDate?: Date; endDate?: Date } | undefined {
+  const sp = req.nextUrl.searchParams;
+  const start = sp.get('startDate');
+  const end = sp.get('endDate');
+  if (!start && !end) return undefined;
+  return {
+    startDate: start ? new Date(start) : undefined,
+    endDate: end ? new Date(end) : undefined,
+  };
+}
+
 export class ExpenseController {
   async getExpenses(req: NextRequest) {
     try {
@@ -107,14 +118,6 @@ export class ExpenseController {
     }
   }
 
-  /**
-   * FIX (critical -- unauthorized hard delete): identical bug/fix to
-   * VehicleController.deleteVehicle -- `?soft=false` used to trigger a
-   * permanent, non-cascading hardDelete() (orphaning any receipt/report
-   * reference to this expense) under the same EXPENSE_DELETE permission
-   * used for an ordinary, recoverable soft delete. Now requires the
-   * caller to also be isSuperAdmin (SUPER_ADMIN or ORGANIZATION_OWNER).
-   */
   async deleteExpense(req: NextRequest, id: string) {
     try {
       const authContext = await getAuthContext(req);
@@ -147,6 +150,24 @@ export class ExpenseController {
         message: `Import completed: ${result.inserted} inserted, ${result.errors} errors`,
         results: result,
       });
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** Standard-column enterprise import. */
+  async importExpenses(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const userId = await getUserIdFromRequest(req);
+      const { rows } = await req.json();
+
+      if (!Array.isArray(rows) || rows.length === 0) {
+        throw new ValidationError('No rows to import');
+      }
+
+      const result = await expenseCommandService.importExpenses(rows, tenantId, userId);
+      return successResponse(result);
     } catch (error) {
       return this.handleError(error);
     }
@@ -199,6 +220,77 @@ export class ExpenseController {
         new Date(searchParams.get('endDate')!)
       );
       return successResponse(analytics);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async getCategoryOverTime(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const data = await expenseQueryService.getExpenseCategoryOverTime(
+        tenantId,
+        parseDateRangeParams(req)
+      );
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async getTopVehicles(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const limit = Number(req.nextUrl.searchParams.get('limit') || '10');
+      const data = await expenseQueryService.getTopVehiclesByExpense(
+        tenantId,
+        parseDateRangeParams(req),
+        limit
+      );
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async getVehicleBreakdown(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const vehicleLimit = Number(req.nextUrl.searchParams.get('vehicleLimit') || '8');
+      const data = await expenseQueryService.getVehicleExpenseBreakdown(
+        tenantId,
+        parseDateRangeParams(req),
+        vehicleLimit
+      );
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async getAmountDistribution(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const data = await expenseQueryService.getExpenseAmountDistribution(
+        tenantId,
+        parseDateRangeParams(req)
+      );
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async getJobTripExpense(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const jobLimit = Number(req.nextUrl.searchParams.get('jobLimit') || '10');
+      const data = await expenseQueryService.getJobTripExpense(
+        tenantId,
+        parseDateRangeParams(req),
+        jobLimit
+      );
+      return successResponse(data);
     } catch (error) {
       return this.handleError(error);
     }

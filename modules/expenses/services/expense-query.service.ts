@@ -6,7 +6,21 @@ import { GetExpenseByIdQuery } from '../queries/get-expense-by-id.query';
 import { GetExpenseStatsQuery } from '../queries/get-expense-stats.query';
 import { GetMonthlyTrendsQuery } from '../queries/get-monthly-trends.query';
 import { GetExpenseAnalyticsQuery } from '../queries/get-expense-analytics.query';
-import { Expense, ExpenseFilters, ExpenseStats } from '@/shared/types/expense.types';
+import { GetExpenseCategoryOverTimeQuery } from '../queries/get-expense-category-over-time.query';
+import { GetTopVehiclesByExpenseQuery } from '../queries/get-top-vehicles-by-expense.query';
+import { GetVehicleExpenseBreakdownQuery } from '../queries/get-vehicle-expense-breakdown.query';
+import { GetExpenseAmountDistributionQuery } from '../queries/get-expense-amount-distribution.query';
+import { GetJobTripExpenseQuery } from '../queries/get-job-trip-expense.query';
+import {
+  Expense,
+  ExpenseFilters,
+  ExpenseStats,
+  ExpenseCategoryOverTimePoint,
+  TopVehicleExpenseRow,
+  VehicleExpenseBreakdownRow,
+  ExpenseAmountDistributionBucket,
+  JobTripExpenseRow,
+} from '@/shared/types/expense.types';
 import { PaginatedResponse, PaginationParams, DateRange } from '@/shared/types/common.types';
 
 export class ExpenseQueryService {
@@ -48,6 +62,54 @@ export class ExpenseQueryService {
   ): Promise<unknown[]> {
     return queryBus.execute<unknown[]>(
       new GetExpenseAnalyticsQuery(tenantId, startDate, endDate)
+    );
+  }
+
+  async getExpenseCategoryOverTime(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<ExpenseCategoryOverTimePoint[]> {
+    return queryBus.execute<ExpenseCategoryOverTimePoint[]>(
+      new GetExpenseCategoryOverTimeQuery(tenantId, dateRange)
+    );
+  }
+
+  async getTopVehiclesByExpense(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date },
+    limit: number = 10
+  ): Promise<TopVehicleExpenseRow[]> {
+    return queryBus.execute<TopVehicleExpenseRow[]>(
+      new GetTopVehiclesByExpenseQuery(tenantId, dateRange, limit)
+    );
+  }
+
+  async getVehicleExpenseBreakdown(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date },
+    vehicleLimit: number = 8
+  ): Promise<VehicleExpenseBreakdownRow[]> {
+    return queryBus.execute<VehicleExpenseBreakdownRow[]>(
+      new GetVehicleExpenseBreakdownQuery(tenantId, dateRange, vehicleLimit)
+    );
+  }
+
+  async getExpenseAmountDistribution(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<ExpenseAmountDistributionBucket[]> {
+    return queryBus.execute<ExpenseAmountDistributionBucket[]>(
+      new GetExpenseAmountDistributionQuery(tenantId, dateRange)
+    );
+  }
+
+  async getJobTripExpense(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date },
+    jobLimit: number = 10
+  ): Promise<JobTripExpenseRow[]> {
+    return queryBus.execute<JobTripExpenseRow[]>(
+      new GetJobTripExpenseQuery(tenantId, dateRange, jobLimit)
     );
   }
 }

@@ -1,9 +1,19 @@
-//frontend/modules/expenses/components/index.ts
+// frontend/modules/expenses/components/index.ts
 
-export { ExpenseForm } from './ExpenseForm';
-export { ExpenseModal, type ExpenseModalMode } from './ExpenseModal';
-export { ExpensesTable } from './ExpensesTable';
-export { ExpenseFilters } from './ExpenseFilters';
-export { ExpenseStatsCards } from './ExpenseStatsCards';
-export { ExpenseMonthlyTrendChart } from './ExpenseMonthlyTrendChart';
-export { ExpenseCategoryChart } from './ExpenseCategoryChart';
+export * from './ExpenseCategoryChart';
+export * from './ExpenseMonthlyTrendChart';
+export * from './ExpenseStatsCards';
+export * from './ExpensesTable';
+export * from './ExpenseFilters';
+export * from './ExpenseForm';
+export * from './ExpenseModal';
+export * from './ExpenseAnalyticsFilterBar';
+export * from './ExpenseCategoryOverTimeChart';
+export * from './ExpenseTopCategoriesChart';
+export * from './TopVehiclesByExpenseChart';
+export * from './VehicleExpenseBreakdownChart';
+export * from './ExpenseAmountDistributionChart';
+export * from './ExpenseParetoChart';
+export * from './ExpenseHeatmapChart';
+export * from './JobTripExpenseChart';
+
