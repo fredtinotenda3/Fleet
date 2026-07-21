@@ -10,11 +10,13 @@ import { BaseCommand } from '@/server/cqrs/command';
  * one place (the handler).
  */
 export class CreateVehicleCommand extends BaseCommand {
+  static readonly commandName = 'CreateVehicleCommand';
+
   constructor(
     public readonly rawData: unknown,
     public readonly tenantId: string,
     public readonly userId?: string
   ) {
-    super(CreateVehicleCommand.name);
+    super(CreateVehicleCommand.commandName);
   }
 }

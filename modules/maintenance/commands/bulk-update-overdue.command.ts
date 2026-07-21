@@ -3,10 +3,12 @@
 import { BaseCommand } from '@/server/cqrs/command';
 
 export class BulkUpdateOverdueCommand extends BaseCommand {
+  static readonly commandName = 'BulkUpdateOverdueCommand';
+
   constructor(
     public readonly tenantId: string,
     public readonly userId?: string
   ) {
-    super(BulkUpdateOverdueCommand.name);
+    super(BulkUpdateOverdueCommand.commandName);
   }
 }

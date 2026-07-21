@@ -3,7 +3,9 @@
 import { BaseQuery } from '@/server/cqrs/query';
 
 export class GetOverdueRemindersQuery extends BaseQuery {
+  static readonly queryName = 'GetOverdueRemindersQuery';
+
   constructor(public readonly tenantId: string) {
-    super(GetOverdueRemindersQuery.name);
+    super(GetOverdueRemindersQuery.queryName);
   }
 }

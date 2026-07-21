@@ -16,13 +16,13 @@ export class QueryBus {
     queryType: QueryConstructor<TQuery>,
     handler: IQueryHandler<TQuery, TResult>
   ): void {
-    this.handlers.set(queryType.name, handler);
+    this.handlers.set(queryType.queryName, handler);
   }
 
   isRegistered<TQuery extends IQuery>(
     queryType: QueryConstructor<TQuery>
   ): boolean {
-    return this.handlers.has(queryType.name);
+    return this.handlers.has(queryType.queryName);
   }
 
   async execute<TResult>(query: IQuery): Promise<TResult> {

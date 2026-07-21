@@ -3,12 +3,14 @@
 import { BaseCommand } from '@/server/cqrs/command';
 
 export class UpdateReminderCommand extends BaseCommand {
+  static readonly commandName = 'UpdateReminderCommand';
+
   constructor(
     public readonly reminderId: string,
     public readonly rawData: unknown,
     public readonly tenantId: string,
     public readonly userId?: string
   ) {
-    super(UpdateReminderCommand.name);
+    super(UpdateReminderCommand.commandName);
   }
 }

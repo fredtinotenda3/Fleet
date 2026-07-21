@@ -15,11 +15,13 @@ export interface BulkExpenseRecord {
 }
 
 export class BulkImportExpensesCommand extends BaseCommand {
+  static readonly commandName = 'BulkImportExpensesCommand';
+
   constructor(
     public readonly records: BulkExpenseRecord[],
     public readonly tenantId: string,
     public readonly userId?: string
   ) {
-    super(BulkImportExpensesCommand.name);
+    super(BulkImportExpensesCommand.commandName);
   }
 }

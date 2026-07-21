@@ -9,10 +9,12 @@ export interface VehicleFuelTimelineFilters {
 }
 
 export class GetVehicleFuelTimelineQuery extends BaseQuery {
+  static readonly queryName = 'GetVehicleFuelTimelineQuery';
+
   constructor(
     public readonly tenantId: string,
     public readonly filters: VehicleFuelTimelineFilters
   ) {
-    super(GetVehicleFuelTimelineQuery.name);
+    super(GetVehicleFuelTimelineQuery.queryName);
   }
 }

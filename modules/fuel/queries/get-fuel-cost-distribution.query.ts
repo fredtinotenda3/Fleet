@@ -3,10 +3,12 @@
 import { BaseQuery } from '@/server/cqrs/query';
 
 export class GetFuelCostDistributionQuery extends BaseQuery {
+  static readonly queryName = 'GetFuelCostDistributionQuery';
+
   constructor(
     public readonly tenantId: string,
     public readonly dateRange?: { startDate?: Date; endDate?: Date }
   ) {
-    super(GetFuelCostDistributionQuery.name);
+    super(GetFuelCostDistributionQuery.queryName);
   }
 }

@@ -3,10 +3,12 @@
 import { BaseQuery } from '@/server/cqrs/query';
 
 export class GetDailyDistanceQuery extends BaseQuery {
+  static readonly queryName = 'GetDailyDistanceQuery';
+
   constructor(
     public readonly tenantId: string,
     public readonly days: number = 30
   ) {
-    super(GetDailyDistanceQuery.name);
+    super(GetDailyDistanceQuery.queryName);
   }
 }

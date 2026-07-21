@@ -3,7 +3,9 @@
 import { BaseQuery } from '@/server/cqrs/query';
 
 export class GetVehicleStatsQuery extends BaseQuery {
+  static readonly queryName = 'GetVehicleStatsQuery';
+
   constructor(public readonly tenantId: string) {
-    super(GetVehicleStatsQuery.name);
+    super(GetVehicleStatsQuery.queryName);
   }
 }

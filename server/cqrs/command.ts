@@ -43,6 +43,22 @@ export interface ICommandHandler<TCommand extends ICommand, TResult = void> {
  * (not an instance), so the bus can map `SomeCommand.name` -> handler at
  * registration time.
  */
-export type CommandConstructor<T extends ICommand = ICommand> = new (
+/**
+ * Constructor type used for registering handlers against a command class.
+ *
+ * Deliberately requires a static `commandName` string (set explicitly by
+ * each concrete command, e.g. `static readonly commandName = 'CreateTripCommand'`)
+ * rather than relying on the built-in `Function.name`. Production builds
+ * minify class names, and Next.js may bundle the same command class into
+ * more than one chunk (e.g. once via the central cqrs bootstrap module,
+ * once via a route handler that imports it directly), each minified
+ * independently. That made `SomeCommand.name` resolve to different
+ * mangled strings (or collide on the same one, like "i") depending on
+ * which bundle referenced it, so the CommandBus looked up a name that
+ * didn't match what it registered under. A static string literal
+ * survives minification untouched and is identical no matter which
+ * chunk reads it, so registration and lookup always agree.
+ */
+export type CommandConstructor<T extends ICommand = ICommand> = (new (
   ...args: any[]
-) => T;
+) => T) & { readonly commandName: string };

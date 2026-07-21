@@ -2,10 +2,12 @@
 import { BaseQuery } from '@/server/cqrs/query';
 
 export class GetExpenseCategorySummaryQuery extends BaseQuery {
+  static readonly queryName = 'GetExpenseCategorySummaryQuery';
+
   constructor(
     public readonly tenantId: string,
     public readonly dateRange?: { startDate?: Date; endDate?: Date }
   ) {
-    super(GetExpenseCategorySummaryQuery.name);
+    super(GetExpenseCategorySummaryQuery.queryName);
   }
 }

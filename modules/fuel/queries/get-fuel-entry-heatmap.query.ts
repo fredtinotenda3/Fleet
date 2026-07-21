@@ -3,10 +3,12 @@
 import { BaseQuery } from '@/server/cqrs/query';
 
 export class GetFuelEntryHeatmapQuery extends BaseQuery {
+  static readonly queryName = 'GetFuelEntryHeatmapQuery';
+
   constructor(
     public readonly tenantId: string,
     public readonly dateRange?: { startDate?: Date; endDate?: Date }
   ) {
-    super(GetFuelEntryHeatmapQuery.name);
+    super(GetFuelEntryHeatmapQuery.queryName);
   }
 }

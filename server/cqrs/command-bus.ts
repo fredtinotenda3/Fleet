@@ -28,7 +28,7 @@ export class CommandBus {
     commandType: CommandConstructor<TCommand>,
     handler: ICommandHandler<TCommand, TResult>
   ): void {
-    this.handlers.set(commandType.name, handler);
+    this.handlers.set(commandType.commandName, handler);
   }
 
   /**
@@ -38,7 +38,7 @@ export class CommandBus {
   isRegistered<TCommand extends ICommand>(
     commandType: CommandConstructor<TCommand>
   ): boolean {
-    return this.handlers.has(commandType.name);
+    return this.handlers.has(commandType.commandName);
   }
 
   /**

@@ -3,12 +3,14 @@
 import { BaseCommand } from '@/server/cqrs/command';
 
 export class UpdateVehicleCommand extends BaseCommand {
+  static readonly commandName = 'UpdateVehicleCommand';
+
   constructor(
     public readonly vehicleId: string,
     public readonly rawData: unknown,
     public readonly tenantId: string,
     public readonly userId?: string
   ) {
-    super(UpdateVehicleCommand.name);
+    super(UpdateVehicleCommand.commandName);
   }
 }

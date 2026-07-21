@@ -11,12 +11,14 @@ import { BaseQuery } from '@/server/cqrs/query';
 export type FuelByDriverSort = 'volume' | 'cost';
 
 export class GetFuelByDriverQuery extends BaseQuery {
+  static readonly queryName = 'GetFuelByDriverQuery';
+
   constructor(
     public readonly tenantId: string,
     public readonly dateRange?: { startDate?: Date; endDate?: Date },
     public readonly limit: number = 10,
     public readonly sortBy: FuelByDriverSort = 'volume'
   ) {
-    super(GetFuelByDriverQuery.name);
+    super(GetFuelByDriverQuery.queryName);
   }
 }

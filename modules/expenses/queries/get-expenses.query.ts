@@ -5,11 +5,13 @@ import { ExpenseFilters } from '@/shared/types/expense.types';
 import { PaginationParams } from '@/shared/types/common.types';
 
 export class GetExpensesQuery extends BaseQuery {
+  static readonly queryName = 'GetExpensesQuery';
+
   constructor(
     public readonly filters: ExpenseFilters,
     public readonly pagination: PaginationParams,
     public readonly tenantId: string
   ) {
-    super(GetExpensesQuery.name);
+    super(GetExpensesQuery.queryName);
   }
 }

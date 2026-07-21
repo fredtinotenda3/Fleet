@@ -3,10 +3,12 @@
 import { BaseQuery } from '@/server/cqrs/query';
 
 export class GetVehiclesDueForServiceQuery extends BaseQuery {
+  static readonly queryName = 'GetVehiclesDueForServiceQuery';
+
   constructor(
     public readonly mileageThreshold: number,
     public readonly tenantId: string
   ) {
-    super(GetVehiclesDueForServiceQuery.name);
+    super(GetVehiclesDueForServiceQuery.queryName);
   }
 }

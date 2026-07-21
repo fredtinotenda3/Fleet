@@ -15,11 +15,13 @@ export interface ImportExpenseRow {
 }
 
 export class ImportExpensesCommand extends BaseCommand {
+  static readonly commandName = 'ImportExpensesCommand';
+
   constructor(
     public readonly rows: ImportExpenseRow[],
     public readonly tenantId: string,
     public readonly userId?: string
   ) {
-    super(ImportExpensesCommand.name);
+    super(ImportExpensesCommand.commandName);
   }
 }

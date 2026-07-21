@@ -3,11 +3,13 @@
 import { BaseQuery } from '@/server/cqrs/query';
 
 export class GetJobTripExpenseQuery extends BaseQuery {
+  static readonly queryName = 'GetJobTripExpenseQuery';
+
   constructor(
     public readonly tenantId: string,
     public readonly dateRange?: { startDate?: Date; endDate?: Date },
     public readonly jobLimit: number = 10
   ) {
-    super(GetJobTripExpenseQuery.name);
+    super(GetJobTripExpenseQuery.queryName);
   }
 }

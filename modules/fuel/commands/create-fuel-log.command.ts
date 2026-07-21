@@ -3,11 +3,13 @@
 import { BaseCommand } from '@/server/cqrs/command';
 
 export class CreateFuelLogCommand extends BaseCommand {
+  static readonly commandName = 'CreateFuelLogCommand';
+
   constructor(
     public readonly rawData: unknown,
     public readonly tenantId: string,
     public readonly userId?: string
   ) {
-    super(CreateFuelLogCommand.name);
+    super(CreateFuelLogCommand.commandName);
   }
 }
