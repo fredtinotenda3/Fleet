@@ -26,6 +26,10 @@ import { GetTopVehiclesByExpenseQuery } from './queries/get-top-vehicles-by-expe
 import { GetVehicleExpenseBreakdownQuery } from './queries/get-vehicle-expense-breakdown.query';
 import { GetExpenseAmountDistributionQuery } from './queries/get-expense-amount-distribution.query';
 import { GetJobTripExpenseQuery } from './queries/get-job-trip-expense.query';
+import { GetExpenseCategorySummaryQuery } from './queries/get-expense-category-summary.query';
+import { GetTopExpenseTransactionsQuery } from './queries/get-top-expense-transactions.query';
+import { GetDailyExpenseTotalsQuery } from './queries/get-daily-expense-totals.query';
+import { GetExpenseOutliersQuery } from './queries/get-expense-outliers.query';
 
 import { GetExpensesHandler } from './queries/handlers/get-expenses.handler';
 import { GetExpenseByIdHandler } from './queries/handlers/get-expense-by-id.handler';
@@ -37,19 +41,18 @@ import { GetTopVehiclesByExpenseHandler } from './queries/handlers/get-top-vehic
 import { GetVehicleExpenseBreakdownHandler } from './queries/handlers/get-vehicle-expense-breakdown.handler';
 import { GetExpenseAmountDistributionHandler } from './queries/handlers/get-expense-amount-distribution.handler';
 import { GetJobTripExpenseHandler } from './queries/handlers/get-job-trip-expense.handler';
+import { GetExpenseCategorySummaryHandler } from './queries/handlers/get-expense-category-summary.handler';
+import { GetTopExpenseTransactionsHandler } from './queries/handlers/get-top-expense-transactions.handler';
+import { GetDailyExpenseTotalsHandler } from './queries/handlers/get-daily-expense-totals.handler';
+import { GetExpenseOutliersHandler } from './queries/handlers/get-expense-outliers.handler';
 
-export function registerExpenseCqrsHandlers(
-  commandBus: CommandBus,
-  queryBus: QueryBus
-): void {
-  // Commands
+export function registerExpenseCqrsHandlers(commandBus: CommandBus, queryBus: QueryBus): void {
   commandBus.register(CreateExpenseCommand, new CreateExpenseHandler(expenseRepository));
   commandBus.register(UpdateExpenseCommand, new UpdateExpenseHandler(expenseRepository));
   commandBus.register(DeleteExpenseCommand, new DeleteExpenseHandler(expenseRepository));
   commandBus.register(BulkImportExpensesCommand, new BulkImportExpensesHandler(expenseRepository));
   commandBus.register(ImportExpensesCommand, new ImportExpensesHandler(expenseRepository));
 
-  // Queries
   queryBus.register(GetExpensesQuery, new GetExpensesHandler(expenseRepository));
   queryBus.register(GetExpenseByIdQuery, new GetExpenseByIdHandler(expenseRepository));
   queryBus.register(GetExpenseStatsQuery, new GetExpenseStatsHandler(expenseRepository));
@@ -60,4 +63,8 @@ export function registerExpenseCqrsHandlers(
   queryBus.register(GetVehicleExpenseBreakdownQuery, new GetVehicleExpenseBreakdownHandler(expenseRepository));
   queryBus.register(GetExpenseAmountDistributionQuery, new GetExpenseAmountDistributionHandler(expenseRepository));
   queryBus.register(GetJobTripExpenseQuery, new GetJobTripExpenseHandler(expenseRepository));
+  queryBus.register(GetExpenseCategorySummaryQuery, new GetExpenseCategorySummaryHandler(expenseRepository));
+  queryBus.register(GetTopExpenseTransactionsQuery, new GetTopExpenseTransactionsHandler(expenseRepository));
+  queryBus.register(GetDailyExpenseTotalsQuery, new GetDailyExpenseTotalsHandler(expenseRepository));
+  queryBus.register(GetExpenseOutliersQuery, new GetExpenseOutliersHandler(expenseRepository));
 }

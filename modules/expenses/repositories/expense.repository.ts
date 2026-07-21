@@ -7,10 +7,14 @@ import {
   ExpenseFilters,
   ExpenseStats,
   ExpenseCategoryOverTimePoint,
+  CategorySummary,
   TopVehicleExpenseRow,
   VehicleExpenseBreakdownRow,
   ExpenseAmountDistributionBucket,
   JobTripExpenseRow,
+  TopExpenseTransactionRow,
+  DailyExpenseTotal,
+  ExpenseOutlierRow,
 } from '@/shared/types/expense.types';
 import {
   PaginationParams,
@@ -43,7 +47,6 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     ];
   }
 
-  /** Shared tenant + date-range match builder for every analytics aggregation below. */
   private buildBaseMatch(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date }
@@ -56,6 +59,18 @@ export class ExpenseRepository extends BaseRepository<Expense> {
       if (dateRange.endDate) (match.date as any).$lte = dateRange.endDate;
     }
     return match;
+  }
+
+  /** Previous period of equal length immediately preceding a given range, for MoM/period-over-period comparisons. */
+  private previousPeriodMatch(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Record<string, unknown> | null {
+    if (!dateRange?.startDate || !dateRange?.endDate) return null;
+    const periodMs = dateRange.endDate.getTime() - dateRange.startDate.getTime();
+    const prevEnd = new Date(dateRange.startDate.getTime() - 1);
+    const prevStart = new Date(prevEnd.getTime() - periodMs);
+    return this.buildBaseMatch(tenantId, { startDate: prevStart, endDate: prevEnd });
   }
 
   async findByLicensePlate(
@@ -86,6 +101,22 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     }
     if (filters.type) {
       match.expense_type_id = new ObjectId(filters.type);
+    }
+    /**
+     * FIX (drill-down gap): the Job/Trip chart's drill-down had no
+     * corresponding server-side filter -- jobTrip was accepted nowhere
+     * in ExpenseFilters or this match. Added so clicking a Job/Trip bar
+     * can open a transaction list scoped to that exact job/trip
+     * reference, the same way license_plate/type drill-downs already
+     * work. "No Job/Trip" (the bucket label used by
+     * getJobTripExpenseAnalysis for records with no jobTrip) is treated
+     * as an explicit "field absent or empty" filter.
+     */
+    if (filters.jobTrip) {
+      match.jobTrip =
+        filters.jobTrip === 'No Job/Trip'
+          ? { $in: [null, ''] }
+          : { $regex: `^${filters.jobTrip}$`, $options: 'i' };
     }
     if (filters.startDate || filters.endDate) {
       match.date = {};
@@ -137,13 +168,8 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     const collection = await this.getCollection();
     const isSuperAdmin = this.isSuperAdminTenant(tenantId);
 
-    const filter: Record<string, unknown> = {
-      isDeleted: { $ne: true },
-    };
-    if (!isSuperAdmin) {
-      filter.tenantId = tenantId;
-    }
-
+    const filter: Record<string, unknown> = { isDeleted: { $ne: true } };
+    if (!isSuperAdmin) filter.tenantId = tenantId;
     if (dateRange) {
       filter.date = { $gte: dateRange.startDate, $lte: dateRange.endDate };
     }
@@ -209,9 +235,7 @@ export class ExpenseRepository extends BaseRepository<Expense> {
       isDeleted: { $ne: true },
       date: { $gte: startDate },
     };
-    if (!isSuperAdmin) {
-      match.tenantId = tenantId;
-    }
+    if (!isSuperAdmin) match.tenantId = tenantId;
 
     const pipeline = [
       { $match: match },
@@ -240,9 +264,7 @@ export class ExpenseRepository extends BaseRepository<Expense> {
       isDeleted: { $ne: true },
       date: { $gte: startDate, $lte: endDate },
     };
-    if (!isSuperAdmin) {
-      match.tenantId = tenantId;
-    }
+    if (!isSuperAdmin) match.tenantId = tenantId;
 
     const pipeline = [
       { $match: match },
@@ -263,14 +285,9 @@ export class ExpenseRepository extends BaseRepository<Expense> {
   }
 
   // ------------------------------------------------------------------
-  // Enterprise analytics additions
+  // Enterprise analytics -- category over time / vehicle / distribution
   // ------------------------------------------------------------------
 
-  /**
-   * Category totals per month. Powers both the stacked
-   * category-over-time chart and the category x month heatmap -- same
-   * shape, two visualizations, so we aggregate it once.
-   */
   async getExpenseCategoryOverTime(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date }
@@ -307,11 +324,116 @@ export class ExpenseRepository extends BaseRepository<Expense> {
   }
 
   /**
-   * Top vehicles by total expense spend, with each vehicle's single
-   * biggest category. Uses $sortArray (Mongo 5.2+) to pick the top
-   * category from a pushed per-category array rather than a second
-   * round-trip query.
+   * Rich per-category summary for hover tooltips and the Pareto/waterfall
+   * charts. Three bounded aggregation queries total (current period,
+   * category x vehicle breakdown for top-vehicle-per-category, and an
+   * optional previous-period query for MoM) -- run once per dashboard
+   * load, never per hover.
    */
+  async getExpenseCategorySummary(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<CategorySummary[]> {
+    const collection = await this.getCollection();
+    const match = this.buildBaseMatch(tenantId, dateRange);
+
+    const grandTotalResult = await collection
+      .aggregate([{ $match: match }, { $group: { _id: null, total: { $sum: '$amount' } } }])
+      .toArray();
+    const grandTotal: number = grandTotalResult[0]?.total || 0;
+
+    const summaryPipeline = [
+      { $match: match },
+      ...this.expenseTypeLookupStages(),
+      {
+        $group: {
+          _id: { $ifNull: ['$expense_type.name', 'Uncategorized'] },
+          total: { $sum: '$amount' },
+          count: { $sum: 1 },
+          min: { $min: '$amount' },
+          max: { $max: '$amount' },
+          latestDate: { $max: '$date' },
+        },
+      },
+    ];
+    const summaries = await collection.aggregate(summaryPipeline).toArray();
+
+    // Category x vehicle totals, to pick each category's top vehicle --
+    // one aggregation, not one query per category.
+    const byVehiclePipeline = [
+      { $match: match },
+      ...this.expenseTypeLookupStages(),
+      {
+        $group: {
+          _id: {
+            category: { $ifNull: ['$expense_type.name', 'Uncategorized'] },
+            plate: '$license_plate',
+          },
+          amount: { $sum: '$amount' },
+        },
+      },
+    ];
+    const byVehicle = await collection.aggregate(byVehiclePipeline).toArray();
+    const topVehicleByCategory = new Map<string, { plate: string; amount: number }>();
+    for (const row of byVehicle) {
+      const cat = row._id.category as string;
+      const current = topVehicleByCategory.get(cat);
+      if (!current || row.amount > current.amount) {
+        topVehicleByCategory.set(cat, { plate: row._id.plate, amount: row.amount });
+      }
+    }
+
+    // Previous period, for MoM change -- skipped entirely if no explicit range given.
+    const prevMatch = this.previousPeriodMatch(tenantId, dateRange);
+    let prevTotalsByCategory = new Map<string, number>();
+    if (prevMatch) {
+      const prevPipeline = [
+        { $match: prevMatch },
+        ...this.expenseTypeLookupStages(),
+        {
+          $group: {
+            _id: { $ifNull: ['$expense_type.name', 'Uncategorized'] },
+            total: { $sum: '$amount' },
+          },
+        },
+      ];
+      const prevResults = await collection.aggregate(prevPipeline).toArray();
+      prevTotalsByCategory = new Map(prevResults.map((r) => [r._id as string, r.total as number]));
+    }
+
+    return summaries
+      .map((s) => {
+        const category = s._id as string;
+        const prevTotal = prevTotalsByCategory.get(category);
+        const momChangePercent =
+          prevMatch && prevTotal !== undefined && prevTotal > 0
+            ? Math.round(((s.total - prevTotal) / prevTotal) * 1000) / 10
+            : prevMatch && (prevTotal === undefined || prevTotal === 0) && s.total > 0
+              ? null // no meaningful prior baseline (division by zero) -- omit rather than fabricate
+              : null;
+
+        return {
+          category,
+          total: Math.round(s.total * 100) / 100,
+          count: s.count,
+          average: s.count > 0 ? Math.round((s.total / s.count) * 100) / 100 : 0,
+          min: Math.round(s.min * 100) / 100,
+          max: Math.round(s.max * 100) / 100,
+          latestDate: s.latestDate ? new Date(s.latestDate).toISOString() : null,
+          topVehicle: topVehicleByCategory.get(category)?.plate ?? null,
+          percentageOfTotal: grandTotal > 0 ? Math.round((s.total / grandTotal) * 1000) / 10 : 0,
+          momChangePercent,
+        };
+      })
+      .sort((a, b) => b.total - a.total);
+  }
+
+  /**
+   * FIX (Job/Trip drill-down had no filter path): getFilteredExpenses
+   * above now accepts `jobTrip`; this method is unchanged apart from
+   * that fix already applied there.
+   */
+
   async getTopVehiclesByExpense(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
@@ -359,15 +481,64 @@ export class ExpenseRepository extends BaseRepository<Expense> {
       { $limit: limit },
     ];
 
-    return collection.aggregate<TopVehicleExpenseRow>(pipeline).toArray();
+    const rows = await collection.aggregate(pipeline).toArray();
+
+    // Per-vehicle min/max/avg/latestDate -- single follow-up aggregation
+    // scoped to only the top-N plates already selected above, not N+1.
+    const plates = rows.map((r) => r.license_plate as string);
+    const detailMap = new Map<string, { min: number; max: number; latestDate: Date | null }>();
+    if (plates.length > 0) {
+      const detailPipeline = [
+        { $match: { ...match, license_plate: { $in: plates } } },
+        {
+          $group: {
+            _id: '$license_plate',
+            min: { $min: '$amount' },
+            max: { $max: '$amount' },
+            latestDate: { $max: '$date' },
+          },
+        },
+      ];
+      const details = await collection.aggregate(detailPipeline).toArray();
+      for (const d of details) {
+        detailMap.set(d._id as string, { min: d.min, max: d.max, latestDate: d.latestDate });
+      }
+    }
+
+    // Optional previous-period totals for MoM, scoped to the same plates -- one query, not per-vehicle.
+    const prevMatch = this.previousPeriodMatch(tenantId, dateRange);
+    let prevTotalsByPlate = new Map<string, number>();
+    if (prevMatch && plates.length > 0) {
+      const prevPipeline = [
+        { $match: { ...prevMatch, license_plate: { $in: plates } } },
+        { $group: { _id: '$license_plate', total: { $sum: '$amount' } } },
+      ];
+      const prevResults = await collection.aggregate(prevPipeline).toArray();
+      prevTotalsByPlate = new Map(prevResults.map((r) => [r._id as string, r.total as number]));
+    }
+
+    return rows.map((r) => {
+      const detail = detailMap.get(r.license_plate as string);
+      const prevTotal = prevTotalsByPlate.get(r.license_plate as string);
+      const momChangePercent =
+        prevMatch && prevTotal !== undefined && prevTotal > 0
+          ? Math.round(((r.totalAmount - prevTotal) / prevTotal) * 1000) / 10
+          : null;
+
+      return {
+        license_plate: r.license_plate,
+        totalAmount: r.totalAmount,
+        expenseCount: r.expenseCount,
+        topCategory: r.topCategory,
+        average: r.expenseCount > 0 ? Math.round((r.totalAmount / r.expenseCount) * 100) / 100 : 0,
+        min: detail ? Math.round(detail.min * 100) / 100 : 0,
+        max: detail ? Math.round(detail.max * 100) / 100 : 0,
+        latestDate: detail?.latestDate ? new Date(detail.latestDate).toISOString() : null,
+        momChangePercent,
+      };
+    });
   }
 
-  /**
-   * Per-category spend for the top N vehicles by total spend -- powers
-   * the vehicle x category stacked bar. Two-stage: first find the top
-   * vehicle plates, then aggregate their category breakdown in a single
-   * follow-up query (no N+1: one query per stage, not per vehicle).
-   */
   async getVehicleExpenseBreakdown(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
@@ -413,7 +584,6 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     return collection.aggregate<VehicleExpenseBreakdownRow>(pipeline).toArray();
   }
 
-  /** Histogram buckets via $bucketAuto -- mirrors FuelRepository.getFuelCostDistribution. */
   async getExpenseAmountDistribution(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date }
@@ -427,13 +597,7 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     const bucketCount = Math.min(8, count);
     const pipeline = [
       { $match: match },
-      {
-        $bucketAuto: {
-          groupBy: '$amount',
-          buckets: bucketCount,
-          output: { count: { $sum: 1 } },
-        },
-      },
+      { $bucketAuto: { groupBy: '$amount', buckets: bucketCount, output: { count: { $sum: 1 } } } },
     ];
 
     const results = await collection.aggregate(pipeline).toArray();
@@ -444,11 +608,6 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     }));
   }
 
-  /**
-   * Job/Trip spend broken down by category, for the top N jobs/trips
-   * by total spend. Same two-stage shape as getVehicleExpenseBreakdown.
-   * Records with no jobTrip are grouped under "No Job/Trip".
-   */
   async getJobTripExpenseAnalysis(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
@@ -503,6 +662,142 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     ];
 
     return collection.aggregate<JobTripExpenseRow>(pipeline).toArray();
+  }
+
+  // ------------------------------------------------------------------
+  // New in this pass: top transactions, calendar heatmap, outliers
+  // ------------------------------------------------------------------
+
+  /** Top N single highest-value transactions, for the executive "biggest expenses" list. */
+  async getTopExpenseTransactions(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date },
+    limit: number = 10
+  ): Promise<TopExpenseTransactionRow[]> {
+    const collection = await this.getCollection();
+    const match = this.buildBaseMatch(tenantId, dateRange);
+
+    const pipeline = [
+      { $match: match },
+      ...this.expenseTypeLookupStages(),
+      { $sort: { amount: -1 } },
+      { $limit: limit },
+      {
+        $project: {
+          _id: { $toString: '$_id' },
+          license_plate: 1,
+          category: { $ifNull: ['$expense_type.name', 'Uncategorized'] },
+          amount: { $round: ['$amount', 2] },
+          date: 1,
+          jobTrip: { $ifNull: ['$jobTrip', null] },
+          description: { $ifNull: ['$description', null] },
+        },
+      },
+    ];
+
+    const results = await collection.aggregate(pipeline).toArray();
+    return results.map((r) => ({ ...r, date: new Date(r.date).toISOString() })) as TopExpenseTransactionRow[];
+  }
+
+  /**
+   * Daily totals for the calendar heatmap. Bounded to at most 366 days
+   * even if the caller passes no range or an overlong one, so an
+   * enterprise dataset can never return an unbounded number of days.
+   */
+  async getDailyExpenseTotals(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<DailyExpenseTotal[]> {
+    const collection = await this.getCollection();
+    const endDate = dateRange?.endDate ?? new Date();
+    const requestedStart = dateRange?.startDate ?? new Date(endDate.getTime() - 365 * 24 * 60 * 60 * 1000);
+    const earliestAllowedStart = new Date(endDate.getTime() - 366 * 24 * 60 * 60 * 1000);
+    const startDate = requestedStart < earliestAllowedStart ? earliestAllowedStart : requestedStart;
+
+    const match = this.buildBaseMatch(tenantId, { startDate, endDate });
+
+    const pipeline = [
+      { $match: match },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$date' } },
+          amount: { $sum: '$amount' },
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ];
+
+    const results = await collection.aggregate(pipeline).toArray();
+    return results.map((r) => ({
+      date: r._id,
+      amount: Math.round(r.amount * 100) / 100,
+      count: r.count,
+    }));
+  }
+
+  /**
+   * Statistical outlier detection: flags expenses whose amount is more
+   * than `zThreshold` standard deviations from their OWN CATEGORY's
+   * mean (not the fleet-wide mean -- a $250 tyre expense and a $250
+   * insurance expense mean very different things). Categories with
+   * fewer than 3 records are excluded since a std-dev computed from 1-2
+   * points is not statistically meaningful. Single aggregation query.
+   */
+  async getExpenseOutliers(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date },
+    zThreshold: number = 2.5,
+    limit: number = 25
+  ): Promise<ExpenseOutlierRow[]> {
+    const collection = await this.getCollection();
+    const match = this.buildBaseMatch(tenantId, dateRange);
+
+    const pipeline = [
+      { $match: match },
+      ...this.expenseTypeLookupStages(),
+      {
+        $group: {
+          _id: { $ifNull: ['$expense_type.name', 'Uncategorized'] },
+          mean: { $avg: '$amount' },
+          stdDev: { $stdDevPop: '$amount' },
+          docs: {
+            $push: {
+              _id: '$_id',
+              license_plate: '$license_plate',
+              amount: '$amount',
+              date: '$date',
+            },
+          },
+          count: { $sum: 1 },
+        },
+      },
+      { $match: { count: { $gte: 3 }, stdDev: { $gt: 0 } } },
+      { $unwind: '$docs' },
+      {
+        $addFields: {
+          zScore: { $divide: [{ $subtract: ['$docs.amount', '$mean'] }, '$stdDev'] },
+        },
+      },
+      { $match: { $expr: { $gte: [{ $abs: '$zScore' }, zThreshold] } } },
+      {
+        $project: {
+          _id: { $toString: '$docs._id' },
+          license_plate: '$docs.license_plate',
+          category: '$_id',
+          amount: { $round: ['$docs.amount', 2] },
+          date: '$docs.date',
+          categoryMean: { $round: ['$mean', 2] },
+          categoryStdDev: { $round: ['$stdDev', 2] },
+          zScore: { $round: ['$zScore', 2] },
+        },
+      },
+      { $sort: { zScore: -1 } },
+      { $limit: limit },
+    ];
+
+    const results = await collection.aggregate(pipeline).toArray();
+    return results.map((r) => ({ ...r, date: new Date(r.date).toISOString() })) as ExpenseOutlierRow[];
   }
 }
 

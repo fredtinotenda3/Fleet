@@ -98,6 +98,11 @@ const BASE_INDEXES = {
       key: { tenantId: 1, orgUnitId: 1 },
       name: 'idx_expense_tenant_orgunit',
     },
+    {
+      key: { tenantId: 1, amount: -1, date: -1 },
+      name: 'idx_expense_tenant_amount_date',
+      // supports top-transactions and outlier-candidate sorting
+    },
   ],
   tblfuellogs: [
     {

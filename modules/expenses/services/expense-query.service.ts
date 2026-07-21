@@ -11,6 +11,10 @@ import { GetTopVehiclesByExpenseQuery } from '../queries/get-top-vehicles-by-exp
 import { GetVehicleExpenseBreakdownQuery } from '../queries/get-vehicle-expense-breakdown.query';
 import { GetExpenseAmountDistributionQuery } from '../queries/get-expense-amount-distribution.query';
 import { GetJobTripExpenseQuery } from '../queries/get-job-trip-expense.query';
+import { GetExpenseCategorySummaryQuery } from '../queries/get-expense-category-summary.query';
+import { GetTopExpenseTransactionsQuery } from '../queries/get-top-expense-transactions.query';
+import { GetDailyExpenseTotalsQuery } from '../queries/get-daily-expense-totals.query';
+import { GetExpenseOutliersQuery } from '../queries/get-expense-outliers.query';
 import {
   Expense,
   ExpenseFilters,
@@ -20,6 +24,10 @@ import {
   VehicleExpenseBreakdownRow,
   ExpenseAmountDistributionBucket,
   JobTripExpenseRow,
+  CategorySummary,
+  TopExpenseTransactionRow,
+  DailyExpenseTotal,
+  ExpenseOutlierRow,
 } from '@/shared/types/expense.types';
 import { PaginatedResponse, PaginationParams, DateRange } from '@/shared/types/common.types';
 
@@ -35,15 +43,11 @@ export class ExpenseQueryService {
   }
 
   async getExpenseById(expenseId: string, tenantId: string): Promise<Expense> {
-    return queryBus.execute<Expense>(
-      new GetExpenseByIdQuery(expenseId, tenantId)
-    );
+    return queryBus.execute<Expense>(new GetExpenseByIdQuery(expenseId, tenantId));
   }
 
   async getExpenseStats(tenantId: string, dateRange?: DateRange): Promise<ExpenseStats> {
-    return queryBus.execute<ExpenseStats>(
-      new GetExpenseStatsQuery(tenantId, dateRange)
-    );
+    return queryBus.execute<ExpenseStats>(new GetExpenseStatsQuery(tenantId, dateRange));
   }
 
   async getMonthlyTrends(
@@ -55,14 +59,8 @@ export class ExpenseQueryService {
     );
   }
 
-  async getExpenseAnalytics(
-    tenantId: string,
-    startDate: Date,
-    endDate: Date
-  ): Promise<unknown[]> {
-    return queryBus.execute<unknown[]>(
-      new GetExpenseAnalyticsQuery(tenantId, startDate, endDate)
-    );
+  async getExpenseAnalytics(tenantId: string, startDate: Date, endDate: Date): Promise<unknown[]> {
+    return queryBus.execute<unknown[]>(new GetExpenseAnalyticsQuery(tenantId, startDate, endDate));
   }
 
   async getExpenseCategoryOverTime(
@@ -108,8 +106,41 @@ export class ExpenseQueryService {
     dateRange?: { startDate?: Date; endDate?: Date },
     jobLimit: number = 10
   ): Promise<JobTripExpenseRow[]> {
-    return queryBus.execute<JobTripExpenseRow[]>(
-      new GetJobTripExpenseQuery(tenantId, dateRange, jobLimit)
+    return queryBus.execute<JobTripExpenseRow[]>(new GetJobTripExpenseQuery(tenantId, dateRange, jobLimit));
+  }
+
+  async getExpenseCategorySummary(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<CategorySummary[]> {
+    return queryBus.execute<CategorySummary[]>(new GetExpenseCategorySummaryQuery(tenantId, dateRange));
+  }
+
+  async getTopExpenseTransactions(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date },
+    limit: number = 10
+  ): Promise<TopExpenseTransactionRow[]> {
+    return queryBus.execute<TopExpenseTransactionRow[]>(
+      new GetTopExpenseTransactionsQuery(tenantId, dateRange, limit)
+    );
+  }
+
+  async getDailyExpenseTotals(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<DailyExpenseTotal[]> {
+    return queryBus.execute<DailyExpenseTotal[]>(new GetDailyExpenseTotalsQuery(tenantId, dateRange));
+  }
+
+  async getExpenseOutliers(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date },
+    zThreshold: number = 2.5,
+    limit: number = 25
+  ): Promise<ExpenseOutlierRow[]> {
+    return queryBus.execute<ExpenseOutlierRow[]>(
+      new GetExpenseOutliersQuery(tenantId, dateRange, zThreshold, limit)
     );
   }
 }

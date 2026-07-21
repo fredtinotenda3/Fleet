@@ -23,10 +23,13 @@ export const expenseKeys = {
   types: () => [...expenseKeys.all, 'types'] as const,
   categoryOverTime: (range?: string) => [...expenseKeys.all, 'category-over-time', range] as const,
   topVehicles: (range?: string, limit?: number) => [...expenseKeys.all, 'top-vehicles', range, limit] as const,
-  vehicleBreakdown: (range?: string, limit?: number) =>
-    [...expenseKeys.all, 'vehicle-breakdown', range, limit] as const,
+  vehicleBreakdown: (range?: string, limit?: number) => [...expenseKeys.all, 'vehicle-breakdown', range, limit] as const,
   amountDistribution: (range?: string) => [...expenseKeys.all, 'amount-distribution', range] as const,
   jobTrip: (range?: string, limit?: number) => [...expenseKeys.all, 'job-trip', range, limit] as const,
+  categorySummary: (range?: string) => [...expenseKeys.all, 'category-summary', range] as const,
+  topTransactions: (range?: string, limit?: number) => [...expenseKeys.all, 'top-transactions', range, limit] as const,
+  dailyTotals: (range?: string) => [...expenseKeys.all, 'daily-totals', range] as const,
+  outliers: (range?: string, z?: number) => [...expenseKeys.all, 'outliers', range, z] as const,
 };
 
 export function useExpensesList(params: Partial<ExpenseListParams>) {
@@ -51,7 +54,6 @@ export function useExpense(id: string | undefined, options?: Partial<UseQueryOpt
 export function useExpenseStats(dateRange?: { startDate?: Date; endDate?: Date }) {
   const hasCompleteRange = Boolean(dateRange?.startDate && dateRange?.endDate);
   const effectiveRange = hasCompleteRange ? dateRange : undefined;
-
   const key = effectiveRange
     ? `${effectiveRange.startDate!.toISOString()}-${effectiveRange.endDate!.toISOString()}`
     : undefined;
@@ -87,8 +89,6 @@ export function useVehicleExpenseHistory(licensePlate: string | undefined, page 
     staleTime: 30_000,
   });
 }
-
-// ---- Enterprise analytics ----
 
 export function useExpenseCategoryOverTime(dateRange?: DateRange) {
   return useQuery({
@@ -126,6 +126,39 @@ export function useJobTripExpense(dateRange?: DateRange, jobLimit: number = 10) 
   return useQuery({
     queryKey: expenseKeys.jobTrip(rangeKey(dateRange), jobLimit),
     queryFn: () => expensesApi.getJobTripExpense(dateRange, jobLimit),
+    staleTime: 60_000,
+  });
+}
+
+/** Rich per-category stats -- feeds hover tooltips with zero extra network calls per hover. */
+export function useExpenseCategorySummary(dateRange?: DateRange) {
+  return useQuery({
+    queryKey: expenseKeys.categorySummary(rangeKey(dateRange)),
+    queryFn: () => expensesApi.getCategorySummary(dateRange),
+    staleTime: 60_000,
+  });
+}
+
+export function useTopExpenseTransactions(dateRange?: DateRange, limit: number = 10) {
+  return useQuery({
+    queryKey: expenseKeys.topTransactions(rangeKey(dateRange), limit),
+    queryFn: () => expensesApi.getTopTransactions(dateRange, limit),
+    staleTime: 60_000,
+  });
+}
+
+export function useDailyExpenseTotals(dateRange?: DateRange) {
+  return useQuery({
+    queryKey: expenseKeys.dailyTotals(rangeKey(dateRange)),
+    queryFn: () => expensesApi.getDailyTotals(dateRange),
+    staleTime: 60_000,
+  });
+}
+
+export function useExpenseOutliers(dateRange?: DateRange, zThreshold: number = 2.5) {
+  return useQuery({
+    queryKey: expenseKeys.outliers(rangeKey(dateRange), zThreshold),
+    queryFn: () => expensesApi.getOutliers(dateRange, zThreshold),
     staleTime: 60_000,
   });
 }

@@ -20,6 +20,10 @@ export const GET = withAuth(
     if (action === 'vehicle-breakdown') return expenseController.getVehicleBreakdown(req);
     if (action === 'amount-distribution') return expenseController.getAmountDistribution(req);
     if (action === 'job-trip') return expenseController.getJobTripExpense(req);
+    if (action === 'category-summary') return expenseController.getCategorySummary(req);
+    if (action === 'top-transactions') return expenseController.getTopTransactions(req);
+    if (action === 'daily-totals') return expenseController.getDailyTotals(req);
+    if (action === 'outliers') return expenseController.getOutliers(req);
     if (id) return expenseController.getExpense(req, id);
 
     return expenseController.getExpenses(req);
@@ -35,9 +39,7 @@ export const POST = withAuth(
 export const PUT = withAuth(
   async (req: NextRequest) => {
     const id = req.nextUrl.searchParams.get('id');
-    if (!id) {
-      return errorResponse('Missing expense ID', 'VALIDATION_ERROR', 400);
-    }
+    if (!id) return errorResponse('Missing expense ID', 'VALIDATION_ERROR', 400);
     return expenseController.updateExpense(req, id);
   },
   { permission: Permission.EXPENSE_EDIT }
@@ -46,9 +48,7 @@ export const PUT = withAuth(
 export const DELETE = withAuth(
   async (req: NextRequest) => {
     const id = req.nextUrl.searchParams.get('id');
-    if (!id) {
-      return errorResponse('Missing expense ID', 'VALIDATION_ERROR', 400);
-    }
+    if (!id) return errorResponse('Missing expense ID', 'VALIDATION_ERROR', 400);
     return expenseController.deleteExpense(req, id);
   },
   { permission: Permission.EXPENSE_DELETE }

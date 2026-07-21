@@ -37,6 +37,7 @@ export interface ExpenseUpdateDTO extends Partial<ExpenseCreateDTO> {
 export interface ExpenseFilters {
   license_plate?: string;
   type?: string;
+  jobTrip?: string;
   startDate?: Date;
   endDate?: Date;
   minAmount?: number;
@@ -51,7 +52,7 @@ export interface ExpenseStats {
   topCategories: Array<{ name: string; amount: number }>;
 }
 
-/** Powers the stacked category-over-time chart AND the category x month heatmap (same shape, two views). */
+/** Powers the stacked category-over-time chart AND the category x month heatmap. */
 export interface ExpenseCategoryOverTimePoint {
   category: string;
   month: string;
@@ -59,15 +60,38 @@ export interface ExpenseCategoryOverTimePoint {
   count: number;
 }
 
-/** Powers "Top Vehicles by Expense" horizontal bar. */
+/**
+ * Rich per-category stats -- powers hover tooltips on the category chart
+ * and the top-categories chart without any additional round trip: this
+ * is fetched once per dashboard load, not per hover.
+ */
+export interface CategorySummary {
+  category: string;
+  total: number;
+  count: number;
+  average: number;
+  min: number;
+  max: number;
+  latestDate: string | null;
+  topVehicle: string | null;
+  percentageOfTotal: number;
+  /** null when no comparable prior period is available (no date range set). */
+  momChangePercent: number | null;
+}
+
+/** Rich per-vehicle stats -- powers hover tooltips on vehicle charts. */
 export interface TopVehicleExpenseRow {
   license_plate: string;
   totalAmount: number;
   expenseCount: number;
   topCategory: string;
+  average: number;
+  min: number;
+  max: number;
+  latestDate: string | null;
+  momChangePercent: number | null;
 }
 
-/** Powers "Vehicle Expense Breakdown" stacked bar (vehicle x category). */
 export interface VehicleExpenseBreakdownRow {
   license_plate: string;
   category: string;
@@ -75,17 +99,45 @@ export interface VehicleExpenseBreakdownRow {
   count: number;
 }
 
-/** Powers the expense amount histogram. */
 export interface ExpenseAmountDistributionBucket {
   min: number;
   max: number;
   count: number;
 }
 
-/** Powers "Job / Trip Expense Analysis" stacked bar (job/trip x category). */
 export interface JobTripExpenseRow {
   jobTrip: string;
   category: string;
   amount: number;
   count: number;
+}
+
+/** Top N single transactions by amount -- flattened for direct chart/table use. */
+export interface TopExpenseTransactionRow {
+  _id: string;
+  license_plate: string;
+  category: string;
+  amount: number;
+  date: string;
+  jobTrip: string | null;
+  description: string | null;
+}
+
+/** Powers the calendar heatmap. */
+export interface DailyExpenseTotal {
+  date: string; // YYYY-MM-DD
+  amount: number;
+  count: number;
+}
+
+/** Statistical outliers -- amount more than `threshold` std-devs from that category's mean. */
+export interface ExpenseOutlierRow {
+  _id: string;
+  license_plate: string;
+  category: string;
+  amount: number;
+  date: string;
+  categoryMean: number;
+  categoryStdDev: number;
+  zScore: number;
 }

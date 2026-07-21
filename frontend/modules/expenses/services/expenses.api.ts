@@ -10,6 +10,10 @@ import type {
   VehicleExpenseBreakdownRow,
   ExpenseAmountDistributionBucket,
   JobTripExpenseRow,
+  CategorySummary,
+  TopExpenseTransactionRow,
+  DailyExpenseTotal,
+  ExpenseOutlierRow,
 } from '@/shared/types/expense.types';
 import type { ImportResponse } from '@/frontend/shared/import/ImportModal';
 
@@ -22,11 +26,7 @@ export interface ExpenseListParams extends ExpenseTableFilters {
 
 export interface BulkImportResult {
   message: string;
-  results: {
-    inserted: number;
-    errors: number;
-    errorDetails: string[];
-  };
+  results: { inserted: number; errors: number; errorDetails: string[] };
 }
 
 type DateRange = { startDate?: Date; endDate?: Date } | undefined;
@@ -40,6 +40,7 @@ function buildListQuery(params: Partial<ExpenseListParams>) {
   return {
     license_plate: params.license_plate,
     type: params.type,
+    jobTrip: (params as any).jobTrip,
     start: toIso(params.startDate),
     end: toIso(params.endDate),
     minAmount: params.minAmount,
@@ -73,18 +74,7 @@ export const expensesApi = {
   },
 
   async getMonthlyTrends(months: number = 12): Promise<Array<{ month: string; total: number }>> {
-    return apiClient.get<Array<{ month: string; total: number }>>(BASE, {
-      params: { action: 'monthly', months },
-    });
-  },
-
-  async getAnalytics(
-    startDate: Date,
-    endDate: Date
-  ): Promise<Array<{ _id: { category?: string; month: string }; total: number }>> {
-    return apiClient.get(BASE, {
-      params: { action: 'analytics', startDate: startDate.toISOString(), endDate: endDate.toISOString() },
-    });
+    return apiClient.get<Array<{ month: string; total: number }>>(BASE, { params: { action: 'monthly', months } });
   },
 
   async getCategoryOverTime(dateRange?: DateRange): Promise<ExpenseCategoryOverTimePoint[]> {
@@ -117,6 +107,30 @@ export const expensesApi = {
     });
   },
 
+  async getCategorySummary(dateRange?: DateRange): Promise<CategorySummary[]> {
+    return apiClient.get<CategorySummary[]>(BASE, {
+      params: { action: 'category-summary', ...rangeParams(dateRange) },
+    });
+  },
+
+  async getTopTransactions(dateRange?: DateRange, limit: number = 10): Promise<TopExpenseTransactionRow[]> {
+    return apiClient.get<TopExpenseTransactionRow[]>(BASE, {
+      params: { action: 'top-transactions', limit, ...rangeParams(dateRange) },
+    });
+  },
+
+  async getDailyTotals(dateRange?: DateRange): Promise<DailyExpenseTotal[]> {
+    return apiClient.get<DailyExpenseTotal[]>(BASE, {
+      params: { action: 'daily-totals', ...rangeParams(dateRange) },
+    });
+  },
+
+  async getOutliers(dateRange?: DateRange, zThreshold: number = 2.5, limit: number = 25): Promise<ExpenseOutlierRow[]> {
+    return apiClient.get<ExpenseOutlierRow[]>(BASE, {
+      params: { action: 'outliers', zThreshold, limit, ...rangeParams(dateRange) },
+    });
+  },
+
   async create(payload: ExpenseFormOutput): Promise<Expense> {
     return apiClient.post<Expense>(BASE, payload);
   },
@@ -133,7 +147,6 @@ export const expensesApi = {
     return apiClient.post<BulkImportResult>(`${BASE}/bulk`, { records });
   },
 
-  /** Standard-column enterprise import (date/vehicle/category/amount/jobTrip/description). */
   async importStandard(rows: Array<Record<string, unknown>>): Promise<ImportResponse> {
     return apiClient.post<ImportResponse>(`${BASE}/import`, { rows });
   },
