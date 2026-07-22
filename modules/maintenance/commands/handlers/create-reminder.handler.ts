@@ -74,6 +74,9 @@ export class CreateReminderHandler
       title: String(validated.title),
       due_date: new Date(validated.due_date as unknown as string),
       status: validated.status ?? 'pending',
+      ...((vehicle as { orgUnitId?: string }).orgUnitId && {
+        orgUnitId: (vehicle as { orgUnitId?: string }).orgUnitId,
+      }),
       notes: validated.notes ? String(validated.notes) : undefined,
       priority: validated.priority,
       service_type: validated.service_type

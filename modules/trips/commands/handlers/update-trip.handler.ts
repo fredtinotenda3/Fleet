@@ -66,6 +66,7 @@ export class UpdateTripHandler implements ICommandHandler<UpdateTripCommand, Tri
         );
       }
       updateData.license_plate = String(updateData.license_plate).toUpperCase();
+      updateData.orgUnitId = (vehicle as { orgUnitId?: string }).orgUnitId ?? null;
     }
 
     if (updateData.unit_id) {

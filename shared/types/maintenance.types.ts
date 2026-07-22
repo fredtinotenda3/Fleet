@@ -19,6 +19,9 @@ export interface Reminder extends BaseEntity {
   next_due_odometer?: number;
   assigned_to?: string;
   estimated_cost?: number;
+  /** Inherited from the referenced vehicle's orgUnitId at write time -- see
+   *  CreateReminderHandler/UpdateReminderHandler. Not user-submitted. */
+  orgUnitId?: string;
 }
 
 export interface ReminderCreateDTO {

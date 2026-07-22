@@ -12,19 +12,34 @@ import {
   errorResponse,
   createdResponse,
 } from '@/server/utils/response.utils';
-import { AppError, ValidationError, UnauthorizedError, ForbiddenError } from '@/server/errors/app.errors';
+import { AppError, ValidationError, UnauthorizedError, ForbiddenError, NotFoundError } from '@/server/errors/app.errors';
 import {
   getTenantFromRequest,
   getUserIdFromRequest,
 } from '@/server/utils/context.utils';
 import { getAuthContext } from '@/server/auth/auth-context';
+import { tenantContextService } from '@/modules/tenancy/services/tenant-context.service';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
+import { tripRepository } from '../repositories/trip.repository';
 
 bootstrapCqrs();
 
 export class TripController {
   async getTrips(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const authContext = await getAuthContext(req);
+      if (!authContext) {
+        throw new UnauthorizedError('Authentication required');
+      }
+
+      const tenantContext = await tenantContextService.resolveContext(
+        authContext.userId,
+        authContext.tenantId,
+        authContext.roles,
+        authContext.isSuperAdmin,
+        authContext.orgUnitId
+      );
+
       const searchParams = req.nextUrl.searchParams;
 
       const filters: TripFilters = {
@@ -42,10 +57,10 @@ export class TripController {
       // Support non-paginated path for legacy dashboard/chart usage
       const pageParam = searchParams.get('page');
       if (!pageParam) {
-        const result = await tripQueryService.getFilteredTrips(
+        const result = await tripRepository.getFilteredTripsInScope(
           filters,
-          { page: 1, limit: 10000 },
-          tenantId
+          tenantContext,
+          { page: 1, limit: 10000 }
         );
         return successResponse(result.data);
       }
@@ -55,10 +70,10 @@ export class TripController {
         searchParams.get('limit')
       );
 
-      const result = await tripQueryService.getFilteredTrips(
+      const result = await tripRepository.getFilteredTripsInScope(
         filters,
-        { page, limit },
-        tenantId
+        tenantContext,
+        { page, limit }
       );
 
       return paginatedResponse(result.data, result.pagination);
@@ -67,10 +82,48 @@ export class TripController {
     }
   }
 
+  /**
+   * FIX (critical -- org-unit scope bypass on single-record access):
+   * same bug/fix as VehicleController.loadInScopeVehicle. getTrips (the
+   * list endpoint) is the only place that used to apply org-unit
+   * scoping; getTrip/updateTrip/deleteTrip checked only tenantId, so a
+   * user scoped to a single branch could still read/edit/delete any
+   * trip in the tenant by ID. This re-resolves the caller's
+   * TenantContext and verifies the target trip's orgUnitId is one the
+   * caller may access, throwing NotFoundError (not ForbiddenError) on a
+   * scope violation to avoid leaking the existence of out-of-scope
+   * records.
+   */
+  private async loadInScopeTrip(req: NextRequest, id: string) {
+    const authContext = await getAuthContext(req);
+    if (!authContext) {
+      throw new UnauthorizedError('Authentication required');
+    }
+
+    const trip = await tripQueryService.getTripById(id, authContext.tenantId);
+
+    const tenantContext = await tenantContextService.resolveContext(
+      authContext.userId,
+      authContext.tenantId,
+      authContext.roles,
+      authContext.isSuperAdmin,
+      authContext.orgUnitId
+    );
+
+    const tripOrgUnitId = (trip as any).orgUnitId as string | undefined;
+    if (
+      tripOrgUnitId &&
+      !tenantScopeService.canAccessOrgUnit(tenantContext, tripOrgUnitId)
+    ) {
+      throw new NotFoundError('Trip not found');
+    }
+
+    return { authContext, trip };
+  }
+
   async getTrip(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const trip = await tripQueryService.getTripById(id, tenantId);
+      const { trip } = await this.loadInScopeTrip(req, id);
       return successResponse(trip);
     } catch (error) {
       return this.handleError(error);
@@ -92,11 +145,11 @@ export class TripController {
 
   async updateTrip(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const userId = await getUserIdFromRequest(req);
+      const { authContext } = await this.loadInScopeTrip(req, id);
+      const userId = authContext.userId;
       const body = await req.json();
 
-      const trip = await tripCommandService.updateTrip(id, body, tenantId, userId);
+      const trip = await tripCommandService.updateTrip(id, body, authContext.tenantId, userId);
       return successResponse(trip);
     } catch (error) {
       return this.handleError(error);
@@ -111,10 +164,7 @@ export class TripController {
    */
   async deleteTrip(req: NextRequest, id: string) {
     try {
-      const authContext = await getAuthContext(req);
-      if (!authContext) {
-        throw new UnauthorizedError('Authentication required');
-      }
+      const { authContext } = await this.loadInScopeTrip(req, id);
       const soft = req.nextUrl.searchParams.get('soft') !== 'false';
 
       if (!soft && !authContext.isSuperAdmin) {

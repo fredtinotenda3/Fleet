@@ -117,6 +117,9 @@ export class CreateExpenseHandler
       license_plate: String(validated.license_plate).toUpperCase(),
       amount: Number(validated.amount),
       date: new Date(validated.date as unknown as string),
+      ...((vehicle as { orgUnitId?: string }).orgUnitId && {
+        orgUnitId: (vehicle as { orgUnitId?: string }).orgUnitId,
+      }),
       ...(expenseTypeId && { expense_type_id: expenseTypeId as unknown as string }),
       ...(validated.description && { description: String(validated.description).trim() }),
       ...(validated.jobTrip && { jobTrip: String(validated.jobTrip).trim() }),

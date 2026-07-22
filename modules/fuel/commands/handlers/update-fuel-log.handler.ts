@@ -70,6 +70,7 @@ export class UpdateFuelLogHandler implements ICommandHandler<UpdateFuelLogComman
         throw new AppError(`Vehicle "${updateData.license_plate}" not found`, 'VEHICLE_NOT_FOUND', 400);
       }
       updateData.license_plate = String(updateData.license_plate).toUpperCase();
+      updateData.orgUnitId = (vehicle as { orgUnitId?: string }).orgUnitId ?? null;
     }
 
     if (updateData.unit_id) {

@@ -15,6 +15,9 @@ export interface Trip extends BaseEntity {
   start_location?: string;
   end_location?: string;
   driver_id?: string;
+  /** Inherited from the referenced vehicle's orgUnitId at write time -- see
+   *  CreateTripHandler/UpdateTripHandler. Not user-submitted. */
+  orgUnitId?: string;
 }
 
 export interface TripCreateDTO {

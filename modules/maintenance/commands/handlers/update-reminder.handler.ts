@@ -82,6 +82,7 @@ export class UpdateReminderHandler
         );
       }
       updateData.license_plate = String(updateData.license_plate).toUpperCase();
+      updateData.orgUnitId = (vehicle as { orgUnitId?: string }).orgUnitId ?? null;
     }
 
     if (updateData.status === 'completed' && !updateData.completion_date) {
@@ -139,6 +140,7 @@ export class UpdateReminderHandler
         '_id' | 'createdAt' | 'updatedAt' | 'isDeleted' | 'deletedAt'
       > = {
         tenantId: command.tenantId,
+        orgUnitId: updated.orgUnitId,
         license_plate: (updateData.license_plate as string | undefined) ?? existing.license_plate,
         title: (updateData.title as string | undefined) ?? existing.title,
         due_date: nextDueDate,

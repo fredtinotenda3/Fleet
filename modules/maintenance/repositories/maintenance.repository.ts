@@ -12,6 +12,8 @@ import {
   PaginatedResponse,
 } from '@/shared/types/common.types';
 import { Filter, ObjectId } from 'mongodb';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 
 export class MaintenanceRepository extends BaseRepository<Reminder> {
   protected collectionName = 'tblreminders';
@@ -80,6 +82,72 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
       pagination,
       tenantId
     );
+  }
+
+  /**
+   * Org/branch-scoped variant of getFilteredReminders. Mirrors
+   * VehicleRepository.getFilteredVehiclesInScope: same filters, plus
+   * tenantScopeService.buildFilter(context, 'orgUnitId') on top of (not
+   * instead of) tenant isolation.
+   */
+  async getFilteredRemindersInScope(
+    filters: MaintenanceFilters,
+    context: TenantContext,
+    pagination: PaginationParams
+  ): Promise<PaginatedResponse<Reminder>> {
+    const collection = await this.getCollection();
+
+    const query: Record<string, unknown> = {
+      isDeleted: { $ne: true },
+    };
+
+    if (!this.isSuperAdminTenant(context.organizationId)) {
+      query.tenantId = context.organizationId;
+    }
+
+    if (filters.license_plate) {
+      query.license_plate = {
+        $regex: filters.license_plate,
+        $options: 'i',
+      };
+    }
+    if (filters.status) query.status = filters.status;
+    if (filters.priority) query.priority = filters.priority;
+    if (filters.category) query.category = filters.category;
+    if (filters.assigned_to) query.assigned_to = filters.assigned_to;
+    if (filters.startDate || filters.endDate) {
+      query.due_date = {};
+      if (filters.startDate) (query.due_date as any).$gte = filters.startDate;
+      if (filters.endDate) (query.due_date as any).$lte = filters.endDate;
+    }
+
+    const scopeFilter = tenantScopeService.buildFilter<Reminder>(context, 'orgUnitId');
+    Object.assign(query, scopeFilter);
+
+    const { page, limit } = pagination;
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await Promise.all([
+      collection
+        .find(query as Filter<Reminder>)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .toArray(),
+      collection.countDocuments(query as Filter<Reminder>),
+    ]);
+
+    return {
+      data: data as Reminder[],
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+        hasNext: page * limit < total,
+        hasPrev: page > 1,
+      },
+    };
   }
 
   /**

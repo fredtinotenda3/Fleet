@@ -12,11 +12,15 @@ import {
   errorResponse,
   createdResponse,
 } from '@/server/utils/response.utils';
-import { AppError } from '@/server/errors/app.errors';
+import { AppError, NotFoundError, UnauthorizedError } from '@/server/errors/app.errors';
 import {
   getTenantFromRequest,
   getUserIdFromRequest,
 } from '@/server/utils/context.utils';
+import { getAuthContext } from '@/server/auth/auth-context';
+import { tenantContextService } from '@/modules/tenancy/services/tenant-context.service';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
+import { maintenanceRepository } from '../repositories/maintenance.repository';
 
 bootstrapCqrs();
 
@@ -38,7 +42,19 @@ export interface ImportResponse {
 export class MaintenanceController {
   async getReminders(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const authContext = await getAuthContext(req);
+      if (!authContext) {
+        throw new UnauthorizedError('Authentication required');
+      }
+
+      const tenantContext = await tenantContextService.resolveContext(
+        authContext.userId,
+        authContext.tenantId,
+        authContext.roles,
+        authContext.isSuperAdmin,
+        authContext.orgUnitId
+      );
+
       const searchParams = req.nextUrl.searchParams;
 
       const statusParam = searchParams.get('status');
@@ -65,10 +81,10 @@ export class MaintenanceController {
       const pageParam = searchParams.get('page');
       if (!pageParam) {
         // Legacy non-paginated path used by dashboards/charts
-        const result = await maintenanceQueryService.getFilteredReminders(
+        const result = await maintenanceRepository.getFilteredRemindersInScope(
           filters,
-          { page: 1, limit: 10000 },
-          tenantId
+          tenantContext,
+          { page: 1, limit: 10000 }
         );
         return successResponse(result.data);
       }
@@ -78,10 +94,10 @@ export class MaintenanceController {
         searchParams.get('limit')
       );
 
-      const result = await maintenanceQueryService.getFilteredReminders(
+      const result = await maintenanceRepository.getFilteredRemindersInScope(
         filters,
-        { page, limit },
-        tenantId
+        tenantContext,
+        { page, limit }
       );
 
       return paginatedResponse(result.data, result.pagination);
@@ -90,10 +106,44 @@ export class MaintenanceController {
     }
   }
 
+  /**
+   * FIX (critical -- org-unit scope bypass on single-record access):
+   * same bug/fix as VehicleController.loadInScopeVehicle -- getReminders
+   * (list) was the only endpoint applying org-unit scoping;
+   * getReminder/updateReminder/deleteReminder/completeReminder checked
+   * only tenantId (or, for delete, nothing at all beyond tenantId via
+   * the command handler).
+   */
+  private async loadInScopeReminder(req: NextRequest, id: string) {
+    const authContext = await getAuthContext(req);
+    if (!authContext) {
+      throw new UnauthorizedError('Authentication required');
+    }
+
+    const reminder = await maintenanceQueryService.getReminderById(id, authContext.tenantId);
+
+    const tenantContext = await tenantContextService.resolveContext(
+      authContext.userId,
+      authContext.tenantId,
+      authContext.roles,
+      authContext.isSuperAdmin,
+      authContext.orgUnitId
+    );
+
+    const reminderOrgUnitId = (reminder as any).orgUnitId as string | undefined;
+    if (
+      reminderOrgUnitId &&
+      !tenantScopeService.canAccessOrgUnit(tenantContext, reminderOrgUnitId)
+    ) {
+      throw new NotFoundError('Reminder not found');
+    }
+
+    return { authContext, reminder };
+  }
+
   async getReminder(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const reminder = await maintenanceQueryService.getReminderById(id, tenantId);
+      const { reminder } = await this.loadInScopeReminder(req, id);
       return successResponse(reminder);
     } catch (error) {
       return this.handleError(error);
@@ -115,11 +165,11 @@ export class MaintenanceController {
 
   async updateReminder(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const userId = await getUserIdFromRequest(req);
+      const { authContext } = await this.loadInScopeReminder(req, id);
+      const userId = authContext.userId;
       const body = await req.json();
 
-      const reminder = await maintenanceCommandService.updateReminder(id, body, tenantId, userId);
+      const reminder = await maintenanceCommandService.updateReminder(id, body, authContext.tenantId, userId);
       return successResponse(reminder);
     } catch (error) {
       return this.handleError(error);
@@ -128,8 +178,8 @@ export class MaintenanceController {
 
   async completeReminder(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const userId = await getUserIdFromRequest(req);
+      const { authContext } = await this.loadInScopeReminder(req, id);
+      const userId = authContext.userId;
       const body = await req.json().catch(() => ({}));
 
       const completionDate = body?.completion_date
@@ -138,7 +188,7 @@ export class MaintenanceController {
 
       const reminder = await maintenanceCommandService.completeReminder(
         id,
-        tenantId,
+        authContext.tenantId,
         userId,
         completionDate
       );
@@ -150,10 +200,10 @@ export class MaintenanceController {
 
   async deleteReminder(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const userId = await getUserIdFromRequest(req);
+      const { authContext } = await this.loadInScopeReminder(req, id);
+      const userId = authContext.userId;
 
-      await maintenanceCommandService.deleteReminder(id, tenantId, userId);
+      await maintenanceCommandService.deleteReminder(id, authContext.tenantId, userId);
       return successResponse({ message: 'Reminder deleted successfully' });
     } catch (error) {
       return this.handleError(error);

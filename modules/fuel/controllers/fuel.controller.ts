@@ -15,7 +15,7 @@ import {
   errorResponse,
   createdResponse,
 } from '@/server/utils/response.utils';
-import { AppError, ValidationError, UnauthorizedError, ForbiddenError } from '@/server/errors/app.errors';
+import { AppError, ValidationError, UnauthorizedError, ForbiddenError, NotFoundError } from '@/server/errors/app.errors';
 import {
   getTenantFromRequest,
   getUserIdFromRequest,
@@ -23,6 +23,9 @@ import {
 import { getAuthContext } from '@/server/auth/auth-context';
 import { driverRepository } from '@/modules/drivers/repositories/driver.repository';
 import connectToDatabase from '@/infrastructure/database/mongodb';
+import { tenantContextService } from '@/modules/tenancy/services/tenant-context.service';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
+import { fuelRepository } from '../repositories/fuel.repository';
 
 bootstrapCqrs();
 
@@ -207,7 +210,19 @@ async function buildExistingFuelLogKeys(
 export class FuelController {
   async getFuelLogs(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const authContext = await getAuthContext(req);
+      if (!authContext) {
+        throw new UnauthorizedError('Authentication required');
+      }
+
+      const tenantContext = await tenantContextService.resolveContext(
+        authContext.userId,
+        authContext.tenantId,
+        authContext.roles,
+        authContext.isSuperAdmin,
+        authContext.orgUnitId
+      );
+
       const searchParams = req.nextUrl.searchParams;
 
       const filters: FuelFilters = {
@@ -227,10 +242,10 @@ export class FuelController {
 
       const pageParam = searchParams.get('page');
       if (!pageParam) {
-        const result = await fuelQueryService.getFilteredLogs(
+        const result = await fuelRepository.getFilteredLogsInScope(
           filters,
-          { page: 1, limit: 10000 },
-          tenantId
+          tenantContext,
+          { page: 1, limit: 10000 }
         );
         return successResponse(result.data);
       }
@@ -240,10 +255,10 @@ export class FuelController {
         searchParams.get('limit')
       );
 
-      const result = await fuelQueryService.getFilteredLogs(
+      const result = await fuelRepository.getFilteredLogsInScope(
         filters,
-        { page, limit },
-        tenantId
+        tenantContext,
+        { page, limit }
       );
 
       return paginatedResponse(result.data, result.pagination);
@@ -252,10 +267,42 @@ export class FuelController {
     }
   }
 
+  /**
+   * FIX (critical -- org-unit scope bypass on single-record access):
+   * same bug/fix as VehicleController.loadInScopeVehicle -- getFuelLogs
+   * (list) was the only endpoint applying org-unit scoping;
+   * getFuelLog/updateFuelLog/deleteFuelLog checked only tenantId.
+   */
+  private async loadInScopeFuelLog(req: NextRequest, id: string) {
+    const authContext = await getAuthContext(req);
+    if (!authContext) {
+      throw new UnauthorizedError('Authentication required');
+    }
+
+    const log = await fuelQueryService.getFuelLogById(id, authContext.tenantId);
+
+    const tenantContext = await tenantContextService.resolveContext(
+      authContext.userId,
+      authContext.tenantId,
+      authContext.roles,
+      authContext.isSuperAdmin,
+      authContext.orgUnitId
+    );
+
+    const logOrgUnitId = (log as any).orgUnitId as string | undefined;
+    if (
+      logOrgUnitId &&
+      !tenantScopeService.canAccessOrgUnit(tenantContext, logOrgUnitId)
+    ) {
+      throw new NotFoundError('Fuel log not found');
+    }
+
+    return { authContext, log };
+  }
+
   async getFuelLog(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const log = await fuelQueryService.getFuelLogById(id, tenantId);
+      const { log } = await this.loadInScopeFuelLog(req, id);
       return successResponse(log);
     } catch (error) {
       return this.handleError(error);
@@ -432,11 +479,11 @@ export class FuelController {
 
   async updateFuelLog(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const userId = await getUserIdFromRequest(req);
+      const { authContext } = await this.loadInScopeFuelLog(req, id);
+      const userId = authContext.userId;
       const body = await req.json();
 
-      const log = await fuelCommandService.updateFuelLog(id, body, tenantId, userId);
+      const log = await fuelCommandService.updateFuelLog(id, body, authContext.tenantId, userId);
       return successResponse(log);
     } catch (error) {
       return this.handleError(error);
@@ -445,10 +492,7 @@ export class FuelController {
 
   async deleteFuelLog(req: NextRequest, id: string) {
     try {
-      const authContext = await getAuthContext(req);
-      if (!authContext) {
-        throw new UnauthorizedError('Authentication required');
-      }
+      const { authContext } = await this.loadInScopeFuelLog(req, id);
       const soft = req.nextUrl.searchParams.get('soft') !== 'false';
 
       if (!soft && !authContext.isSuperAdmin) {

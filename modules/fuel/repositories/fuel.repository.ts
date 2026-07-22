@@ -26,6 +26,8 @@ import {
 } from '@/shared/types/common.types';
 import { Filter, ObjectId } from 'mongodb';
 import connectToDatabase from '@/infrastructure/database/mongodb';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 
 interface VehiclePeriodAggregate {
   _id: string;
@@ -187,6 +189,72 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     }
 
     const result = await this.findWithPagination(filter as Filter<FuelLog>, pagination, tenantId);
+    return { ...result, data: await this.enrichFuelLogs(result.data) };
+  }
+
+  /**
+   * Org/branch-scoped variant of getFilteredLogs. Mirrors
+   * VehicleRepository.getFilteredVehiclesInScope: same filters, plus
+   * tenantScopeService.buildFilter(context, 'orgUnitId') on top of (not
+   * instead of) tenant isolation.
+   */
+  async getFilteredLogsInScope(
+    filters: FuelFilters,
+    context: TenantContext,
+    pagination: PaginationParams
+  ): Promise<PaginatedResponse<FuelLog>> {
+    const collection = await this.getCollection();
+
+    const query: Record<string, unknown> = {
+      isDeleted: { $ne: true },
+    };
+
+    if (!this.isSuperAdminTenant(context.organizationId)) {
+      query.tenantId = context.organizationId;
+    }
+
+    if (filters.license_plate) {
+      query.license_plate = { $regex: filters.license_plate, $options: 'i' };
+    }
+    if (filters.unit_id) query.unit_id = filters.unit_id;
+    if (filters.payment_method) query.payment_method = filters.payment_method;
+    if (filters.fuel_station_id) query.fuel_station_id = filters.fuel_station_id;
+    if (filters.fuel_card_id) query.fuel_card_id = filters.fuel_card_id;
+    if (filters.driver_id) query.driver_id = filters.driver_id;
+    if (filters.startDate || filters.endDate) {
+      query.date = {};
+      if (filters.startDate) (query.date as any).$gte = filters.startDate;
+      if (filters.endDate) (query.date as any).$lte = filters.endDate;
+    }
+
+    const scopeFilter = tenantScopeService.buildFilter<FuelLog>(context, 'orgUnitId');
+    Object.assign(query, scopeFilter);
+
+    const { page, limit } = pagination;
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await Promise.all([
+      collection
+        .find(query as Filter<FuelLog>)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .toArray(),
+      collection.countDocuments(query as Filter<FuelLog>),
+    ]);
+
+    const result = {
+      data: data as FuelLog[],
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+        hasNext: page * limit < total,
+        hasPrev: page > 1,
+      },
+    };
+
     return { ...result, data: await this.enrichFuelLogs(result.data) };
   }
 

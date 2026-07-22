@@ -11,6 +11,8 @@ import {
   PaginatedResponse,
 } from '@/shared/types/common.types';
 import { Filter } from 'mongodb';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 
 export class TripRepository extends BaseRepository<Trip> {
   protected collectionName = 'tbltrips';
@@ -61,6 +63,71 @@ export class TripRepository extends BaseRepository<Trip> {
       pagination,
       tenantId
     );
+  }
+
+  /**
+   * Org/branch-scoped variant of getFilteredTrips. Mirrors
+   * VehicleRepository.getFilteredVehiclesInScope: applies the same
+   * filters, then narrows to the org units the caller may see via
+   * tenantScopeService.buildFilter(context, 'orgUnitId'), on top of
+   * (not instead of) tenant isolation.
+   */
+  async getFilteredTripsInScope(
+    filters: TripFilters,
+    context: TenantContext,
+    pagination: PaginationParams
+  ): Promise<PaginatedResponse<Trip>> {
+    const collection = await this.getCollection();
+
+    const query: Record<string, unknown> = {
+      isDeleted: { $ne: true },
+    };
+
+    if (!this.isSuperAdminTenant(context.organizationId)) {
+      query.tenantId = context.organizationId;
+    }
+
+    if (filters.license_plate) {
+      query.license_plate = {
+        $regex: filters.license_plate,
+        $options: 'i',
+      };
+    }
+    if (filters.mode) query.mode = filters.mode;
+    if (filters.driver_id) query.driver_id = filters.driver_id;
+    if (filters.startDate || filters.endDate) {
+      query.date = {};
+      if (filters.startDate) (query.date as any).$gte = filters.startDate;
+      if (filters.endDate) (query.date as any).$lte = filters.endDate;
+    }
+
+    const scopeFilter = tenantScopeService.buildFilter<Trip>(context, 'orgUnitId');
+    Object.assign(query, scopeFilter);
+
+    const { page, limit } = pagination;
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await Promise.all([
+      collection
+        .find(query as Filter<Trip>)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .toArray(),
+      collection.countDocuments(query as Filter<Trip>),
+    ]);
+
+    return {
+      data: data as Trip[],
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+        hasNext: page * limit < total,
+        hasPrev: page > 1,
+      },
+    };
   }
 
   async getTripStats(

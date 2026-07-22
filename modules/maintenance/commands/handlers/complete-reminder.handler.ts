@@ -75,6 +75,7 @@ export class CompleteReminderHandler
         '_id' | 'createdAt' | 'updatedAt' | 'isDeleted' | 'deletedAt'
       > = {
         tenantId: command.tenantId,
+        orgUnitId: existing.orgUnitId,
         license_plate: existing.license_plate,
         title: existing.title,
         due_date: nextDueDate,

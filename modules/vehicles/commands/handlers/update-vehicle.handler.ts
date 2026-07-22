@@ -26,6 +26,7 @@ const ALLOWED_FIELDS = [
   'insurance_provider',
   'service_interval',
   'odometer',
+  'orgUnitId',
 ] as const;
 
 export class UpdateVehicleHandler

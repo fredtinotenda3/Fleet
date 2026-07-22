@@ -115,6 +115,9 @@ export class CreateTripHandler implements ICommandHandler<CreateTripCommand, Tri
       date: new Date(validated.date as unknown as string),
       unit_id: String(validated.unit_id),
       distance_calculated,
+      ...((vehicle as { orgUnitId?: string }).orgUnitId && {
+        orgUnitId: (vehicle as { orgUnitId?: string }).orgUnitId,
+      }),
       ...(validated.trip_distance != null && { trip_distance: Number(validated.trip_distance) }),
       ...(validated.start_odometer != null && { start_odometer: Number(validated.start_odometer) }),
       ...(validated.end_odometer != null && { end_odometer: Number(validated.end_odometer) }),

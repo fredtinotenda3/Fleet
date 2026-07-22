@@ -31,6 +31,7 @@ export class CreateVehicleHandler
       insurance_provider: raw.insurance_provider,
       service_interval: raw.service_interval,
       odometer: raw.odometer,
+      orgUnitId: raw.orgUnitId,
     };
 
     const payload = Object.fromEntries(

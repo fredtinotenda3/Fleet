@@ -66,6 +66,7 @@ export class UpdateExpenseHandler
         );
       }
       updateData.license_plate = String(updateData.license_plate).toUpperCase();
+      updateData.orgUnitId = (vehicle as { orgUnitId?: string }).orgUnitId ?? null;
     }
 
     if (updateData.expense_type_id) {

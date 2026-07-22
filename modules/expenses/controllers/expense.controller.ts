@@ -12,9 +12,12 @@ import {
   errorResponse,
   createdResponse,
 } from '@/server/utils/response.utils';
-import { AppError, ValidationError, UnauthorizedError, ForbiddenError } from '@/server/errors/app.errors';
+import { AppError, ValidationError, UnauthorizedError, ForbiddenError, NotFoundError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
 import { getAuthContext } from '@/server/auth/auth-context';
+import { tenantContextService } from '@/modules/tenancy/services/tenant-context.service';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
+import { expenseRepository } from '../repositories/expense.repository';
 
 bootstrapCqrs();
 
@@ -32,7 +35,19 @@ function parseDateRangeParams(req: NextRequest): { startDate?: Date; endDate?: D
 export class ExpenseController {
   async getExpenses(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const authContext = await getAuthContext(req);
+      if (!authContext) {
+        throw new UnauthorizedError('Authentication required');
+      }
+
+      const tenantContext = await tenantContextService.resolveContext(
+        authContext.userId,
+        authContext.tenantId,
+        authContext.roles,
+        authContext.isSuperAdmin,
+        authContext.orgUnitId
+      );
+
       const searchParams = req.nextUrl.searchParams;
 
       const filters: ExpenseFilters = {
@@ -47,22 +62,54 @@ export class ExpenseController {
 
       const pageParam = searchParams.get('page');
       if (!pageParam) {
-        const result = await expenseQueryService.getFilteredExpenses(filters, { page: 1, limit: 10000 }, tenantId);
+        const result = await expenseRepository.getFilteredExpensesInScope(filters, tenantContext, { page: 1, limit: 10000 });
         return successResponse(result.data);
       }
 
       const { page, limit } = validatePaginationParams(pageParam, searchParams.get('limit'));
-      const result = await expenseQueryService.getFilteredExpenses(filters, { page, limit }, tenantId);
+      const result = await expenseRepository.getFilteredExpensesInScope(filters, tenantContext, { page, limit });
       return paginatedResponse(result.data, result.pagination);
     } catch (error) {
       return this.handleError(error);
     }
   }
 
+  /**
+   * FIX (critical -- org-unit scope bypass on single-record access):
+   * same bug/fix as VehicleController.loadInScopeVehicle -- getExpenses
+   * (list) was the only endpoint applying org-unit scoping;
+   * getExpense/updateExpense/deleteExpense checked only tenantId.
+   */
+  private async loadInScopeExpense(req: NextRequest, id: string) {
+    const authContext = await getAuthContext(req);
+    if (!authContext) {
+      throw new UnauthorizedError('Authentication required');
+    }
+
+    const expense = await expenseQueryService.getExpenseById(id, authContext.tenantId);
+
+    const tenantContext = await tenantContextService.resolveContext(
+      authContext.userId,
+      authContext.tenantId,
+      authContext.roles,
+      authContext.isSuperAdmin,
+      authContext.orgUnitId
+    );
+
+    const expenseOrgUnitId = (expense as any).orgUnitId as string | undefined;
+    if (
+      expenseOrgUnitId &&
+      !tenantScopeService.canAccessOrgUnit(tenantContext, expenseOrgUnitId)
+    ) {
+      throw new NotFoundError('Expense not found');
+    }
+
+    return { authContext, expense };
+  }
+
   async getExpense(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const expense = await expenseQueryService.getExpenseById(id, tenantId);
+      const { expense } = await this.loadInScopeExpense(req, id);
       return successResponse(expense);
     } catch (error) {
       return this.handleError(error);
@@ -83,10 +130,10 @@ export class ExpenseController {
 
   async updateExpense(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const userId = await getUserIdFromRequest(req);
+      const { authContext } = await this.loadInScopeExpense(req, id);
+      const userId = authContext.userId;
       const body = await req.json();
-      const expense = await expenseCommandService.updateExpense(id, body, tenantId, userId);
+      const expense = await expenseCommandService.updateExpense(id, body, authContext.tenantId, userId);
       return successResponse(expense);
     } catch (error) {
       return this.handleError(error);
@@ -95,8 +142,7 @@ export class ExpenseController {
 
   async deleteExpense(req: NextRequest, id: string) {
     try {
-      const authContext = await getAuthContext(req);
-      if (!authContext) throw new UnauthorizedError('Authentication required');
+      const { authContext } = await this.loadInScopeExpense(req, id);
       const soft = req.nextUrl.searchParams.get('soft') !== 'false';
 
       if (!soft && !authContext.isSuperAdmin) {

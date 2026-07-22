@@ -18,6 +18,9 @@ export interface Expense extends BaseEntity {
   notes?: string;
   expense_type_id?: string;
   expense_type?: ExpenseType;
+  /** Inherited from the referenced vehicle's orgUnitId at write time -- see
+   *  CreateExpenseHandler/UpdateExpenseHandler. Not user-submitted. */
+  orgUnitId?: string;
 }
 
 export interface ExpenseCreateDTO {

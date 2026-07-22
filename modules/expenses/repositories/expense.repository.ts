@@ -21,6 +21,8 @@ import {
   PaginatedResponse,
   DateRange,
 } from '@/shared/types/common.types';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 
 export class ExpenseRepository extends BaseRepository<Expense> {
   protected collectionName = 'tblexpenses';
@@ -129,6 +131,82 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     if (filters.maxAmount !== undefined) {
       match.amount = { ...(match.amount as object), $lte: filters.maxAmount };
     }
+
+    const { page, limit } = pagination;
+    const skip = (page - 1) * limit;
+
+    const [data, totalResult] = await Promise.all([
+      collection
+        .aggregate<Expense>([
+          { $match: match },
+          ...this.expenseTypeLookupStages(),
+          { $sort: { date: -1 } },
+          { $skip: skip },
+          { $limit: limit },
+        ])
+        .toArray(),
+      collection.aggregate([{ $match: match }, { $count: 'count' }]).toArray(),
+    ]);
+
+    const total = totalResult[0]?.count ?? 0;
+
+    return {
+      data,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+        hasNext: page * limit < total,
+        hasPrev: page > 1,
+      },
+    };
+  }
+
+  /**
+   * Org/branch-scoped variant of getFilteredExpenses. Mirrors
+   * VehicleRepository.getFilteredVehiclesInScope: same match stage,
+   * plus tenantScopeService.buildFilter(context, 'orgUnitId') on top of
+   * (not instead of) tenant isolation.
+   */
+  async getFilteredExpensesInScope(
+    filters: ExpenseFilters,
+    context: TenantContext,
+    pagination: PaginationParams
+  ): Promise<PaginatedResponse<Expense>> {
+    const collection = await this.getCollection();
+
+    const match: Record<string, unknown> = { isDeleted: { $ne: true } };
+    if (!this.isSuperAdminTenant(context.organizationId)) {
+      match.tenantId = context.organizationId;
+    }
+
+    if (filters.license_plate) {
+      match.license_plate = { $regex: filters.license_plate, $options: 'i' };
+    }
+    if (filters.type) {
+      match.expense_type_id = new ObjectId(filters.type);
+    }
+    if (filters.jobTrip) {
+      match.jobTrip =
+        filters.jobTrip === 'No Job/Trip'
+          ? { $in: [null, ''] }
+          : { $regex: `^${filters.jobTrip}$`, $options: 'i' };
+    }
+    if (filters.startDate || filters.endDate) {
+      match.date = {};
+      if (filters.startDate) (match.date as any).$gte = filters.startDate;
+      if (filters.endDate) (match.date as any).$lte = filters.endDate;
+    }
+    if (filters.minAmount !== undefined) {
+      match.amount = { $gte: filters.minAmount };
+    }
+    if (filters.maxAmount !== undefined) {
+      match.amount = { ...(match.amount as object), $lte: filters.maxAmount };
+    }
+
+    const scopeFilter = tenantScopeService.buildFilter<Expense>(context, 'orgUnitId');
+    Object.assign(match, scopeFilter);
 
     const { page, limit } = pagination;
     const skip = (page - 1) * limit;

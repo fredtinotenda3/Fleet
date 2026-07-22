@@ -114,6 +114,9 @@ export class CreateFuelLogHandler implements ICommandHandler<CreateFuelLogComman
       unit_id: String(validated.unit_id),
       cost: Number(validated.cost),
       payment_method: validated.payment_method,
+      ...((vehicle as { orgUnitId?: string }).orgUnitId && {
+        orgUnitId: (vehicle as { orgUnitId?: string }).orgUnitId,
+      }),
       ...(validated.odometer != null ? { odometer: Number(validated.odometer) } : undefined),
       ...(validated.station_name ? { station_name: String(validated.station_name) } : undefined),
       ...(validated.fuel_station_id ? { fuel_station_id: String(validated.fuel_station_id) } : undefined),

@@ -29,6 +29,9 @@ export interface FuelLog extends BaseEntity {
   receipt_url?: string;
   payment_method?: FuelPaymentMethod;
   fuel_card_id?: string;
+  /** Inherited from the referenced vehicle's orgUnitId at write time -- see
+   *  CreateFuelLogHandler/UpdateFuelLogHandler. Not user-submitted. */
+  orgUnitId?: string;
   unit?: {
     name: string;
     symbol: string;
