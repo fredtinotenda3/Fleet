@@ -1,9 +1,10 @@
 // frontend/modules/expenses/utils/index.ts
 
-import { exportToCSV, type ExportColumn } from '@/shared/utils/csv.utils';
-import { formatDate } from '@/shared/utils/date.utils';
 import { formatCurrency } from '@/shared/utils/currency.utils';
-import type { Expense } from '../types';
+import type { ExportFormat } from '@/shared/export/export.types';
+import { triggerExport, type ExportDownloadResult } from '@/shared/utils/export-download.utils';
+import { expensesApi } from '../services/expenses.api';
+import type { Expense, ExpenseTableFilters } from '../types';
 
 /**
  * Mirrors server/permissions/roles.ts's rolePermissions table for
@@ -48,35 +49,23 @@ export function formatExpenseAmount(amount: number, currency: string = 'USD'): s
   return formatCurrency(amount, { currency });
 }
 
-const EXPORT_COLUMNS: ExportColumn<Expense>[] = [
-  { header: 'Date', accessor: (e) => formatDate(e.date) },
-  { header: 'Vehicle', accessor: (e) => e.license_plate },
-  { header: 'Category', accessor: (e) => expenseCategoryLabel(e) },
-  { header: 'Amount', accessor: (e) => e.amount },
-  { header: 'Job / Trip', accessor: (e) => e.jobTrip ?? '' },
-  { header: 'Description', accessor: (e) => e.description ?? '' },
-  { header: 'Notes', accessor: (e) => e.notes ?? '' },
-];
-
-export function exportExpensesToCSV(expenses: Expense[]): void {
-  exportToCSV(expenses, EXPORT_COLUMNS, `expenses-${new Date().toISOString().slice(0, 10)}.csv`);
-}
-
-export async function exportExpensesToExcel(expenses: Expense[]): Promise<void> {
-  const XLSX = await import('xlsx');
-  const rows = expenses.map((e) => ({
-    Date: formatDate(e.date),
-    Vehicle: e.license_plate,
-    Category: expenseCategoryLabel(e),
-    Amount: e.amount,
-    'Job / Trip': e.jobTrip ?? '',
-    Description: e.description ?? '',
-    Notes: e.notes ?? '',
-  }));
-  const worksheet = XLSX.utils.json_to_sheet(rows);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Expenses');
-  XLSX.writeFile(workbook, `expenses-${new Date().toISOString().slice(0, 10)}.xlsx`);
+/**
+ * Enterprise Export Framework (Phase 2). Replaces exportExpensesToCSV/
+ * exportExpensesToExcel, which only ever exported the currently-loaded
+ * page of expenses. Sends the user's current filters (including the
+ * jobTrip filter, which lives outside ExpenseTableFilters) to
+ * GET /api/expenses?action=export, which re-runs the same scoped/
+ * filtered query server-side with no page limit (capped at
+ * EXPORT_ROW_CAP) and returns a real file.
+ */
+export async function exportExpenses(
+  filters: ExpenseTableFilters & { jobTrip?: string },
+  format: ExportFormat = 'csv'
+): Promise<ExportDownloadResult> {
+  return triggerExport(
+    () => expensesApi.exportFile(filters, format),
+    `expenses-export.${format}`
+  );
 }
 
 export function printExpenses(): void {

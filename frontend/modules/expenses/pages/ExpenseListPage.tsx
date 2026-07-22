@@ -4,6 +4,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 import { Plus, Download, FileSpreadsheet, Trash2, Printer, Upload, UploadCloud } from 'lucide-react';
+import { toast } from 'sonner';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { Separator } from '@/frontend/shared/ui/data-display/separator';
@@ -28,7 +29,7 @@ import {
   useBulkImportExpenses,
 } from '../hooks/useExpenseMutations';
 import { expensesApi } from '../services/expenses.api';
-import { exportExpensesToCSV, exportExpensesToExcel, printExpenses, canManageExpenses, canDeleteExpenses } from '../utils';
+import { exportExpenses, printExpenses, canManageExpenses, canDeleteExpenses } from '../utils';
 import { EXPENSE_ROUTES } from '../routes';
 import type { Expense, ExpenseTableFilters } from '../types';
 import type { ExpenseFormValues } from '../schemas';
@@ -193,6 +194,21 @@ export function ExpenseListPage() {
     return expensesApi.importStandard(records);
   }
 
+  async function handleExport(format: 'csv' | 'xlsx') {
+    try {
+      const { truncated, totalMatched, rowsExported } = await exportExpenses(filters, format);
+      if (truncated) {
+        toast.warning(
+          `Export limited to ${rowsExported.toLocaleString()} of ${totalMatched.toLocaleString()} matching expenses. Narrow your filters to export the rest.`
+        );
+      } else {
+        toast.success(`Exported ${rowsExported.toLocaleString()} expense${rowsExported === 1 ? '' : 's'}`);
+      }
+    } catch {
+      toast.error('Failed to export expenses');
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -234,10 +250,10 @@ export function ExpenseListPage() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onSelect={() => exportExpensesToCSV(result?.data ?? [])}>
+                <DropdownMenuItem onSelect={() => void handleExport('csv')}>
                   Export as CSV
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => void exportExpensesToExcel(result?.data ?? [])}>
+                <DropdownMenuItem onSelect={() => void handleExport('xlsx')}>
                   <FileSpreadsheet className="mr-2 h-3.5 w-3.5" />
                   Export as Excel
                 </DropdownMenuItem>

@@ -2,6 +2,8 @@
 
 import { apiClient } from '@/shared/utils/api-client.utils';
 import type { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
+import type { ExportFormat } from '@/shared/export/export.types';
+import type { ExportBlobResponse } from '@/shared/utils/export-download.utils';
 import type {
   Vehicle,
   VehicleStats,
@@ -84,6 +86,26 @@ export const vehiclesApi = {
   async getActivity(vehicleId: string, page = 1, limit = 20): Promise<AuditLogPage> {
     return apiClient.get<AuditLogPage>('/api/security/audit-log', {
       params: { entityType: 'vehicle', entityId: vehicleId, page, limit },
+    });
+  },
+
+  /**
+   * Enterprise Export Framework (Phase 2). Hits GET /api/vehicles/export
+   * with the same filter fields as list(), not the currently-loaded
+   * (paginated) rows -- the backend re-queries the full authorized,
+   * filtered result set (capped at EXPORT_ROW_CAP) and returns a file.
+   */
+  async exportFile(filters: Partial<VehicleTableFilters>, format: ExportFormat = 'csv'): Promise<ExportBlobResponse> {
+    return apiClient.getBlob(`${BASE}/export`, {
+      params: {
+        license_plate: filters.license_plate,
+        make: filters.make,
+        model: filters.model,
+        status: filters.status,
+        year: filters.year,
+        vehicle_type: filters.vehicle_type,
+        format,
+      },
     });
   },
 };

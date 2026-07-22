@@ -5,6 +5,7 @@
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus, Download, FileSpreadsheet, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import {
@@ -26,7 +27,7 @@ import {
   useBulkDeleteVehicles,
   useUpdateVehicleStatus,
 } from '../hooks/useVehicleMutations';
-import { exportVehiclesToCSV, exportVehiclesToExcel, canManageVehicles, canDeleteVehicles } from '../utils';
+import { exportVehicles, canManageVehicles, canDeleteVehicles } from '../utils';
 import { VEHICLE_ROUTES } from '../routes';
 import type { Vehicle, VehicleStatus, VehicleTableFilters } from '../types';
 import type { VehicleFormValues } from '../schemas';
@@ -131,6 +132,21 @@ export function VehiclesListPage() {
     await updateStatus.mutateAsync({ id: vehicle._id, status });
   }
 
+  async function handleExport(format: 'csv' | 'xlsx') {
+    try {
+      const { truncated, totalMatched, rowsExported } = await exportVehicles(filters, format);
+      if (truncated) {
+        toast.warning(
+          `Export limited to ${rowsExported.toLocaleString()} of ${totalMatched.toLocaleString()} matching vehicles. Narrow your filters to export the rest.`
+        );
+      } else {
+        toast.success(`Exported ${rowsExported.toLocaleString()} vehicle${rowsExported === 1 ? '' : 's'}`);
+      }
+    } catch {
+      toast.error('Failed to export vehicles');
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -152,10 +168,10 @@ export function VehiclesListPage() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onSelect={() => exportVehiclesToCSV(result?.data ?? [])}>
+                <DropdownMenuItem onSelect={() => void handleExport('csv')}>
                   Export as CSV
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => void exportVehiclesToExcel(result?.data ?? [])}>
+                <DropdownMenuItem onSelect={() => void handleExport('xlsx')}>
                   <FileSpreadsheet className="mr-2 h-3.5 w-3.5" />
                   Export as Excel
                 </DropdownMenuItem>

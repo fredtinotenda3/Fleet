@@ -1,5 +1,10 @@
 // frontend/modules/fuel/utils/index.ts
 
+import type { ExportFormat } from '@/shared/export/export.types';
+import { triggerExport, type ExportDownloadResult } from '@/shared/utils/export-download.utils';
+import { fuelApi } from '../services/fuel.api';
+import type { FuelTableFilters } from '../types';
+
 export function canManageFuel(roles: string[]): boolean {
   return roles.some((r) => ['super_admin', 'organization_owner', 'fleet_manager', 'accountant'].includes(r));
 }
@@ -14,48 +19,25 @@ export function canViewFuel(roles: string[]): boolean {
   );
 }
 
-interface ExportableFuelLog {
-  date: string | Date;
-  license_plate: string;
-  fuel_volume: number;
-  unit?: { symbol?: string };
-  currency?: string;
-  cost: number;
-  odometer?: number;
-  station_name?: string;
-  is_full_tank?: boolean;
-}
-
-export function exportFuelLogsToCSV(logs: ExportableFuelLog[]): void {
-  if (!logs.length) return;
-
-  const headers = ['Date', 'License Plate', 'Volume', 'Cost', 'Odometer', 'Station', 'Full Tank'];
-  const rows = logs.map((log) => [
-    new Date(log.date).toLocaleDateString(),
-    log.license_plate,
-    `${log.fuel_volume} ${log.unit?.symbol || 'L'}`,
-    `${log.currency || 'USD'} ${log.cost.toFixed(2)}`,
-    String(log.odometer ?? ''),
-    log.station_name || 'N/A',
-    log.is_full_tank ? 'Yes' : 'No',
-  ]);
-
-  const csvContent = [headers, ...rows]
-    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-    .join('\n');
-
-  const blob = new Blob([csvContent], { type: 'text/csv' });
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `fuel-logs-${new Date().toISOString().split('T')[0]}.csv`;
-  a.click();
-  window.URL.revokeObjectURL(url);
-}
-
-export async function exportFuelLogsToExcel(logs: ExportableFuelLog[]): Promise<void> {
-  // Falls back to CSV until an xlsx generator is wired up for this module.
-  exportFuelLogsToCSV(logs);
+/**
+ * Enterprise Export Framework (Phase 2).
+ *
+ * Replaces exportFuelLogsToCSV/exportFuelLogsToExcel, which only ever
+ * exported the currently-loaded page of fuel logs (and whose "Excel"
+ * export silently fell back to CSV -- there was no xlsx generator wired
+ * up for this module). exportFuelLogs(filters, format) sends the user's
+ * current filters to GET /api/fuellogs?action=export, which re-runs the
+ * same scoped/filtered query server-side with no page limit (capped at
+ * EXPORT_ROW_CAP) and returns a real CSV or genuine .xlsx file.
+ */
+export async function exportFuelLogs(
+  filters: FuelTableFilters,
+  format: ExportFormat = 'csv'
+): Promise<ExportDownloadResult> {
+  return triggerExport(
+    () => fuelApi.exportFile(filters, format),
+    `fuel-logs-export.${format}`
+  );
 }
 
 export function printFuelLogs(): void {

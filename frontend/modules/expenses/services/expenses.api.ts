@@ -2,6 +2,8 @@
 
 import { apiClient } from '@/shared/utils/api-client.utils';
 import type { PaginatedResponse } from '@/shared/types/common.types';
+import type { ExportFormat } from '@/shared/export/export.types';
+import type { ExportBlobResponse } from '@/shared/utils/export-download.utils';
 import type { Expense, ExpenseType, ExpenseTableFilters, ExpenseStats } from '../types';
 import type { ExpenseFormOutput } from '../schemas';
 import type {
@@ -141,6 +143,33 @@ export const expensesApi = {
 
   async remove(id: string, soft: boolean = true): Promise<{ message: string }> {
     return apiClient.delete<{ message: string }>(BASE, { params: { id, soft } });
+  },
+
+  /**
+   * Enterprise Export Framework (Phase 2). Expense export lives behind
+   * ?action=export on the shared /api/expenses route. Sends the same
+   * filter fields as list() (including the jobTrip filter, which isn't
+   * part of ExpenseTableFilters but is read straight through by both
+   * the list and export controllers) so the backend re-queries the full
+   * authorized, filtered result set (capped at EXPORT_ROW_CAP).
+   */
+  async exportFile(
+    filters: Partial<ExpenseTableFilters> & { jobTrip?: string },
+    format: ExportFormat = 'csv'
+  ): Promise<ExportBlobResponse> {
+    return apiClient.getBlob(BASE, {
+      params: {
+        action: 'export',
+        license_plate: filters.license_plate,
+        type: filters.type,
+        jobTrip: filters.jobTrip,
+        start: toIso(filters.startDate),
+        end: toIso(filters.endDate),
+        minAmount: filters.minAmount,
+        maxAmount: filters.maxAmount,
+        format,
+      },
+    });
   },
 
   async bulkImport(records: Array<Record<string, unknown>>): Promise<BulkImportResult> {

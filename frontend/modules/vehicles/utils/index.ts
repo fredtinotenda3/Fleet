@@ -4,9 +4,11 @@
 import { VEHICLE_CONFIG } from '@/shared/config/constants';
 import { getStatusConfig } from '@/shared/utils/status.utils';
 import { getDaysUntil } from '@/shared/utils/date.utils';
-import { generateCSV, downloadCSV } from '@/shared/utils/csv.utils';
 import type { Vehicle } from '@/shared/types/vehicle.types';
-import type { VehicleStatus } from '../types';
+import type { ExportFormat } from '@/shared/export/export.types';
+import { triggerExport, type ExportDownloadResult } from '@/shared/utils/export-download.utils';
+import { vehiclesApi } from '../services/vehicles.api';
+import type { VehicleStatus, VehicleTableFilters } from '../types';
 
 export const VEHICLE_TYPE_OPTIONS = VEHICLE_CONFIG.vehicleTypes;
 export const FUEL_TYPE_OPTIONS = VEHICLE_CONFIG.fuelTypes;
@@ -51,40 +53,26 @@ export function canDeleteVehicles(roles: string[] = []): boolean {
   return roles.some((r) => DELETE_ROLES.includes(r));
 }
 
-export function exportVehiclesToCSV(vehicles: Vehicle[]): void {
-  const csv = generateCSV(vehicles, [
-    { header: 'License Plate', accessor: (v) => v.license_plate },
-    { header: 'Make', accessor: (v) => v.make },
-    { header: 'Model', accessor: (v) => v.model },
-    { header: 'Year', accessor: (v) => v.year },
-    { header: 'Type', accessor: (v) => v.vehicle_type },
-    { header: 'Fuel Type', accessor: (v) => v.fuel_type },
-    { header: 'Status', accessor: (v) => v.status },
-    { header: 'VIN', accessor: (v) => v.vin },
-    { header: 'Odometer', accessor: (v) => v.odometer },
-    { header: 'Registration Expiry', accessor: (v) => v.registration_expiry },
-    { header: 'Insurance Provider', accessor: (v) => v.insurance_provider },
-  ]);
-  downloadCSV(csv, `vehicles-export-${new Date().toISOString().slice(0, 10)}.csv`);
-}
-
-export async function exportVehiclesToExcel(vehicles: Vehicle[]): Promise<void> {
-  const XLSX = await import('xlsx');
-  const rows = vehicles.map((v) => ({
-    'License Plate': v.license_plate,
-    Make: v.make,
-    Model: v.model,
-    Year: v.year,
-    Type: v.vehicle_type,
-    'Fuel Type': v.fuel_type,
-    Status: v.status,
-    VIN: v.vin ?? '',
-    Odometer: v.odometer ?? '',
-    'Registration Expiry': v.registration_expiry ?? '',
-    'Insurance Provider': v.insurance_provider ?? '',
-  }));
-  const worksheet = XLSX.utils.json_to_sheet(rows);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Vehicles');
-  XLSX.writeFile(workbook, `vehicles-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
+/**
+ * Enterprise Export Framework (Phase 2).
+ *
+ * Replaces the old exportVehiclesToCSV(vehicles) / exportVehiclesToExcel(vehicles)
+ * pair, which only ever received the currently-loaded PAGE of vehicles
+ * (result?.data from VehiclesListPage) -- exporting "all vehicles" from a
+ * filtered, paginated list silently exported only page 1.
+ *
+ * exportVehicles(filters, format) instead sends the user's current filters
+ * to GET /api/vehicles/export, which re-runs the same scoped/filtered query
+ * server-side with no page limit (capped at EXPORT_ROW_CAP) and returns a
+ * real file. Tenant/org-unit scoping is enforced identically to the list
+ * endpoint since both share vehicleRepository's scoped query builder.
+ */
+export async function exportVehicles(
+  filters: VehicleTableFilters,
+  format: ExportFormat = 'csv'
+): Promise<ExportDownloadResult> {
+  return triggerExport(
+    () => vehiclesApi.exportFile(filters, format),
+    `vehicles-export.${format}`
+  );
 }

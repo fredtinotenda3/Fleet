@@ -2,6 +2,8 @@
 
 import { apiClient } from '@/shared/utils/api-client.utils';
 import type { PaginatedResponse } from '@/shared/types/common.types';
+import type { ExportFormat } from '@/shared/export/export.types';
+import type { ExportBlobResponse } from '@/shared/utils/export-download.utils';
 import type { Trip, TripStats, TripTableFilters } from '../types';
 import type { TripFormOutput } from '../schemas';
 
@@ -55,5 +57,24 @@ export const tripsApi = {
 
   async remove(id: string): Promise<{ message: string }> {
     return apiClient.delete<{ message: string }>(`${BASE}/${id}`);
+  },
+
+  /**
+   * Enterprise Export Framework (Phase 2). Hits GET /api/trips/export
+   * with the same filter fields as list(), so the backend re-queries the
+   * full authorized, filtered result set (capped at EXPORT_ROW_CAP)
+   * rather than exporting only the currently-loaded page.
+   */
+  async exportFile(filters: Partial<TripTableFilters>, format: ExportFormat = 'csv'): Promise<ExportBlobResponse> {
+    return apiClient.getBlob(`${BASE}/export`, {
+      params: {
+        license_plate: filters.license_plate,
+        mode: filters.mode,
+        driver_id: filters.driver_id,
+        start: toIso(filters.startDate),
+        end: toIso(filters.endDate),
+        format,
+      },
+    });
   },
 };

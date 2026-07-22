@@ -1,8 +1,11 @@
 // frontend/modules/maintenance/utils/index.ts
 
-import { formatDate, isOverdue as dateIsOverdue } from '@/shared/utils/date.utils';
+import { isOverdue as dateIsOverdue } from '@/shared/utils/date.utils';
 import { formatCurrency } from '@/shared/utils/currency.utils';
-import type { Reminder, ReminderStatus, Priority } from '../types';
+import type { ExportFormat } from '@/shared/export/export.types';
+import { triggerExport, type ExportDownloadResult } from '@/shared/utils/export-download.utils';
+import { maintenanceApi } from '../services/maintenance.api';
+import type { Reminder, ReminderStatus, Priority, MaintenanceTableFilters } from '../types';
 
 export function canManageMaintenance(roles: string[]): boolean {
   return roles.some((r) =>
@@ -53,67 +56,22 @@ export function formatEstimatedCost(cost?: number): string {
   return formatCurrency(cost);
 }
 
-const CSV_HEADERS = [
-  'License Plate',
-  'Title',
-  'Category',
-  'Priority',
-  'Status',
-  'Due Date',
-  'Completion Date',
-  'Assigned To',
-  'Estimated Cost',
-  'Notes',
-];
-
-function csvEscape(value: unknown): string {
-  const str = value === undefined || value === null ? '' : String(value);
-  return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
-}
-
-export function exportMaintenanceToCSV(records: Reminder[]): void {
-  const rows = records.map((r) => [
-    r.license_plate,
-    r.title,
-    r.category ?? '',
-    r.priority ?? '',
-    r.status,
-    formatDate(r.due_date),
-    r.completion_date ? formatDate(r.completion_date) : '',
-    r.assigned_to ?? '',
-    r.estimated_cost ?? '',
-    r.notes ?? '',
-  ]);
-  const csv = [CSV_HEADERS, ...rows].map((row) => row.map(csvEscape).join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `maintenance-records-${new Date().toISOString().slice(0, 10)}.csv`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
-
-export async function exportMaintenanceToExcel(records: Reminder[]): Promise<void> {
-  const XLSX = await import('xlsx');
-  const rows = records.map((r) => ({
-    'License Plate': r.license_plate,
-    Title: r.title,
-    Category: r.category ?? '',
-    Priority: r.priority ?? '',
-    Status: r.status,
-    'Due Date': formatDate(r.due_date),
-    'Completion Date': r.completion_date ? formatDate(r.completion_date) : '',
-    'Assigned To': r.assigned_to ?? '',
-    'Estimated Cost': r.estimated_cost ?? '',
-    Notes: r.notes ?? '',
-  }));
-  const worksheet = XLSX.utils.json_to_sheet(rows);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Maintenance');
-  XLSX.writeFile(workbook, `maintenance-records-${new Date().toISOString().slice(0, 10)}.xlsx`);
+/**
+ * Enterprise Export Framework (Phase 2). Replaces exportMaintenanceToCSV/
+ * exportMaintenanceToExcel, which only ever exported the currently-loaded
+ * page of records. Sends the user's current filters to
+ * GET /api/reminders?action=export, which re-runs the same scoped/
+ * filtered query server-side with no page limit (capped at
+ * EXPORT_ROW_CAP) and returns a real file.
+ */
+export async function exportMaintenance(
+  filters: MaintenanceTableFilters,
+  format: ExportFormat = 'csv'
+): Promise<ExportDownloadResult> {
+  return triggerExport(
+    () => maintenanceApi.exportFile(filters, format),
+    `maintenance-records-export.${format}`
+  );
 }
 
 export function printMaintenanceRecords(): void {

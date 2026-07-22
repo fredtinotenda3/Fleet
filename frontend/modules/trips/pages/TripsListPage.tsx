@@ -5,6 +5,7 @@
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus, Download, FileSpreadsheet, Trash2, Printer } from 'lucide-react';
+import { toast } from 'sonner';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import {
@@ -20,7 +21,7 @@ import { TripsTable } from '../components/TripsTable';
 import { TripModal, type TripModalMode } from '../components/TripModal';
 import { useTripsList } from '../hooks/useTrips';
 import { useCreateTrip, useUpdateTrip, useDeleteTrip, useBulkDeleteTrips } from '../hooks/useTripMutations';
-import { exportTripsToCSV, exportTripsToExcel, printTrips, canManageTrips, canDeleteTrips } from '../utils';
+import { exportTrips, printTrips, canManageTrips, canDeleteTrips } from '../utils';
 import { TRIP_ROUTES } from '../routes';
 import type { Trip, TripTableFilters } from '../types';
 import type { TripFormValues } from '../schemas';
@@ -113,6 +114,21 @@ export function TripsListPage() {
     setSelectedIds(new Set());
   }
 
+  async function handleExport(format: 'csv' | 'xlsx') {
+    try {
+      const { truncated, totalMatched, rowsExported } = await exportTrips(filters, format);
+      if (truncated) {
+        toast.warning(
+          `Export limited to ${rowsExported.toLocaleString()} of ${totalMatched.toLocaleString()} matching trips. Narrow your filters to export the rest.`
+        );
+      } else {
+        toast.success(`Exported ${rowsExported.toLocaleString()} trip${rowsExported === 1 ? '' : 's'}`);
+      }
+    } catch {
+      toast.error('Failed to export trips');
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -134,10 +150,10 @@ export function TripsListPage() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onSelect={() => exportTripsToCSV(result?.data ?? [])}>
+                <DropdownMenuItem onSelect={() => void handleExport('csv')}>
                   Export as CSV
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => void exportTripsToExcel(result?.data ?? [])}>
+                <DropdownMenuItem onSelect={() => void handleExport('xlsx')}>
                   <FileSpreadsheet className="mr-2 h-3.5 w-3.5" />
                   Export as Excel
                 </DropdownMenuItem>

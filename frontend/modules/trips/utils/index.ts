@@ -1,10 +1,12 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 // frontend/modules/trips/utils/index.ts
 
-import { generateCSV, downloadCSV } from '@/shared/utils/csv.utils';
 import { formatDistance } from '@/shared/utils/distance.utils';
 import { formatDate } from '@/shared/utils/date.utils';
-import type { Trip } from '../types';
+import type { ExportFormat } from '@/shared/export/export.types';
+import { triggerExport, type ExportDownloadResult } from '@/shared/utils/export-download.utils';
+import { tripsApi } from '../services/trips.api';
+import type { Trip, TripTableFilters } from '../types';
 
 export function tripModeLabel(mode: Trip['mode']): string {
   return mode === 'distance' ? 'Direct distance' : 'Odometer reading';
@@ -32,40 +34,21 @@ export function canDeleteTrips(roles: string[] = []): boolean {
   return roles.some((r) => DELETE_ROLES.includes(r));
 }
 
-export function exportTripsToCSV(trips: Trip[]): void {
-  const csv = generateCSV(trips, [
-    { header: 'Date', accessor: (t) => formatDate(t.date) },
-    { header: 'License Plate', accessor: (t) => t.license_plate },
-    { header: 'Mode', accessor: (t) => tripModeLabel(t.mode) },
-    { header: 'Distance (km)', accessor: (t) => t.distance_calculated },
-    { header: 'Start Odometer', accessor: (t) => t.start_odometer },
-    { header: 'End Odometer', accessor: (t) => t.end_odometer },
-    { header: 'Start Location', accessor: (t) => t.start_location },
-    { header: 'End Location', accessor: (t) => t.end_location },
-    { header: 'Driver', accessor: (t) => t.driver_id },
-    { header: 'Notes', accessor: (t) => t.notes },
-  ]);
-  downloadCSV(csv, `trips-export-${new Date().toISOString().slice(0, 10)}.csv`);
-}
-
-export async function exportTripsToExcel(trips: Trip[]): Promise<void> {
-  const XLSX = await import('xlsx');
-  const rows = trips.map((t) => ({
-    Date: formatDate(t.date),
-    'License Plate': t.license_plate,
-    Mode: tripModeLabel(t.mode),
-    'Distance (km)': t.distance_calculated,
-    'Start Odometer': t.start_odometer ?? '',
-    'End Odometer': t.end_odometer ?? '',
-    'Start Location': t.start_location ?? '',
-    'End Location': t.end_location ?? '',
-    Driver: t.driver_id ?? '',
-    Notes: t.notes ?? '',
-  }));
-  const worksheet = XLSX.utils.json_to_sheet(rows);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Trips');
-  XLSX.writeFile(workbook, `trips-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
+/**
+ * Enterprise Export Framework (Phase 2). Replaces exportTripsToCSV/
+ * exportTripsToExcel, which only ever exported the currently-loaded page
+ * of trips. Sends the user's current filters to GET /api/trips/export,
+ * which re-runs the same scoped/filtered query server-side with no page
+ * limit (capped at EXPORT_ROW_CAP) and returns a real file.
+ */
+export async function exportTrips(
+  filters: TripTableFilters,
+  format: ExportFormat = 'csv'
+): Promise<ExportDownloadResult> {
+  return triggerExport(
+    () => tripsApi.exportFile(filters, format),
+    `trips-export.${format}`
+  );
 }
 
 export function printTrips(): void {

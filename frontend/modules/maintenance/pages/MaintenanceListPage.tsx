@@ -5,6 +5,7 @@
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus, Download, FileSpreadsheet, Trash2, Printer } from 'lucide-react';
+import { toast } from 'sonner';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import {
@@ -26,8 +27,7 @@ import {
   useCompleteMaintenanceRecord,
 } from '../hooks/useMaintenanceMutations';
 import {
-  exportMaintenanceToCSV,
-  exportMaintenanceToExcel,
+  exportMaintenance,
   printMaintenanceRecords,
   canManageMaintenance,
   canDeleteMaintenance,
@@ -130,6 +130,21 @@ export function MaintenanceListPage() {
     await completeRecord.mutateAsync({ id: record._id });
   }
 
+  async function handleExport(format: 'csv' | 'xlsx') {
+    try {
+      const { truncated, totalMatched, rowsExported } = await exportMaintenance(filters, format);
+      if (truncated) {
+        toast.warning(
+          `Export limited to ${rowsExported.toLocaleString()} of ${totalMatched.toLocaleString()} matching records. Narrow your filters to export the rest.`
+        );
+      } else {
+        toast.success(`Exported ${rowsExported.toLocaleString()} record${rowsExported === 1 ? '' : 's'}`);
+      }
+    } catch {
+      toast.error('Failed to export maintenance records');
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -152,10 +167,10 @@ export function MaintenanceListPage() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onSelect={() => exportMaintenanceToCSV(result?.data ?? [])}>
+                <DropdownMenuItem onSelect={() => void handleExport('csv')}>
                   Export as CSV
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => void exportMaintenanceToExcel(result?.data ?? [])}>
+                <DropdownMenuItem onSelect={() => void handleExport('xlsx')}>
                   <FileSpreadsheet className="mr-2 h-3.5 w-3.5" />
                   Export as Excel
                 </DropdownMenuItem>

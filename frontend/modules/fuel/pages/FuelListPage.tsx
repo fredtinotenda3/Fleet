@@ -4,6 +4,7 @@
 
 import { useMemo, useState } from 'react';
 import { Plus, Download, FileSpreadsheet, Trash2, Printer, Upload } from 'lucide-react';
+import { toast } from 'sonner';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import {
@@ -20,7 +21,7 @@ import { FuelModal, type FuelModalMode } from '../components/FuelModal';
 import { FuelImportModal } from '../components/FuelImportModal';
 import { useFuelLogsList } from '../hooks/useFuel';
 import { useCreateFuelLog, useUpdateFuelLog, useDeleteFuelLog, useBulkDeleteFuelLogs } from '../hooks/useFuelMutations';
-import { exportFuelLogsToCSV, exportFuelLogsToExcel, printFuelLogs, canManageFuel, canDeleteFuel } from '../utils';
+import { exportFuelLogs, printFuelLogs, canManageFuel, canDeleteFuel } from '../utils';
 import { FUEL_ROUTES } from '../routes';
 import type { FuelLog, FuelTableFilters } from '../types';
 import type { FuelFormValues } from '../schemas';
@@ -119,6 +120,21 @@ export function FuelListPage() {
     setSelectedIds(new Set());
   }
 
+  async function handleExport(format: 'csv' | 'xlsx') {
+    try {
+      const { truncated, totalMatched, rowsExported } = await exportFuelLogs(filters, format);
+      if (truncated) {
+        toast.warning(
+          `Export limited to ${rowsExported.toLocaleString()} of ${totalMatched.toLocaleString()} matching fuel logs. Narrow your filters to export the rest.`
+        );
+      } else {
+        toast.success(`Exported ${rowsExported.toLocaleString()} fuel log${rowsExported === 1 ? '' : 's'}`);
+      }
+    } catch {
+      toast.error('Failed to export fuel logs');
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -142,8 +158,8 @@ export function FuelListPage() {
                 <Button variant="outline" size="sm"><Download className="h-3.5 w-3.5" /> Export</Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onSelect={() => exportFuelLogsToCSV(result?.data ?? [])}>Export as CSV</DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => void exportFuelLogsToExcel(result?.data ?? [])}>
+                <DropdownMenuItem onSelect={() => void handleExport('csv')}>Export as CSV</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => void handleExport('xlsx')}>
                   <FileSpreadsheet className="mr-2 h-3.5 w-3.5" /> Export as Excel
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => printFuelLogs()}>

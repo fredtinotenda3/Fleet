@@ -3,6 +3,8 @@
 import { apiClient } from '@/shared/utils/api-client.utils';
 import { normalizeListResponse } from '@/shared/utils/pagination.utils';
 import type { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
+import type { ExportFormat } from '@/shared/export/export.types';
+import type { ExportBlobResponse } from '@/shared/utils/export-download.utils';
 import type { Reminder, MaintenanceFilters, MaintenanceStats } from '../types';
 import type { MaintenanceFormOutput } from '../schemas';
 
@@ -65,6 +67,29 @@ export const maintenanceApi = {
 
   async remove(id: string): Promise<{ message: string }> {
     return apiClient.delete<{ message: string }>(BASE, { params: { id } });
+  },
+
+  /**
+   * Enterprise Export Framework (Phase 2). Maintenance/reminder export
+   * lives behind ?action=export on the shared /api/reminders route.
+   * Sends the same filter fields as list() so the backend re-queries the
+   * full authorized, filtered result set (capped at EXPORT_ROW_CAP)
+   * instead of exporting only the currently-loaded page.
+   */
+  async exportFile(filters: Partial<MaintenanceFilters>, format: ExportFormat = 'csv'): Promise<ExportBlobResponse> {
+    return apiClient.getBlob(BASE, {
+      params: {
+        action: 'export',
+        license_plate: filters.license_plate,
+        status: filters.status,
+        priority: filters.priority,
+        category: filters.category,
+        assigned_to: filters.assigned_to,
+        start: toIso(filters.startDate),
+        end: toIso(filters.endDate),
+        format,
+      },
+    });
   },
 
   async complete(id: string, completionDate?: Date): Promise<Reminder> {

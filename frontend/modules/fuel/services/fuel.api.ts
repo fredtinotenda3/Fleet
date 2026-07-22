@@ -2,6 +2,8 @@
 
 import { apiClient } from '@/shared/utils/api-client.utils';
 import type { PaginatedResponse } from '@/shared/types/common.types';
+import type { ExportFormat } from '@/shared/export/export.types';
+import type { ExportBlobResponse } from '@/shared/utils/export-download.utils';
 import type {
   FuelLog,
   FuelTableFilters,
@@ -91,6 +93,30 @@ export const fuelApi = {
 
   async remove(id: string, soft: boolean = true): Promise<{ message: string }> {
     return apiClient.delete<{ message: string }>(BASE, { params: { id, soft } });
+  },
+
+  /**
+   * Enterprise Export Framework (Phase 2). Fuel logs export lives behind
+   * ?action=export on the shared /api/fuellogs route (no dedicated
+   * /export subroute), same as every other action on this module. Sends
+   * the same filter fields as list() so the backend re-queries the full
+   * authorized, filtered result set (capped at EXPORT_ROW_CAP).
+   */
+  async exportFile(filters: Partial<FuelTableFilters>, format: ExportFormat = 'csv'): Promise<ExportBlobResponse> {
+    return apiClient.getBlob(BASE, {
+      params: {
+        action: 'export',
+        license_plate: filters.license_plate,
+        unit_id: filters.unit_id,
+        payment_method: filters.payment_method,
+        fuel_station_id: filters.fuel_station_id,
+        fuel_card_id: filters.fuel_card_id,
+        driver_id: filters.driver_id,
+        start: toIso(filters.startDate),
+        end: toIso(filters.endDate),
+        format,
+      },
+    });
   },
 
   async getStats(dateRange?: { startDate?: Date; endDate?: Date }): Promise<FuelStats> {
