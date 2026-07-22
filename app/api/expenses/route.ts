@@ -24,6 +24,10 @@ export const GET = withAuth(
     if (action === 'top-transactions') return expenseController.getTopTransactions(req);
     if (action === 'daily-totals') return expenseController.getDailyTotals(req);
     if (action === 'outliers') return expenseController.getOutliers(req);
+
+    // Phase 2 Enterprise Export Framework
+    if (action === 'export') return expenseController.exportExpenses(req);
+
     if (id) return expenseController.getExpense(req, id);
 
     return expenseController.getExpenses(req);

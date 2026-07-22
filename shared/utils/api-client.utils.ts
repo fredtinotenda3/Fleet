@@ -141,6 +141,54 @@ class ApiClient {
     return this.handleResponse<T>(response);
   }
 
+  /**
+   * GET a binary file response (used by the Phase 2 Enterprise Export
+   * Framework's export endpoints, which return a CSV/XLSX file rather
+   * than a JSON ApiResponse envelope). Reuses the same URL-building,
+   * auth headers, and timeout handling as get<T>() -- deliberately NOT
+   * a separate fetch layer -- but skips handleResponse()'s JSON
+   * parsing since the success body is binary. On a non-OK response the
+   * body IS JSON (errorResponse()'s shape), so that path still parses
+   * and throws an ApiError the same way get<T>() does.
+   */
+  async getBlob(
+    path: string,
+    options?: RequestOptionsType
+  ): Promise<{ blob: Blob; filename: string | null; headers: Headers }> {
+    const { params, timeout = this.defaultTimeout, ...fetchOptions } = options || {};
+    const url = this.buildURL(path, params);
+
+    const response = await this.fetchWithTimeout(url, {
+      method: 'GET',
+      headers: this.defaultHeaders,
+      ...fetchOptions,
+    }, timeout);
+
+    if (!response.ok) {
+      let errorMessage = `HTTP Error ${response.status}: ${response.statusText}`;
+      let errorCode = 'HTTP_ERROR';
+      let errorDetails: unknown;
+
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error?.message || errorData.message || errorMessage;
+        errorCode = errorData.error?.code || errorCode;
+        errorDetails = errorData.error?.details;
+      } catch {
+        // If response is not JSON, use default error message
+      }
+
+      throw new ApiError(errorMessage, response.status, errorCode, errorDetails);
+    }
+
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const match = /filename="?([^"]+)"?/.exec(disposition);
+    const filename = match ? match[1] : null;
+
+    const blob = await response.blob();
+    return { blob, filename, headers: response.headers };
+  }
+
   async post<T>(path: string, body?: unknown, options?: RequestOptionsType): Promise<T> {
     const { params, timeout = this.defaultTimeout, ...fetchOptions } = options || {};
     const url = this.buildURL(path, params);

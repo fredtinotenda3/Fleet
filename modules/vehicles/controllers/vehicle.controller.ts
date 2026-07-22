@@ -21,6 +21,12 @@ import { getAuthContext } from '@/server/auth/auth-context';
 import { tenantContextService } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 import { vehicleRepository } from '../repositories/vehicle.repository';
+import { exportService, fileDownloadResponse } from '@/shared/export';
+import {
+  VEHICLE_EXPORT_COLUMNS,
+  VEHICLE_EXPORT_SHEET_NAME,
+  VEHICLE_EXPORT_BASE_FILENAME,
+} from '../export/vehicle-export.columns';
 
 bootstrapCqrs();
 
@@ -80,6 +86,69 @@ export class VehicleController {
       );
 
       return paginatedResponse(result.data, result.pagination);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /**
+   * Phase 2 Enterprise Export Framework: exports the COMPLETE set of
+   * vehicles matching the caller's current filters and authorization
+   * scope, not just the page of results currently loaded in the UI
+   * table. Reuses the exact same auth resolution, tenant-context
+   * resolution, and filter parsing as getVehicles above so an export
+   * can never see data the equivalent list call wouldn't -- the only
+   * difference is getFilteredVehiclesForExport ignores pagination
+   * (capped at EXPORT_ROW_CAP instead) and the response is a file
+   * rather than JSON.
+   */
+  async exportVehicles(req: NextRequest) {
+    try {
+      const authContext = await getAuthContext(req);
+      if (!authContext) {
+        throw new UnauthorizedError('Authentication required');
+      }
+
+      const tenantContext = await tenantContextService.resolveContext(
+        authContext.userId,
+        authContext.tenantId,
+        authContext.roles,
+        authContext.isSuperAdmin,
+        authContext.orgUnitId
+      );
+
+      const searchParams = req.nextUrl.searchParams;
+
+      const filters: VehicleFilters = {
+        license_plate: searchParams.get('license_plate') || undefined,
+        make: searchParams.get('make') || undefined,
+        model: searchParams.get('model') || undefined,
+        status: (searchParams.get('status') as any) || undefined,
+        year: searchParams.get('year')
+          ? parseInt(searchParams.get('year')!)
+          : undefined,
+        vehicle_type: searchParams.get('vehicle_type') || undefined,
+      };
+
+      const format = exportService.parseFormat(searchParams.get('format'));
+
+      const { rows, totalMatched, truncated, exportCap } =
+        await vehicleRepository.getFilteredVehiclesForExport(filters, tenantContext);
+
+      const file = exportService.generate(
+        rows,
+        VEHICLE_EXPORT_COLUMNS,
+        format,
+        VEHICLE_EXPORT_BASE_FILENAME,
+        VEHICLE_EXPORT_SHEET_NAME
+      );
+
+      return fileDownloadResponse(file, {
+        totalMatched,
+        rowsExported: rows.length,
+        truncated,
+        exportCap,
+      });
     } catch (error) {
       return this.handleError(error);
     }

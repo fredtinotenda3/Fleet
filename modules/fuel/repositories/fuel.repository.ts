@@ -28,6 +28,7 @@ import { Filter, ObjectId } from 'mongodb';
 import connectToDatabase from '@/infrastructure/database/mongodb';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
+import { EXPORT_ROW_CAP, ExportDataset } from '@/shared/export';
 
 interface VehiclePeriodAggregate {
   _id: string;
@@ -198,13 +199,12 @@ export class FuelRepository extends BaseRepository<FuelLog> {
    * tenantScopeService.buildFilter(context, 'orgUnitId') on top of (not
    * instead of) tenant isolation.
    */
-  async getFilteredLogsInScope(
-    filters: FuelFilters,
-    context: TenantContext,
-    pagination: PaginationParams
-  ): Promise<PaginatedResponse<FuelLog>> {
-    const collection = await this.getCollection();
-
+  /**
+   * Single source of truth for the tenant + org-unit-scope + filter
+   * query shared by getFilteredLogsInScope (paginated list) and
+   * getFilteredLogsForExport (uncapped-by-pagination export).
+   */
+  private buildScopedQuery(filters: FuelFilters, context: TenantContext): Record<string, unknown> {
     const query: Record<string, unknown> = {
       isDeleted: { $ne: true },
     };
@@ -229,6 +229,17 @@ export class FuelRepository extends BaseRepository<FuelLog> {
 
     const scopeFilter = tenantScopeService.buildFilter<FuelLog>(context, 'orgUnitId');
     Object.assign(query, scopeFilter);
+
+    return query;
+  }
+
+  async getFilteredLogsInScope(
+    filters: FuelFilters,
+    context: TenantContext,
+    pagination: PaginationParams
+  ): Promise<PaginatedResponse<FuelLog>> {
+    const collection = await this.getCollection();
+    const query = this.buildScopedQuery(filters, context);
 
     const { page, limit } = pagination;
     const skip = (page - 1) * limit;
@@ -256,6 +267,40 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     };
 
     return { ...result, data: await this.enrichFuelLogs(result.data) };
+  }
+
+  /**
+   * Export variant of getFilteredLogsInScope: same filters and same
+   * tenant/org-unit scope, returns up to `cap` matching records
+   * (default EXPORT_ROW_CAP) ignoring UI pagination, enriched with
+   * driver/station names the same way the list endpoint is, plus the
+   * true total match count so the caller can detect truncation.
+   */
+  async getFilteredLogsForExport(
+    filters: FuelFilters,
+    context: TenantContext,
+    cap: number = EXPORT_ROW_CAP
+  ): Promise<ExportDataset<FuelLog>> {
+    const collection = await this.getCollection();
+    const query = this.buildScopedQuery(filters, context);
+
+    const [rows, totalMatched] = await Promise.all([
+      collection
+        .find(query as Filter<FuelLog>)
+        .sort({ createdAt: -1 })
+        .limit(cap)
+        .toArray(),
+      collection.countDocuments(query as Filter<FuelLog>),
+    ]);
+
+    const enriched = await this.enrichFuelLogs(rows as FuelLog[]);
+
+    return {
+      rows: enriched,
+      totalMatched,
+      truncated: totalMatched > rows.length,
+      exportCap: cap,
+    };
   }
 
   async findById(id: string, tenantId: string): Promise<FuelLog | null> {

@@ -23,6 +23,7 @@ import {
 } from '@/shared/types/common.types';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
+import { EXPORT_ROW_CAP, ExportDataset } from '@/shared/export';
 
 export class ExpenseRepository extends BaseRepository<Expense> {
   protected collectionName = 'tblexpenses';
@@ -169,13 +170,12 @@ export class ExpenseRepository extends BaseRepository<Expense> {
    * plus tenantScopeService.buildFilter(context, 'orgUnitId') on top of
    * (not instead of) tenant isolation.
    */
-  async getFilteredExpensesInScope(
-    filters: ExpenseFilters,
-    context: TenantContext,
-    pagination: PaginationParams
-  ): Promise<PaginatedResponse<Expense>> {
-    const collection = await this.getCollection();
-
+  /**
+   * Single source of truth for the tenant + org-unit-scope + filter
+   * match stage shared by getFilteredExpensesInScope (paginated list)
+   * and getFilteredExpensesForExport (uncapped-by-pagination export).
+   */
+  private buildScopedMatch(filters: ExpenseFilters, context: TenantContext): Record<string, unknown> {
     const match: Record<string, unknown> = { isDeleted: { $ne: true } };
     if (!this.isSuperAdminTenant(context.organizationId)) {
       match.tenantId = context.organizationId;
@@ -208,6 +208,17 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     const scopeFilter = tenantScopeService.buildFilter<Expense>(context, 'orgUnitId');
     Object.assign(match, scopeFilter);
 
+    return match;
+  }
+
+  async getFilteredExpensesInScope(
+    filters: ExpenseFilters,
+    context: TenantContext,
+    pagination: PaginationParams
+  ): Promise<PaginatedResponse<Expense>> {
+    const collection = await this.getCollection();
+    const match = this.buildScopedMatch(filters, context);
+
     const { page, limit } = pagination;
     const skip = (page - 1) * limit;
 
@@ -236,6 +247,43 @@ export class ExpenseRepository extends BaseRepository<Expense> {
         hasNext: page * limit < total,
         hasPrev: page > 1,
       },
+    };
+  }
+
+  /**
+   * Export variant of getFilteredExpensesInScope: same filters and
+   * same tenant/org-unit scope, but returns up to `cap` matching
+   * records (default EXPORT_ROW_CAP) ignoring UI pagination, with the
+   * same expense_type $lookup so category labels are available, plus
+   * the true total match count so the caller can detect truncation.
+   */
+  async getFilteredExpensesForExport(
+    filters: ExpenseFilters,
+    context: TenantContext,
+    cap: number = EXPORT_ROW_CAP
+  ): Promise<ExportDataset<Expense>> {
+    const collection = await this.getCollection();
+    const match = this.buildScopedMatch(filters, context);
+
+    const [rows, totalResult] = await Promise.all([
+      collection
+        .aggregate<Expense>([
+          { $match: match },
+          ...this.expenseTypeLookupStages(),
+          { $sort: { date: -1 } },
+          { $limit: cap },
+        ])
+        .toArray(),
+      collection.aggregate([{ $match: match }, { $count: 'count' }]).toArray(),
+    ]);
+
+    const totalMatched = totalResult[0]?.count ?? 0;
+
+    return {
+      rows,
+      totalMatched,
+      truncated: totalMatched > rows.length,
+      exportCap: cap,
     };
   }
 

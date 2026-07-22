@@ -13,6 +13,7 @@ import {
 } from '@/shared/types/common.types';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
+import { EXPORT_ROW_CAP, ExportDataset } from '@/shared/export';
 
 export class VehicleRepository extends BaseRepository<Vehicle> {
   protected collectionName = 'tblvehicles';
@@ -141,13 +142,15 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
     };
   }
 
-  async getFilteredVehiclesInScope(
-    filters: VehicleFilters,
-    pagination: PaginationParams,
-    context: TenantContext
-  ): Promise<PaginatedResponse<Vehicle>> {
-    const collection = await this.getCollection();
-
+  /**
+   * Single source of truth for the tenant + org-unit-scope + filter
+   * query shared by getFilteredVehiclesInScope (paginated list) and
+   * getFilteredVehiclesForExport (uncapped-by-pagination export).
+   * Extracted during the Phase 2 Enterprise Export Framework work so
+   * the two call sites can never drift on what "matches the filters,
+   * in scope" means.
+   */
+  private buildScopedQuery(filters: VehicleFilters, context: TenantContext): Record<string, unknown> {
     const query: Record<string, unknown> = {
       isDeleted: { $ne: true },
     };
@@ -186,6 +189,17 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
     const scopeFilter = tenantScopeService.buildFilter<Vehicle>(context, 'orgUnitId');
     Object.assign(query, scopeFilter);
 
+    return query;
+  }
+
+  async getFilteredVehiclesInScope(
+    filters: VehicleFilters,
+    pagination: PaginationParams,
+    context: TenantContext
+  ): Promise<PaginatedResponse<Vehicle>> {
+    const collection = await this.getCollection();
+    const query = this.buildScopedQuery(filters, context);
+
     const { page, limit } = pagination;
     const skip = (page - 1) * limit;
 
@@ -209,6 +223,43 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
         hasNext: page * limit < total,
         hasPrev: page > 1,
       },
+    };
+  }
+
+  /**
+   * Export variant of getFilteredVehiclesInScope: same filters, same
+   * tenant + org-unit scope, but ignores UI pagination entirely and
+   * instead returns up to `cap` matching records (default
+   * EXPORT_ROW_CAP) plus the true total match count, so the caller can
+   * tell whether the export is complete or was truncated. This is the
+   * Phase 2 fix for the "export only exports the currently loaded
+   * page" bug -- previously Vehicles had no export query at all,
+   * exports were built client-side from whatever page of
+   * getFilteredVehiclesInScope() happened to already be loaded in the
+   * UI table.
+   */
+  async getFilteredVehiclesForExport(
+    filters: VehicleFilters,
+    context: TenantContext,
+    cap: number = EXPORT_ROW_CAP
+  ): Promise<ExportDataset<Vehicle>> {
+    const collection = await this.getCollection();
+    const query = this.buildScopedQuery(filters, context);
+
+    const [rows, totalMatched] = await Promise.all([
+      collection
+        .find(query as Filter<Vehicle>)
+        .sort({ createdAt: -1 })
+        .limit(cap)
+        .toArray(),
+      collection.countDocuments(query as Filter<Vehicle>),
+    ]);
+
+    return {
+      rows: rows as Vehicle[],
+      totalMatched,
+      truncated: totalMatched > rows.length,
+      exportCap: cap,
     };
   }
 

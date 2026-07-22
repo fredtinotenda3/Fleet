@@ -29,6 +29,9 @@ export const GET = withAuth(
     if (action === 'cost-distribution') return fuelController.getFuelCostDistribution(req);
     if (action === 'heatmap') return fuelController.getFuelEntryHeatmap(req);
 
+    // Phase 2 Enterprise Export Framework
+    if (action === 'export') return fuelController.exportFuelLogs(req);
+
     if (id) return fuelController.getFuelLog(req, id);
 
     return fuelController.getFuelLogs(req);

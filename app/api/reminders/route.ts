@@ -15,6 +15,10 @@ export const GET = withAuth(
     if (action === 'stats') return await maintenanceController.getMaintenanceStats(req);
     if (action === 'overdue') return await maintenanceController.getOverdueReminders(req);
     if (action === 'upcoming') return await maintenanceController.getUpcomingReminders(req);
+
+    // Phase 2 Enterprise Export Framework
+    if (action === 'export') return await maintenanceController.exportReminders(req);
+
     if (id) return await maintenanceController.getReminder(req, id);
 
     return await maintenanceController.getReminders(req);

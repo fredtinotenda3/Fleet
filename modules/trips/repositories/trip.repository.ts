@@ -13,6 +13,7 @@ import {
 import { Filter } from 'mongodb';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
+import { EXPORT_ROW_CAP, ExportDataset } from '@/shared/export';
 
 export class TripRepository extends BaseRepository<Trip> {
   protected collectionName = 'tbltrips';
@@ -72,13 +73,12 @@ export class TripRepository extends BaseRepository<Trip> {
    * tenantScopeService.buildFilter(context, 'orgUnitId'), on top of
    * (not instead of) tenant isolation.
    */
-  async getFilteredTripsInScope(
-    filters: TripFilters,
-    context: TenantContext,
-    pagination: PaginationParams
-  ): Promise<PaginatedResponse<Trip>> {
-    const collection = await this.getCollection();
-
+  /**
+   * Single source of truth for the tenant + org-unit-scope + filter
+   * query shared by getFilteredTripsInScope (paginated list) and
+   * getFilteredTripsForExport (uncapped-by-pagination export).
+   */
+  private buildScopedQuery(filters: TripFilters, context: TenantContext): Record<string, unknown> {
     const query: Record<string, unknown> = {
       isDeleted: { $ne: true },
     };
@@ -104,6 +104,17 @@ export class TripRepository extends BaseRepository<Trip> {
     const scopeFilter = tenantScopeService.buildFilter<Trip>(context, 'orgUnitId');
     Object.assign(query, scopeFilter);
 
+    return query;
+  }
+
+  async getFilteredTripsInScope(
+    filters: TripFilters,
+    context: TenantContext,
+    pagination: PaginationParams
+  ): Promise<PaginatedResponse<Trip>> {
+    const collection = await this.getCollection();
+    const query = this.buildScopedQuery(filters, context);
+
     const { page, limit } = pagination;
     const skip = (page - 1) * limit;
 
@@ -127,6 +138,37 @@ export class TripRepository extends BaseRepository<Trip> {
         hasNext: page * limit < total,
         hasPrev: page > 1,
       },
+    };
+  }
+
+  /**
+   * Export variant of getFilteredTripsInScope: same filters and same
+   * tenant/org-unit scope, but returns up to `cap` matching records
+   * (default EXPORT_ROW_CAP) ignoring UI pagination, plus the true
+   * total match count so the caller can detect truncation.
+   */
+  async getFilteredTripsForExport(
+    filters: TripFilters,
+    context: TenantContext,
+    cap: number = EXPORT_ROW_CAP
+  ): Promise<ExportDataset<Trip>> {
+    const collection = await this.getCollection();
+    const query = this.buildScopedQuery(filters, context);
+
+    const [rows, totalMatched] = await Promise.all([
+      collection
+        .find(query as Filter<Trip>)
+        .sort({ createdAt: -1 })
+        .limit(cap)
+        .toArray(),
+      collection.countDocuments(query as Filter<Trip>),
+    ]);
+
+    return {
+      rows: rows as Trip[],
+      totalMatched,
+      truncated: totalMatched > rows.length,
+      exportCap: cap,
     };
   }
 

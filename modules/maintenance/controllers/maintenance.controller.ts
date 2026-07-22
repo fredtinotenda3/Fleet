@@ -21,6 +21,12 @@ import { getAuthContext } from '@/server/auth/auth-context';
 import { tenantContextService } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 import { maintenanceRepository } from '../repositories/maintenance.repository';
+import { exportService, fileDownloadResponse } from '@/shared/export';
+import {
+  MAINTENANCE_EXPORT_COLUMNS,
+  MAINTENANCE_EXPORT_SHEET_NAME,
+  MAINTENANCE_EXPORT_BASE_FILENAME,
+} from '../export/maintenance-export.columns';
 
 bootstrapCqrs();
 
@@ -101,6 +107,72 @@ export class MaintenanceController {
       );
 
       return paginatedResponse(result.data, result.pagination);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /**
+   * Phase 2 Enterprise Export Framework: exports the COMPLETE set of
+   * maintenance reminders matching the caller's current filters and
+   * authorization scope, not just the page of results currently loaded
+   * in the UI table. Reuses the exact same auth/tenant-context/filter
+   * parsing as getReminders above.
+   */
+  async exportReminders(req: NextRequest) {
+    try {
+      const authContext = await getAuthContext(req);
+      if (!authContext) {
+        throw new UnauthorizedError('Authentication required');
+      }
+
+      const tenantContext = await tenantContextService.resolveContext(
+        authContext.userId,
+        authContext.tenantId,
+        authContext.roles,
+        authContext.isSuperAdmin,
+        authContext.orgUnitId
+      );
+
+      const searchParams = req.nextUrl.searchParams;
+
+      const statusParam = searchParams.get('status');
+      const priorityParam = searchParams.get('priority');
+      const categoryParam = searchParams.get('category');
+
+      const filters: MaintenanceFilters = {
+        license_plate: searchParams.get('license_plate') || undefined,
+        status: statusParam && statusParam !== 'all' ? (statusParam as any) : undefined,
+        priority: priorityParam && priorityParam !== 'all' ? (priorityParam as any) : undefined,
+        category: categoryParam && categoryParam !== 'all' ? categoryParam : undefined,
+        assigned_to: searchParams.get('assigned_to') || undefined,
+        startDate: searchParams.get('start')
+          ? new Date(searchParams.get('start')!)
+          : undefined,
+        endDate: searchParams.get('end')
+          ? new Date(searchParams.get('end')!)
+          : undefined,
+      };
+
+      const format = exportService.parseFormat(searchParams.get('format'));
+
+      const { rows, totalMatched, truncated, exportCap } =
+        await maintenanceRepository.getFilteredRemindersForExport(filters, tenantContext);
+
+      const file = exportService.generate(
+        rows,
+        MAINTENANCE_EXPORT_COLUMNS,
+        format,
+        MAINTENANCE_EXPORT_BASE_FILENAME,
+        MAINTENANCE_EXPORT_SHEET_NAME
+      );
+
+      return fileDownloadResponse(file, {
+        totalMatched,
+        rowsExported: rows.length,
+        truncated,
+        exportCap,
+      });
     } catch (error) {
       return this.handleError(error);
     }

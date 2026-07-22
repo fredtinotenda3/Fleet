@@ -26,6 +26,12 @@ import connectToDatabase from '@/infrastructure/database/mongodb';
 import { tenantContextService } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 import { fuelRepository } from '../repositories/fuel.repository';
+import { exportService, fileDownloadResponse } from '@/shared/export';
+import {
+  FUEL_EXPORT_COLUMNS,
+  FUEL_EXPORT_SHEET_NAME,
+  FUEL_EXPORT_BASE_FILENAME,
+} from '../export/fuel-export.columns';
 
 bootstrapCqrs();
 
@@ -262,6 +268,71 @@ export class FuelController {
       );
 
       return paginatedResponse(result.data, result.pagination);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /**
+   * Phase 2 Enterprise Export Framework: exports the COMPLETE set of
+   * fuel logs matching the caller's current filters and authorization
+   * scope, not just the page of results currently loaded in the UI
+   * table. Reuses the exact same auth/tenant-context/filter parsing as
+   * getFuelLogs above.
+   */
+  async exportFuelLogs(req: NextRequest) {
+    try {
+      const authContext = await getAuthContext(req);
+      if (!authContext) {
+        throw new UnauthorizedError('Authentication required');
+      }
+
+      const tenantContext = await tenantContextService.resolveContext(
+        authContext.userId,
+        authContext.tenantId,
+        authContext.roles,
+        authContext.isSuperAdmin,
+        authContext.orgUnitId
+      );
+
+      const searchParams = req.nextUrl.searchParams;
+
+      const filters: FuelFilters = {
+        license_plate: searchParams.get('license_plate') || undefined,
+        unit_id: searchParams.get('unit_id') || undefined,
+        payment_method: (searchParams.get('payment_method') as FuelFilters['payment_method']) || undefined,
+        fuel_station_id: searchParams.get('fuel_station_id') || undefined,
+        fuel_card_id: searchParams.get('fuel_card_id') || undefined,
+        driver_id: searchParams.get('driver_id') || undefined,
+        startDate: searchParams.get('start')
+          ? new Date(searchParams.get('start')!)
+          : undefined,
+        endDate: searchParams.get('end')
+          ? new Date(searchParams.get('end')!)
+          : undefined,
+      };
+
+      const format = exportService.parseFormat(searchParams.get('format'));
+
+      const { rows, totalMatched, truncated, exportCap } = await fuelRepository.getFilteredLogsForExport(
+        filters,
+        tenantContext
+      );
+
+      const file = exportService.generate(
+        rows,
+        FUEL_EXPORT_COLUMNS,
+        format,
+        FUEL_EXPORT_BASE_FILENAME,
+        FUEL_EXPORT_SHEET_NAME
+      );
+
+      return fileDownloadResponse(file, {
+        totalMatched,
+        rowsExported: rows.length,
+        truncated,
+        exportCap,
+      });
     } catch (error) {
       return this.handleError(error);
     }

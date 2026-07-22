@@ -14,6 +14,7 @@ import {
 import { Filter, ObjectId } from 'mongodb';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
+import { EXPORT_ROW_CAP, ExportDataset } from '@/shared/export';
 
 export class MaintenanceRepository extends BaseRepository<Reminder> {
   protected collectionName = 'tblreminders';
@@ -90,13 +91,12 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
    * tenantScopeService.buildFilter(context, 'orgUnitId') on top of (not
    * instead of) tenant isolation.
    */
-  async getFilteredRemindersInScope(
-    filters: MaintenanceFilters,
-    context: TenantContext,
-    pagination: PaginationParams
-  ): Promise<PaginatedResponse<Reminder>> {
-    const collection = await this.getCollection();
-
+  /**
+   * Single source of truth for the tenant + org-unit-scope + filter
+   * query shared by getFilteredRemindersInScope (paginated list) and
+   * getFilteredRemindersForExport (uncapped-by-pagination export).
+   */
+  private buildScopedQuery(filters: MaintenanceFilters, context: TenantContext): Record<string, unknown> {
     const query: Record<string, unknown> = {
       isDeleted: { $ne: true },
     };
@@ -124,6 +124,17 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
     const scopeFilter = tenantScopeService.buildFilter<Reminder>(context, 'orgUnitId');
     Object.assign(query, scopeFilter);
 
+    return query;
+  }
+
+  async getFilteredRemindersInScope(
+    filters: MaintenanceFilters,
+    context: TenantContext,
+    pagination: PaginationParams
+  ): Promise<PaginatedResponse<Reminder>> {
+    const collection = await this.getCollection();
+    const query = this.buildScopedQuery(filters, context);
+
     const { page, limit } = pagination;
     const skip = (page - 1) * limit;
 
@@ -147,6 +158,37 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
         hasNext: page * limit < total,
         hasPrev: page > 1,
       },
+    };
+  }
+
+  /**
+   * Export variant of getFilteredRemindersInScope: same filters and
+   * same tenant/org-unit scope, but returns up to `cap` matching
+   * records (default EXPORT_ROW_CAP) ignoring UI pagination, plus the
+   * true total match count so the caller can detect truncation.
+   */
+  async getFilteredRemindersForExport(
+    filters: MaintenanceFilters,
+    context: TenantContext,
+    cap: number = EXPORT_ROW_CAP
+  ): Promise<ExportDataset<Reminder>> {
+    const collection = await this.getCollection();
+    const query = this.buildScopedQuery(filters, context);
+
+    const [rows, totalMatched] = await Promise.all([
+      collection
+        .find(query as Filter<Reminder>)
+        .sort({ createdAt: -1 })
+        .limit(cap)
+        .toArray(),
+      collection.countDocuments(query as Filter<Reminder>),
+    ]);
+
+    return {
+      rows: rows as Reminder[],
+      totalMatched,
+      truncated: totalMatched > rows.length,
+      exportCap: cap,
     };
   }
 
