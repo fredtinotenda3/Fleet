@@ -25,7 +25,7 @@ export type {
 /** UI alias -- backend entity is `Reminder`; UI domain language is "maintenance record". */
 export type MaintenanceRecord = Reminder;
 
-export interface MaintenanceTableFilters extends MaintenanceFilters {}
+export type MaintenanceTableFilters = MaintenanceFilters;
 
 export const MAINTENANCE_CATEGORIES = [
   'preventive',
@@ -98,3 +98,10 @@ export interface MaintenanceCategoryBreakdown {
   count: number;
   totalEstimatedCost: number;
 }
+
+export type {
+  MaintenanceCostTrendPoint,
+  RepairFrequencyByVehicleRow,
+  MostExpensiveVehicleRow,
+  DowntimeEstimatePoint,
+} from '@/shared/types/maintenance.types';

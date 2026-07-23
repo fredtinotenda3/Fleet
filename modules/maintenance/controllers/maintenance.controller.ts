@@ -370,6 +370,52 @@ export class MaintenanceController {
     }
   }
 
+  // ---- Enterprise analytics ----
+
+  async getCostTrend(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const months = Number(req.nextUrl.searchParams.get('months') || '12');
+      const data = await maintenanceQueryService.getCostTrend(tenantId, months);
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async getRepairFrequencyByVehicle(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const limit = Number(req.nextUrl.searchParams.get('limit') || '20');
+      const data = await maintenanceQueryService.getRepairFrequencyByVehicle(tenantId, limit);
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async getMostExpensiveVehicles(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const limit = Number(req.nextUrl.searchParams.get('limit') || '20');
+      const data = await maintenanceQueryService.getMostExpensiveVehicles(tenantId, limit);
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async getDowntimeEstimate(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const limit = Number(req.nextUrl.searchParams.get('limit') || '20');
+      const data = await maintenanceQueryService.getDowntimeEstimate(tenantId, limit);
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
   private handleError(error: unknown) {
     if (error instanceof AppError) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);

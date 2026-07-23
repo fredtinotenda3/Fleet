@@ -61,3 +61,42 @@ export interface MaintenanceStats {
   completionRate: number;
   averageCompletionDays: number;
 }
+
+// ---------------------------------------------------------------------
+// Enterprise analytics additions (Maintenance Analytics Enhancement)
+// ---------------------------------------------------------------------
+
+/** Monthly completed-maintenance cost trend. Cost figure is `estimated_cost`
+ *  summed across completed records in that month -- there is currently no
+ *  separate "actual cost" field on Reminder (see audit notes), so this is
+ *  the best available cost signal, not a true actuals ledger. */
+export interface MaintenanceCostTrendPoint {
+  month: string; // YYYY-MM
+  totalCost: number;
+  count: number;
+}
+
+/** How often a vehicle needs maintenance -- ranked by completed-record count. */
+export interface RepairFrequencyByVehicleRow {
+  license_plate: string;
+  count: number;
+  totalCost: number;
+}
+
+/** Vehicles with the highest cumulative estimated maintenance cost. */
+export interface MostExpensiveVehicleRow {
+  license_plate: string;
+  totalCost: number;
+  recordCount: number;
+}
+
+/** Approximate downtime per vehicle: average number of days between a
+ *  record's due_date and its completion_date. This is a PROXY, not a
+ *  measured out-of-service duration -- there is no start/end
+ *  out-of-service timestamp on Reminder today. A negative average (fixed
+ *  early) is floored to 0. */
+export interface DowntimeEstimatePoint {
+  license_plate: string;
+  estimatedDowntimeDays: number;
+  recordCount: number;
+}

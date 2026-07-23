@@ -11,6 +11,11 @@ class DataSourceRegistryImpl {
   private readonly sources = new Map<DataSourceKey, DataSourceDefinition>();
 
   register(definition: DataSourceDefinition): void {
+    if (!definition.collectionName) {
+      throw new Error(
+        `[DataSourceRegistry] "${definition.key}" is missing collectionName -- pushdown queries require it.`
+      );
+    }
     this.sources.set(definition.key, definition);
   }
 

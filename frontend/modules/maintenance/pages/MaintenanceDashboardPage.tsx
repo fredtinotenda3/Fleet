@@ -4,7 +4,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, List, CalendarDays, AlertTriangle, Clock } from 'lucide-react';
+import { Plus, List, CalendarDays, AlertTriangle, Clock, BarChart3 } from 'lucide-react';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import {
@@ -36,7 +36,11 @@ export function MaintenanceDashboardPage() {
   const { data: upcoming } = useUpcomingMaintenance(7);
 
   async function handleSubmit(values: MaintenanceFormValues) {
-    await createRecord.mutateAsync(values as Required<MaintenanceFormValues>);
+    // Cast and transform the date to strictly match the mutation's expected type
+    await createRecord.mutateAsync({
+      ...values,
+      due_date: new Date(values.due_date),
+    } as any);
   }
 
   return (
@@ -63,6 +67,9 @@ export function MaintenanceDashboardPage() {
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => router.push(MAINTENANCE_ROUTES.calendar)}>
                   <CalendarDays className="mr-2 h-3.5 w-3.5" /> Service calendar
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => router.push(MAINTENANCE_ROUTES.analytics)}>
+                  <BarChart3 className="mr-2 h-3.5 w-3.5" /> Analytics
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -97,7 +104,7 @@ export function MaintenanceDashboardPage() {
             {(overdue ?? []).slice(0, 5).map((r) => (
               <button
                 key={r._id}
-                onClick={() => router.push(MAINTENANCE_ROUTES.detail(r._id))}
+                onClick={() => router.push(MAINTENANCE_ROUTES.detail(r._id!))}
                 className="flex items-center justify-between w-full px-3 py-2 text-sm text-left border rounded-md hover:bg-muted"
               >
                 <span>{r.license_plate} — {r.title}</span>
@@ -123,7 +130,7 @@ export function MaintenanceDashboardPage() {
             {(upcoming ?? []).slice(0, 5).map((r) => (
               <button
                 key={r._id}
-                onClick={() => router.push(MAINTENANCE_ROUTES.detail(r._id))}
+                onClick={() => router.push(MAINTENANCE_ROUTES.detail(r._id!))}
                 className="flex items-center justify-between w-full px-3 py-2 text-sm text-left border rounded-md hover:bg-muted"
               >
                 <span>{r.license_plate} — {r.title}</span>

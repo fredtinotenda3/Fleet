@@ -20,6 +20,7 @@ import {
   ReportDefinitionDeletedEvent,
 } from '../events/report-definition.events';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
+import { PaginationParams } from '@/shared/types/common.types';
 
 bootstrapDataSources();
 
@@ -36,7 +37,6 @@ export class ReportBuilderService {
 
     const created = await this.repo.create(
       {
-        tenantId,
         name: data.name,
         description: data.description,
         dataSource: data.dataSource,
@@ -118,20 +118,31 @@ export class ReportBuilderService {
     return this.repo.findByOrganization(tenantId);
   }
 
-  /** Runs the definition and returns the flat/grouped tabular preview (used by the builder UI and for JSON exports). */
-  async preview(id: string, tenantId: string): Promise<ReportResult> {
+  /**
+   * Runs the definition and returns ONE PAGE of the flat/grouped
+   * tabular preview (used by the builder UI, which paginates rather
+   * than rendering every matching row at once). `pagination` defaults
+   * to the engine's own preview page size when omitted.
+   */
+  async preview(id: string, tenantId: string, pagination?: PaginationParams): Promise<ReportResult> {
     const definition = await this.get(id, tenantId);
-    return reportQueryEngine.run(definition, tenantId);
+    return reportQueryEngine.run(definition, tenantId, { pagination });
   }
 
-  /** Runs the definition's raw rows through the pivot engine, if a pivot config is saved on it. */
+  /**
+   * Runs the definition's raw rows through the pivot engine, if a
+   * pivot config is saved on it. Uses runFull() (not preview's
+   * paginated run()) because a pivot table needs every matching row to
+   * bucket correctly -- pivoting only the first page would silently
+   * under-count every cell.
+   */
   async previewPivot(id: string, tenantId: string): Promise<PivotResult> {
     const definition = await this.get(id, tenantId);
     if (!definition.pivot) {
       throw new ValidationError('This report has no pivot configuration');
     }
     const rawDefinition: ReportDefinition = { ...definition, groupBy: [], aggregations: [] };
-    const flat = await reportQueryEngine.run(rawDefinition, tenantId);
+    const flat = await reportQueryEngine.runFull(rawDefinition, tenantId);
     return pivotEngine.pivot(flat, definition.pivot);
   }
 }

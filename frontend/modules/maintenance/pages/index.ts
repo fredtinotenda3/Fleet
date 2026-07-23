@@ -7,3 +7,4 @@ export { VehicleMaintenanceHistoryPage } from './VehicleMaintenanceHistoryPage';
 export { UpcomingMaintenancePage } from './UpcomingMaintenancePage';
 export { OverdueMaintenancePage } from './OverdueMaintenancePage';
 export { ServiceCalendarPage } from './ServiceCalendarPage';
+export { MaintenanceAnalyticsPage } from './MaintenanceAnalyticsPage';

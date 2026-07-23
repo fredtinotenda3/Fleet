@@ -19,6 +19,12 @@ export const GET = withAuth(
     // Phase 2 Enterprise Export Framework
     if (action === 'export') return await maintenanceController.exportReminders(req);
 
+    // Enterprise analytics additions
+    if (action === 'cost-trend') return await maintenanceController.getCostTrend(req);
+    if (action === 'repair-frequency') return await maintenanceController.getRepairFrequencyByVehicle(req);
+    if (action === 'most-expensive-vehicles') return await maintenanceController.getMostExpensiveVehicles(req);
+    if (action === 'downtime-estimate') return await maintenanceController.getDowntimeEstimate(req);
+
     if (id) return await maintenanceController.getReminder(req, id);
 
     return await maintenanceController.getReminders(req);

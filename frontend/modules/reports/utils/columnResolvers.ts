@@ -1,24 +1,19 @@
 // frontend/modules/reports/utils/columnResolvers.ts
 //
-// FIX (Critical - field catalog drift causing save/preview 400s and wrong
-// data): this file previously defined its own camelCase field names
-// (vehiclePlate, costPerLiter, fuelEconomy, cardId, etc.) that DO NOT EXIST
-// in the backend's DataSourceRegistry (modules/reporting/registry/
-// bootstrap-data-sources.ts registers snake_case: license_plate, cost,
-// fuel_volume, odometer, fuel_type, station_name). Every report saved
-// against the old catalog stored field names the query engine cannot
-// resolve, and any aggregation whose column.label collided with another
-// column's label (both defaulting to the same alias, e.g. two columns
-// both landing on "Liters") produced duplicate aggregation aliases, which
-// report-definition.schema.ts rejects -> PUT /api/reporting/definitions/
-// [id] 400.
-//
-// This file is now the single source of truth mirror of
+// Single source of truth mirror of
 // modules/reporting/registry/bootstrap-data-sources.ts and
-// frontend/modules/reports/types/index.ts#DATA_SOURCES. Field keys below
-// are byte-for-byte identical to what the backend registers. If you add a
-// field on the backend, add it here with the same key -- do not invent a
-// friendlier client-side name.
+// frontend/modules/reports/schemas/reportDefinition.ts#REPORT_DATA_SOURCES.
+// Field keys below are byte-for-byte identical to what the backend
+// registers. If you add a field on the backend, add it here with the
+// same key -- do not invent a friendlier client-side name.
+//
+// FIX (Fix 4): the previous version of this file explicitly excluded
+// 'organizations' from FIELD_CATALOG with a note not to add it until
+// the backend registered a matching data source -- that registration
+// now exists (organizations.data-source.ts, backed by tblorgunits), so
+// the exclusion is removed. Also added: the new 'drivers' data source,
+// and the orgUnitId/orgUnitName ("Branch") fields now present on
+// vehicles/expenses/fuel/trips.
 
 import type { ReportDataSource } from '../schemas/reportDefinition';
 import type { ReportColumn } from '../schemas/reportColumn';
@@ -31,6 +26,11 @@ export interface ResolvableField {
   aggregatable: boolean;
 }
 
+const ORG_UNIT_FIELDS: ResolvableField[] = [
+  { field: 'orgUnitId', label: 'Org Unit ID', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'orgUnitName', label: 'Branch', dataType: 'string', groupable: true, aggregatable: false },
+];
+
 // Mirrors bootstrap-data-sources.ts 'vehicles'
 const VEHICLE_FIELDS: ResolvableField[] = [
   { field: 'license_plate', label: 'License Plate', dataType: 'string', groupable: true, aggregatable: false },
@@ -42,6 +42,7 @@ const VEHICLE_FIELDS: ResolvableField[] = [
   { field: 'status', label: 'Status', dataType: 'string', groupable: true, aggregatable: false },
   { field: 'odometer', label: 'Odometer', dataType: 'number', groupable: false, aggregatable: true },
   { field: 'purchase_date', label: 'Purchase Date', dataType: 'date', groupable: false, aggregatable: false },
+  ...ORG_UNIT_FIELDS,
 ];
 
 // Mirrors bootstrap-data-sources.ts 'trips'
@@ -51,6 +52,7 @@ const TRIP_FIELDS: ResolvableField[] = [
   { field: 'mode', label: 'Mode', dataType: 'string', groupable: true, aggregatable: false },
   { field: 'distance_calculated', label: 'Distance', dataType: 'number', groupable: false, aggregatable: true },
   { field: 'driver_id', label: 'Driver', dataType: 'string', groupable: true, aggregatable: false },
+  ...ORG_UNIT_FIELDS,
 ];
 
 // Mirrors bootstrap-data-sources.ts 'fuel'
@@ -62,6 +64,7 @@ const FUEL_FIELDS: ResolvableField[] = [
   { field: 'odometer', label: 'Odometer', dataType: 'number', groupable: false, aggregatable: true },
   { field: 'fuel_type', label: 'Fuel Type', dataType: 'string', groupable: true, aggregatable: false },
   { field: 'station_name', label: 'Station', dataType: 'string', groupable: true, aggregatable: false },
+  ...ORG_UNIT_FIELDS,
 ];
 
 // Mirrors bootstrap-data-sources.ts 'maintenance'
@@ -82,22 +85,42 @@ const EXPENSE_FIELDS: ResolvableField[] = [
   { field: 'date', label: 'Date', dataType: 'date', groupable: false, aggregatable: false },
   { field: 'description', label: 'Description', dataType: 'string', groupable: false, aggregatable: false },
   { field: 'expense_type_id', label: 'Expense Type', dataType: 'string', groupable: true, aggregatable: false },
+  ...ORG_UNIT_FIELDS,
 ];
 
-// NOTE: 'organizations' is intentionally NOT included -- the backend
-// DataSourceRegistry has no entry for it (see the note already in
-// queryBuilder.ts). Do not add it here until modules/reporting/registry/
-// bootstrap-data-sources.ts registers it, or saves against it will 400.
-const FIELD_CATALOG: Record<Exclude<ReportDataSource, 'organizations'>, ResolvableField[]> = {
+// Mirrors bootstrap-data-sources.ts drivers.data-source.ts
+const DRIVER_FIELDS: ResolvableField[] = [
+  { field: 'name', label: 'Name', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'driver_code', label: 'Driver Code', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'email', label: 'Email', dataType: 'string', groupable: false, aggregatable: false },
+  { field: 'phone', label: 'Phone', dataType: 'string', groupable: false, aggregatable: false },
+  { field: 'license_number', label: 'License Number', dataType: 'string', groupable: false, aggregatable: false },
+  { field: 'license_expiry', label: 'License Expiry', dataType: 'date', groupable: false, aggregatable: false },
+  { field: 'status', label: 'Status', dataType: 'string', groupable: true, aggregatable: false },
+];
+
+// Mirrors bootstrap-data-sources.ts organizations.data-source.ts
+const ORGANIZATION_FIELDS: ResolvableField[] = [
+  { field: 'name', label: 'Name', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'type', label: 'Type', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'code', label: 'Code', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'status', label: 'Status', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'depth', label: 'Depth', dataType: 'number', groupable: true, aggregatable: false },
+  { field: 'managerId', label: 'Manager', dataType: 'string', groupable: true, aggregatable: false },
+];
+
+const FIELD_CATALOG: Record<ReportDataSource, ResolvableField[]> = {
   vehicles: VEHICLE_FIELDS,
   trips: TRIP_FIELDS,
   fuel: FUEL_FIELDS,
   maintenance: MAINTENANCE_FIELDS,
   expenses: EXPENSE_FIELDS,
+  organizations: ORGANIZATION_FIELDS,
+  drivers: DRIVER_FIELDS,
 };
 
 export function getFieldsForDataSource(dataSource: ReportDataSource): ResolvableField[] {
-  return (FIELD_CATALOG as Record<string, ResolvableField[]>)[dataSource] ?? [];
+  return FIELD_CATALOG[dataSource] ?? [];
 }
 
 export function getGroupableFields(dataSource: ReportDataSource): ResolvableField[] {

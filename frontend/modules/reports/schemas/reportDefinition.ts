@@ -9,6 +9,11 @@ import { z } from 'zod';
 import { reportColumnListSchema } from './reportColumn';
 import { reportFilterGroupSchema } from './reportFilter';
 
+// FIX (Fix 4): 'drivers' added -- modules/reporting/registry/bootstrap-data-sources.ts
+// now registers a `drivers` DataSourceDefinition (backed by tbldrivers).
+// 'organizations' was already listed here even though the backend had no
+// matching registration yet (see the now-resolved note in
+// columnResolvers.ts); it's now registered too, backed by tblorgunits.
 export const REPORT_DATA_SOURCES = [
   'vehicles',
   'trips',
@@ -16,6 +21,7 @@ export const REPORT_DATA_SOURCES = [
   'maintenance',
   'expenses',
   'organizations',
+  'drivers',
 ] as const;
 export type ReportDataSource = (typeof REPORT_DATA_SOURCES)[number];
 

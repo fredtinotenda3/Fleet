@@ -7,13 +7,26 @@ import { Skeleton } from '@/frontend/shared/ui/feedback/skeleton';
 interface FleetHealthGaugeProps {
   score: number | undefined;
   isLoading: boolean;
+  isError?: boolean;
+  /** Recommendations from the AI fleet-health engine, shown under the gauge when present. */
+  topRecommendation?: string;
 }
 
-export function FleetHealthGauge({ score, isLoading }: FleetHealthGaugeProps) {
+export function FleetHealthGauge({ score, isLoading, isError, topRecommendation }: FleetHealthGaugeProps) {
   if (isLoading) {
     return (
       <ChartContainer title="Fleet Health Score">
         <Skeleton className="h-40 w-full" />
+      </ChartContainer>
+    );
+  }
+
+  if (isError) {
+    return (
+      <ChartContainer title="Fleet Health Score">
+        <p className="text-sm text-muted-foreground">
+          Couldn&apos;t load the fleet health score right now.
+        </p>
       </ChartContainer>
     );
   }
@@ -39,6 +52,11 @@ export function FleetHealthGauge({ score, isLoading }: FleetHealthGaugeProps) {
           />
         </div>
         <p className="mt-1 text-xs text-muted-foreground">Overall fleet health</p>
+        {topRecommendation && (
+          <p className="mt-3 text-xs text-center text-muted-foreground border-t pt-2 w-full">
+            {topRecommendation}
+          </p>
+        )}
       </div>
     </ChartContainer>
   );

@@ -31,7 +31,7 @@ export class KpiDefinitionService {
 
     const created = await this.repo.create(
       {
-        tenantId,
+        // tenantId removed from here because it's passed as the 2nd argument below
         name: data.name,
         description: data.description,
         dataSource: data.dataSource,

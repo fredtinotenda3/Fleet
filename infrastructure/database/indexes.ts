@@ -37,6 +37,7 @@ import { REPORTING_INDEXES } from './indexes.reporting-addendum';
 import { RULES_INDEXES } from './indexes.rules-addendum';
 import { TELEMATICS_INDEXES } from './indexes.telematics-addendum';
 import { WORKFLOWS_INDEXES } from './indexes.workflows-addendum';
+import { ANOMALY_INDEXES } from './indexes.anomaly-addendum'
 
 const BASE_INDEXES = {
   // ── Domain collections ──────────────────────────────────────────
@@ -419,6 +420,7 @@ export const INDEXES = {
   ...RULES_INDEXES,
   ...TELEMATICS_INDEXES,
   ...WORKFLOWS_INDEXES,
+  ...ANOMALY_INDEXES, 
   tblorgunits: [
     ...BASE_INDEXES.tblorgunits,
     ...SECURITY_INDEXES.tblorgunits,

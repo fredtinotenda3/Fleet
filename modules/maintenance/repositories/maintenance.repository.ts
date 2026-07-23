@@ -375,6 +375,174 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
       newlyOverdue,
     };
   }
+
+  // ---------------------------------------------------------------------
+  // Enterprise analytics additions (Maintenance Analytics Enhancement)
+  // ---------------------------------------------------------------------
+
+  /** Monthly cost trend across completed records, based on estimated_cost. */
+  async getCostTrend(
+    tenantId: string,
+    months: number = 12
+  ): Promise<import('@/shared/types/maintenance.types').MaintenanceCostTrendPoint[]> {
+    const collection = await this.getCollection();
+    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+    const startDate = new Date();
+    startDate.setMonth(startDate.getMonth() - months);
+
+    const match: Record<string, unknown> = {
+      isDeleted: { $ne: true },
+      status: 'completed',
+      completion_date: { $gte: startDate },
+    };
+    if (!isSuperAdmin) match.tenantId = tenantId;
+
+    const pipeline = [
+      { $match: match },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m', date: '$completion_date' } },
+          totalCost: { $sum: { $ifNull: ['$estimated_cost', 0] } },
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ];
+
+    const results = await collection.aggregate(pipeline).toArray();
+    return results.map((r) => ({
+      month: r._id as string,
+      totalCost: Math.round((r.totalCost as number) * 100) / 100,
+      count: r.count as number,
+    }));
+  }
+
+  /** Completed-record count per vehicle, ranked descending -- "which vehicles need work most often". */
+  async getRepairFrequencyByVehicle(
+    tenantId: string,
+    limit: number = 20
+  ): Promise<import('@/shared/types/maintenance.types').RepairFrequencyByVehicleRow[]> {
+    const collection = await this.getCollection();
+    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+    const match: Record<string, unknown> = { isDeleted: { $ne: true }, status: 'completed' };
+    if (!isSuperAdmin) match.tenantId = tenantId;
+
+    const pipeline = [
+      { $match: match },
+      {
+        $group: {
+          _id: '$license_plate',
+          count: { $sum: 1 },
+          totalCost: { $sum: { $ifNull: ['$estimated_cost', 0] } },
+        },
+      },
+      { $sort: { count: -1 } },
+      { $limit: limit },
+      {
+        $project: {
+          license_plate: '$_id',
+          count: 1,
+          totalCost: { $round: [{ $ifNull: ['$totalCost', 0] }, 2] },
+          _id: 0,
+        },
+      },
+    ];
+
+    return collection.aggregate(pipeline).toArray() as unknown as Promise<
+      import('@/shared/types/maintenance.types').RepairFrequencyByVehicleRow[]
+    >;
+  }
+
+  /** Vehicles ranked by cumulative estimated maintenance cost. */
+  async getMostExpensiveVehicles(
+    tenantId: string,
+    limit: number = 20
+  ): Promise<import('@/shared/types/maintenance.types').MostExpensiveVehicleRow[]> {
+    const collection = await this.getCollection();
+    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+    const match: Record<string, unknown> = { isDeleted: { $ne: true }, status: 'completed' };
+    if (!isSuperAdmin) match.tenantId = tenantId;
+
+    const pipeline = [
+      { $match: match },
+      {
+        $group: {
+          _id: '$license_plate',
+          totalCost: { $sum: { $ifNull: ['$estimated_cost', 0] } },
+          recordCount: { $sum: 1 },
+        },
+      },
+      { $sort: { totalCost: -1 } },
+      { $limit: limit },
+      {
+        $project: {
+          license_plate: '$_id',
+          totalCost: { $round: [{ $ifNull: ['$totalCost', 0] }, 2] },
+          recordCount: 1,
+          _id: 0,
+        },
+      },
+    ];
+
+    return collection.aggregate(pipeline).toArray() as unknown as Promise<
+      import('@/shared/types/maintenance.types').MostExpensiveVehicleRow[]
+    >;
+  }
+
+  /**
+   * Approximate per-vehicle downtime: average days between due_date and
+   * completion_date across completed records. This is a PROXY for actual
+   * out-of-service duration -- Reminder has no dedicated downtime-start/
+   * downtime-end fields today (see MaintenanceCostTrendPoint doc comment
+   * for the same caveat applied to cost). Negative averages (completed
+   * before due) are floored to 0 rather than shown as "negative downtime".
+   */
+  async getDowntimeEstimate(
+    tenantId: string,
+    limit: number = 20
+  ): Promise<import('@/shared/types/maintenance.types').DowntimeEstimatePoint[]> {
+    const collection = await this.getCollection();
+    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+    const match: Record<string, unknown> = {
+      isDeleted: { $ne: true },
+      status: 'completed',
+      completion_date: { $exists: true },
+    };
+    if (!isSuperAdmin) match.tenantId = tenantId;
+
+    const pipeline = [
+      { $match: match },
+      {
+        $project: {
+          license_plate: 1,
+          daysDiff: {
+            $dateDiff: { startDate: '$due_date', endDate: '$completion_date', unit: 'day' },
+          },
+        },
+      },
+      {
+        $group: {
+          _id: '$license_plate',
+          avgDays: { $avg: '$daysDiff' },
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { avgDays: -1 } },
+      { $limit: limit },
+      {
+        $project: {
+          license_plate: '$_id',
+          estimatedDowntimeDays: { $round: [{ $max: [0, '$avgDays'] }, 1] },
+          recordCount: '$count',
+          _id: 0,
+        },
+      },
+    ];
+
+    return collection.aggregate(pipeline).toArray() as unknown as Promise<
+      import('@/shared/types/maintenance.types').DowntimeEstimatePoint[]
+    >;
+  }
 }
 
 export const maintenanceRepository = new MaintenanceRepository();

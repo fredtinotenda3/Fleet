@@ -10,6 +10,7 @@ import { useFuelTrendsWidget } from '@/frontend/modules/dashboard/hooks/useDashb
 import { useExpenseBreakdownWidget } from '@/frontend/modules/dashboard/hooks/useDashboardData';
 import { useMaintenanceWidget } from '@/frontend/modules/dashboard/hooks/useDashboardData';
 import { useFleetKPIs } from '@/modules/analytics/hooks/useAnalytics';
+import { useFleetHealthScore } from '../hooks/useFleetHealthScore';
 import { StatsCard } from '@/shared/ui/cards/StatsCard';
 import { FuelTrendChart } from '../components/charts/FuelTrendChart';
 import { ExpenseBreakdownChart } from '../components/charts/ExpenseBreakdownChart';
@@ -41,6 +42,13 @@ export default function ExecutiveDashboard() {
   const fuelTrends = useFuelTrendsWidget();
   const expenseBreakdown = useExpenseBreakdownWidget();
   const maintenanceWidget = useMaintenanceWidget();
+  const fleetHealth = useFleetHealthScore();
+
+  // Fleet health is intentionally excluded from the page-level loading/error
+  // gate below: it's a slower AI computation than the other widgets, and a
+  // delay or failure there shouldn't block the rest of the executive
+  // dashboard from rendering. FleetHealthGauge handles its own
+  // loading/error/empty states.
 
   if (isLoading || fleetKPIs.isLoading || fuelTrends.isLoading || expenseBreakdown.isLoading || maintenanceWidget.isLoading) {
     return <LoadingState />;
@@ -76,6 +84,10 @@ export default function ExecutiveDashboard() {
     { name: 'Upcoming', count: maintenanceWidget.data?.upcoming?.length ?? 0 },
   ];
 
+  const topRecommendation = fleetHealth.data?.recommendations?.[0]
+    ? `${fleetHealth.data.recommendations[0].title}: ${fleetHealth.data.recommendations[0].description}`
+    : undefined;
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -87,14 +99,17 @@ export default function ExecutiveDashboard() {
         </div>
         <button
           type="button"
-          onClick={refresh}
+          onClick={() => {
+            refresh();
+            fleetHealth.refetch();
+          }}
           className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium border rounded-md hover:bg-accent"
         >
           <RefreshCw className="h-4 w-4" /> Refresh
         </button>
       </div>
 
-      {/* Default analytics KPIs – always shown */}
+      {/* Default analytics KPIs - always shown */}
       {fleetKPIs.data && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -136,8 +151,10 @@ export default function ExecutiveDashboard() {
               isLoading={false}
             />
             <FleetHealthGauge
-              score={fleetKPIs.data.averageFuelEfficiency ? 75 : 65} // simple heuristic, can be replaced with real AI health score
-              isLoading={false}
+              score={fleetHealth.data?.overallScore}
+              isLoading={fleetHealth.isLoading}
+              isError={fleetHealth.isError}
+              topRecommendation={topRecommendation}
             />
           </div>
         </>
@@ -190,7 +207,7 @@ export default function ExecutiveDashboard() {
           href="/reports/ai"
           className="text-primary hover:underline"
         >
-          AI‑Powered Insights
+          AI-Powered Insights
         </Link>
       </div>
     </div>

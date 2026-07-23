@@ -69,7 +69,6 @@ export class ReportExecutionService {
 
     const created = await this.repo.create(
       {
-        tenantId,
         name,
         sourceType: input.reportDefinitionId ? 'report_definition' : 'dashboard',
         reportDefinitionId: input.reportDefinitionId,
@@ -166,9 +165,8 @@ export class ReportExecutionService {
 
   /**
    * Entry point for the recurring scheduler path (kind: 'scheduled'),
-   * which has no pre-created ReportExecution row — one is created fresh
-   * on every scheduled run, mirroring how ReportWorker (legacy
-   * modules/reports) handles recurring GENERATE_REPORT jobs.
+   * which has no pre-created ReportExecution row -- one is created
+   * fresh on every scheduled run.
    */
   async generateScheduled(
     reportDefinitionId: string,
@@ -181,7 +179,6 @@ export class ReportExecutionService {
 
     const created = await this.repo.create(
       {
-        tenantId,
         name: def.name,
         sourceType: 'report_definition',
         reportDefinitionId,
@@ -208,11 +205,16 @@ export class ReportExecutionService {
       const def = await reportDefinitionRepository.findById(execution.reportDefinitionId!, tenantId);
       if (!def) throw new NotFoundError('Report definition not found');
 
-      result = await reportQueryEngine.run(def, tenantId, execution.drilldownFilters ?? []);
+      // FIX: an export must contain the FULL matching result set (up to
+      // the shared FULL_RESULT_CAP), not a 100-row preview page --
+      // runFull() pushes the drilldown filters + definition filters
+      // into Mongo and returns everything that matches, flagged
+      // `truncated` if the match count exceeds the cap.
+      result = await reportQueryEngine.runFull(def, tenantId, execution.drilldownFilters ?? []);
 
       if (def.pivot) {
         const rawDefinition = { ...def, groupBy: [], aggregations: [] };
-        const flat = await reportQueryEngine.run(rawDefinition, tenantId);
+        const flat = await reportQueryEngine.runFull(rawDefinition, tenantId);
         pivotResult = pivotEngine.pivot(flat, def.pivot);
       }
     } else {

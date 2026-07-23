@@ -118,6 +118,24 @@ export const maintenanceApi = {
     });
   },
 
+  // ---- Enterprise analytics additions ----
+
+  async getCostTrend(months: number = 12): Promise<import('../types').MaintenanceCostTrendPoint[]> {
+    return apiClient.get(BASE, { params: { action: 'cost-trend', months } });
+  },
+
+  async getRepairFrequencyByVehicle(limit: number = 20): Promise<import('../types').RepairFrequencyByVehicleRow[]> {
+    return apiClient.get(BASE, { params: { action: 'repair-frequency', limit } });
+  },
+
+  async getMostExpensiveVehicles(limit: number = 20): Promise<import('../types').MostExpensiveVehicleRow[]> {
+    return apiClient.get(BASE, { params: { action: 'most-expensive-vehicles', limit } });
+  },
+
+  async getDowntimeEstimate(limit: number = 20): Promise<import('../types').DowntimeEstimatePoint[]> {
+    return apiClient.get(BASE, { params: { action: 'downtime-estimate', limit } });
+  },
+
   /**
    * Recalculates pending/overdue status fleet-wide. This hits
    * /api/reminders/update-status, which only exports GET (it's a

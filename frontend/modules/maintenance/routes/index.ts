@@ -10,4 +10,5 @@ export const MAINTENANCE_ROUTES = {
   upcoming: '/maintenance/upcoming',
   overdue: '/maintenance/overdue',
   calendar: '/maintenance/calendar',
+  analytics: '/maintenance/analytics',
 } as const;

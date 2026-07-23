@@ -78,3 +78,35 @@ export function useAllMaintenanceRecords(filters: Partial<MaintenanceListParams>
     select: (result) => result.data,
   });
 }
+
+export function useMaintenanceCostTrend(months: number = 12) {
+  return useQuery({
+    queryKey: [...maintenanceKeys.all, 'cost-trend', months],
+    queryFn: () => maintenanceApi.getCostTrend(months),
+    staleTime: 60_000,
+  });
+}
+
+export function useRepairFrequencyByVehicle(limit: number = 20) {
+  return useQuery({
+    queryKey: [...maintenanceKeys.all, 'repair-frequency', limit],
+    queryFn: () => maintenanceApi.getRepairFrequencyByVehicle(limit),
+    staleTime: 60_000,
+  });
+}
+
+export function useMostExpensiveVehicles(limit: number = 20) {
+  return useQuery({
+    queryKey: [...maintenanceKeys.all, 'most-expensive-vehicles', limit],
+    queryFn: () => maintenanceApi.getMostExpensiveVehicles(limit),
+    staleTime: 60_000,
+  });
+}
+
+export function useDowntimeEstimate(limit: number = 20) {
+  return useQuery({
+    queryKey: [...maintenanceKeys.all, 'downtime-estimate', limit],
+    queryFn: () => maintenanceApi.getDowntimeEstimate(limit),
+    staleTime: 60_000,
+  });
+}

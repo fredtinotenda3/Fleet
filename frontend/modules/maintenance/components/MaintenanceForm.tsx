@@ -53,8 +53,14 @@ export function MaintenanceForm({ record, onSubmit, onCancel, isSubmitting }: Ma
           estimated_cost: record.estimated_cost ?? undefined,
         }
       : {
+          license_plate: '',
+          title: '',
+          notes: '',
           status: 'pending',
           priority: 'medium',
+          service_type: '',
+          category: '',
+          assigned_to: '',
         },
   });
 
@@ -67,7 +73,7 @@ export function MaintenanceForm({ record, onSubmit, onCancel, isSubmitting }: Ma
             control={control}
             name="license_plate"
             render={({ field }) => (
-              <Select value={field.value} onValueChange={field.onChange}>
+              <Select value={field.value || ''} onValueChange={field.onChange}>
                 <SelectTrigger><SelectValue placeholder="Select a vehicle" /></SelectTrigger>
                 <SelectContent>
                   {vehicles.map((v) => (
@@ -102,7 +108,7 @@ export function MaintenanceForm({ record, onSubmit, onCancel, isSubmitting }: Ma
             control={control}
             name="category"
             render={({ field }) => (
-              <Select value={field.value ?? ''} onValueChange={field.onChange}>
+              <Select value={field.value || ''} onValueChange={field.onChange}>
                 <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
                 <SelectContent>
                   {MAINTENANCE_CATEGORIES.map((c) => (
@@ -120,7 +126,7 @@ export function MaintenanceForm({ record, onSubmit, onCancel, isSubmitting }: Ma
             control={control}
             name="priority"
             render={({ field }) => (
-              <Select value={field.value} onValueChange={field.onChange}>
+              <Select value={field.value || ''} onValueChange={field.onChange}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="low">Low</SelectItem>
@@ -139,7 +145,7 @@ export function MaintenanceForm({ record, onSubmit, onCancel, isSubmitting }: Ma
             control={control}
             name="status"
             render={({ field }) => (
-              <Select value={field.value} onValueChange={field.onChange}>
+              <Select value={field.value || ''} onValueChange={field.onChange}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="pending">Pending</SelectItem>
@@ -182,7 +188,7 @@ export function MaintenanceForm({ record, onSubmit, onCancel, isSubmitting }: Ma
           control={control}
           name="recurrence_interval"
           render={({ field }) => (
-            <Select value={field.value ?? 'none'} onValueChange={(v) => field.onChange(v === 'none' ? undefined : v)}>
+            <Select value={field.value || 'none'} onValueChange={(v) => field.onChange(v === 'none' ? undefined : v)}>
               <SelectTrigger><SelectValue placeholder="One-time" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">One-time (no recurrence)</SelectItem>
