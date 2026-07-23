@@ -229,7 +229,7 @@ export function AddMemberDialog({ organizationId, trigger }: AddMemberDialogProp
                   <Controller
                     control={directForm.control}
                     name="orgUnitId"
-                    render={({ field }) => <BranchSelect value={field.value} onChange={(v) => field.onChange(v ?? '')} />}
+                    render={({ field }) => <BranchSelect value={field.value ?? undefined} onChange={(v) => field.onChange(v ?? '')} />}
                   />
                   <p className="form-hint">Leave blank for organization-wide access.</p>
                 </div>
@@ -311,7 +311,7 @@ export function AddMemberDialog({ organizationId, trigger }: AddMemberDialogProp
                     control={inviteForm.control}
                     name="orgUnitId"
                     render={({ field }) => (
-                      <BranchSelect value={field.value} onChange={(v) => field.onChange(v ?? '')} />
+                      <BranchSelect value={field.value ?? undefined} onChange={(v) => field.onChange(v ?? '')} />
                     )}
                   />
                   <p className="form-hint">Applied once they accept the invitation.</p>
