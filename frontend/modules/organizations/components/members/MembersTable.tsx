@@ -18,6 +18,7 @@ interface MembersTableProps {
   organizationId: string;
   members: OrganizationMember[];
   canManage: boolean;
+  branchLookup?: Record<string, string>; // orgUnitId -> branch name
 }
 
 const PAGE_SIZE = 10;
@@ -28,7 +29,7 @@ const STATUS_VARIANT: Record<OrganizationMember['status'], 'default' | 'outline'
   suspended: 'destructive',
 };
 
-export function MembersTable({ organizationId, members, canManage }: MembersTableProps) {
+export function MembersTable({ organizationId, members, canManage, branchLookup = {} }: MembersTableProps) {
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -103,6 +104,7 @@ export function MembersTable({ organizationId, members, canManage }: MembersTabl
               <th scope="col">Member</th>
               <th scope="col">Role</th>
               <th scope="col">Status</th>
+              <th scope="col">Branch</th>
               <th scope="col">Joined</th>
               {canManage && <th scope="col" className="text-right">Actions</th>}
             </tr>
@@ -126,6 +128,9 @@ export function MembersTable({ organizationId, members, canManage }: MembersTabl
                   <Badge variant={STATUS_VARIANT[member.status]} className="capitalize">
                     {member.status}
                   </Badge>
+                </td>
+                <td className="text-caption text-muted-foreground">
+                  {member.orgUnitId ? (branchLookup[member.orgUnitId] ?? 'Unknown branch') : 'Organization-wide'}
                 </td>
                 <td className="text-caption text-muted-foreground">
                   {member.joinedAt ? new Date(member.joinedAt).toLocaleDateString() : '—'}

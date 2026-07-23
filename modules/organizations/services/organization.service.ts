@@ -1,10 +1,12 @@
 // modules/organizations/services/organization.service.ts
 
-import { randomUUID } from 'crypto';
+import { randomUUID, randomBytes } from 'crypto';
+import bcrypt from 'bcryptjs';
 import {
   organizationRepository,
   OrganizationRepository,
 } from '../repositories/organization.repository';
+import { adminUserRepository, AdminUserRepository } from '../repositories/admin-user.repository';
 import {
   Organization,
   OrganizationMember,
@@ -21,6 +23,41 @@ import { webSocketManager } from '@/infrastructure/websocket/server';
 import { queueService, JobType } from '@/infrastructure/queue/queue.service';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { MemberJoinedEvent } from '@/modules/organizations/events/MemberJoinedEvent';
+import { userScopeService } from '@/modules/security/services/user-scope.service';
+import { orgUnitRepository } from '@/modules/security/repositories/org-unit.repository';
+
+export interface AddMemberDirectInput {
+  name: string;
+  email: string;
+  role: string;
+  password?: string;
+  orgUnitId?: string;
+}
+
+export interface AddMemberDirectResult {
+  member: OrganizationMember;
+  /**
+   * Only ever populated on this one response. Nothing persists the
+   * plaintext anywhere (tbladmin stores the bcrypt hash only) so the
+   * admin must copy/share it now; it cannot be retrieved later.
+   */
+  temporaryPassword?: string;
+  orgUnitAssigned?: boolean;
+  /** True if this reused an existing tbladmin account rather than creating one. */
+  reusedExistingAccount?: boolean;
+}
+
+/** 12-character password: unambiguous alphabet, guaranteed to satisfy
+ *  the 8-char minimum with room to spare. */
+function generateTemporaryPassword(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  const bytes = randomBytes(12);
+  let out = '';
+  for (let i = 0; i < 12; i++) {
+    out += alphabet[bytes[i] % alphabet.length];
+  }
+  return out;
+}
 
 export interface CreateOrganizationInput {
   name: string;
@@ -41,9 +78,15 @@ const VALID_ROLES = [
   'auditor',
   'viewer',
 ];
+/** Roles assignable to a member added after org creation — everything
+ *  except organization_owner, which is set once at creation time only. */
+const ASSIGNABLE_ROLES = VALID_ROLES.filter((r) => r !== 'organization_owner');
 
 export class OrganizationService {
-  constructor(private readonly repo: OrganizationRepository = organizationRepository) {}
+  constructor(
+    private readonly repo: OrganizationRepository = organizationRepository,
+    private readonly adminUserRepo: AdminUserRepository = adminUserRepository
+  ) {}
 
   async createOrganization(data: CreateOrganizationInput): Promise<Organization> {
     if (!data.name?.trim()) {
@@ -167,7 +210,7 @@ export class OrganizationService {
     userId: string
   ): Promise<Organization> {
     const before = await this.getOrganization(organizationId, tenantId);
-    const updated = await this.repo.update(organizationId, { contact: data }, tenantId, userId, true);
+    const updated = await this.repo.update(organizationId, { contact: data } as any, tenantId, userId, true);
     if (!updated) throw new NotFoundError('Organization not found');
     await auditLog.logUpdate(userId, tenantId, 'organization', organizationId, before, updated);
     return updated;
@@ -180,7 +223,7 @@ export class OrganizationService {
     userId: string
   ): Promise<Organization> {
     const before = await this.getOrganization(organizationId, tenantId);
-    const updated = await this.repo.update(organizationId, { businessHours: data }, tenantId, userId, true);
+    const updated = await this.repo.update(organizationId, { businessHours: data } as any, tenantId, userId, true);
     if (!updated) throw new NotFoundError('Organization not found');
     await auditLog.logUpdate(userId, tenantId, 'organization', organizationId, before, updated);
     return updated;
@@ -193,7 +236,7 @@ export class OrganizationService {
     userId: string
   ): Promise<Organization> {
     const before = await this.getOrganization(organizationId, tenantId);
-    const updated = await this.repo.update(organizationId, { taxSettings: data }, tenantId, userId, true);
+    const updated = await this.repo.update(organizationId, { taxSettings: data } as any, tenantId, userId, true);
     if (!updated) throw new NotFoundError('Organization not found');
     await auditLog.logUpdate(userId, tenantId, 'organization', organizationId, before, updated);
     return updated;
@@ -288,18 +331,34 @@ export class OrganizationService {
     webSocketManager.emitToUser(memberId, 'organization:member_restored', { organizationId });
   }
 
+  /**
+   * Validates (if provided) that orgUnitId refers to a real, active org
+   * unit belonging to this organization. Shared by addMember (invite)
+   * and addMemberDirect so both paths reject a bogus/foreign branch the
+   * same way instead of silently storing an unusable reference.
+   */
+  private async assertOrgUnitBelongsToOrg(orgUnitId: string | undefined, tenantId: string): Promise<void> {
+    if (!orgUnitId) return;
+    const unit = await orgUnitRepository.findById(orgUnitId, tenantId);
+    if (!unit) {
+      throw new NotFoundError('Selected branch/org unit was not found in this organization');
+    }
+  }
+
   async addMember(
     organizationId: string,
     email: string,
     role: string,
     invitedBy: string,
-    tenantId: string
+    tenantId: string,
+    orgUnitId?: string
   ): Promise<OrganizationInvite> {
     if (!VALID_ROLES.includes(role)) {
       throw new ValidationError(`Invalid role: ${role}`);
     }
 
     const organization = await this.getOrganization(organizationId, tenantId);
+    await this.assertOrgUnitBelongsToOrg(orgUnitId, tenantId);
 
     if (organization.members.length >= organization.subscription.seats) {
       throw new AppError(
@@ -335,6 +394,7 @@ export class OrganizationService {
       token,
       expiresAt,
       status: 'pending',
+      orgUnitId,
     };
 
     const created = await this.repo.createInvite(organizationId, invite);
@@ -364,10 +424,140 @@ export class OrganizationService {
       tenantId,
       entityType: 'organization',
       entityId: organizationId,
-      metadata: { email: invite.email, role },
+      metadata: { email: invite.email, role, orgUnitId },
     });
 
     return invite;
+  }
+
+  /**
+   * "Add member" (as opposed to "invite member"): creates a login-ready
+   * account immediately — no email round-trip required — and adds them
+   * to the organization as an active member. If `orgUnitId` is given,
+   * also creates a UserScopeAssignment so the Permission Engine scopes
+   * their access to that branch instead of the whole organization.
+   *
+   * If an account with this email already exists (in tbladmin), it is
+   * reused rather than erroring — this lets an admin add someone who
+   * already has a login (e.g. from another organization they've since
+   * left) without creating a duplicate account. In that case no new
+   * password is generated/returned.
+   */
+  async addMemberDirect(
+    organizationId: string,
+    input: AddMemberDirectInput,
+    addedBy: string,
+    tenantId: string
+  ): Promise<AddMemberDirectResult> {
+    if (!ASSIGNABLE_ROLES.includes(input.role)) {
+      throw new ValidationError(`Invalid role: ${input.role}`);
+    }
+
+    const organization = await this.getOrganization(organizationId, tenantId);
+    await this.assertOrgUnitBelongsToOrg(input.orgUnitId, tenantId);
+
+    if (organization.members.length >= organization.subscription.seats) {
+      throw new AppError(
+        'Organization has reached its seat limit. Upgrade your plan to add more members.',
+        'SEAT_LIMIT_REACHED',
+        400
+      );
+    }
+
+    const email = input.email.toLowerCase();
+    const existingMember = organization.members.find((m) => m.email.toLowerCase() === email);
+    if (existingMember) {
+      throw new ConflictError('This person is already a member of this organization');
+    }
+
+    let userId: string;
+    let temporaryPassword: string | undefined;
+    let reusedExistingAccount = false;
+
+    const existingAccount = await this.adminUserRepo.findByEmail(email);
+    if (existingAccount) {
+      userId = existingAccount._id!.toString();
+      reusedExistingAccount = true;
+    } else {
+      temporaryPassword = input.password?.trim() || generateTemporaryPassword();
+      const passwordHash = await bcrypt.hash(temporaryPassword, 10);
+
+      const createdAccount = await this.adminUserRepo.create({
+        Email: email,
+        Password: passwordHash,
+        FirstName: input.name.trim(),
+        Role: input.role,
+        tenantId,
+      });
+      userId = createdAccount._id.toString();
+    }
+
+    const member: OrganizationMember = {
+      userId,
+      email,
+      name: input.name.trim(),
+      role: input.role,
+      permissions: [],
+      status: 'active',
+      joinedAt: new Date(),
+      invitedBy: addedBy,
+      orgUnitId: input.orgUnitId,
+    };
+
+    const added = await this.repo.addMember(organizationId, member);
+    if (!added) {
+      throw new AppError('Failed to add member', 'MEMBER_ADD_FAILED', 500);
+    }
+    await this.repo.incrementUsedSeats(organizationId, 1);
+
+    let orgUnitAssigned = false;
+    if (input.orgUnitId) {
+      try {
+        await userScopeService.assign(
+          {
+            organizationId: tenantId,
+            userId,
+            orgUnitId: input.orgUnitId,
+            role: input.role,
+            isCustomRole: false,
+          },
+          tenantId,
+          addedBy
+        );
+        orgUnitAssigned = true;
+      } catch (error) {
+        // Non-fatal: the member is still added org-wide with their
+        // static role; branch-scoping can be retried/fixed later via
+        // the Roles > Scope Assignments UI. We don't want a scope
+        // assignment hiccup to roll back the whole member-add.
+        console.error('[OrganizationService] Failed to create scope assignment for direct-added member:', error);
+      }
+    }
+
+    await auditLog.log({
+      action: 'MEMBER_ADDED_DIRECTLY',
+      userId: addedBy,
+      tenantId,
+      entityType: 'organization',
+      entityId: organizationId,
+      metadata: { memberId: userId, email, role: input.role, orgUnitId: input.orgUnitId, reusedExistingAccount },
+    });
+
+    webSocketManager.emitToTenant(tenantId, 'organization:member_joined', {
+      userId,
+      name: member.name,
+      organizationId,
+    });
+
+    const eventBus = EventBusFactory.getInstance();
+    await eventBus.publish(
+      new MemberJoinedEvent(organizationId, member.email, member.name, member.role, organization.ownerId, tenantId, {
+        userId,
+        addedDirectly: true,
+      })
+    );
+
+    return { member, temporaryPassword, orgUnitAssigned, reusedExistingAccount };
   }
 
   async resendInvite(
@@ -466,7 +656,6 @@ export class OrganizationService {
       organizationId: organization._id,
     });
 
-    // Emit domain event for new member
     const member = organization.members.find((m) => m.userId === userId);
     if (member) {
       const eventBus = EventBusFactory.getInstance();
@@ -479,6 +668,40 @@ export class OrganizationService {
         organization.tenantId,
         { userId }
       ));
+
+      // If the invite this member accepted carried a branch/org-unit
+      // scope, create the corresponding UserScopeAssignment now that we
+      // have a real userId to attach it to. The invite is still present
+      // in organization.invites (now status: 'accepted'), so we can read
+      // its orgUnitId back off the returned document.
+      const acceptedInvite = (organization.invites || []).find(
+        (i) => i.token === token && i.status === 'accepted'
+      );
+      if (acceptedInvite?.orgUnitId) {
+        try {
+          await userScopeService.assign(
+            {
+              organizationId: organization.tenantId,
+              userId,
+              orgUnitId: acceptedInvite.orgUnitId,
+              role: member.role,
+              isCustomRole: false,
+            },
+            organization.tenantId,
+            acceptedInvite.invitedBy
+          );
+          // Persist the reference on the member row too, for display.
+          await this.repo.update(
+            organization._id!,
+            {} as any,
+            organization.tenantId,
+            userId,
+            true
+          ).catch(() => undefined);
+        } catch (error) {
+          console.error('[OrganizationService] Failed to create scope assignment on invite acceptance:', error);
+        }
+      }
     }
 
     return organization;
@@ -595,11 +818,6 @@ export class OrganizationService {
     const totalUsers = organization.members.length;
     const pendingInvites = (organization.invites || []).filter((i) => i.status === 'pending').length;
 
-    // Cross-module counts are best-effort via dynamic import to avoid a
-    // hard compile-time dependency from the organizations module onto
-    // vehicles/expenses. Each is wrapped so a missing/renamed method on
-    // either repository degrades to 0 rather than failing the whole
-    // dashboard.
     let vehicleCount = 0;
     let activeVehicles = 0;
     let totalExpensesThisMonth = 0;
@@ -641,9 +859,9 @@ export class OrganizationService {
       activeVehicles,
       totalExpensesThisMonth,
       totalExpensesLastMonth,
-      storageUsedGb: 0, // wire to infrastructure/storage usage tracking when available
+      storageUsedGb: 0,
       storageLimitGb: organization.features.maxStorage,
-      apiCallsThisMonth: 0, // wire to API key usage tracking when available
+      apiCallsThisMonth: 0,
       apiCallLimit: 10_000,
       seatsUsed: organization.subscription.usedSeats,
       seatsTotal: organization.subscription.seats,

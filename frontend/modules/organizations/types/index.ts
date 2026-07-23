@@ -107,6 +107,22 @@ export interface UpdateOrganizationPayload {
 export interface InviteMemberPayload {
   email: string;
   role: OrganizationRole;
+  orgUnitId?: string;
+}
+
+export interface AddMemberDirectPayload {
+  name: string;
+  email: string;
+  role: OrganizationRole;
+  password?: string;
+  orgUnitId?: string;
+}
+
+export interface AddMemberDirectResult {
+  member: OrganizationMember;
+  temporaryPassword?: string;
+  orgUnitAssigned?: boolean;
+  reusedExistingAccount?: boolean;
 }
 
 export interface UpdateMemberRolePayload {

@@ -60,6 +60,8 @@ export const organizationInviteSchema = z.object({
     'auditor',
     'viewer',
   ]),
+  /** Optional branch/org unit the invitee is scoped to once they accept. */
+  orgUnitId: z.string().optional(),
 });
 
 export const organizationMemberRoleUpdateSchema = z.object({
@@ -74,6 +76,34 @@ export const organizationMemberRoleUpdateSchema = z.object({
   ]),
 });
 
+/**
+ * Direct member creation ("Add member" as opposed to "Invite member").
+ * Creates a real login-capable account immediately instead of a pending
+ * email invitation. `password` is optional — if omitted, the server
+ * generates a temporary one and returns it exactly once in the response.
+ */
+export const addMemberDirectSchema = z.object({
+  name: z.string().min(1, 'Name is required').max(100, 'Name too long'),
+  email: z.string().email('Invalid email address'),
+  role: z.enum([
+    'fleet_manager',
+    'accountant',
+    'dispatcher',
+    'driver',
+    'mechanic',
+    'auditor',
+    'viewer',
+  ]),
+  password: z
+    .string()
+    .min(8, 'Password must be at least 8 characters')
+    .max(128, 'Password too long')
+    .optional(),
+  /** Branch/org unit to scope this member's access to. Optional. */
+  orgUnitId: z.string().optional(),
+});
+
 export type OrganizationCreateInput = z.infer<typeof organizationCreateSchema>;
 export type OrganizationUpdateInput = z.infer<typeof organizationUpdateSchema>;
 export type OrganizationInviteInput = z.infer<typeof organizationInviteSchema>;
+export type AddMemberDirectInput = z.infer<typeof addMemberDirectSchema>;

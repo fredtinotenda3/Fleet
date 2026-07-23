@@ -97,10 +97,29 @@ export class OrganizationController {
     try {
       const tenantId = await getTenantFromRequest(req);
       const userId = await getUserIdFromRequest(req);
-      const { email, role } = await req.json();
+      const { email, role, orgUnitId } = await req.json();
 
-      const invite = await organizationService.addMember(id, email, role, userId, tenantId);
+      const invite = await organizationService.addMember(id, email, role, userId, tenantId, orgUnitId);
       return createdResponse(invite);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async addMemberDirect(req: NextRequest, id: string) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const userId = await getUserIdFromRequest(req);
+      const body = await req.json();
+
+      const { addMemberDirectSchema } = await import('@/shared/validations/organization.schema');
+      const parsed = addMemberDirectSchema.safeParse(body);
+      if (!parsed.success) {
+        return errorResponse('Invalid member details', 'VALIDATION_ERROR', 400, parsed.error.flatten());
+      }
+
+      const result = await organizationService.addMemberDirect(id, parsed.data, userId, tenantId);
+      return createdResponse(result);
     } catch (error) {
       return this.handleError(error);
     }

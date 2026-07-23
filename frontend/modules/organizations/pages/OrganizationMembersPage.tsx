@@ -1,22 +1,27 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 // frontend/modules/organizations/pages/OrganizationMembersPage.tsx
 'use client';
 
+import { useMemo } from 'react';
 import { UserPlus } from 'lucide-react';
 import { useAuth } from '@/frontend/modules/auth/hooks/useAuth';
 import { useCurrentOrganization } from '../hooks/useCurrentOrganization';
-import { InviteMemberDialog } from '../components/members/InviteMemberDialog';
+import { useOrgUnits } from '../hooks/useOrganizations';
+import { AddMemberDialog } from '../components/members/AddMemberDialog';
 import { MembersTable } from '../components/members/MembersTable';
 import { PendingInvitationsList } from '../components/members/PendingInvitationsList';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { PageLoader } from '@/frontend/shared/loading/PageLoader';
-import { EmptyState } from '@/shared/ui/feedback/EmptyState';
 import { canManageMembers } from '../utils';
-import { ORGANIZATION_ROUTES } from '../routes';
 
 export function OrganizationMembersPage() {
   const { user } = useAuth();
   const { organization, currentUserRole, isLoading } = useCurrentOrganization(user?.id);
+  const { data: orgUnits = [] } = useOrgUnits();
+
+  const branchLookup = useMemo(
+    () => Object.fromEntries(orgUnits.map((u) => [u.id, u.name])),
+    [orgUnits]
+  );
 
   if (isLoading || !organization) {
     return <PageLoader label="Loading members" />;
@@ -35,12 +40,12 @@ export function OrganizationMembersPage() {
           </p>
         </div>
         {canManage && (
-          <InviteMemberDialog
+          <AddMemberDialog
             organizationId={organization._id!}
             trigger={
               <Button>
                 <UserPlus className="mr-1.5 h-4 w-4" aria-hidden="true" />
-                Invite member
+                Add member
               </Button>
             }
           />
@@ -51,6 +56,7 @@ export function OrganizationMembersPage() {
         organizationId={organization._id!}
         members={organization.members}
         canManage={canManage}
+        branchLookup={branchLookup}
       />
 
       <div>

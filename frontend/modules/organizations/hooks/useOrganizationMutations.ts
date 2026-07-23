@@ -15,6 +15,8 @@ import type {
   UpdateOrgUnitPayload,
   MoveOrgUnitPayload,
   OrgUnitNode,
+  AddMemberDirectPayload,
+  AddMemberDirectResult,
 } from '../types';
 
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -219,6 +221,20 @@ export function useRestoreMember(organizationId: string) {
     },
     onError: (error) => {
       toast.error(getErrorMessage(error, 'Failed to restore member'));
+    },
+  });
+}
+
+export function useAddMemberDirect(organizationId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: AddMemberDirectPayload) => organizationApi.addMemberDirect(organizationId, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: organizationKeys.detail(organizationId) });
+      toast.success('Member added');
+    },
+    onError: (error) => {
+      toast.error(getErrorMessage(error, 'Failed to add member'));
     },
   });
 }

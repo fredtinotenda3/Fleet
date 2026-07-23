@@ -13,6 +13,8 @@ import type {
   CreateOrgUnitPayload,
   UpdateOrgUnitPayload,
   MoveOrgUnitPayload,
+  AddMemberDirectPayload,
+  AddMemberDirectResult,
 } from '../types';
 import { BrandingFormValues, ContactDetailsFormValues, RegionalSettingsFormValues, BusinessHoursFormValues, TaxSettingsFormValues } from '../schemas';
 
@@ -82,6 +84,13 @@ export const organizationApi = {
    */
   async inviteMember(id: string, payload: InviteMemberPayload): Promise<OrganizationInvite> {
     return apiClient.post<OrganizationInvite>(`${BASE}/${id}/members/invite`, payload);
+  },
+
+  /**
+   * Backing route: POST /api/organizations/[id]/members
+   */
+  async addMemberDirect(id: string, payload: AddMemberDirectPayload): Promise<AddMemberDirectResult> {
+    return apiClient.post<AddMemberDirectResult>(`${BASE}/${id}/members`, payload);
   },
 
   /**

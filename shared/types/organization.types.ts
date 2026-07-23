@@ -21,10 +21,6 @@ export interface Organization extends BaseEntity {
   invites?: OrganizationInvite[];
   aiSettings?: OrganizationAISettings;
   reportingPreferences?: OrganizationReportingPreferences;
-  // Phase 3 fields — previously defined only in
-  // organization.settings-addendum.ts and written via `{ ... } as any`
-  // in OrganizationService. Declared here so those casts can be removed
-  // and the fields are visible on the canonical Organization type.
   contact?: OrganizationContactDetails;
   businessHours?: OrganizationBusinessHours;
   taxSettings?: OrganizationTaxSettings;
@@ -47,9 +43,6 @@ export interface OrganizationSettings {
   language: string;
   notificationsEnabled: boolean;
   emailReports: boolean;
-  // Merged from organization.settings-addendum.ts (Phase 3) — these were
-  // previously only documented in a comment block and never actually
-  // declared here, which forced `as any` casts at every write site.
   weeklyDigest?: boolean;
   criticalAlertsOnly?: boolean;
   requireMfa?: boolean;
@@ -93,6 +86,20 @@ export interface OrganizationMember {
   invitedAt?: Date;
   joinedAt?: Date;
   invitedBy?: string;
+  /**
+   * The branch (OrgUnit type='branch', but any org unit is technically
+   * accepted) this member is scoped to, if any. `undefined` means the
+   * member's access follows their organization-wide role
+   * (OrganizationMember.role) with no narrower restriction. Setting
+   * this ALSO requires a corresponding UserScopeAssignment record
+   * (modules/security) to actually be enforced by the Permission
+   * Engine — this field alone is just a display/reference convenience
+   * on the member row so the Members table can show "Branch: Harare
+   * Depot" without an extra join. See
+   * OrganizationService.addMemberDirect / addMember for where both are
+   * written together.
+   */
+  orgUnitId?: string;
 }
 
 export interface OrganizationInvite {
@@ -104,6 +111,8 @@ export interface OrganizationInvite {
   token: string;
   expiresAt: Date;
   status: 'pending' | 'accepted' | 'expired' | 'cancelled';
+  /** Branch/org unit to scope this invitee to once they accept. */
+  orgUnitId?: string;
 }
 
 export interface UserOrganization {
@@ -121,7 +130,6 @@ export interface OrganizationAISettings {
   fuelFraudDetection: boolean;
   driverRiskScoring: boolean;
   expenseAnomalyDetection: boolean;
-  /** 0-1. Below this confidence, AI insights are suppressed from dashboards. */
   confidenceThreshold: number;
 }
 

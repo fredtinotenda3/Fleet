@@ -98,8 +98,23 @@ export type SecuritySettingsFormValues = z.infer<typeof securitySettingsSchema>;
 export const inviteMemberSchema = z.object({
   email: z.string().email('Invalid email address'),
   role: z.enum(ASSIGNABLE_ROLES as [string, ...string[]]),
+  orgUnitId: z.string().optional().or(z.literal('')),
 });
 export type InviteMemberFormValues = z.infer<typeof inviteMemberSchema>;
+
+export const addMemberDirectSchema = z.object({
+  name: z.string().min(1, 'Name is required').max(100, 'Name too long'),
+  email: z.string().email('Invalid email address'),
+  role: z.enum(ASSIGNABLE_ROLES as [string, ...string[]]),
+  password: z
+    .string()
+    .min(8, 'Password must be at least 8 characters')
+    .max(128, 'Password too long')
+    .optional()
+    .or(z.literal('')),
+  orgUnitId: z.string().optional().or(z.literal('')),
+});
+export type AddMemberDirectFormValues = z.infer<typeof addMemberDirectSchema>;
 
 export const editMemberRoleSchema = z.object({
   role: z.enum(ASSIGNABLE_ROLES as [string, ...string[]]),
