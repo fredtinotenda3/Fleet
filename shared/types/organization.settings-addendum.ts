@@ -1,10 +1,11 @@
 // shared/types/organization.settings-addendum.ts
 //
-// Merge these into shared/types/organization.types.ts's Organization
-// interface. New optional top-level fields covering Phase 3 (contact,
-// business hours, tax) that don't exist on Organization yet. Branding
-// and OrganizationSettings already cover general info / regional /
-// notification toggles, so those are untouched.
+// contact / businessHours / taxSettings are now declared directly on the
+// Organization interface in organization.types.ts (which imports the
+// types below), and the extra settings fields listed further down are
+// now declared on OrganizationSettings. This file remains the source of
+// truth for those type definitions plus their Zod-adjacent defaults —
+// it's just no longer a "TODO: merge me" note.
 
 export interface OrganizationContactDetails {
   contactEmail: string;
@@ -38,25 +39,6 @@ export interface OrganizationTaxSettings {
   taxRate: number; // 0-100
   taxInclusivePricing: boolean;
 }
-
-/**
- * Add to Organization interface in organization.types.ts:
- *
- *   contact?: OrganizationContactDetails;
- *   businessHours?: OrganizationBusinessHours;
- *   taxSettings?: OrganizationTaxSettings;
- *
- * Add to OrganizationSettings interface:
- *
- *   weeklyDigest?: boolean;
- *   criticalAlertsOnly?: boolean;
- *   requireMfa?: boolean;
- *   sessionTimeoutMinutes?: number;
- *   passwordMinLength?: number;
- *   passwordRequireSymbol?: boolean;
- *   passwordRequireNumber?: boolean;
- *   passwordExpiryDays?: number;
- */
 
 export const DEFAULT_BUSINESS_HOURS: OrganizationBusinessHours = {
   monday: { enabled: true, openTime: '08:00', closeTime: '17:00' },

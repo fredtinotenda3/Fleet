@@ -1,6 +1,11 @@
 // shared/types/organization.types.ts
 
 import { BaseEntity } from './common.types';
+import {
+  OrganizationContactDetails,
+  OrganizationBusinessHours,
+  OrganizationTaxSettings,
+} from './organization.settings-addendum';
 
 export interface Organization extends BaseEntity {
   name: string;
@@ -16,6 +21,13 @@ export interface Organization extends BaseEntity {
   invites?: OrganizationInvite[];
   aiSettings?: OrganizationAISettings;
   reportingPreferences?: OrganizationReportingPreferences;
+  // Phase 3 fields — previously defined only in
+  // organization.settings-addendum.ts and written via `{ ... } as any`
+  // in OrganizationService. Declared here so those casts can be removed
+  // and the fields are visible on the canonical Organization type.
+  contact?: OrganizationContactDetails;
+  businessHours?: OrganizationBusinessHours;
+  taxSettings?: OrganizationTaxSettings;
 }
 
 export interface OrganizationBranding {
@@ -35,6 +47,17 @@ export interface OrganizationSettings {
   language: string;
   notificationsEnabled: boolean;
   emailReports: boolean;
+  // Merged from organization.settings-addendum.ts (Phase 3) — these were
+  // previously only documented in a comment block and never actually
+  // declared here, which forced `as any` casts at every write site.
+  weeklyDigest?: boolean;
+  criticalAlertsOnly?: boolean;
+  requireMfa?: boolean;
+  sessionTimeoutMinutes?: number;
+  passwordMinLength?: number;
+  passwordRequireSymbol?: boolean;
+  passwordRequireNumber?: boolean;
+  passwordExpiryDays?: number;
 }
 
 export interface OrganizationSubscription {

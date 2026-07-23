@@ -167,7 +167,7 @@ export class OrganizationService {
     userId: string
   ): Promise<Organization> {
     const before = await this.getOrganization(organizationId, tenantId);
-    const updated = await this.repo.update(organizationId, { contact: data } as any, tenantId, userId, true);
+    const updated = await this.repo.update(organizationId, { contact: data }, tenantId, userId, true);
     if (!updated) throw new NotFoundError('Organization not found');
     await auditLog.logUpdate(userId, tenantId, 'organization', organizationId, before, updated);
     return updated;
@@ -180,7 +180,7 @@ export class OrganizationService {
     userId: string
   ): Promise<Organization> {
     const before = await this.getOrganization(organizationId, tenantId);
-    const updated = await this.repo.update(organizationId, { businessHours: data } as any, tenantId, userId, true);
+    const updated = await this.repo.update(organizationId, { businessHours: data }, tenantId, userId, true);
     if (!updated) throw new NotFoundError('Organization not found');
     await auditLog.logUpdate(userId, tenantId, 'organization', organizationId, before, updated);
     return updated;
@@ -193,7 +193,7 @@ export class OrganizationService {
     userId: string
   ): Promise<Organization> {
     const before = await this.getOrganization(organizationId, tenantId);
-    const updated = await this.repo.update(organizationId, { taxSettings: data } as any, tenantId, userId, true);
+    const updated = await this.repo.update(organizationId, { taxSettings: data }, tenantId, userId, true);
     if (!updated) throw new NotFoundError('Organization not found');
     await auditLog.logUpdate(userId, tenantId, 'organization', organizationId, before, updated);
     return updated;

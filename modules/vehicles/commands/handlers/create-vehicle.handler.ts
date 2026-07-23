@@ -7,6 +7,7 @@ import { ConflictError, ValidationError } from '@/server/errors/app.errors';
 import { validateWithZod } from '@/shared/utils/validation.utils';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { VehicleCreatedEvent } from '@/modules/vehicles/events/VehicleCreatedEvent';
+import { organizationService } from '@/modules/organizations/services/organization.service';
 
 export class CreateVehicleHandler
   implements ICommandHandler<CreateVehicleCommand, Vehicle>
@@ -48,6 +49,18 @@ export class CreateVehicleHandler
     }
 
     const validated = result.data;
+
+    // Enforce the organization's plan-based vehicle limit. This check
+    // (OrganizationService.checkVehicleLimit) already existed but was
+    // never called from anywhere, so plan limits were defined but not
+    // actually enforced. organizationId === tenantId for org-scoped
+    // resources in this system (see TenantContext.organizationId).
+    const currentVehicleCount = await this.vehicleRepo.count({}, command.tenantId);
+    await organizationService.checkVehicleLimit(
+      command.tenantId,
+      currentVehicleCount,
+      command.tenantId
+    );
 
     const existing = await this.vehicleRepo.findByLicensePlate(
       validated.license_plate,
