@@ -34,8 +34,14 @@ interface AddMemberDialogProps {
 function BranchSelect({ value, onChange }: { value: string | undefined; onChange: (v: string | undefined) => void }) {
   const { data: units = [] } = useOrgUnits({ type: 'branch' });
 
+  // Normalize '' | undefined | null to the 'none' sentinel so the Select's
+  // controlled value always matches a real item — previously `?? undefined`
+  // let an empty string slip through unmatched, which is what made a
+  // selection appear not to "stick".
+  const selectValue = value && value.length > 0 ? value : 'none';
+
   return (
-    <Select value={value ?? 'none'} onValueChange={(v) => onChange(v === 'none' ? undefined : v)}>
+    <Select value={selectValue} onValueChange={(v) => onChange(v === 'none' ? undefined : v)}>
       <SelectTrigger id="member-branch" className="input-base">
         <SelectValue placeholder="No branch (organization-wide)" />
       </SelectTrigger>
@@ -229,7 +235,9 @@ export function AddMemberDialog({ organizationId, trigger }: AddMemberDialogProp
                   <Controller
                     control={directForm.control}
                     name="orgUnitId"
-                    render={({ field }) => <BranchSelect value={field.value ?? undefined} onChange={(v) => field.onChange(v ?? '')} />}
+                    render={({ field }) => (
+                      <BranchSelect value={field.value || undefined} onChange={(v) => field.onChange(v ?? '')} />
+                    )}
                   />
                   <p className="form-hint">Leave blank for organization-wide access.</p>
                 </div>
