@@ -12,6 +12,8 @@ import {
   DriverUtilizationRow,
   TripDistanceDistributionBucket,
   TripHeatmapCell,
+  TripCostAnalyticsRow,
+  TripCostSummary,
 } from '@/shared/types/trip.types';
 import {
   PaginationParams,
@@ -21,7 +23,7 @@ import { Filter, ObjectId } from 'mongodb';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 import { EXPORT_ROW_CAP, ExportDataset } from '@/shared/export';
-import { connectToDatabase } from '@/server/db';
+import connectToDatabase from '@/lib/mongodb';
 
 export class TripRepository extends BaseRepository<Trip> {
   protected collectionName = 'tbltrips';
@@ -856,6 +858,111 @@ export class TripRepository extends BaseRepository<Trip> {
       count: r.count,
       distance: Math.round((r.distance || 0) * 100) / 100,
     }));
+  }
+
+  /**
+   * PHASE 3: Fuel per Trip / Expense per Trip / Cost per Trip / Fuel vs
+   * Distance / Cost vs Distance -- all derived from one pass over
+   * tblfuellogs and tblexpenses grouped by tripId, left-joined back
+   * onto the owning trip for its distance. Trips with no linked fuel
+   * or expense records are excluded from the per-row output (they
+   * can't be it isn't meaningful to report "$0 cost" for a trip that
+   * was simply never linked), but ARE still counted correctly as
+   * "unlinked" by getTripCostSummary below via a separate total.
+   */
+  async getTripCostAnalytics(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date },
+    limit: number = 100
+  ): Promise<TripCostAnalyticsRow[]> {
+    const db = await connectToDatabase();
+    const tripMatch = this.buildBaseMatch(tenantId, dateRange);
+
+    const pipeline = [
+      { $match: tripMatch },
+      {
+        $lookup: {
+          from: 'tblfuellogs',
+          let: { tripId: { $toString: '$_id' } },
+          pipeline: [
+            { $match: { $expr: { $and: [{ $eq: ['$tripId', '$$tripId'] }, { $ne: ['$isDeleted', true] }] } } },
+            { $group: { _id: null, cost: { $sum: '$cost' }, volume: { $sum: '$fuel_volume' } } },
+          ],
+          as: 'fuelAgg',
+        },
+      },
+      {
+        $lookup: {
+          from: 'tblexpenses',
+          let: { tripId: { $toString: '$_id' } },
+          pipeline: [
+            { $match: { $expr: { $and: [{ $eq: ['$tripId', '$$tripId'] }, { $ne: ['$isDeleted', true] }] } } },
+            { $group: { _id: null, amount: { $sum: '$amount' } } },
+          ],
+          as: 'expenseAgg',
+        },
+      },
+      {
+        $addFields: {
+          fuelCost: { $ifNull: [{ $arrayElemAt: ['$fuelAgg.cost', 0] }, 0] },
+          fuelVolume: { $ifNull: [{ $arrayElemAt: ['$fuelAgg.volume', 0] }, 0] },
+          expenseCost: { $ifNull: [{ $arrayElemAt: ['$expenseAgg.amount', 0] }, 0] },
+        },
+      },
+      // Only trips that actually have a linked fuel log or expense.
+      { $match: { $expr: { $or: [{ $gt: ['$fuelCost', 0] }, { $gt: ['$expenseCost', 0] }] } } },
+      { $sort: { date: -1 } },
+      { $limit: limit },
+      {
+        $project: {
+          tripId: { $toString: '$_id' },
+          license_plate: 1,
+          date: 1,
+          distance: '$distance_calculated',
+          fuelCost: { $round: ['$fuelCost', 2] },
+          fuelVolume: { $round: ['$fuelVolume', 2] },
+          expenseCost: { $round: ['$expenseCost', 2] },
+          totalCost: { $round: [{ $add: ['$fuelCost', '$expenseCost'] }, 2] },
+          _id: 0,
+        },
+      },
+    ];
+
+    const results = await db.collection(this.collectionName).aggregate(pipeline).toArray();
+    return results.map((r) => ({
+      ...r,
+      costPerKm: r.distance > 0 ? Math.round((r.totalCost / r.distance) * 100) / 100 : null,
+    })) as TripCostAnalyticsRow[];
+  }
+
+  /**
+   * PHASE 3: fleet-wide summary for KPI cards. Reuses the same
+   * per-trip join as getTripCostAnalytics but without the row limit,
+   * since it only needs aggregate totals, not the row list.
+   */
+  async getTripCostSummary(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<TripCostSummary> {
+    const rows = await this.getTripCostAnalytics(tenantId, dateRange, 100000);
+
+    const totalFuelCost = rows.reduce((sum, r) => sum + r.fuelCost, 0);
+    const totalExpenseCost = rows.reduce((sum, r) => sum + r.expenseCost, 0);
+    const totalCost = totalFuelCost + totalExpenseCost;
+    const totalDistance = rows.reduce((sum, r) => sum + (r.distance || 0), 0);
+    const linkedTripCount = rows.length;
+
+    return {
+      linkedTripCount,
+      totalFuelCost: Math.round(totalFuelCost * 100) / 100,
+      totalExpenseCost: Math.round(totalExpenseCost * 100) / 100,
+      totalCost: Math.round(totalCost * 100) / 100,
+      totalDistance: Math.round(totalDistance * 100) / 100,
+      averageFuelCostPerTrip: linkedTripCount > 0 ? Math.round((totalFuelCost / linkedTripCount) * 100) / 100 : 0,
+      averageExpenseCostPerTrip: linkedTripCount > 0 ? Math.round((totalExpenseCost / linkedTripCount) * 100) / 100 : 0,
+      averageCostPerTrip: linkedTripCount > 0 ? Math.round((totalCost / linkedTripCount) * 100) / 100 : 0,
+      averageCostPerKm: totalDistance > 0 ? Math.round((totalCost / totalDistance) * 100) / 100 : 0,
+    };
   }
 }
 

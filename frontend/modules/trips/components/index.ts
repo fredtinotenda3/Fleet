@@ -16,3 +16,5 @@ export { TripDistanceDistributionChart } from './TripDistanceDistributionChart';
 export { TripDayOfWeekHeatmapChart } from './TripDayOfWeekHeatmapChart';
 export { TripTransactionDrawer } from './TripTransactionDrawer';
 export type { TripDrawerFilter } from './TripTransactionDrawer';
+export { TripSelect } from './TripSelect';
+export { TripCostAnalyticsChart } from './TripCostAnalyticsChart';

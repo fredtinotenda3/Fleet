@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 // modules/expenses/hooks/useExpenses.ts
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';

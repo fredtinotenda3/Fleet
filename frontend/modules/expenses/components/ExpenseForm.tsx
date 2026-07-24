@@ -31,6 +31,7 @@ import { useExpenseTypes, expenseKeys } from '../hooks/useExpenses';
 import { useCreateExpenseType } from '../hooks/useExpenseMutations';
 import { expenseFormSchema, type ExpenseFormValues } from '../schemas';
 import { DEFAULT_EXPENSE_CATEGORIES } from '../types';
+import { TripSelect } from '@/frontend/modules/trips/components/TripSelect'; // Phase 3 – trip linking
 
 const NO_TYPE = '__none__';
 
@@ -49,6 +50,7 @@ const FALLBACK_DEFAULTS: ExpenseFormValues = {
   description: '',
   jobTrip: '',
   notes: '',
+  tripId: '', // Phase 3
 };
 
 export function ExpenseForm({ defaultValues, onSubmit, onCancel, submitLabel = 'Record expense' }: ExpenseFormProps) {
@@ -66,11 +68,14 @@ export function ExpenseForm({ defaultValues, onSubmit, onCancel, submitLabel = '
     control,
     handleSubmit,
     setValue,
+    watch, // added for Phase 3
     formState: { errors, isSubmitting },
   } = useForm<ExpenseFormValues>({
     resolver: zodResolver(expenseFormSchema),
     defaultValues: { ...FALLBACK_DEFAULTS, ...defaultValues },
   });
+
+  const licensePlate = watch('license_plate'); // needed by TripSelect
 
   const submit = handleSubmit(async (values) => {
     await onSubmit(values);
@@ -199,6 +204,22 @@ export function ExpenseForm({ defaultValues, onSubmit, onCancel, submitLabel = '
           <div>
             <Label htmlFor="jobTrip" className="form-label">Job / Trip reference</Label>
             <Input id="jobTrip" placeholder="e.g. Trip #482, Job Order 12" {...register('jobTrip')} />
+          </div>
+
+          {/* Phase 3: Trip link (optional) */}
+          <div>
+            <Label htmlFor="tripId" className="form-label">Link to trip (optional)</Label>
+            <Controller
+              control={control}
+              name="tripId"
+              render={({ field }) => (
+                <TripSelect
+                  licensePlate={licensePlate}
+                  value={field.value}
+                  onChange={field.onChange}
+                />
+              )}
+            />
           </div>
         </div>
 

@@ -1,4 +1,4 @@
-//frontend/modules/trips/pages/TripAnalyticsPage.tsx
+// frontend/modules/trips/pages/TripAnalyticsPage.tsx
 
 'use client';
 
@@ -17,6 +17,7 @@ import {
   TripDistanceDistributionChart,
   TripDayOfWeekHeatmapChart,
   TripTransactionDrawer,
+  TripCostAnalyticsChart,   // Phase 3
 } from '../components';
 import { useTripDrawer } from '../hooks/useTripDrawer';
 import { TRIP_ROUTES } from '../routes';
@@ -54,6 +55,9 @@ export function TripAnalyticsPage() {
         <TripDistanceDistributionChart dateRange={dateRange} />
         <TripDayOfWeekHeatmapChart dateRange={dateRange} />
       </div>
+
+      {/* Phase 3: Cross-module cost analytics (fuel & expense rolled up per trip) */}
+      <TripCostAnalyticsChart dateRange={dateRange} />
 
       <TripTransactionDrawer open={open} onOpenChange={setOpen} filter={filter} />
     </div>

@@ -27,6 +27,7 @@ import { useUploadReceipt } from '../hooks/useFuelMutations';
 import { useFuelStationsList } from '@/frontend/modules/fuel-stations/hooks/useFuelStations';
 import { useFuelCardsList } from '@/frontend/modules/fuel-cards/hooks/useFuelCards';
 import { useDriversList } from '@/frontend/modules/drivers/hooks/useDrivers';
+import { TripSelect } from '@/frontend/modules/trips/components/TripSelect';
 
 const CURRENCIES = ['USD', 'ZWG', 'ZAR', 'EUR', 'GBP'];
 const FUEL_TYPES = ['diesel', 'petrol', 'electric', 'hybrid'];
@@ -58,6 +59,7 @@ const FALLBACK_DEFAULTS: FuelFormValues = {
   payment_method: 'cash',
   fuel_card_id: '',
   driver_id: '',
+  tripId: '',
 };
 
 export function FuelForm({
@@ -393,6 +395,21 @@ export function FuelForm({
       <div>
         <Label htmlFor="notes" className="form-label">Notes</Label>
         <Textarea id="notes" rows={3} disabled={readOnly} {...register('notes')} />
+      </div>
+
+      <div>
+        <Label htmlFor="tripId" className="form-label">Link to trip (optional)</Label>
+        <Controller
+          control={control}
+          name="tripId"
+          render={({ field }) => (
+            <TripSelect
+              licensePlate={watch('license_plate')}
+              value={field.value}
+              onChange={field.onChange}
+            />
+          )}
+        />
       </div>
 
       <div className="flex justify-end gap-2 pt-2">

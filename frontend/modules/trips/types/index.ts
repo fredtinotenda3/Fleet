@@ -15,6 +15,8 @@ import type {
   DriverUtilizationRow,
   TripDistanceDistributionBucket,
   TripHeatmapCell,
+  TripCostAnalyticsRow,
+  TripCostSummary,
 } from '@/shared/types/trip.types';
 import type { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
 
@@ -36,6 +38,9 @@ export type {
   DriverUtilizationRow,
   TripDistanceDistributionBucket,
   TripHeatmapCell,
+  // PHASE 3
+  TripCostAnalyticsRow,
+  TripCostSummary,
 };
 
 export type TripMode = 'distance' | 'odometer';

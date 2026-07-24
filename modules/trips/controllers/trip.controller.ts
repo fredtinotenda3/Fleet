@@ -405,6 +405,33 @@ export class TripController {
     }
   }
 
+  /** PHASE 3: cross-module cost analytics rows, backing GET /api/trips/cost-analytics */
+  async getTripCostAnalytics(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const dateRange = this.parseDateRange(req);
+      const limit = Number(req.nextUrl.searchParams.get('limit') || '100');
+
+      const data = await tripQueryService.getTripCostAnalytics(tenantId, dateRange, limit);
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** PHASE 3: fleet-wide cost summary, backing GET /api/trips/cost-summary */
+  async getTripCostSummary(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const dateRange = this.parseDateRange(req);
+
+      const data = await tripQueryService.getTripCostSummary(tenantId, dateRange);
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
   private handleError(error: unknown) {
     if (error instanceof AppError) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);

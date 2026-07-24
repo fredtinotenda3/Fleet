@@ -13,6 +13,9 @@ import { GetVehicleUtilizationQuery } from '../queries/get-vehicle-utilization.q
 import { GetDriverUtilizationQuery } from '../queries/get-driver-utilization.query';
 import { GetTripDistanceDistributionQuery } from '../queries/get-trip-distance-distribution.query';
 import { GetTripsByDayOfWeekQuery } from '../queries/get-trips-by-day-of-week.query';
+// PHASE 3
+import { GetTripCostAnalyticsQuery } from '../queries/get-trip-cost-analytics.query';
+import { GetTripCostSummaryQuery } from '../queries/get-trip-cost-summary.query';
 import {
   Trip,
   TripFilters,
@@ -24,6 +27,8 @@ import {
   DriverUtilizationRow,
   TripDistanceDistributionBucket,
   TripHeatmapCell,
+  TripCostAnalyticsRow,
+  TripCostSummary,
 } from '@/shared/types/trip.types';
 import { PaginatedResponse, PaginationParams } from '@/shared/types/common.types';
 
@@ -130,6 +135,25 @@ export class TripQueryService {
     return queryBus.execute<TripHeatmapCell[]>(
       new GetTripsByDayOfWeekQuery(tenantId, dateRange)
     );
+  }
+
+  /** PHASE 3: Cross-module cost analytics rows (fuel/expense joined per trip). */
+  async getTripCostAnalytics(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date },
+    limit: number = 100
+  ): Promise<TripCostAnalyticsRow[]> {
+    return queryBus.execute<TripCostAnalyticsRow[]>(
+      new GetTripCostAnalyticsQuery(tenantId, dateRange, limit)
+    );
+  }
+
+  /** PHASE 3: Fleet-wide cost summary for KPI cards. */
+  async getTripCostSummary(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date }
+  ): Promise<TripCostSummary> {
+    return queryBus.execute<TripCostSummary>(new GetTripCostSummaryQuery(tenantId, dateRange));
   }
 }
 

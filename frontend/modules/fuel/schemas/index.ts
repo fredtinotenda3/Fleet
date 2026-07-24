@@ -23,6 +23,7 @@ const fuelFormBaseSchema = z.object({
   // NEW: optional -- a fuel entry does not require a driver, and every
   // existing record without one continues to work unchanged.
   driver_id: z.string().optional(),
+  tripId: z.string().optional(),
 });
 
 export const fuelFormSchema = fuelFormBaseSchema.refine(

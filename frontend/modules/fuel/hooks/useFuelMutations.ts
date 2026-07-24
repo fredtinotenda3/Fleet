@@ -14,6 +14,8 @@ function errMsg(error: unknown, fallback: string): string {
 export function useCreateFuelLog() {
   const queryClient = useQueryClient();
   return useMutation({
+    // Because payload is of type FuelFormOutput, tripId is now automatically 
+    // passed through to the API along with the other optional fields.
     mutationFn: (payload: FuelFormOutput) => fuelApi.create(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: fuelKeys.all });

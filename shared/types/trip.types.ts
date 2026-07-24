@@ -228,3 +228,35 @@ export interface TripHeatmapCell {
   count: number;
   distance: number;
 }
+
+/**
+ * PHASE 3: Cross-module cost analytics -- joins Trip with any linked
+ * Fuel/Expense records via tripId. One row per trip that has at least
+ * one linked fuel log or expense; trips with neither are omitted here
+ * (they contribute nothing to cost-per-trip/fuel-per-trip averages).
+ */
+export interface TripCostAnalyticsRow {
+  tripId: string;
+  license_plate: string;
+  date: Date | string;
+  distance: number;
+  fuelCost: number;
+  fuelVolume: number;
+  expenseCost: number;
+  totalCost: number;
+  costPerKm: number | null;
+}
+
+/** PHASE 3: fleet-wide summary powering the "Fuel per Trip / Expense per
+ *  Trip / Cost per Trip" KPI cards once cross-module linking is in use. */
+export interface TripCostSummary {
+  linkedTripCount: number;
+  totalFuelCost: number;
+  totalExpenseCost: number;
+  totalCost: number;
+  totalDistance: number;
+  averageFuelCostPerTrip: number;
+  averageExpenseCostPerTrip: number;
+  averageCostPerTrip: number;
+  averageCostPerKm: number;
+}

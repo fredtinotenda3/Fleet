@@ -28,6 +28,7 @@ export class CreateExpenseHandler
       description: raw.description,
       jobTrip: raw.jobTrip,
       notes: raw.notes,
+      tripId: raw.tripId,   // <-- added
     };
 
     const payload = Object.fromEntries(
@@ -77,39 +78,31 @@ export class CreateExpenseHandler
       expenseTypeId = new ObjectId(String(validated.expense_type_id));
     }
 
-    /**
-     * FIX (category always displays as "Uncategorized" for new
-     * expenses): this previously stored `expenseTypeId.toString()` --
-     * a plain string -- on the expense document. tblexpense_types._id
-     * is a native MongoDB ObjectId, and ExpenseRepository's
-     * expenseTypeLookupStages() joins on
-     * { localField: 'expense_type_id', foreignField: '_id' }.
-     * MongoDB's $lookup requires exact BSON type equality, so a string
-     * value NEVER matches an ObjectId value even when their hex text is
-     * identical -- the join silently returned nothing for every expense
-     * created through this handler, and expenseCategoryLabel() then
-     * correctly (but misleadingly) fell back to "Uncategorized" even
-     * though a real category had been selected and validated above.
-     * Storing the ObjectId itself (matching how
-     * scripts/seed-actual-expenses-from-file.ts has always stored it,
-     * and how ExpenseRepository.getFilteredExpenses's own type filter
-     * already expects it: `new ObjectId(filters.type)`) makes the join
-     * -- and category filtering -- work correctly for every new expense.
-     * See scripts/fix-expense-type-id-types.ts for a one-off migration
-     * that repairs existing string-typed records created before this
-     * fix.
-     */
-    // FIX: `tenantId` removed from this object. ExpenseRepository.create()
-    // takes tenantId as its own (second) argument and sets it internally --
-    // its data-parameter type is
-    // Omit<Expense, '_id' | 'isDeleted' | 'createdAt' | 'updatedAt' | 'deletedAt' | 'tenantId'>.
-    // The Omit<> annotation below previously didn't exclude 'tenantId', so this
-    // object carried a redundant (and, once assigned into a literal call site,
-    // TS-rejected -- see bulk-import-expenses.handler.ts) tenantId field. It
-    // only compiled here because expenseData is a separately-typed variable,
-    // which skips TypeScript's excess-property check; the actual tenantId
-    // used for the write was always the `command.tenantId` argument below,
-    // never this one.
+    // --- tripId validation (cross-module link) ---
+    let linkedTripId: string | undefined;
+    if (validated.tripId) {
+      const tripIdStr = String(validated.tripId);
+      if (!ObjectId.isValid(tripIdStr)) {
+        throw new AppError('Selected trip was not found', 'TRIP_NOT_FOUND', 400);
+      }
+      const trip = await db.collection('tbltrips').findOne({
+        _id: new ObjectId(tripIdStr),
+        tenantId: command.tenantId,
+        isDeleted: { $ne: true },
+      });
+      if (!trip) {
+        throw new AppError('Selected trip was not found', 'TRIP_NOT_FOUND', 400);
+      }
+      if (trip.license_plate !== String(validated.license_plate).toUpperCase()) {
+        throw new AppError(
+          `Selected trip belongs to ${trip.license_plate}, not ${validated.license_plate}`,
+          'TRIP_VEHICLE_MISMATCH',
+          400
+        );
+      }
+      linkedTripId = tripIdStr;
+    }
+
     const expenseData: Omit<
       Expense,
       '_id' | 'isDeleted' | 'createdAt' | 'updatedAt' | 'deletedAt' | 'tenantId'
@@ -124,6 +117,7 @@ export class CreateExpenseHandler
       ...(validated.description && { description: String(validated.description).trim() }),
       ...(validated.jobTrip && { jobTrip: String(validated.jobTrip).trim() }),
       ...(validated.notes && { notes: String(validated.notes).trim() }),
+      ...(linkedTripId && { tripId: linkedTripId }),   // <-- added
     };
 
     const created = await this.expenseRepo.create(expenseData, command.tenantId, command.userId);

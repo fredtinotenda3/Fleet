@@ -38,6 +38,8 @@ import { RULES_INDEXES } from './indexes.rules-addendum';
 import { TELEMATICS_INDEXES } from './indexes.telematics-addendum';
 import { WORKFLOWS_INDEXES } from './indexes.workflows-addendum';
 import { ANOMALY_INDEXES } from './indexes.anomaly-addendum'
+// Phase 3 tripId join indexes
+import { TRIPID_JOIN_INDEXES } from './indexes.phase3-tripid-addendum';
 
 const BASE_INDEXES = {
   // ── Domain collections ──────────────────────────────────────────
@@ -429,6 +431,11 @@ export const INDEXES = {
     ...BASE_INDEXES.tblfuellogs,
     ...FUEL_DRIVER_INDEXES.tblfuellogs,
     ...FUEL_ANALYTICS_INDEXES.tblfuellogs,
+    ...TRIPID_JOIN_INDEXES.tblfuellogs,          // Phase 3
+  ],
+  tblexpenses: [
+    ...BASE_INDEXES.tblexpenses,
+    ...TRIPID_JOIN_INDEXES.tblexpenses,          // Phase 3
   ],
 } as const;
 

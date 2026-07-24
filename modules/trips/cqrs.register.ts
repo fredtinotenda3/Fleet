@@ -24,6 +24,9 @@ import { GetVehicleUtilizationQuery } from './queries/get-vehicle-utilization.qu
 import { GetDriverUtilizationQuery } from './queries/get-driver-utilization.query';
 import { GetTripDistanceDistributionQuery } from './queries/get-trip-distance-distribution.query';
 import { GetTripsByDayOfWeekQuery } from './queries/get-trips-by-day-of-week.query';
+// PHASE 3
+import { GetTripCostAnalyticsQuery } from './queries/get-trip-cost-analytics.query';
+import { GetTripCostSummaryQuery } from './queries/get-trip-cost-summary.query';
 
 import { GetTripsHandler } from './queries/handlers/get-trips.handler';
 import { GetTripByIdHandler } from './queries/handlers/get-trip-by-id.handler';
@@ -37,6 +40,9 @@ import { GetVehicleUtilizationHandler } from './queries/handlers/get-vehicle-uti
 import { GetDriverUtilizationHandler } from './queries/handlers/get-driver-utilization.handler';
 import { GetTripDistanceDistributionHandler } from './queries/handlers/get-trip-distance-distribution.handler';
 import { GetTripsByDayOfWeekHandler } from './queries/handlers/get-trips-by-day-of-week.handler';
+// PHASE 3
+import { GetTripCostAnalyticsHandler } from './queries/handlers/get-trip-cost-analytics.handler';
+import { GetTripCostSummaryHandler } from './queries/handlers/get-trip-cost-summary.handler';
 
 export function registerTripCqrsHandlers(
   commandBus: CommandBus,
@@ -64,4 +70,7 @@ export function registerTripCqrsHandlers(
     new GetTripDistanceDistributionHandler(tripRepository)
   );
   queryBus.register(GetTripsByDayOfWeekQuery, new GetTripsByDayOfWeekHandler(tripRepository));
+  // PHASE 3 additions (cross-module cost analytics)
+  queryBus.register(GetTripCostAnalyticsQuery, new GetTripCostAnalyticsHandler(tripRepository));
+  queryBus.register(GetTripCostSummaryQuery, new GetTripCostSummaryHandler(tripRepository));
 }

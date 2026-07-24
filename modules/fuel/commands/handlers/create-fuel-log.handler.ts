@@ -36,6 +36,7 @@ export class CreateFuelLogHandler implements ICommandHandler<CreateFuelLogComman
       payment_method: raw.payment_method || 'cash',
       fuel_card_id: raw.fuel_card_id,
       driver_id: raw.driver_id,
+      tripId: raw.tripId,   // <-- added
     };
 
     const payload = Object.fromEntries(
@@ -68,11 +69,6 @@ export class CreateFuelLogHandler implements ICommandHandler<CreateFuelLogComman
     }
 
     if (validated.fuel_station_id) {
-      // FIX: fuel_station_id arrives as a string from validation, but
-      // tblfuelstations._id is a real ObjectId. The raw driver never
-      // auto-casts, so this lookup previously always missed for a
-      // genuinely registered station -- every create with a station
-      // selected from the dropdown incorrectly 400'd as "not found".
       const stationIdStr = String(validated.fuel_station_id);
       if (!ObjectId.isValid(stationIdStr)) {
         throw new AppError('Selected fuel station was not found', 'FUEL_STATION_NOT_FOUND', 400);
@@ -88,7 +84,6 @@ export class CreateFuelLogHandler implements ICommandHandler<CreateFuelLogComman
     }
 
     if (validated.payment_method === 'fuel_card' && validated.fuel_card_id) {
-      // FIX: same ObjectId-vs-string mismatch as fuel_station_id above.
       const cardIdStr = String(validated.fuel_card_id);
       if (!ObjectId.isValid(cardIdStr)) {
         throw new AppError('Selected fuel card was not found', 'FUEL_CARD_NOT_FOUND', 400);
@@ -103,6 +98,29 @@ export class CreateFuelLogHandler implements ICommandHandler<CreateFuelLogComman
       }
       if (card.status !== 'active') {
         throw new AppError('Selected fuel card is not active', 'FUEL_CARD_INACTIVE', 400);
+      }
+    }
+
+    // --- Validate tripId if provided ---
+    if (validated.tripId) {
+      const tripIdStr = String(validated.tripId);
+      if (!ObjectId.isValid(tripIdStr)) {
+        throw new AppError('Selected trip was not found', 'TRIP_NOT_FOUND', 400);
+      }
+      const trip = await db.collection('tbltrips').findOne({
+        _id: new ObjectId(tripIdStr),
+        tenantId: command.tenantId,
+        isDeleted: { $ne: true },
+      });
+      if (!trip) {
+        throw new AppError('Selected trip was not found', 'TRIP_NOT_FOUND', 400);
+      }
+      if (trip.license_plate !== String(validated.license_plate).toUpperCase()) {
+        throw new AppError(
+          `Selected trip belongs to ${trip.license_plate}, not ${validated.license_plate}`,
+          'TRIP_VEHICLE_MISMATCH',
+          400
+        );
       }
     }
 
@@ -131,6 +149,8 @@ export class CreateFuelLogHandler implements ICommandHandler<CreateFuelLogComman
       ...((validated as Record<string, unknown>).driver_id
         ? { driver_id: String((validated as Record<string, unknown>).driver_id) }
         : undefined),
+      // Attach tripId only if validated
+      ...(validated.tripId ? { tripId: String(validated.tripId) } : undefined),
     };
 
     const created = await this.fuelRepo.create(fuelData, command.tenantId, command.userId);
