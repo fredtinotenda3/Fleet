@@ -178,7 +178,9 @@ export function OrgUnitFormDialog({ mode, unit, defaultParentId, onClose }: OrgU
               render={({ field }) => (
                 <Select value={field.value} onValueChange={field.onChange} disabled={mode === 'edit'}>
                   <SelectTrigger id="unit-type" className="input-base">
-                    <SelectValue placeholder="Select type" />
+                    <SelectValue placeholder="Select type">
+                      {(v: OrgUnitNode['type']) => TYPE_LABELS[v] ?? v}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {(Object.keys(TYPE_LABELS) as OrgUnitNode['type'][]).map((t) => (
@@ -221,7 +223,20 @@ export function OrgUnitFormDialog({ mode, unit, defaultParentId, onClose }: OrgU
                   onValueChange={(v) => field.onChange(v === 'none' ? null : v)}
                 >
                   <SelectTrigger id="unit-parent" className="input-base">
-                    <SelectValue placeholder={requiresParent ? 'Select a parent unit' : 'Top-level (no parent)'} />
+                    <SelectValue placeholder={requiresParent ? 'Select a parent unit' : 'Top-level (no parent)'}>
+                      {(v: string) => {
+                        if (v === 'none' || !v) return 'Top-level (no parent)';
+                        // Look up against parentOptions first (the filtered,
+                        // currently-valid list); fall back to the full
+                        // allUnits list so an existing-but-now-invalid
+                        // parent (older data, see the comment on
+                        // parentOptions above) still shows its real name
+                        // instead of the raw _id.
+                        const found =
+                          parentOptions.find((u) => u._id === v) ?? allUnits.find((u) => u._id === v);
+                        return found ? `${found.name} (${TYPE_LABELS[found.type]})` : v;
+                      }}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {!requiresParent && <SelectItem value="none">Top-level (no parent)</SelectItem>}

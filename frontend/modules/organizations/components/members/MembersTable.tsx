@@ -70,7 +70,9 @@ export function MembersTable({ organizationId, members, canManage, branchLookup 
 
         <Select value={roleFilter} onValueChange={(v) => { setRoleFilter(v ?? 'all'); setPage(1); }}>
           <SelectTrigger className="input-base sm:w-44">
-            <SelectValue placeholder="All roles" />
+            <SelectValue placeholder="All roles">
+              {(v: string) => (v === 'all' ? 'All roles' : ROLE_LABELS[v as keyof typeof ROLE_LABELS] ?? v)}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All roles</SelectItem>
@@ -82,7 +84,17 @@ export function MembersTable({ organizationId, members, canManage, branchLookup 
 
         <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v ?? 'all'); setPage(1); }}>
           <SelectTrigger className="input-base sm:w-40">
-            <SelectValue placeholder="All statuses" />
+            <SelectValue placeholder="All statuses">
+              {(v: string) => {
+                const labels: Record<string, string> = {
+                  all: 'All statuses',
+                  active: 'Active',
+                  invited: 'Invited',
+                  suspended: 'Suspended',
+                };
+                return labels[v] ?? v;
+              }}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All statuses</SelectItem>

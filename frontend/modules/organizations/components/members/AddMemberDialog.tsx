@@ -40,10 +40,22 @@ function BranchSelect({ value, onChange }: { value: string | undefined; onChange
   // selection appear not to "stick".
   const selectValue = value && value.length > 0 ? value : 'none';
 
+  // FIX (raw value shown instead of label): Base UI's Select.Value only
+  // resolves a friendly label when given an `items` map on Select, or a
+  // label-mapping function as its own children (see
+  // node_modules/@base-ui/react/select/value/SelectValue.js —
+  // resolveSelectedLabel falls back to the raw value otherwise). Without
+  // this, the trigger showed the raw branch _id (a Mongo ObjectId hex
+  // string) instead of the branch's name.
+  const labelByValue = new Map(units.map((u) => [u._id, `${u.name}${u.code ? ` (${u.code})` : ''}`]));
+  labelByValue.set('none', 'No branch (organization-wide)');
+
   return (
     <Select value={selectValue} onValueChange={(v) => onChange(v === 'none' ? undefined : v)}>
       <SelectTrigger id="member-branch" className="input-base">
-        <SelectValue placeholder="No branch (organization-wide)" />
+        <SelectValue placeholder="No branch (organization-wide)">
+          {(v: string) => labelByValue.get(v) ?? v}
+        </SelectValue>
       </SelectTrigger>
       <SelectContent>
         <SelectItem value="none">No branch (organization-wide)</SelectItem>
@@ -214,7 +226,9 @@ export function AddMemberDialog({ organizationId, trigger }: AddMemberDialogProp
                     render={({ field }) => (
                       <Select value={field.value} onValueChange={field.onChange}>
                         <SelectTrigger id="direct-role" className="input-base">
-                          <SelectValue placeholder="Select role" />
+                          <SelectValue placeholder="Select role">
+                            {(v: OrganizationRole) => ROLE_LABELS[v] ?? v}
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                           {ASSIGNABLE_ROLES.map((role) => (
@@ -297,7 +311,9 @@ export function AddMemberDialog({ organizationId, trigger }: AddMemberDialogProp
                     render={({ field }) => (
                       <Select value={field.value} onValueChange={field.onChange}>
                         <SelectTrigger id="invite-role" className="input-base">
-                          <SelectValue placeholder="Select role" />
+                          <SelectValue placeholder="Select role">
+                            {(v: OrganizationRole) => ROLE_LABELS[v] ?? v}
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                           {ASSIGNABLE_ROLES.map((role) => (

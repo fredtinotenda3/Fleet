@@ -87,7 +87,9 @@ export function InviteMemberDialog({ organizationId, trigger }: InviteMemberDial
               render={({ field }) => (
                 <Select value={field.value} onValueChange={field.onChange}>
                   <SelectTrigger id="invite-role" className="input-base">
-                    <SelectValue placeholder="Select role" />
+                    <SelectValue placeholder="Select role">
+                      {(v: string) => ROLE_LABELS[v as keyof typeof ROLE_LABELS] ?? v}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {ASSIGNABLE_ROLES.map((role) => (
