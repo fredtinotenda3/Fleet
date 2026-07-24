@@ -10,6 +10,10 @@
 // exports use raw ISO dates and numeric values so the file stays
 // machine-parseable (re-importable, chartable in Excel) rather than
 // display-formatted text.
+//
+// PHASE 1: appended status/timing/type columns after the original set
+// rather than interleaving them, so a spreadsheet someone already built
+// against the old column order doesn't have its column indexes shift.
 
 import type { ExportColumn } from '@/shared/export';
 import type { Trip } from '@/shared/types/trip.types';
@@ -29,6 +33,14 @@ export const TRIP_EXPORT_COLUMNS: ExportColumn<Trip>[] = [
   { header: 'End Location', accessor: (t) => t.end_location ?? '' },
   { header: 'Driver', accessor: (t) => t.driver_id ?? '' },
   { header: 'Notes', accessor: (t) => t.notes ?? '' },
+  // --- PHASE 1 additions ---
+  { header: 'Status', accessor: (t) => t.status ?? '' },
+  { header: 'Trip Type', accessor: (t) => t.trip_type ?? '' },
+  { header: 'Start Time', accessor: (t) => (t.start_time ? new Date(t.start_time).toISOString() : '') },
+  { header: 'End Time', accessor: (t) => (t.end_time ? new Date(t.end_time).toISOString() : '') },
+  { header: 'Duration (min)', accessor: (t) => t.duration_minutes ?? '' },
+  { header: 'Avg Speed (km/h)', accessor: (t) => (t.average_speed != null ? Number(t.average_speed.toFixed(1)) : '') },
+  { header: 'Route', accessor: (t) => t.routeId ?? '' },
 ];
 
 export const TRIP_EXPORT_SHEET_NAME = 'Trips';

@@ -1,3 +1,5 @@
 // frontend/modules/trips/services/index.ts
 
-export * from './trips.api';
+export { tripsApi } from './trips.api';
+export type { TripListParams } from './trips.api';
+;

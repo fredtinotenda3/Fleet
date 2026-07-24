@@ -2,3 +2,5 @@
 
 export * from './useTrips';
 export * from './useTripMutations';
+export * from './useTripAnalytics';
+export * from './useTripDrawer';

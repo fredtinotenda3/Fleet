@@ -11,9 +11,7 @@ export class GetTripByIdHandler implements IQueryHandler<GetTripByIdQuery, Trip>
 
   async execute(query: GetTripByIdQuery): Promise<Trip> {
     const trip = await this.tripRepo.findById(query.tripId, query.tenantId);
-    if (!trip) {
-      throw new NotFoundError('Trip not found');
-    }
+    if (!trip) throw new NotFoundError('Trip not found');
     return trip;
   }
 }

@@ -5,6 +5,13 @@ import { apiClient } from '@/shared/utils/api-client.utils';
 import { tripsApi, type TripListParams } from '../services/trips.api';
 import type { Trip, DistanceUnitOption } from '../types';
 
+type DateRange = { startDate?: Date; endDate?: Date };
+
+function rangeKey(dateRange?: DateRange): string | undefined {
+  if (!dateRange) return undefined;
+  return `${dateRange.startDate?.toISOString() ?? ''}-${dateRange.endDate?.toISOString() ?? ''}`;
+}
+
 export const tripKeys = {
   all: ['trips'] as const,
   lists: () => [...tripKeys.all, 'list'] as const,
@@ -12,6 +19,9 @@ export const tripKeys = {
   details: () => [...tripKeys.all, 'detail'] as const,
   detail: (id: string) => [...tripKeys.details(), id] as const,
   stats: (range?: string) => [...tripKeys.all, 'stats', range] as const,
+  kpis: (range?: string) => [...tripKeys.all, 'kpis', range] as const,
+  exceptions: (range?: string, zThreshold?: number) =>
+    [...tripKeys.all, 'exceptions', range, zThreshold] as const,
 };
 
 export function useTripsList(params: Partial<TripListParams>) {
@@ -33,14 +43,29 @@ export function useTrip(id: string | undefined, options?: Partial<UseQueryOption
   });
 }
 
-export function useTripStats(dateRange?: { startDate?: Date; endDate?: Date }) {
-  const rangeKey = dateRange
-    ? `${dateRange.startDate?.toISOString() ?? ''}-${dateRange.endDate?.toISOString() ?? ''}`
-    : undefined;
-
+export function useTripStats(dateRange?: DateRange) {
   return useQuery({
-    queryKey: tripKeys.stats(rangeKey),
+    queryKey: tripKeys.stats(rangeKey(dateRange)),
     queryFn: () => tripsApi.getStats(dateRange),
+    staleTime: 60_000,
+  });
+}
+
+/** PHASE 1: executive KPI cards for the Trip Analytics page. */
+export function useTripKpis(dateRange?: DateRange) {
+  return useQuery({
+    queryKey: tripKeys.kpis(rangeKey(dateRange)),
+    queryFn: () => tripsApi.getKpis(dateRange),
+    staleTime: 60_000,
+  });
+}
+
+/** PHASE 1: exception analytics (duration outliers, odometer
+ *  inconsistencies, possible duplicates, missing driver). */
+export function useTripExceptions(dateRange?: DateRange, zThreshold: number = 2.5, limit: number = 50) {
+  return useQuery({
+    queryKey: tripKeys.exceptions(rangeKey(dateRange), zThreshold),
+    queryFn: () => tripsApi.getExceptions(dateRange, zThreshold, limit),
     staleTime: 60_000,
   });
 }

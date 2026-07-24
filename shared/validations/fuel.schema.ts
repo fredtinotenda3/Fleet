@@ -31,6 +31,7 @@ const fuelLogBaseSchema = z.object({
     .enum(['cash', 'fuel_card', 'credit_card', 'company_account', 'other'])
     .default('cash'),
   fuel_card_id: z.string().optional().nullable(),
+  tripId: z.string().optional().nullable(),
 });
 
 export const fuelLogCreateSchema = fuelLogBaseSchema.refine(

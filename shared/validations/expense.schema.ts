@@ -18,6 +18,7 @@ export const expenseSchema = z.object({
   description: z.string().max(500, 'Description too long').optional(),
   jobTrip: z.string().max(100, 'Job/Trip reference too long').optional(),
   notes: z.string().max(1000, 'Notes too long').optional(),
+  tripId: z.string().optional().nullable(),
 });
 
 export const expenseCreateSchema = expenseSchema;

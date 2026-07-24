@@ -32,6 +32,8 @@ export interface FuelLog extends BaseEntity {
   /** Inherited from the referenced vehicle's orgUnitId at write time -- see
    *  CreateFuelLogHandler/UpdateFuelLogHandler. Not user-submitted. */
   orgUnitId?: string;
+  /** Optional FK -> Trip. Populated by a future "link to trip" selector on the fuel form. */
+  tripId?: string;
   unit?: {
     name: string;
     symbol: string;
@@ -69,6 +71,8 @@ export interface FuelLogCreateDTO {
   receipt_url?: string;
   payment_method?: FuelPaymentMethod;
   fuel_card_id?: string;
+  /** Optional FK -> Trip. Populated by a future "link to trip" selector on the fuel form. */
+  tripId?: string;
 }
 
 export interface FuelLogUpdateDTO extends Partial<FuelLogCreateDTO> {

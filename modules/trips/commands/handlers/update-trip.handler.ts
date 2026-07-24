@@ -23,7 +23,30 @@ const ALLOWED_FIELDS = [
   'trip_distance',
   'start_odometer',
   'end_odometer',
+  // --- PHASE 1 additions ---
+  'status',
+  'start_time',
+  'end_time',
+  'trip_type',
+  'routeId',
 ] as const;
+
+const NUMERIC_FIELDS = ['trip_distance', 'start_odometer', 'end_odometer'];
+
+/** Same derivation used in CreateTripHandler -- see that file for rationale. */
+function calculateTiming(
+  startTime: Date | undefined,
+  endTime: Date | undefined,
+  distanceCalculated: number
+): { duration_minutes?: number; average_speed?: number } {
+  if (!startTime || !endTime) return {};
+  const durationMs = endTime.getTime() - startTime.getTime();
+  if (durationMs <= 0) return {};
+  const duration_minutes = durationMs / 60000;
+  const hours = duration_minutes / 60;
+  const average_speed = hours > 0 ? distanceCalculated / hours : undefined;
+  return { duration_minutes, average_speed };
+}
 
 export class UpdateTripHandler implements ICommandHandler<UpdateTripCommand, Trip> {
   constructor(private readonly tripRepo: TripRepository) {}
@@ -34,8 +57,7 @@ export class UpdateTripHandler implements ICommandHandler<UpdateTripCommand, Tri
 
     for (const field of ALLOWED_FIELDS) {
       if (raw[field] !== undefined) {
-        const numericFields = ['trip_distance', 'start_odometer', 'end_odometer'];
-        clean[field] = numericFields.includes(field) && raw[field] !== ''
+        clean[field] = NUMERIC_FIELDS.includes(field) && raw[field] !== ''
           ? Number(raw[field])
           : raw[field];
       }
@@ -83,6 +105,25 @@ export class UpdateTripHandler implements ICommandHandler<UpdateTripCommand, Tri
       }
     }
 
+    /**
+     * PHASE 1 (validation gap closed -- see CreateTripHandler for the
+     * matching create-side fix). An empty string clears the driver
+     * assignment and is intentionally not checked against tbldrivers.
+     */
+    if (updateData.driver_id) {
+      const driver = await db.collection('tbldrivers').findOne({
+        _id: updateData.driver_id as any,
+        isDeleted: { $ne: true },
+      });
+      if (!driver) {
+        throw new AppError(
+          `Driver "${updateData.driver_id}" not found`,
+          'DRIVER_NOT_FOUND',
+          400
+        );
+      }
+    }
+
     const mode = updateData.mode as string | undefined;
     if (mode === 'distance' && updateData.trip_distance != null) {
       updateData.distance_calculated = Number(updateData.trip_distance);
@@ -111,6 +152,30 @@ export class UpdateTripHandler implements ICommandHandler<UpdateTripCommand, Tri
           throw new ValidationError('End odometer cannot be less than start odometer');
         }
         updateData.distance_calculated = end - start;
+      }
+    }
+
+    /**
+     * PHASE 1: recompute duration/average_speed whenever start_time,
+     * end_time, or the distance changed. If only one of start/end time
+     * is supplied on this update we can't recompute against the other
+     * (unknown) side, so we leave the existing stored value alone --
+     * TripCommandService always sends full objects only where the
+     * caller explicitly changed something, and a partial time edit
+     * without the paired value is treated as "not enough information
+     * to recompute" rather than silently zeroing out duration.
+     */
+    if (updateData.start_time !== undefined || updateData.end_time !== undefined) {
+      const startTime = updateData.start_time ? new Date(updateData.start_time as string) : undefined;
+      const endTime = updateData.end_time ? new Date(updateData.end_time as string) : undefined;
+      if (startTime && endTime) {
+        const distanceForTiming =
+          (updateData.distance_calculated as number | undefined) ?? undefined;
+        if (distanceForTiming != null) {
+          const timing = calculateTiming(startTime, endTime, distanceForTiming);
+          if (timing.duration_minutes != null) updateData.duration_minutes = timing.duration_minutes;
+          if (timing.average_speed != null) updateData.average_speed = timing.average_speed;
+        }
       }
     }
 

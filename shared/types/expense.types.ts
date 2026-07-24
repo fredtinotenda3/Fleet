@@ -15,6 +15,8 @@ export interface Expense extends BaseEntity {
   date: Date;
   description?: string;
   jobTrip?: string;
+  /** Optional FK -> Trip, replacing free-text jobTrip once trip linking ships in the UI. */
+  tripId?: string;
   notes?: string;
   expense_type_id?: string;
   expense_type?: ExpenseType;
@@ -30,6 +32,8 @@ export interface ExpenseCreateDTO {
   expense_type_id?: string | null;
   description?: string;
   jobTrip?: string;
+  /** Optional FK -> Trip, replacing free-text jobTrip once trip linking ships in the UI. */
+  tripId?: string;
   notes?: string;
 }
 

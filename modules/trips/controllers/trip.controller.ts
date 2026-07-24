@@ -30,6 +30,28 @@ import {
 
 bootstrapCqrs();
 
+/**
+ * PHASE 1: shared filter parsing, extended with status/trip_type/routeId.
+ * Previously duplicated between getTrips and exportTrips; pulled into
+ * one helper so the two new fields only need to be added in one place.
+ */
+function parseTripFilters(searchParams: URLSearchParams): TripFilters {
+  return {
+    license_plate: searchParams.get('license_plate') || undefined,
+    mode: (searchParams.get('mode') as any) || undefined,
+    driver_id: searchParams.get('driver_id') || undefined,
+    status: (searchParams.get('status') as any) || undefined,
+    trip_type: (searchParams.get('trip_type') as any) || undefined,
+    routeId: searchParams.get('routeId') || undefined,
+    startDate: searchParams.get('start')
+      ? new Date(searchParams.get('start')!)
+      : undefined,
+    endDate: searchParams.get('end')
+      ? new Date(searchParams.get('end')!)
+      : undefined,
+  };
+}
+
 export class TripController {
   async getTrips(req: NextRequest) {
     try {
@@ -47,18 +69,7 @@ export class TripController {
       );
 
       const searchParams = req.nextUrl.searchParams;
-
-      const filters: TripFilters = {
-        license_plate: searchParams.get('license_plate') || undefined,
-        mode: (searchParams.get('mode') as any) || undefined,
-        driver_id: searchParams.get('driver_id') || undefined,
-        startDate: searchParams.get('start')
-          ? new Date(searchParams.get('start')!)
-          : undefined,
-        endDate: searchParams.get('end')
-          ? new Date(searchParams.get('end')!)
-          : undefined,
-      };
+      const filters = parseTripFilters(searchParams);
 
       // Support non-paginated path for legacy dashboard/chart usage
       const pageParam = searchParams.get('page');
@@ -111,19 +122,7 @@ export class TripController {
       );
 
       const searchParams = req.nextUrl.searchParams;
-
-      const filters: TripFilters = {
-        license_plate: searchParams.get('license_plate') || undefined,
-        mode: (searchParams.get('mode') as any) || undefined,
-        driver_id: searchParams.get('driver_id') || undefined,
-        startDate: searchParams.get('start')
-          ? new Date(searchParams.get('start')!)
-          : undefined,
-        endDate: searchParams.get('end')
-          ? new Date(searchParams.get('end')!)
-          : undefined,
-      };
-
+      const filters = parseTripFilters(searchParams);
       const format = exportService.parseFormat(searchParams.get('format'));
 
       const { rows, totalMatched, truncated, exportCap } = await tripRepository.getFilteredTripsForExport(
@@ -274,6 +273,132 @@ export class TripController {
       const days = Number(req.nextUrl.searchParams.get('days') || '30');
 
       const data = await tripQueryService.getDailyDistance(tenantId, days);
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** PHASE 1: executive KPI cards endpoint, backing GET /api/trips/kpis */
+  async getTripKpis(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const searchParams = req.nextUrl.searchParams;
+
+      const dateRange =
+        searchParams.get('startDate') && searchParams.get('endDate')
+          ? {
+              startDate: new Date(searchParams.get('startDate')!),
+              endDate: new Date(searchParams.get('endDate')!),
+            }
+          : undefined;
+
+      const kpis = await tripQueryService.getTripKpis(tenantId, dateRange);
+      return successResponse(kpis);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** PHASE 1: exception analytics endpoint, backing GET /api/trips/exceptions */
+  async getTripExceptions(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const searchParams = req.nextUrl.searchParams;
+
+      const dateRange =
+        searchParams.get('startDate') && searchParams.get('endDate')
+          ? {
+              startDate: new Date(searchParams.get('startDate')!),
+              endDate: new Date(searchParams.get('endDate')!),
+            }
+          : undefined;
+      const zThreshold = Number(searchParams.get('zThreshold') || '2.5');
+      const limit = Number(searchParams.get('limit') || '50');
+
+      const exceptions = await tripQueryService.getTripExceptions(tenantId, dateRange, zThreshold, limit);
+      return successResponse(exceptions);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** Shared dateRange parsing for the Phase 2 analytics endpoints below. */
+  private parseDateRange(req: NextRequest): { startDate?: Date; endDate?: Date } | undefined {
+    const searchParams = req.nextUrl.searchParams;
+    return searchParams.get('startDate') && searchParams.get('endDate')
+      ? {
+          startDate: new Date(searchParams.get('startDate')!),
+          endDate: new Date(searchParams.get('endDate')!),
+        }
+      : undefined;
+  }
+
+  /** PHASE 2: monthly trip trend, backing GET /api/trips/monthly-trend */
+  async getMonthlyTripTrend(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const months = Number(req.nextUrl.searchParams.get('months') || '12');
+
+      const data = await tripQueryService.getMonthlyTripTrend(tenantId, months);
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** PHASE 2: vehicle utilization, backing GET /api/trips/vehicle-utilization */
+  async getVehicleUtilization(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const searchParams = req.nextUrl.searchParams;
+      const dateRange = this.parseDateRange(req);
+      const limit = Number(searchParams.get('limit') || '20');
+      const sortBy = (searchParams.get('sortBy') as 'trips' | 'distance') || 'trips';
+
+      const data = await tripQueryService.getVehicleUtilization(tenantId, dateRange, limit, sortBy);
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** PHASE 2: driver utilization, backing GET /api/trips/driver-utilization */
+  async getDriverUtilization(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const searchParams = req.nextUrl.searchParams;
+      const dateRange = this.parseDateRange(req);
+      const limit = Number(searchParams.get('limit') || '20');
+      const sortBy = (searchParams.get('sortBy') as 'trips' | 'distance') || 'trips';
+
+      const data = await tripQueryService.getDriverUtilization(tenantId, dateRange, limit, sortBy);
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** PHASE 2: distance distribution histogram, backing GET /api/trips/distance-distribution */
+  async getTripDistanceDistribution(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const dateRange = this.parseDateRange(req);
+
+      const data = await tripQueryService.getTripDistanceDistribution(tenantId, dateRange);
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** PHASE 2: day-of-week x hour heatmap, backing GET /api/trips/day-of-week */
+  async getTripsByDayOfWeek(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const dateRange = this.parseDateRange(req);
+
+      const data = await tripQueryService.getTripsByDayOfWeek(tenantId, dateRange);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);

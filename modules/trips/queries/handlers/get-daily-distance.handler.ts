@@ -9,9 +9,7 @@ export class GetDailyDistanceHandler
 {
   constructor(private readonly tripRepo: TripRepository) {}
 
-  async execute(
-    query: GetDailyDistanceQuery
-  ): Promise<Array<{ date: string; distance: number }>> {
+  async execute(query: GetDailyDistanceQuery): Promise<Array<{ date: string; distance: number }>> {
     return this.tripRepo.getDailyDistance(query.tenantId, query.days);
   }
 }
