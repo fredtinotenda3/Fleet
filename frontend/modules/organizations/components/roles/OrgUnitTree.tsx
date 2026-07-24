@@ -66,7 +66,7 @@ function TreeNode({
         )}
 
         <div className="flex gap-1 ml-auto transition-opacity opacity-0 shrink-0 group-hover:opacity-100">
-          <Button variant="ghost" size="sm" onClick={() => onCreateChild(node.id)} aria-label={`Add child to ${node.name}`}>
+          <Button variant="ghost" size="sm" onClick={() => onCreateChild(node._id)} aria-label={`Add child to ${node.name}`}>
             <Plus className="h-3.5 w-3.5" aria-hidden="true" />
           </Button>
           <Button variant="ghost" size="sm" onClick={() => onEdit(node)} aria-label={`Edit ${node.name}`}>
@@ -82,7 +82,7 @@ function TreeNode({
         <div>
           {node.children!.map((child) => (
             <TreeNode
-              key={child.id}
+              key={child._id}
               node={child}
               depth={depth + 1}
               onCreateChild={onCreateChild}
@@ -136,7 +136,7 @@ export function OrgUnitTree() {
         ) : (
           tree.map((node) => (
             <TreeNode
-              key={node.id}
+              key={node._id}
               node={node}
               depth={0}
               onCreateChild={(parentId) => setDialogState({ mode: 'create', unit: null, parentId })}
@@ -172,7 +172,7 @@ export function OrgUnitTree() {
                 size="sm"
                 disabled={(confirmDelete.children?.length ?? 0) > 0}
                 onClick={() => {
-                  deleteUnit.mutate(confirmDelete.id);
+                  deleteUnit.mutate(confirmDelete._id);
                   setConfirmDelete(null);
                 }}
               >

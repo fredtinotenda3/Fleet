@@ -48,7 +48,7 @@ function BranchSelect({ value, onChange }: { value: string | undefined; onChange
       <SelectContent>
         <SelectItem value="none">No branch (organization-wide)</SelectItem>
         {units.map((u) => (
-          <SelectItem key={u.id} value={u.id}>
+          <SelectItem key={u._id} value={u._id}>
             {u.name}
             {u.code ? ` (${u.code})` : ''}
           </SelectItem>

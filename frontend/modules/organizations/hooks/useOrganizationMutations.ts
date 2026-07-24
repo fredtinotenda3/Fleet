@@ -290,7 +290,7 @@ export function useMoveOrgUnit(id: string) {
     mutationFn: (payload: MoveOrgUnitPayload) => organizationApi.moveOrgUnit(id, payload),
     onSuccess: (updated: OrgUnitNode) => {
       queryClient.invalidateQueries({ queryKey: orgUnitKeys.lists() });
-      queryClient.setQueryData(orgUnitKeys.detail(updated.id), updated);
+      queryClient.setQueryData(orgUnitKeys.detail(updated._id), updated);
       toast.success('Org unit moved');
     },
     onError: (error) => {

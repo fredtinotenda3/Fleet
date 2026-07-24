@@ -19,7 +19,7 @@ export function OrganizationMembersPage() {
   const { data: orgUnits = [] } = useOrgUnits();
 
   const branchLookup = useMemo(
-    () => Object.fromEntries(orgUnits.map((u) => [u.id, u.name])),
+    () => Object.fromEntries(orgUnits.map((u) => [u._id, u.name])),
     [orgUnits]
   );
 

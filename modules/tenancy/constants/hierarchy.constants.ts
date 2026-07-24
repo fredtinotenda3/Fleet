@@ -11,9 +11,9 @@ import { OrgUnitType } from '@/modules/security/types/org-unit.types';
 export const TENANT_LEVEL_ORDER: Record<OrgUnitType, number> = {
   branch: 1,
   department: 2,
+  fleet: 2,
+  workshop: 2,
   team: 3,
-  fleet: 3,
-  workshop: 4,
 };
 
 /**
@@ -26,8 +26,8 @@ export const ALLOWED_PARENT_TYPES: Record<OrgUnitType, OrgUnitType[] | null> = {
   branch: null,
   department: ['branch'],
   team: ['department'],
-  fleet: ['branch', 'department'],
-  workshop: ['fleet'],
+  fleet: ['branch'],
+  workshop: ['branch'],
 };
 
 export const TENANT_HIERARCHY_LABELS: Record<

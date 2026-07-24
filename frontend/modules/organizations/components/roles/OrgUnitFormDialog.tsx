@@ -42,7 +42,7 @@ const TYPE_LABELS: Record<OrgUnitNode['type'], string> = {
 export function OrgUnitFormDialog({ mode, unit, defaultParentId, onClose }: OrgUnitFormDialogProps) {
   const { data: allUnits = [] } = useOrgUnits();
   const createUnit = useCreateOrgUnit();
-  const updateUnit = useUpdateOrgUnit(unit?.id ?? '');
+  const updateUnit = useUpdateOrgUnit(unit?._id ?? '');
 
   const {
     register,
@@ -93,9 +93,9 @@ export function OrgUnitFormDialog({ mode, unit, defaultParentId, onClose }: OrgU
   // and saving would wipe out a real, existing parent.
   const parentOptions = useMemo(() => {
     if (!requiresParent) return [];
-    const valid = allUnits.filter((u) => u.id !== unit?.id && allowedParentTypes!.includes(u.type));
-    if (mode === 'edit' && unit?.parentId && !valid.some((u) => u.id === unit.parentId)) {
-      const currentParent = allUnits.find((u) => u.id === unit.parentId);
+    const valid = allUnits.filter((u) => u._id !== unit?._id && allowedParentTypes!.includes(u.type));
+    if (mode === 'edit' && unit?.parentId && !valid.some((u) => u._id === unit.parentId)) {
+      const currentParent = allUnits.find((u) => u._id === unit.parentId);
       if (currentParent) return [currentParent, ...valid];
     }
     return valid;
@@ -110,7 +110,7 @@ export function OrgUnitFormDialog({ mode, unit, defaultParentId, onClose }: OrgU
       setValue('parentId', null);
       return;
     }
-    const stillValid = parentOptions.some((u) => u.id === selectedParentId);
+    const stillValid = parentOptions.some((u) => u._id === selectedParentId);
     if (!stillValid) {
       setValue('parentId', null);
     }
@@ -226,7 +226,7 @@ export function OrgUnitFormDialog({ mode, unit, defaultParentId, onClose }: OrgU
                   <SelectContent>
                     {!requiresParent && <SelectItem value="none">Top-level (no parent)</SelectItem>}
                     {parentOptions.map((u) => (
-                      <SelectItem key={u.id} value={u.id}>
+                      <SelectItem key={u._id} value={u._id}>
                         {u.name} ({TYPE_LABELS[u.type]})
                       </SelectItem>
                     ))}

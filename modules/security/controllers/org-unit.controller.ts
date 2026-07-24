@@ -2,6 +2,18 @@
 
 import { NextRequest } from 'next/server';
 import { orgUnitService } from '../services/org-unit.service';
+// FIX (hierarchy-validation bypass): this controller's createOrgUnit used
+// to call orgUnitService.createOrgUnit() directly, which knows nothing
+// about the branch/department/team/fleet/workshop nesting rules -- those
+// live in HierarchyValidationService and are only enforced by
+// OrgUnitHierarchyService.createOrgUnit(). That made POST
+// /api/security/org-units a second, unvalidated org-unit creation path
+// that disagreed with POST /api/tenancy/org-units (the one the app's own
+// UI uses). Routing through orgUnitHierarchyService here instead makes
+// hierarchy validation apply the same way no matter which route a caller
+// uses, with ALLOWED_PARENT_TYPES in modules/tenancy/constants/hierarchy.constants.ts
+// as the single source of truth.
+import { orgUnitHierarchyService } from '@/modules/tenancy/services/org-unit-hierarchy.service';
 import { orgUnitCreateSchema, orgUnitUpdateSchema } from '@/shared/validations/security.schema';
 import { successResponse, createdResponse, errorResponse } from '@/server/utils/response.utils';
 import { AppError, ValidationError } from '@/server/errors/app.errors';
@@ -48,7 +60,10 @@ export class OrgUnitController {
         throw new ValidationError('Invalid org unit definition', parsed.error.flatten());
       }
 
-      const unit = await orgUnitService.createOrgUnit({ ...parsed.data, organizationId: tenantId }, userId);
+      const unit = await orgUnitHierarchyService.createOrgUnit(
+        { ...parsed.data, organizationId: tenantId },
+        userId
+      );
       return createdResponse(unit);
     } catch (error) {
       return this.handleError(error);

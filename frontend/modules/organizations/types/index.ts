@@ -144,7 +144,15 @@ export interface RevokeInvitePayload {
 }
 
 export interface OrgUnitNode {
-  id: string;
+  // Matches the backend's BaseEntity contract (shared/types/common.types.ts)
+  // and the raw Mongo document shape returned by every org-unit API route
+  // (OrgUnitService/OrgUnitRepository never rename `_id` to `id`). This
+  // type previously declared `id`, which does not exist anywhere in the
+  // API response — every comparison against it silently evaluated
+  // `undefined !== undefined`, which is how parent-dropdown filtering
+  // broke. Use `_id` everywhere, matching the rest of the codebase's
+  // entities (e.g. Organization).
+  _id: string;
   organizationId: string;
   type: 'branch' | 'department' | 'fleet' | 'workshop' | 'team';
   name: string;

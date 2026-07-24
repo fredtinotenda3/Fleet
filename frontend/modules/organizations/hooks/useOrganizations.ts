@@ -93,7 +93,7 @@ export function useOrgUnit(
  */
 export function buildOrgUnitTree(units: OrgUnitNode[]): OrgUnitNode[] {
   const byId = new Map<string, OrgUnitNode>();
-  units.forEach((u) => byId.set(u.id, { ...u, children: [] }));
+  units.forEach((u) => byId.set(u._id, { ...u, children: [] }));
 
   const roots: OrgUnitNode[] = [];
   byId.forEach((unit) => {
