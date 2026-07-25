@@ -1,4 +1,6 @@
-// frontend/modules/expenses/components/ExpenseForm.tsx
+// ========================================
+// FILE: frontend/modules/expenses/components/ExpenseForm.tsx
+// ========================================
 
 'use client';
 
@@ -53,6 +55,29 @@ const FALLBACK_DEFAULTS: ExpenseFormValues = {
   tripId: '', // Phase 3
 };
 
+/**
+ * FIX (blank/"unassigned" fields on edit): same root cause as FuelForm
+ * -- real documents can carry explicit `null` on optional fields
+ * (e.g. `expense_type_id` when a record predates categories, or
+ * `jobTrip`/`notes`/`tripId` simply never set). A plain
+ * `{ ...FALLBACK_DEFAULTS, ...defaultValues }` spread lets a `null`
+ * from the record clobber FALLBACK_DEFAULTS' safe `''`/`0`, which then
+ * renders as a blank/unmatched Select instead of a proper "All"/empty
+ * state. Strip null/undefined before merging so the fallback always
+ * wins unless the record has a real value.
+ */
+function cleanDefaults(values?: Partial<ExpenseFormValues>): Partial<ExpenseFormValues> {
+  if (!values) return {};
+  const out: Partial<ExpenseFormValues> = {};
+  (Object.keys(values) as Array<keyof ExpenseFormValues>).forEach((key) => {
+    const v = values[key];
+    if (v !== null && v !== undefined) {
+      (out as any)[key] = v;
+    }
+  });
+  return out;
+}
+
 export function ExpenseForm({ defaultValues, onSubmit, onCancel, submitLabel = 'Record expense' }: ExpenseFormProps) {
   const { data: vehicles } = useVehiclesList({ limit: 1000 });
   const { data: expenseTypes, isLoading: typesLoading } = useExpenseTypes();
@@ -72,7 +97,7 @@ export function ExpenseForm({ defaultValues, onSubmit, onCancel, submitLabel = '
     formState: { errors, isSubmitting },
   } = useForm<ExpenseFormValues>({
     resolver: zodResolver(expenseFormSchema),
-    defaultValues: { ...FALLBACK_DEFAULTS, ...defaultValues },
+    defaultValues: { ...FALLBACK_DEFAULTS, ...cleanDefaults(defaultValues) },
   });
 
   const licensePlate = watch('license_plate'); // needed by TripSelect
@@ -83,20 +108,12 @@ export function ExpenseForm({ defaultValues, onSubmit, onCancel, submitLabel = '
 
   /**
    * FIX (category shows raw ObjectId / "__none__" instead of a name):
-   *
    * This app's <Select> is built on @base-ui/react/select, not Radix.
    * Base UI's <Select.Value> does NOT automatically resolve the current
    * `value` against the mounted <Select.Item>s to find a display label
    * -- unlike Radix, it just renders the raw `value` string verbatim
    * unless you pass it a children render-function that maps
-   * value -> label yourself. Every other Select in this form (Vehicle,
-   * the quick-add Group picker) "accidentally" looked correct only
-   * because their `value` already equals the text you want shown
-   * (e.g. license_plate "WILLS" is both the value and the label). The
-   * Category Select uses an id as `value` with a separate `name` as the
-   * label, which is exactly the case Base UI needs a mapper for -- and
-   * it never had one, so it fell back to showing the id (or the
-   * "__none__" sentinel when nothing was selected).
+   * value -> label yourself.
    */
   function getCategoryLabel(value: string | null | undefined): string {
     if (!value || value === NO_TYPE) {

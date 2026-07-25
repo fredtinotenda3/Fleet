@@ -1,10 +1,12 @@
-// frontend/modules/trips/pages/TripsListPage.tsx
+// ========================================
+// FILE: frontend/modules/trips/pages/TripsListPage.tsx
+// ========================================
 
 'use client';
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, Download, FileSpreadsheet, Trash2, Printer } from 'lucide-react';
+import { Plus, Download, FileSpreadsheet, Trash2, Printer, BarChart3 } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { Button } from '@/frontend/shared/ui/primitives/button';
@@ -136,6 +138,9 @@ export function TripsListPage() {
         description="Track vehicle trips, distances, and driver activity across your fleet."
         actions={
           <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => router.push(TRIP_ROUTES.analytics)}>
+              <BarChart3 className="h-3.5 w-3.5" /> Full analytics
+            </Button>
             {canDelete && selectedIds.size > 0 && (
               <Button variant="destructive" size="sm" onClick={handleBulkDelete}>
                 <Trash2 className="h-3.5 w-3.5" />

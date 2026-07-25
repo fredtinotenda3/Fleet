@@ -5,7 +5,19 @@ import { PaginationParams, PaginatedResponse } from '../types/common.types';
 export const DEFAULT_PAGINATION = {
   page: 1,
   limit: 10,
-  maxLimit: 100,
+  /**
+   * FIX (root cause of "only 10 vehicles/drivers/etc. show up" bugs
+   * across Fuel/Expense/Trip forms): every picker in the app requests
+   * `limit: 1000` to fetch a full unpaginated list for a <Select>. The
+   * old `maxLimit` was 100, and validatePaginationParams() below only
+   * accepted a caller-supplied limit if it was <= maxLimit -- a request
+   * for 1000 simply failed that check and silently fell through to the
+   * *default* limit of 10, with no error surfaced anywhere. Raised the
+   * cap so "fetch everything for a picker" requests actually work, and
+   * (see below) changed the out-of-range behavior from silent-reject-to-
+   * default to clamp-to-max, so this class of bug can't recur silently.
+   */
+  maxLimit: 2000,
 } as const;
 
 export function validatePaginationParams(
@@ -25,8 +37,17 @@ export function validatePaginationParams(
 
   if (typeof limit === 'string' || typeof limit === 'number') {
     const parsed = Number(limit);
-    if (!isNaN(parsed) && parsed >= 1 && parsed <= DEFAULT_PAGINATION.maxLimit) {
-      validLimit = Math.floor(parsed);
+    /**
+     * FIX: previously `parsed <= DEFAULT_PAGINATION.maxLimit` had to be
+     * true for the caller's limit to be used at all -- anything over
+     * the cap was entirely ignored and validLimit silently stayed at
+     * the *default* (10), not the cap. Now any positive limit is
+     * accepted and clamped to maxLimit, so a caller asking for more
+     * than the max gets the max (e.g. 1000 requested -> 2000 cap ->
+     * still returns all 76 vehicles), never the tiny default.
+     */
+    if (!isNaN(parsed) && parsed >= 1) {
+      validLimit = Math.min(Math.floor(parsed), DEFAULT_PAGINATION.maxLimit);
     }
   }
 

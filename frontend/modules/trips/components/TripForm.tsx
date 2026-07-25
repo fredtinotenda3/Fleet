@@ -43,6 +43,27 @@ const FALLBACK_DEFAULTS: TripFormValues = {
   driver_id: '',
 };
 
+/**
+ * FIX (license plate blank on edit, same root cause as Fuel/Expense
+ * forms): a plain `{ ...FALLBACK_DEFAULTS, ...defaultValues }` spread
+ * does not skip explicit `null`/`undefined` values -- if a trip record
+ * ever has `license_plate: null` (or any other field null), it would
+ * silently clobber FALLBACK_DEFAULTS' safe `''` and the field renders
+ * blank. TripForm was the one form of the three that didn't already
+ * guard against this.
+ */
+function cleanDefaults(values?: Partial<TripFormValues>): Partial<TripFormValues> {
+  if (!values) return {};
+  const out: Partial<TripFormValues> = {};
+  (Object.keys(values) as Array<keyof TripFormValues>).forEach((key) => {
+    const v = values[key];
+    if (v !== null && v !== undefined) {
+      (out as any)[key] = v;
+    }
+  });
+  return out;
+}
+
 export function TripForm({
   defaultValues,
   unitOptions,
@@ -50,6 +71,8 @@ export function TripForm({
   onCancel,
   submitLabel = 'Log trip',
 }: TripFormProps) {
+  const cleanedDefaults = cleanDefaults(defaultValues);
+
   const {
     register,
     control,
@@ -59,11 +82,11 @@ export function TripForm({
     reset,
   } = useForm<TripFormValues>({
     resolver: zodResolver(tripFormSchema),
-    defaultValues: { ...FALLBACK_DEFAULTS, ...defaultValues },
+    defaultValues: { ...FALLBACK_DEFAULTS, ...cleanedDefaults },
   });
 
   useEffect(() => {
-    reset({ ...FALLBACK_DEFAULTS, ...defaultValues });
+    reset({ ...FALLBACK_DEFAULTS, ...cleanDefaults(defaultValues) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultValues]);
 
@@ -87,6 +110,20 @@ export function TripForm({
           <Input
             id="license_plate"
             className={errors.license_plate ? 'input-error' : undefined}
+            /**
+             * FIX: `unit_id` below is a controlled Controller/Select, so
+             * reset() always keeps it in sync. `license_plate` is a
+             * plain register()-only uncontrolled input with no
+             * `defaultValue` attribute of its own -- it depended
+             * entirely on RHF's initial mount + reset() to push a value
+             * into the DOM node via ref. Adding an explicit
+             * `defaultValue` here (same pattern already used for the
+             * Fuel form's `date` field) guarantees the field shows the
+             * record's plate on first paint even if register()'s
+             * ref-based update is delayed or the surrounding modal
+             * remounts with a fresh key before reset() runs.
+             */
+            defaultValue={cleanedDefaults.license_plate ?? ''}
             {...register('license_plate')}
           />
           {errors.license_plate && <p className="form-error" role="alert">{errors.license_plate.message}</p>}
@@ -94,7 +131,13 @@ export function TripForm({
 
         <div>
           <Label htmlFor="date" className="form-label form-required">Date</Label>
-          <Input id="date" type="date" className={errors.date ? 'input-error' : undefined} {...register('date')} />
+          <Input
+            id="date"
+            type="date"
+            className={errors.date ? 'input-error' : undefined}
+            defaultValue={cleanedDefaults.date ?? new Date().toISOString().slice(0, 10)}
+            {...register('date')}
+          />
           {errors.date && <p className="form-error" role="alert">{errors.date.message}</p>}
         </div>
 
@@ -180,23 +223,35 @@ export function TripForm({
 
         <div>
           <Label htmlFor="driver_id" className="form-label">Driver ID</Label>
-          <Input id="driver_id" {...register('driver_id')} />
+          <Input
+            id="driver_id"
+            defaultValue={cleanedDefaults.driver_id ?? ''}
+            {...register('driver_id')}
+          />
         </div>
 
         <div>
           <Label htmlFor="start_location" className="form-label">Start location</Label>
-          <Input id="start_location" {...register('start_location')} />
+          <Input
+            id="start_location"
+            defaultValue={cleanedDefaults.start_location ?? ''}
+            {...register('start_location')}
+          />
         </div>
 
         <div>
           <Label htmlFor="end_location" className="form-label">End location</Label>
-          <Input id="end_location" {...register('end_location')} />
+          <Input
+            id="end_location"
+            defaultValue={cleanedDefaults.end_location ?? ''}
+            {...register('end_location')}
+          />
         </div>
       </div>
 
       <div>
         <Label htmlFor="notes" className="form-label">Notes</Label>
-        <Textarea id="notes" rows={3} {...register('notes')} />
+        <Textarea id="notes" rows={3} defaultValue={cleanedDefaults.notes ?? ''} {...register('notes')} />
       </div>
 
       <div className="flex justify-end gap-2 pt-2">
