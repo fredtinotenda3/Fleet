@@ -20,6 +20,7 @@ import { Spinner } from '@/frontend/shared/ui/feedback/spinner';
 import { tripFormSchema, type TripFormValues } from '../schemas';
 import { TRIP_MODES } from '../types';
 import { tripModeLabel } from '../utils';
+import { useVehiclesList } from '@/frontend/modules/vehicles/hooks/useVehicles';
 
 interface TripFormProps {
   defaultValues?: Partial<TripFormValues>;
@@ -44,13 +45,10 @@ const FALLBACK_DEFAULTS: TripFormValues = {
 };
 
 /**
- * FIX (license plate blank on edit, same root cause as Fuel/Expense
- * forms): a plain `{ ...FALLBACK_DEFAULTS, ...defaultValues }` spread
- * does not skip explicit `null`/`undefined` values -- if a trip record
- * ever has `license_plate: null` (or any other field null), it would
- * silently clobber FALLBACK_DEFAULTS' safe `''` and the field renders
- * blank. TripForm was the one form of the three that didn't already
- * guard against this.
+ * FIX (same guard as Fuel/Expense forms): a plain
+ * `{ ...FALLBACK_DEFAULTS, ...defaultValues }` spread doesn't skip
+ * explicit `null`/`undefined` -- a trip record with e.g.
+ * `license_plate: null` would clobber FALLBACK_DEFAULTS' safe `''`.
  */
 function cleanDefaults(values?: Partial<TripFormValues>): Partial<TripFormValues> {
   if (!values) return {};
@@ -64,6 +62,15 @@ function cleanDefaults(values?: Partial<TripFormValues>): Partial<TripFormValues
   return out;
 }
 
+function normalizeId(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object' && '_id' in (value as Record<string, unknown>)) {
+    return String((value as Record<string, unknown>)._id);
+  }
+  return String(value);
+}
+
 export function TripForm({
   defaultValues,
   unitOptions,
@@ -72,6 +79,19 @@ export function TripForm({
   submitLabel = 'Log trip',
 }: TripFormProps) {
   const cleanedDefaults = cleanDefaults(defaultValues);
+
+  /**
+   * FIX (the actual "license plate not rendering" bug): this field was
+   * a bare `register()`-only text <Input> with no vehicle list behind
+   * it at all -- on create it's just an empty box with nothing to pick
+   * from (which is what the screenshot shows), and on edit it required
+   * the record's plate string to already be typed in correctly with no
+   * way to verify it against a real vehicle. FuelForm and ExpenseForm
+   * both back this same field with a vehicle picker Select fed by
+   * useVehiclesList; TripForm never got that treatment. Converting it
+   * to match.
+   */
+  const { data: vehicles, isLoading: vehiclesLoading } = useVehiclesList({ limit: 1000 });
 
   const {
     register,
@@ -100,6 +120,18 @@ export function TripForm({
     setValueAs: (v: unknown) => (v === '' || v === null || v === undefined ? undefined : Number(v)),
   };
 
+  /**
+   * Same @base-ui/react/select quirk as FuelForm: Select.Value doesn't
+   * auto-resolve `value` to a label against mounted Items -- needs an
+   * explicit render function.
+   */
+  function getVehicleLabel(rawValue: string | null | undefined): string {
+    const value = normalizeId(rawValue);
+    if (!value) return vehiclesLoading ? 'Loading vehicles…' : 'Select vehicle';
+    const match = vehicles?.data?.find((v) => v.license_plate === value);
+    return match ? `${match.license_plate} - ${match.make} ${match.model}` : value;
+  }
+
   return (
     <form onSubmit={submit} noValidate className="space-y-4">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -107,26 +139,36 @@ export function TripForm({
           <Label htmlFor="license_plate" className="form-label form-required">
             License plate
           </Label>
-          <Input
-            id="license_plate"
-            className={errors.license_plate ? 'input-error' : undefined}
-            /**
-             * FIX: `unit_id` below is a controlled Controller/Select, so
-             * reset() always keeps it in sync. `license_plate` is a
-             * plain register()-only uncontrolled input with no
-             * `defaultValue` attribute of its own -- it depended
-             * entirely on RHF's initial mount + reset() to push a value
-             * into the DOM node via ref. Adding an explicit
-             * `defaultValue` here (same pattern already used for the
-             * Fuel form's `date` field) guarantees the field shows the
-             * record's plate on first paint even if register()'s
-             * ref-based update is delayed or the surrounding modal
-             * remounts with a fresh key before reset() runs.
-             */
-            defaultValue={cleanedDefaults.license_plate ?? ''}
-            {...register('license_plate')}
+          <Controller
+            control={control}
+            name="license_plate"
+            render={({ field }) => (
+              <Select
+                value={normalizeId(field.value)}
+                onValueChange={(v) => field.onChange(normalizeId(v))}
+              >
+                <SelectTrigger id="license_plate" className="w-full">
+                  <SelectValue placeholder="Select vehicle">
+                    {(value: string) => getVehicleLabel(value)}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {vehiclesLoading && (
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">Loading vehicles…</div>
+                  )}
+                  {vehicles?.data?.map((v) => (
+                    <SelectItem key={v._id} value={v.license_plate}>
+                      {v.license_plate} - {v.make} {v.model}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           />
           {errors.license_plate && <p className="form-error" role="alert">{errors.license_plate.message}</p>}
+          {!vehiclesLoading && (vehicles?.data?.length ?? 0) > 0 && (
+            <p className="text-caption text-muted-foreground mt-1">{vehicles?.data?.length} vehicles loaded</p>
+          )}
         </div>
 
         <div>
