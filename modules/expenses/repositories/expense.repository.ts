@@ -24,6 +24,8 @@ import {
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 import { EXPORT_ROW_CAP, ExportDataset } from '@/shared/export';
+import { AnalyticsScope } from '@/shared/types/analytics-scope.types';
+import { analyticsScopeService } from '@/modules/analytics/services/analytics-scope.service';
 
 export class ExpenseRepository extends BaseRepository<Expense> {
   protected collectionName = 'tblexpenses';
@@ -50,30 +52,38 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     ];
   }
 
+  /**
+   * Shared tenant + date-range + analytics-scope match stage, mirroring
+   * FuelRepository.buildBaseMatch. Omitting `scope` (or passing a fleet
+   * scope) reproduces today's fleet-wide behaviour exactly.
+   */
   private buildBaseMatch(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Record<string, unknown> {
-    const match: Record<string, unknown> = { isDeleted: { $ne: true } };
+    let match: Record<string, unknown> = { isDeleted: { $ne: true } };
     if (!this.isSuperAdminTenant(tenantId)) match.tenantId = tenantId;
     if (dateRange?.startDate || dateRange?.endDate) {
       match.date = {};
       if (dateRange.startDate) (match.date as any).$gte = dateRange.startDate;
       if (dateRange.endDate) (match.date as any).$lte = dateRange.endDate;
     }
+    match = analyticsScopeService.applyScope(match, scope);
     return match;
   }
 
   /** Previous period of equal length immediately preceding a given range, for MoM/period-over-period comparisons. */
   private previousPeriodMatch(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Record<string, unknown> | null {
     if (!dateRange?.startDate || !dateRange?.endDate) return null;
     const periodMs = dateRange.endDate.getTime() - dateRange.startDate.getTime();
     const prevEnd = new Date(dateRange.startDate.getTime() - 1);
     const prevStart = new Date(prevEnd.getTime() - periodMs);
-    return this.buildBaseMatch(tenantId, { startDate: prevStart, endDate: prevEnd });
+    return this.buildBaseMatch(tenantId, { startDate: prevStart, endDate: prevEnd }, scope);
   }
 
   async findByLicensePlate(
@@ -105,16 +115,6 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     if (filters.type) {
       match.expense_type_id = new ObjectId(filters.type);
     }
-    /**
-     * FIX (drill-down gap): the Job/Trip chart's drill-down had no
-     * corresponding server-side filter -- jobTrip was accepted nowhere
-     * in ExpenseFilters or this match. Added so clicking a Job/Trip bar
-     * can open a transaction list scoped to that exact job/trip
-     * reference, the same way license_plate/type drill-downs already
-     * work. "No Job/Trip" (the bucket label used by
-     * getJobTripExpenseAnalysis for records with no jobTrip) is treated
-     * as an explicit "field absent or empty" filter.
-     */
     if (filters.jobTrip) {
       match.jobTrip =
         filters.jobTrip === 'No Job/Trip'
@@ -164,17 +164,6 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     };
   }
 
-  /**
-   * Org/branch-scoped variant of getFilteredExpenses. Mirrors
-   * VehicleRepository.getFilteredVehiclesInScope: same match stage,
-   * plus tenantScopeService.buildFilter(context, 'orgUnitId') on top of
-   * (not instead of) tenant isolation.
-   */
-  /**
-   * Single source of truth for the tenant + org-unit-scope + filter
-   * match stage shared by getFilteredExpensesInScope (paginated list)
-   * and getFilteredExpensesForExport (uncapped-by-pagination export).
-   */
   private buildScopedMatch(filters: ExpenseFilters, context: TenantContext): Record<string, unknown> {
     const match: Record<string, unknown> = { isDeleted: { $ne: true } };
     if (!this.isSuperAdminTenant(context.organizationId)) {
@@ -250,13 +239,6 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     };
   }
 
-  /**
-   * Export variant of getFilteredExpensesInScope: same filters and
-   * same tenant/org-unit scope, but returns up to `cap` matching
-   * records (default EXPORT_ROW_CAP) ignoring UI pagination, with the
-   * same expense_type $lookup so category labels are available, plus
-   * the true total match count so the caller can detect truncation.
-   */
   async getFilteredExpensesForExport(
     filters: ExpenseFilters,
     context: TenantContext,
@@ -289,16 +271,17 @@ export class ExpenseRepository extends BaseRepository<Expense> {
 
   async getExpenseStats(
     tenantId: string,
-    dateRange?: DateRange
+    dateRange?: DateRange,
+    scope?: AnalyticsScope
   ): Promise<ExpenseStats> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
 
-    const filter: Record<string, unknown> = { isDeleted: { $ne: true } };
-    if (!isSuperAdmin) filter.tenantId = tenantId;
+    let filter: Record<string, unknown> = { isDeleted: { $ne: true } };
+    if (!this.isSuperAdminTenant(tenantId)) filter.tenantId = tenantId;
     if (dateRange) {
       filter.date = { $gte: dateRange.startDate, $lte: dateRange.endDate };
     }
+    filter = analyticsScopeService.applyScope(filter, scope);
 
     const pipeline = [
       { $match: filter },
@@ -349,19 +332,14 @@ export class ExpenseRepository extends BaseRepository<Expense> {
 
   async getMonthlyTrends(
     tenantId: string,
-    months: number = 12
+    months: number = 12,
+    scope?: AnalyticsScope
   ): Promise<Array<{ month: string; total: number }>> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
-
     const startDate = new Date();
     startDate.setMonth(startDate.getMonth() - months);
 
-    const match: Record<string, unknown> = {
-      isDeleted: { $ne: true },
-      date: { $gte: startDate },
-    };
-    if (!isSuperAdmin) match.tenantId = tenantId;
+    const match = this.buildBaseMatch(tenantId, { startDate }, scope);
 
     const pipeline = [
       { $match: match },
@@ -410,16 +388,13 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     return collection.aggregate(pipeline).toArray();
   }
 
-  // ------------------------------------------------------------------
-  // Enterprise analytics -- category over time / vehicle / distribution
-  // ------------------------------------------------------------------
-
   async getExpenseCategoryOverTime(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Promise<ExpenseCategoryOverTimePoint[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange);
+    const match = this.buildBaseMatch(tenantId, dateRange, scope);
 
     const pipeline = [
       { $match: match },
@@ -449,19 +424,13 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     return collection.aggregate<ExpenseCategoryOverTimePoint>(pipeline).toArray();
   }
 
-  /**
-   * Rich per-category summary for hover tooltips and the Pareto/waterfall
-   * charts. Three bounded aggregation queries total (current period,
-   * category x vehicle breakdown for top-vehicle-per-category, and an
-   * optional previous-period query for MoM) -- run once per dashboard
-   * load, never per hover.
-   */
   async getExpenseCategorySummary(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Promise<CategorySummary[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange);
+    const match = this.buildBaseMatch(tenantId, dateRange, scope);
 
     const grandTotalResult = await collection
       .aggregate([{ $match: match }, { $group: { _id: null, total: { $sum: '$amount' } } }])
@@ -484,8 +453,6 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     ];
     const summaries = await collection.aggregate(summaryPipeline).toArray();
 
-    // Category x vehicle totals, to pick each category's top vehicle --
-    // one aggregation, not one query per category.
     const byVehiclePipeline = [
       { $match: match },
       ...this.expenseTypeLookupStages(),
@@ -509,8 +476,7 @@ export class ExpenseRepository extends BaseRepository<Expense> {
       }
     }
 
-    // Previous period, for MoM change -- skipped entirely if no explicit range given.
-    const prevMatch = this.previousPeriodMatch(tenantId, dateRange);
+    const prevMatch = this.previousPeriodMatch(tenantId, dateRange, scope);
     let prevTotalsByCategory = new Map<string, number>();
     if (prevMatch) {
       const prevPipeline = [
@@ -534,9 +500,7 @@ export class ExpenseRepository extends BaseRepository<Expense> {
         const momChangePercent =
           prevMatch && prevTotal !== undefined && prevTotal > 0
             ? Math.round(((s.total - prevTotal) / prevTotal) * 1000) / 10
-            : prevMatch && (prevTotal === undefined || prevTotal === 0) && s.total > 0
-              ? null // no meaningful prior baseline (division by zero) -- omit rather than fabricate
-              : null;
+            : null;
 
         return {
           category,
@@ -554,19 +518,14 @@ export class ExpenseRepository extends BaseRepository<Expense> {
       .sort((a, b) => b.total - a.total);
   }
 
-  /**
-   * FIX (Job/Trip drill-down had no filter path): getFilteredExpenses
-   * above now accepts `jobTrip`; this method is unchanged apart from
-   * that fix already applied there.
-   */
-
   async getTopVehiclesByExpense(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    limit: number = 10
+    limit: number = 10,
+    scope?: AnalyticsScope
   ): Promise<TopVehicleExpenseRow[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange);
+    const match = this.buildBaseMatch(tenantId, dateRange, scope);
 
     const pipeline = [
       { $match: match },
@@ -609,8 +568,6 @@ export class ExpenseRepository extends BaseRepository<Expense> {
 
     const rows = await collection.aggregate(pipeline).toArray();
 
-    // Per-vehicle min/max/avg/latestDate -- single follow-up aggregation
-    // scoped to only the top-N plates already selected above, not N+1.
     const plates = rows.map((r) => r.license_plate as string);
     const detailMap = new Map<string, { min: number; max: number; latestDate: Date | null }>();
     if (plates.length > 0) {
@@ -631,8 +588,7 @@ export class ExpenseRepository extends BaseRepository<Expense> {
       }
     }
 
-    // Optional previous-period totals for MoM, scoped to the same plates -- one query, not per-vehicle.
-    const prevMatch = this.previousPeriodMatch(tenantId, dateRange);
+    const prevMatch = this.previousPeriodMatch(tenantId, dateRange, scope);
     let prevTotalsByPlate = new Map<string, number>();
     if (prevMatch && plates.length > 0) {
       const prevPipeline = [
@@ -668,10 +624,11 @@ export class ExpenseRepository extends BaseRepository<Expense> {
   async getVehicleExpenseBreakdown(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    vehicleLimit: number = 8
+    vehicleLimit: number = 8,
+    scope?: AnalyticsScope
   ): Promise<VehicleExpenseBreakdownRow[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange);
+    const match = this.buildBaseMatch(tenantId, dateRange, scope);
 
     const topPlatesPipeline = [
       { $match: match },
@@ -712,10 +669,11 @@ export class ExpenseRepository extends BaseRepository<Expense> {
 
   async getExpenseAmountDistribution(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Promise<ExpenseAmountDistributionBucket[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange);
+    const match = this.buildBaseMatch(tenantId, dateRange, scope);
 
     const count = await collection.countDocuments(match as Filter<Expense>);
     if (count === 0) return [];
@@ -737,10 +695,11 @@ export class ExpenseRepository extends BaseRepository<Expense> {
   async getJobTripExpenseAnalysis(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    jobLimit: number = 10
+    jobLimit: number = 10,
+    scope?: AnalyticsScope
   ): Promise<JobTripExpenseRow[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange);
+    const match = this.buildBaseMatch(tenantId, dateRange, scope);
 
     const jobKeyExpr = {
       $cond: [
@@ -790,18 +749,14 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     return collection.aggregate<JobTripExpenseRow>(pipeline).toArray();
   }
 
-  // ------------------------------------------------------------------
-  // New in this pass: top transactions, calendar heatmap, outliers
-  // ------------------------------------------------------------------
-
-  /** Top N single highest-value transactions, for the executive "biggest expenses" list. */
   async getTopExpenseTransactions(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    limit: number = 10
+    limit: number = 10,
+    scope?: AnalyticsScope
   ): Promise<TopExpenseTransactionRow[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange);
+    const match = this.buildBaseMatch(tenantId, dateRange, scope);
 
     const pipeline = [
       { $match: match },
@@ -825,14 +780,10 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     return results.map((r) => ({ ...r, date: new Date(r.date).toISOString() })) as TopExpenseTransactionRow[];
   }
 
-  /**
-   * Daily totals for the calendar heatmap. Bounded to at most 366 days
-   * even if the caller passes no range or an overlong one, so an
-   * enterprise dataset can never return an unbounded number of days.
-   */
   async getDailyExpenseTotals(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Promise<DailyExpenseTotal[]> {
     const collection = await this.getCollection();
     const endDate = dateRange?.endDate ?? new Date();
@@ -840,7 +791,7 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     const earliestAllowedStart = new Date(endDate.getTime() - 366 * 24 * 60 * 60 * 1000);
     const startDate = requestedStart < earliestAllowedStart ? earliestAllowedStart : requestedStart;
 
-    const match = this.buildBaseMatch(tenantId, { startDate, endDate });
+    const match = this.buildBaseMatch(tenantId, { startDate, endDate }, scope);
 
     const pipeline = [
       { $match: match },
@@ -862,22 +813,15 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     }));
   }
 
-  /**
-   * Statistical outlier detection: flags expenses whose amount is more
-   * than `zThreshold` standard deviations from their OWN CATEGORY's
-   * mean (not the fleet-wide mean -- a $250 tyre expense and a $250
-   * insurance expense mean very different things). Categories with
-   * fewer than 3 records are excluded since a std-dev computed from 1-2
-   * points is not statistically meaningful. Single aggregation query.
-   */
   async getExpenseOutliers(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     zThreshold: number = 2.5,
-    limit: number = 25
+    limit: number = 25,
+    scope?: AnalyticsScope
   ): Promise<ExpenseOutlierRow[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange);
+    const match = this.buildBaseMatch(tenantId, dateRange, scope);
 
     const pipeline = [
       { $match: match },

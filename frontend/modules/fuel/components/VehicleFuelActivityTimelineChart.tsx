@@ -23,6 +23,12 @@ const ALL_VEHICLES = '__all__';
 
 interface VehicleFuelActivityTimelineChartProps {
   dateRange: FuelAnalyticsDateRange;
+  /**
+   * Vehicle-Level Analytics: when provided, this chart is locked to the
+   * given vehicle -- the fleet-wide vehicle picker is hidden instead of
+   * defaulting to "All vehicles". Used by VehicleFuelAnalyticsPanel.
+   */
+  licensePlate?: string;
 }
 
 function TimelineTooltip({ active, payload, label }: any) {
@@ -47,30 +53,36 @@ function TimelineTooltip({ active, payload, label }: any) {
   );
 }
 
-export function VehicleFuelActivityTimelineChart({ dateRange }: VehicleFuelActivityTimelineChartProps) {
+export function VehicleFuelActivityTimelineChart({ dateRange, licensePlate }: VehicleFuelActivityTimelineChartProps) {
+  const locked = Boolean(licensePlate);
   const [vehicle, setVehicle] = useState<string>(ALL_VEHICLES);
+  // Always called (rules of hooks) even when locked; the fetched list is
+  // simply not rendered in that case. Matches the existing fleet-wide
+  // FuelAnalyticsPage usage of this component exactly.
   const { data: vehicles } = useVehiclesList({ limit: 1000 });
-  const { data, isLoading, error } = useVehicleFuelTimeline(
-    vehicle === ALL_VEHICLES ? undefined : vehicle,
-    dateRange
-  );
+  const effectivePlate = locked ? licensePlate : vehicle === ALL_VEHICLES ? undefined : vehicle;
+  const { data, isLoading, error } = useVehicleFuelTimeline(effectivePlate, dateRange);
 
   return (
     <Card>
       <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
         <div>
           <CardTitle>Vehicle fuel activity timeline</CardTitle>
-          <CardDescription>Fuel entries over time, per vehicle or fleet-wide</CardDescription>
+          <CardDescription>
+            {locked ? 'Fuel entries over time for this vehicle' : 'Fuel entries over time, per vehicle or fleet-wide'}
+          </CardDescription>
         </div>
-        <Select value={vehicle} onValueChange={(value) => setVehicle(value ?? ALL_VEHICLES)}>
-          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL_VEHICLES}>All vehicles</SelectItem>
-            {vehicles?.data?.map((v) => (
-              <SelectItem key={v._id} value={v.license_plate}>{v.license_plate}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {!locked && (
+          <Select value={vehicle} onValueChange={(value) => setVehicle(value ?? ALL_VEHICLES)}>
+            <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_VEHICLES}>All vehicles</SelectItem>
+              {vehicles?.data?.map((v) => (
+                <SelectItem key={v._id} value={v.license_plate}>{v.license_plate}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </CardHeader>
       <CardContent>
         {isLoading ? (

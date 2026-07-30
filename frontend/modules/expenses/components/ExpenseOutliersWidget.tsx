@@ -15,10 +15,12 @@ import type { ExpenseOutlierRow } from '@/shared/types/expense.types';
 
 interface ExpenseOutliersWidgetProps {
   dateRange: ExpenseAnalyticsDateRange;
+  /** Vehicle-Level Analytics: scope this widget to a single vehicle instead of the fleet. */
+  licensePlate?: string;
 }
 
-export function ExpenseOutliersWidget({ dateRange }: ExpenseOutliersWidgetProps) {
-  const { data: outliers, isLoading, error } = useExpenseOutliers(dateRange, 2.5);
+export function ExpenseOutliersWidget({ dateRange, licensePlate }: ExpenseOutliersWidgetProps) {
+  const { data: outliers, isLoading, error } = useExpenseOutliers(dateRange, 2.5, licensePlate);
   const { open, setOpen, filter, openDrawer } = useExpenseDrawer();
 
   function handleClick(row: ExpenseOutlierRow) {

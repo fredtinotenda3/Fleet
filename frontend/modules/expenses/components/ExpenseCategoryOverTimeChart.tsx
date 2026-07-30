@@ -1,3 +1,4 @@
+
 // frontend/modules/expenses/components/ExpenseCategoryOverTimeChart.tsx
 
 'use client';
@@ -14,6 +15,8 @@ import type { ExpenseAnalyticsDateRange } from './ExpenseAnalyticsFilterBar';
 
 interface ExpenseCategoryOverTimeChartProps {
   dateRange: ExpenseAnalyticsDateRange;
+  /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
+  licensePlate?: string;
 }
 
 function CategoryOverTimeTooltip({ active, payload, label }: any) {
@@ -38,8 +41,8 @@ function CategoryOverTimeTooltip({ active, payload, label }: any) {
   );
 }
 
-export function ExpenseCategoryOverTimeChart({ dateRange }: ExpenseCategoryOverTimeChartProps) {
-  const { data, isLoading, error } = useExpenseCategoryOverTime(dateRange);
+export function ExpenseCategoryOverTimeChart({ dateRange, licensePlate }: ExpenseCategoryOverTimeChartProps) {
+  const { data, isLoading, error } = useExpenseCategoryOverTime(dateRange, licensePlate);
   const { data: expenseTypes } = useExpenseTypes();
   const { open, setOpen, filter, openDrawer } = useExpenseDrawer();
 
@@ -64,7 +67,7 @@ export function ExpenseCategoryOverTimeChart({ dateRange }: ExpenseCategoryOverT
     const [year, m] = month.split('-');
     const startDate = new Date(Number(year), Number(m) - 1, 1);
     const endDate = new Date(Number(year), Number(m), 0);
-    openDrawer({ label: `${category} \u2014 ${month}`, type: type?._id, startDate, endDate });
+    openDrawer({ label: `${category} \u2014 ${month}`, type: type?._id, startDate, endDate, license_plate: licensePlate });
   }
 
   return (

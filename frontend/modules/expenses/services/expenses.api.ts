@@ -59,6 +59,15 @@ function rangeParams(dateRange?: DateRange) {
   };
 }
 
+/**
+ * Vehicle-Level Analytics: every analytics call accepts an optional
+ * `licensePlate`, mirroring fuelApi.ts's scopeParams. Omit it for
+ * today's unscoped fleet-wide behaviour.
+ */
+function scopeParams(licensePlate?: string) {
+  return licensePlate ? { license_plate: licensePlate } : {};
+}
+
 export const expensesApi = {
   async list(params: Partial<ExpenseListParams> = {}): Promise<PaginatedResponse<Expense>> {
     return apiClient.get<PaginatedResponse<Expense>>(BASE, { params: buildListQuery(params) });
@@ -68,68 +77,79 @@ export const expensesApi = {
     return apiClient.get<Expense>(BASE, { params: { id } });
   },
 
-  async getStats(dateRange?: DateRange): Promise<ExpenseStats> {
+  async getStats(dateRange?: DateRange, licensePlate?: string): Promise<ExpenseStats> {
     const params: Record<string, string | undefined> = { action: 'stats' };
     if (dateRange?.startDate) params.startDate = dateRange.startDate.toISOString();
     if (dateRange?.endDate) params.endDate = dateRange.endDate.toISOString();
-    return apiClient.get<ExpenseStats>(BASE, { params });
+    return apiClient.get<ExpenseStats>(BASE, { params: { ...params, ...scopeParams(licensePlate) } });
   },
 
-  async getMonthlyTrends(months: number = 12): Promise<Array<{ month: string; total: number }>> {
-    return apiClient.get<Array<{ month: string; total: number }>>(BASE, { params: { action: 'monthly', months } });
+  async getMonthlyTrends(months: number = 12, licensePlate?: string): Promise<Array<{ month: string; total: number }>> {
+    return apiClient.get<Array<{ month: string; total: number }>>(BASE, {
+      params: { action: 'monthly', months, ...scopeParams(licensePlate) },
+    });
   },
 
-  async getCategoryOverTime(dateRange?: DateRange): Promise<ExpenseCategoryOverTimePoint[]> {
+  async getCategoryOverTime(dateRange?: DateRange, licensePlate?: string): Promise<ExpenseCategoryOverTimePoint[]> {
     return apiClient.get<ExpenseCategoryOverTimePoint[]>(BASE, {
-      params: { action: 'category-over-time', ...rangeParams(dateRange) },
+      params: { action: 'category-over-time', ...rangeParams(dateRange), ...scopeParams(licensePlate) },
     });
   },
 
-  async getTopVehicles(dateRange?: DateRange, limit: number = 10): Promise<TopVehicleExpenseRow[]> {
+  async getTopVehicles(dateRange?: DateRange, limit: number = 10, licensePlate?: string): Promise<TopVehicleExpenseRow[]> {
     return apiClient.get<TopVehicleExpenseRow[]>(BASE, {
-      params: { action: 'top-vehicles', limit, ...rangeParams(dateRange) },
+      params: { action: 'top-vehicles', limit, ...rangeParams(dateRange), ...scopeParams(licensePlate) },
     });
   },
 
-  async getVehicleBreakdown(dateRange?: DateRange, vehicleLimit: number = 8): Promise<VehicleExpenseBreakdownRow[]> {
+  async getVehicleBreakdown(
+    dateRange?: DateRange,
+    vehicleLimit: number = 8,
+    licensePlate?: string
+  ): Promise<VehicleExpenseBreakdownRow[]> {
     return apiClient.get<VehicleExpenseBreakdownRow[]>(BASE, {
-      params: { action: 'vehicle-breakdown', vehicleLimit, ...rangeParams(dateRange) },
+      params: { action: 'vehicle-breakdown', vehicleLimit, ...rangeParams(dateRange), ...scopeParams(licensePlate) },
     });
   },
 
-  async getAmountDistribution(dateRange?: DateRange): Promise<ExpenseAmountDistributionBucket[]> {
+  async getAmountDistribution(dateRange?: DateRange, licensePlate?: string): Promise<ExpenseAmountDistributionBucket[]> {
     return apiClient.get<ExpenseAmountDistributionBucket[]>(BASE, {
-      params: { action: 'amount-distribution', ...rangeParams(dateRange) },
+      params: { action: 'amount-distribution', ...rangeParams(dateRange), ...scopeParams(licensePlate) },
     });
   },
 
-  async getJobTripExpense(dateRange?: DateRange, jobLimit: number = 10): Promise<JobTripExpenseRow[]> {
+  async getJobTripExpense(dateRange?: DateRange, jobLimit: number = 10, licensePlate?: string): Promise<JobTripExpenseRow[]> {
     return apiClient.get<JobTripExpenseRow[]>(BASE, {
-      params: { action: 'job-trip', jobLimit, ...rangeParams(dateRange) },
+      params: { action: 'job-trip', jobLimit, ...rangeParams(dateRange), ...scopeParams(licensePlate) },
     });
   },
 
-  async getCategorySummary(dateRange?: DateRange): Promise<CategorySummary[]> {
+  async getCategorySummary(dateRange?: DateRange, licensePlate?: string): Promise<CategorySummary[]> {
     return apiClient.get<CategorySummary[]>(BASE, {
-      params: { action: 'category-summary', ...rangeParams(dateRange) },
+      params: { action: 'category-summary', ...rangeParams(dateRange), ...scopeParams(licensePlate) },
     });
   },
 
-  async getTopTransactions(dateRange?: DateRange, limit: number = 10): Promise<TopExpenseTransactionRow[]> {
+  async getTopTransactions(dateRange?: DateRange, limit: number = 10, licensePlate?: string): Promise<TopExpenseTransactionRow[]> {
     return apiClient.get<TopExpenseTransactionRow[]>(BASE, {
-      params: { action: 'top-transactions', limit, ...rangeParams(dateRange) },
+      params: { action: 'top-transactions', limit, ...rangeParams(dateRange), ...scopeParams(licensePlate) },
     });
   },
 
-  async getDailyTotals(dateRange?: DateRange): Promise<DailyExpenseTotal[]> {
+  async getDailyTotals(dateRange?: DateRange, licensePlate?: string): Promise<DailyExpenseTotal[]> {
     return apiClient.get<DailyExpenseTotal[]>(BASE, {
-      params: { action: 'daily-totals', ...rangeParams(dateRange) },
+      params: { action: 'daily-totals', ...rangeParams(dateRange), ...scopeParams(licensePlate) },
     });
   },
 
-  async getOutliers(dateRange?: DateRange, zThreshold: number = 2.5, limit: number = 25): Promise<ExpenseOutlierRow[]> {
+  async getOutliers(
+    dateRange?: DateRange,
+    zThreshold: number = 2.5,
+    limit: number = 25,
+    licensePlate?: string
+  ): Promise<ExpenseOutlierRow[]> {
     return apiClient.get<ExpenseOutlierRow[]>(BASE, {
-      params: { action: 'outliers', zThreshold, limit, ...rangeParams(dateRange) },
+      params: { action: 'outliers', zThreshold, limit, ...rangeParams(dateRange), ...scopeParams(licensePlate) },
     });
   },
 
@@ -145,14 +165,6 @@ export const expensesApi = {
     return apiClient.delete<{ message: string }>(BASE, { params: { id, soft } });
   },
 
-  /**
-   * Enterprise Export Framework (Phase 2). Expense export lives behind
-   * ?action=export on the shared /api/expenses route. Sends the same
-   * filter fields as list() (including the jobTrip filter, which isn't
-   * part of ExpenseTableFilters but is read straight through by both
-   * the list and export controllers) so the backend re-queries the full
-   * authorized, filtered result set (capped at EXPORT_ROW_CAP).
-   */
   async exportFile(
     filters: Partial<ExpenseTableFilters> & { jobTrip?: string },
     format: ExportFormat = 'csv'

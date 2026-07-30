@@ -1,5 +1,4 @@
-//modules/fuel/queries/handlers/get-fuel-activity-trend.handler.ts
-
+// modules/fuel/queries/handlers/get-fuel-activity-trend.handler.ts
 import { IQueryHandler } from '@/server/cqrs/query';
 import { GetFuelActivityTrendQuery } from '../get-fuel-activity-trend.query';
 import { FuelRepository } from '@/modules/fuel/repositories/fuel.repository';
@@ -11,6 +10,6 @@ export class GetFuelActivityTrendHandler
   constructor(private readonly fuelRepo: FuelRepository) {}
 
   async execute(query: GetFuelActivityTrendQuery): Promise<FuelActivityTrendPoint[]> {
-    return this.fuelRepo.getFuelActivityTrend(query.tenantId, query.granularity, query.dateRange);
+    return this.fuelRepo.getFuelActivityTrend(query.tenantId, query.granularity, query.dateRange, query.scope);
   }
 }

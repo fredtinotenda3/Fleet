@@ -12,6 +12,13 @@ import type { FuelFrequencyByVehicleRow } from '../types';
 
 interface FuelFrequencyByVehicleChartProps {
   dateRange: FuelAnalyticsDateRange;
+  /**
+   * Vehicle-Level Analytics: scoping is supported by the underlying query
+   * for API consistency, but a "frequency by vehicle" ranking collapses
+   * to a single bar at vehicle scope -- not meaningful on a vehicle
+   * dashboard. Kept fleet-only in practice.
+   */
+  licensePlate?: string;
 }
 
 function FrequencyTooltip({ active, payload }: any) {
@@ -36,8 +43,8 @@ function FrequencyTooltip({ active, payload }: any) {
   );
 }
 
-export function FuelFrequencyByVehicleChart({ dateRange }: FuelFrequencyByVehicleChartProps) {
-  const { data, isLoading, error } = useFuelingFrequencyByVehicle(dateRange, 20);
+export function FuelFrequencyByVehicleChart({ dateRange, licensePlate }: FuelFrequencyByVehicleChartProps) {
+  const { data, isLoading, error } = useFuelingFrequencyByVehicle(dateRange, 20, licensePlate);
 
   return (
     <Card>

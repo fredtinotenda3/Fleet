@@ -1,14 +1,15 @@
 // modules/expenses/queries/get-expense-stats.query.ts
-
 import { BaseQuery } from '@/server/cqrs/query';
 import { DateRange } from '@/shared/types/common.types';
+import { AnalyticsScope } from '@/shared/types/analytics-scope.types';
 
 export class GetExpenseStatsQuery extends BaseQuery {
   static readonly queryName = 'GetExpenseStatsQuery';
 
   constructor(
     public readonly tenantId: string,
-    public readonly dateRange?: DateRange
+    public readonly dateRange?: DateRange,
+    public readonly scope?: AnalyticsScope
   ) {
     super(GetExpenseStatsQuery.queryName);
   }

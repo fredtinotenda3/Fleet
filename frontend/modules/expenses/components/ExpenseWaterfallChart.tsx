@@ -1,11 +1,9 @@
-// frontend/modules/expenses/components/ExpenseWaterfallChart.tsx
-
 'use client';
 
 import { useMemo } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/frontend/shared/ui/data-display/card';
-import { useExpenseCategorySummary, useExpenseTypes } from '../hooks/useExpenses';
+import { useExpenseStats, useExpenseTypes } from '../hooks/useExpenses';
 import { useExpenseDrawer } from '../hooks/useExpenseDrawer';
 import { ExpenseTransactionDrawer } from './ExpenseTransactionDrawer';
 import { formatCurrency } from '@/shared/utils/currency.utils';
@@ -13,88 +11,90 @@ import type { ExpenseAnalyticsDateRange } from './ExpenseAnalyticsFilterBar';
 
 interface ExpenseWaterfallChartProps {
   dateRange: ExpenseAnalyticsDateRange;
+  /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
+  licensePlate?: string;
 }
 
-interface WaterfallStep {
-  name: string;
-  /** Invisible spacer bar that pushes the visible segment to the right height. */
+interface WaterfallRow {
+  category: string;
+  spend: number;
+  /** Invisible base segment so the visible bar "floats" at the right height */
   base: number;
-  /** The visible colored segment. */
-  value: number;
-  isTotal: boolean;
-  category?: string;
+  isTotal?: boolean;
 }
 
 function WaterfallTooltip({ active, payload }: any) {
   if (!active || !payload || !payload.length) return null;
-  const row = payload.find((p: any) => p.dataKey === 'value')?.payload as WaterfallStep | undefined;
+  const row = payload.find((p: any) => p.dataKey === 'spend')?.payload as WaterfallRow | undefined;
   if (!row) return null;
   return (
     <div style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 }} className="p-2.5 space-y-0.5">
-      <p className="text-sm font-medium">{row.name}</p>
+      <p className="text-sm font-medium">{row.category}</p>
       <p className="text-xs text-muted-foreground">
-        {row.isTotal ? 'Grand total' : 'Contribution'}: <span className="font-medium text-foreground">{formatCurrency(row.value)}</span>
+        {row.isTotal ? 'Total' : 'Spend'}:{' '}
+        <span className="font-medium text-foreground">{formatCurrency(row.spend)}</span>
       </p>
       {!row.isTotal && <p className="pt-1 text-caption text-muted-foreground">Click to view transactions</p>}
     </div>
   );
 }
 
-export function ExpenseWaterfallChart({ dateRange }: ExpenseWaterfallChartProps) {
-  const { data: summary, isLoading, error } = useExpenseCategorySummary(dateRange);
+export function ExpenseWaterfallChart({ dateRange, licensePlate }: ExpenseWaterfallChartProps) {
+  const { data: stats, isLoading, error } = useExpenseStats(dateRange, licensePlate);
   const { data: expenseTypes } = useExpenseTypes();
   const { open, setOpen, filter, openDrawer } = useExpenseDrawer();
 
-  const steps = useMemo<WaterfallStep[]>(() => {
-    if (!summary || summary.length === 0) return [];
-    const sorted = [...summary].sort((a, b) => b.total - a.total);
+  const chartData = useMemo<WaterfallRow[]>(() => {
+    if (!stats) return [];
+    const entries = Object.entries(stats.byType).sort(([, a], [, b]) => b - a);
     let running = 0;
-    const rows: WaterfallStep[] = sorted.map((s) => {
-      const step: WaterfallStep = { name: s.category, base: running, value: s.total, isTotal: false, category: s.category };
-      running += s.total;
-      return step;
+    const rows: WaterfallRow[] = entries.map(([category, spend]) => {
+      const base = running;
+      running += spend;
+      return { category, spend, base };
     });
-    rows.push({ name: 'Grand total', base: 0, value: running, isTotal: true });
+    rows.push({ category: 'Total', spend: running, base: 0, isTotal: true });
     return rows;
-  }, [summary]);
+  }, [stats]);
 
-  function handleClick(step: WaterfallStep) {
-    if (step.isTotal) return;
-    const type = expenseTypes?.find((t) => t.name === step.category);
-    openDrawer({ label: step.name, type: type?._id, startDate: dateRange.startDate, endDate: dateRange.endDate });
+  function handleClick(row: WaterfallRow) {
+    if (row.isTotal) return;
+    const type = expenseTypes?.find((t) => t.name === row.category);
+    openDrawer({ label: row.category, type: type?._id, startDate: dateRange.startDate, endDate: dateRange.endDate, license_plate: licensePlate });
   }
 
   return (
     <>
       <Card>
         <CardHeader>
-          <CardTitle>Executive expense waterfall</CardTitle>
-          <CardDescription>How total spend is composed, category by category</CardDescription>
+          <CardTitle>Spend waterfall</CardTitle>
+          <CardDescription>How each category builds up to total spend &mdash; click a bar for transactions</CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading ? (
             <div className="rounded-lg h-72 skeleton" />
-          ) : error || steps.length === 0 ? (
+          ) : error || chartData.length === 0 ? (
             <p className="text-sm text-muted-foreground">No expenses in this range.</p>
           ) : (
-            <div style={{ width: '100%', height: 340 }}>
+            <div style={{ width: '100%', height: 320 }}>
               <ResponsiveContainer>
-                <BarChart data={steps} margin={{ left: -10, right: 12, top: 20 }}>
+                <BarChart data={chartData} margin={{ left: -10, right: 12 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                  <XAxis dataKey="name" stroke="var(--muted-foreground)" fontSize={10} interval={0} angle={-30} textAnchor="end" height={70} />
+                  <XAxis dataKey="category" stroke="var(--muted-foreground)" fontSize={10} interval={0} angle={-30} textAnchor="end" height={60} />
                   <YAxis stroke="var(--muted-foreground)" fontSize={11} tickFormatter={(v) => formatCurrency(v)} />
                   <Tooltip content={<WaterfallTooltip />} />
-                  <Bar dataKey="base" stackId="waterfall" fill="transparent" isAnimationActive={false} />
-                  <Bar dataKey="value" stackId="waterfall" radius={[4, 4, 0, 0]} cursor="pointer" onClick={(entry: any) => handleClick(entry)}>
-                    {steps.map((s) => (
-                      <Cell key={s.name} fill={s.isTotal ? 'var(--foreground)' : 'var(--chart-1)'} />
+                  {/* invisible base to float the visible segment */}
+                  <Bar dataKey="base" stackId="waterfall" fill="transparent" />
+                  <Bar
+                    dataKey="spend"
+                    stackId="waterfall"
+                    radius={[4, 4, 0, 0]}
+                    cursor="pointer"
+                    onClick={(entry: any) => handleClick(entry)}
+                  >
+                    {chartData.map((row, i) => (
+                      <Cell key={row.category} fill={row.isTotal ? 'var(--chart-1)' : 'var(--chart-2)'} />
                     ))}
-                    <LabelList
-                      dataKey="value"
-                      position="top"
-                      formatter={(v: number) => formatCurrency(v)}
-                      style={{ fontSize: 10, fill: 'var(--muted-foreground)' }}
-                    />
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>

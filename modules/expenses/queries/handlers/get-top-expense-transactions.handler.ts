@@ -10,6 +10,6 @@ export class GetTopExpenseTransactionsHandler
   constructor(private readonly expenseRepo: ExpenseRepository) {}
 
   async execute(query: GetTopExpenseTransactionsQuery): Promise<TopExpenseTransactionRow[]> {
-    return this.expenseRepo.getTopExpenseTransactions(query.tenantId, query.dateRange, query.limit);
+    return this.expenseRepo.getTopExpenseTransactions(query.tenantId, query.dateRange, query.limit, query.scope);
   }
 }

@@ -7,8 +7,13 @@ import { StatisticCard, StatisticCards } from '@/frontend/shared/ui/data-display
 import { useFuelKpis } from '../hooks/useFuel';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 
-export function FuelKpiCards() {
-  const { data: kpis, isLoading, error } = useFuelKpis();
+interface FuelKpiCardsProps {
+  /** Vehicle-Level Analytics: scope every KPI to a single vehicle instead of the fleet. */
+  licensePlate?: string;
+}
+
+export function FuelKpiCards({ licensePlate }: FuelKpiCardsProps = {}) {
+  const { data: kpis, isLoading, error } = useFuelKpis(undefined, licensePlate);
 
   if (isLoading) {
     return (

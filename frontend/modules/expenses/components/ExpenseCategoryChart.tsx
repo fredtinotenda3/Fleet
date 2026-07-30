@@ -13,6 +13,11 @@ import { formatDate } from '@/shared/utils/date.utils';
 import { getChartColor } from '@/shared/utils/chart.utils';
 import type { CategorySummary } from '@/shared/types/expense.types';
 
+interface ExpenseCategoryChartProps {
+  /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
+  licensePlate?: string;
+}
+
 function CategoryTooltip({ active, payload }: any) {
   if (!active || !payload || !payload.length) return null;
   const row = payload[0].payload as CategorySummary;
@@ -50,8 +55,8 @@ function CategoryTooltip({ active, payload }: any) {
   );
 }
 
-export function ExpenseCategoryChart() {
-  const { data: summary, isLoading, error } = useExpenseCategorySummary();
+export function ExpenseCategoryChart({ licensePlate }: ExpenseCategoryChartProps = {}) {
+  const { data: summary, isLoading, error } = useExpenseCategorySummary(undefined, licensePlate);
   const { data: expenseTypes } = useExpenseTypes();
   const { open, setOpen, filter, openDrawer } = useExpenseDrawer();
 
@@ -62,7 +67,7 @@ export function ExpenseCategoryChart() {
 
   function handleClick(row: CategorySummary) {
     const type = expenseTypes?.find((t) => t.name === row.category);
-    openDrawer({ label: row.category, type: type?._id });
+    openDrawer({ label: row.category, type: type?._id, license_plate: licensePlate });
   }
 
   if (isLoading) {

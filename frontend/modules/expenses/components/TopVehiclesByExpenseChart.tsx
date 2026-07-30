@@ -15,6 +15,12 @@ import type { TopVehicleExpenseRow } from '@/shared/types/expense.types';
 
 interface TopVehiclesByExpenseChartProps {
   dateRange: ExpenseAnalyticsDateRange;
+  /**
+   * Vehicle-Level Analytics: scoping is supported for API consistency,
+   * but a "top vehicles" ranking collapses to a single bar at vehicle
+   * scope -- not meaningful on a vehicle dashboard. Fleet-only in practice.
+   */
+  licensePlate?: string;
 }
 
 function TopVehiclesTooltip({ active, payload }: any) {
@@ -46,8 +52,8 @@ function TopVehiclesTooltip({ active, payload }: any) {
   );
 }
 
-export function TopVehiclesByExpenseChart({ dateRange }: TopVehiclesByExpenseChartProps) {
-  const { data, isLoading, error } = useTopVehiclesByExpense(dateRange, 10);
+export function TopVehiclesByExpenseChart({ dateRange, licensePlate }: TopVehiclesByExpenseChartProps) {
+  const { data, isLoading, error } = useTopVehiclesByExpense(dateRange, 10, licensePlate);
   const { open, setOpen, filter, openDrawer } = useExpenseDrawer();
 
   function handleClick(row: TopVehicleExpenseRow) {

@@ -13,10 +13,12 @@ const COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--cha
 
 interface FuelTypeDistributionChartProps {
   dateRange: FuelAnalyticsDateRange;
+  /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
+  licensePlate?: string;
 }
 
-export function FuelTypeDistributionChart({ dateRange }: FuelTypeDistributionChartProps) {
-  const { data, isLoading, error } = useFuelTypeDistribution(dateRange);
+export function FuelTypeDistributionChart({ dateRange, licensePlate }: FuelTypeDistributionChartProps) {
+  const { data, isLoading, error } = useFuelTypeDistribution(dateRange, licensePlate);
 
   return (
     <Card>

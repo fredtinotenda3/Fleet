@@ -11,6 +11,8 @@ import type { TopVehicleExpenseRow } from '@/shared/types/expense.types';
 
 interface VehicleAverageCostChartProps {
   dateRange: ExpenseAnalyticsDateRange;
+  /** Vehicle-Level Analytics: scoping supported for API consistency; fleet-only in practice. */
+  licensePlate?: string;
 }
 
 function AverageCostTooltip({ active, payload }: any) {
@@ -29,8 +31,8 @@ function AverageCostTooltip({ active, payload }: any) {
   );
 }
 
-export function VehicleAverageCostChart({ dateRange }: VehicleAverageCostChartProps) {
-  const { data, isLoading, error } = useTopVehiclesByExpense(dateRange, 10);
+export function VehicleAverageCostChart({ dateRange, licensePlate }: VehicleAverageCostChartProps) {
+  const { data, isLoading, error } = useTopVehiclesByExpense(dateRange, 10, licensePlate);
   const sorted = [...(data ?? [])].sort((a, b) => b.average - a.average);
 
   return (

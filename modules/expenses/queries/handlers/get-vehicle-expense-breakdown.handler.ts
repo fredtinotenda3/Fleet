@@ -1,5 +1,4 @@
-//modules/expenses/queries/handlers/get-vehicle-expense-breakdown.handler.ts
-
+// modules/expenses/queries/handlers/get-vehicle-expense-breakdown.handler.ts
 import { IQueryHandler } from '@/server/cqrs/query';
 import { GetVehicleExpenseBreakdownQuery } from '../get-vehicle-expense-breakdown.query';
 import { ExpenseRepository } from '@/modules/expenses/repositories/expense.repository';
@@ -11,6 +10,6 @@ export class GetVehicleExpenseBreakdownHandler
   constructor(private readonly expenseRepo: ExpenseRepository) {}
 
   async execute(query: GetVehicleExpenseBreakdownQuery): Promise<VehicleExpenseBreakdownRow[]> {
-    return this.expenseRepo.getVehicleExpenseBreakdown(query.tenantId, query.dateRange, query.vehicleLimit);
+    return this.expenseRepo.getVehicleExpenseBreakdown(query.tenantId, query.dateRange, query.vehicleLimit, query.scope);
   }
 }

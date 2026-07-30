@@ -16,6 +16,7 @@ import { useSessionStore } from '@/frontend/shared/store/session.store';
 import { useVehicle, useVehicleActivity } from '../hooks/useVehicles';
 import { useDeleteVehicle, useUpdateVehicle } from '../hooks/useVehicleMutations';
 import { VehicleModal, type VehicleModalMode } from '../components/VehicleModal';
+import { VehicleAnalyticsPanel } from '../components/analytics';
 import {
   getVehicleStatusMeta,
   getVehicleStatusBadgeClass,
@@ -148,6 +149,7 @@ export function VehicleDetailPage({ vehicleId }: VehicleDetailPageProps) {
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="specifications">Specifications</TabsTrigger>
+          <TabsTrigger value="analytics">Analytics</TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
 
@@ -209,6 +211,10 @@ export function VehicleDetailPage({ vehicleId }: VehicleDetailPageProps) {
               <DetailRow label="Status" value={statusMeta.label} />
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="analytics" className="mt-4">
+          <VehicleAnalyticsPanel licensePlate={vehicle.license_plate} />
         </TabsContent>
 
         <TabsContent value="activity" className="mt-4">

@@ -7,8 +7,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/fro
 import { useMonthlyFuelConsumption } from '../hooks/useFuel';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 
-export function FuelMonthlyTrendChart() {
-  const { data: monthlyData, isLoading, error } = useMonthlyFuelConsumption(12);
+interface FuelMonthlyTrendChartProps {
+  /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
+  licensePlate?: string;
+}
+
+export function FuelMonthlyTrendChart({ licensePlate }: FuelMonthlyTrendChartProps = {}) {
+  const { data: monthlyData, isLoading, error } = useMonthlyFuelConsumption(12, licensePlate);
 
   if (isLoading) {
     return (

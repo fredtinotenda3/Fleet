@@ -15,6 +15,8 @@ import type { CategorySummary } from '@/shared/types/expense.types';
 
 interface ExpenseTopCategoriesChartProps {
   dateRange: ExpenseAnalyticsDateRange;
+  /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
+  licensePlate?: string;
 }
 
 function TopCategoriesTooltip({ active, payload }: any) {
@@ -39,8 +41,8 @@ function TopCategoriesTooltip({ active, payload }: any) {
   );
 }
 
-export function ExpenseTopCategoriesChart({ dateRange }: ExpenseTopCategoriesChartProps) {
-  const { data: summary, isLoading, error } = useExpenseCategorySummary(dateRange);
+export function ExpenseTopCategoriesChart({ dateRange, licensePlate }: ExpenseTopCategoriesChartProps) {
+  const { data: summary, isLoading, error } = useExpenseCategorySummary(dateRange, licensePlate);
   const { data: expenseTypes } = useExpenseTypes();
   const { open, setOpen, filter, openDrawer } = useExpenseDrawer();
 
@@ -53,6 +55,7 @@ export function ExpenseTopCategoriesChart({ dateRange }: ExpenseTopCategoriesCha
       type: type?._id,
       startDate: dateRange.startDate,
       endDate: dateRange.endDate,
+      license_plate: licensePlate,
     });
   }
 

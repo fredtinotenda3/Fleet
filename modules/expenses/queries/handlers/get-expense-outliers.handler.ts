@@ -10,6 +10,12 @@ export class GetExpenseOutliersHandler
   constructor(private readonly expenseRepo: ExpenseRepository) {}
 
   async execute(query: GetExpenseOutliersQuery): Promise<ExpenseOutlierRow[]> {
-    return this.expenseRepo.getExpenseOutliers(query.tenantId, query.dateRange, query.zThreshold, query.limit);
+    return this.expenseRepo.getExpenseOutliers(
+      query.tenantId,
+      query.dateRange,
+      query.zThreshold,
+      query.limit,
+      query.scope
+    );
   }
 }

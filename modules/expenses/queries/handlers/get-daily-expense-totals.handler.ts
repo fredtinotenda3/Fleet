@@ -10,6 +10,6 @@ export class GetDailyExpenseTotalsHandler
   constructor(private readonly expenseRepo: ExpenseRepository) {}
 
   async execute(query: GetDailyExpenseTotalsQuery): Promise<DailyExpenseTotal[]> {
-    return this.expenseRepo.getDailyExpenseTotals(query.tenantId, query.dateRange);
+    return this.expenseRepo.getDailyExpenseTotals(query.tenantId, query.dateRange, query.scope);
   }
 }

@@ -11,10 +11,12 @@ import type { FuelAnalyticsDateRange } from './FuelAnalyticsFilterBar';
 
 interface AverageFuelPriceTrendChartProps {
   dateRange: FuelAnalyticsDateRange;
+  /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
+  licensePlate?: string;
 }
 
-export function AverageFuelPriceTrendChart({ dateRange }: AverageFuelPriceTrendChartProps) {
-  const { data, isLoading, error } = useAverageFuelPriceTrend(dateRange, 'month');
+export function AverageFuelPriceTrendChart({ dateRange, licensePlate }: AverageFuelPriceTrendChartProps) {
+  const { data, isLoading, error } = useAverageFuelPriceTrend(dateRange, 'month', licensePlate);
 
   return (
     <Card>

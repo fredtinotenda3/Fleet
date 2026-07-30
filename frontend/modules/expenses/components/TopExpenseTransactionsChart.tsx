@@ -22,10 +22,12 @@ import type { TopExpenseTransactionRow } from '@/shared/types/expense.types';
 
 interface TopExpenseTransactionsChartProps {
   dateRange: ExpenseAnalyticsDateRange;
+  /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
+  licensePlate?: string;
 }
 
-export function TopExpenseTransactionsChart({ dateRange }: TopExpenseTransactionsChartProps) {
-  const { data, isLoading, error } = useTopExpenseTransactions(dateRange, 10);
+export function TopExpenseTransactionsChart({ dateRange, licensePlate }: TopExpenseTransactionsChartProps) {
+  const { data, isLoading, error } = useTopExpenseTransactions(dateRange, 10, licensePlate);
   const { open, setOpen, filter, openDrawer } = useExpenseDrawer();
 
   function handleRowClick(row: TopExpenseTransactionRow) {
@@ -66,7 +68,7 @@ export function TopExpenseTransactionsChart({ dateRange }: TopExpenseTransaction
                       <TableCell className="font-medium">{row.license_plate}</TableCell>
                       <TableCell><Badge variant="outline">{row.category}</Badge></TableCell>
                       <TableCell className="text-right tabular-nums">{formatCurrency(row.amount)}</TableCell>
-                      <TableCell className="max-w-55 truncate" title={row.description ?? undefined}>
+                      <TableCell className="truncate max-w-55" title={row.description ?? undefined}>
                         {row.description || '\u2014'}
                       </TableCell>
                     </TableRow>

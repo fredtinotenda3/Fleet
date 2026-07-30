@@ -10,6 +10,6 @@ export class GetExpenseCategorySummaryHandler
   constructor(private readonly expenseRepo: ExpenseRepository) {}
 
   async execute(query: GetExpenseCategorySummaryQuery): Promise<CategorySummary[]> {
-    return this.expenseRepo.getExpenseCategorySummary(query.tenantId, query.dateRange);
+    return this.expenseRepo.getExpenseCategorySummary(query.tenantId, query.dateRange, query.scope);
   }
 }

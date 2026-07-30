@@ -14,6 +14,8 @@ import type { ExpenseAnalyticsDateRange } from './ExpenseAnalyticsFilterBar';
 
 interface JobTripExpenseChartProps {
   dateRange: ExpenseAnalyticsDateRange;
+  /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
+  licensePlate?: string;
 }
 
 function JobTripTooltip({ active, payload, label }: any) {
@@ -37,8 +39,8 @@ function JobTripTooltip({ active, payload, label }: any) {
   );
 }
 
-export function JobTripExpenseChart({ dateRange }: JobTripExpenseChartProps) {
-  const { data, isLoading, error } = useJobTripExpense(dateRange, 10);
+export function JobTripExpenseChart({ dateRange, licensePlate }: JobTripExpenseChartProps) {
+  const { data, isLoading, error } = useJobTripExpense(dateRange, 10, licensePlate);
   const { data: expenseTypes } = useExpenseTypes();
   const { open, setOpen, filter, openDrawer } = useExpenseDrawer();
 
@@ -64,6 +66,7 @@ export function JobTripExpenseChart({ dateRange }: JobTripExpenseChartProps) {
       type: type?._id,
       startDate: dateRange.startDate,
       endDate: dateRange.endDate,
+      license_plate: licensePlate,
     } as any);
   }
 

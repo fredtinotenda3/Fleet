@@ -35,6 +35,8 @@ const METRIC_LABELS: Record<LineMetric, string> = {
 
 interface FuelActivityTrendChartProps {
   dateRange: FuelAnalyticsDateRange;
+  /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
+  licensePlate?: string;
 }
 
 function ActivityTrendTooltip({ active, payload, label }: any) {
@@ -59,10 +61,10 @@ function ActivityTrendTooltip({ active, payload, label }: any) {
   );
 }
 
-export function FuelActivityTrendChart({ dateRange }: FuelActivityTrendChartProps) {
+export function FuelActivityTrendChart({ dateRange, licensePlate }: FuelActivityTrendChartProps) {
   const [granularity, setGranularity] = useState<FuelTrendGranularity>('month');
   const [metric, setMetric] = useState<LineMetric>('volume');
-  const { data, isLoading, error } = useFuelActivityTrend(granularity, dateRange);
+  const { data, isLoading, error } = useFuelActivityTrend(granularity, dateRange, licensePlate);
 
   const formatMetric = (value: number) => (metric === 'volume' ? `${value.toFixed(1)} L` : formatCurrency(value));
 

@@ -8,6 +8,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/fro
 import { useExpenseMonthlyTrends } from '../hooks/useExpenses';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 
+interface RunningMonthlySpendChartProps {
+  /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
+  licensePlate?: string;
+}
+
 interface RunningRow {
   month: string;
   total: number;
@@ -30,8 +35,8 @@ function RunningTooltip({ active, payload, label }: any) {
   );
 }
 
-export function RunningMonthlySpendChart() {
-  const { data, isLoading, error } = useExpenseMonthlyTrends(12);
+export function RunningMonthlySpendChart({ licensePlate }: RunningMonthlySpendChartProps = {}) {
+  const { data, isLoading, error } = useExpenseMonthlyTrends(12, licensePlate);
 
   const chartData = useMemo<RunningRow[]>(() => {
     if (!data) return [];

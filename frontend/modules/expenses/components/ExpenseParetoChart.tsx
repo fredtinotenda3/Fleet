@@ -1,5 +1,3 @@
-// frontend/modules/expenses/components/ExpenseParetoChart.tsx
-
 'use client';
 
 import { useMemo } from 'react';
@@ -13,6 +11,8 @@ import type { ExpenseAnalyticsDateRange } from './ExpenseAnalyticsFilterBar';
 
 interface ExpenseParetoChartProps {
   dateRange: ExpenseAnalyticsDateRange;
+  /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
+  licensePlate?: string;
 }
 
 interface ParetoRow {
@@ -38,8 +38,8 @@ function ParetoTooltip({ active, payload }: any) {
   );
 }
 
-export function ExpenseParetoChart({ dateRange }: ExpenseParetoChartProps) {
-  const { data: stats, isLoading, error } = useExpenseStats(dateRange);
+export function ExpenseParetoChart({ dateRange, licensePlate }: ExpenseParetoChartProps) {
+  const { data: stats, isLoading, error } = useExpenseStats(dateRange, licensePlate);
   const { data: expenseTypes } = useExpenseTypes();
   const { open, setOpen, filter, openDrawer } = useExpenseDrawer();
 
@@ -56,7 +56,7 @@ export function ExpenseParetoChart({ dateRange }: ExpenseParetoChartProps) {
 
   function handleClick(row: ParetoRow) {
     const type = expenseTypes?.find((t) => t.name === row.category);
-    openDrawer({ label: row.category, type: type?._id, startDate: dateRange.startDate, endDate: dateRange.endDate });
+    openDrawer({ label: row.category, type: type?._id, startDate: dateRange.startDate, endDate: dateRange.endDate, license_plate: licensePlate });
   }
 
   return (

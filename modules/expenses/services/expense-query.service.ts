@@ -30,6 +30,7 @@ import {
   ExpenseOutlierRow,
 } from '@/shared/types/expense.types';
 import { PaginatedResponse, PaginationParams, DateRange } from '@/shared/types/common.types';
+import { AnalyticsScope } from '@/shared/types/analytics-scope.types';
 
 export class ExpenseQueryService {
   async getFilteredExpenses(
@@ -46,16 +47,17 @@ export class ExpenseQueryService {
     return queryBus.execute<Expense>(new GetExpenseByIdQuery(expenseId, tenantId));
   }
 
-  async getExpenseStats(tenantId: string, dateRange?: DateRange): Promise<ExpenseStats> {
-    return queryBus.execute<ExpenseStats>(new GetExpenseStatsQuery(tenantId, dateRange));
+  async getExpenseStats(tenantId: string, dateRange?: DateRange, scope?: AnalyticsScope): Promise<ExpenseStats> {
+    return queryBus.execute<ExpenseStats>(new GetExpenseStatsQuery(tenantId, dateRange, scope));
   }
 
   async getMonthlyTrends(
     tenantId: string,
-    months: number = 12
+    months: number = 12,
+    scope?: AnalyticsScope
   ): Promise<Array<{ month: string; total: number }>> {
     return queryBus.execute<Array<{ month: string; total: number }>>(
-      new GetMonthlyTrendsQuery(tenantId, months)
+      new GetMonthlyTrendsQuery(tenantId, months, scope)
     );
   }
 
@@ -65,82 +67,97 @@ export class ExpenseQueryService {
 
   async getExpenseCategoryOverTime(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Promise<ExpenseCategoryOverTimePoint[]> {
     return queryBus.execute<ExpenseCategoryOverTimePoint[]>(
-      new GetExpenseCategoryOverTimeQuery(tenantId, dateRange)
+      new GetExpenseCategoryOverTimeQuery(tenantId, dateRange, scope)
     );
   }
 
   async getTopVehiclesByExpense(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    limit: number = 10
+    limit: number = 10,
+    scope?: AnalyticsScope
   ): Promise<TopVehicleExpenseRow[]> {
     return queryBus.execute<TopVehicleExpenseRow[]>(
-      new GetTopVehiclesByExpenseQuery(tenantId, dateRange, limit)
+      new GetTopVehiclesByExpenseQuery(tenantId, dateRange, limit, scope)
     );
   }
 
   async getVehicleExpenseBreakdown(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    vehicleLimit: number = 8
+    vehicleLimit: number = 8,
+    scope?: AnalyticsScope
   ): Promise<VehicleExpenseBreakdownRow[]> {
     return queryBus.execute<VehicleExpenseBreakdownRow[]>(
-      new GetVehicleExpenseBreakdownQuery(tenantId, dateRange, vehicleLimit)
+      new GetVehicleExpenseBreakdownQuery(tenantId, dateRange, vehicleLimit, scope)
     );
   }
 
   async getExpenseAmountDistribution(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Promise<ExpenseAmountDistributionBucket[]> {
     return queryBus.execute<ExpenseAmountDistributionBucket[]>(
-      new GetExpenseAmountDistributionQuery(tenantId, dateRange)
+      new GetExpenseAmountDistributionQuery(tenantId, dateRange, scope)
     );
   }
 
   async getJobTripExpense(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    jobLimit: number = 10
+    jobLimit: number = 10,
+    scope?: AnalyticsScope
   ): Promise<JobTripExpenseRow[]> {
-    return queryBus.execute<JobTripExpenseRow[]>(new GetJobTripExpenseQuery(tenantId, dateRange, jobLimit));
+    return queryBus.execute<JobTripExpenseRow[]>(
+      new GetJobTripExpenseQuery(tenantId, dateRange, jobLimit, scope)
+    );
   }
 
   async getExpenseCategorySummary(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Promise<CategorySummary[]> {
-    return queryBus.execute<CategorySummary[]>(new GetExpenseCategorySummaryQuery(tenantId, dateRange));
+    return queryBus.execute<CategorySummary[]>(
+      new GetExpenseCategorySummaryQuery(tenantId, dateRange, scope)
+    );
   }
 
   async getTopExpenseTransactions(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    limit: number = 10
+    limit: number = 10,
+    scope?: AnalyticsScope
   ): Promise<TopExpenseTransactionRow[]> {
     return queryBus.execute<TopExpenseTransactionRow[]>(
-      new GetTopExpenseTransactionsQuery(tenantId, dateRange, limit)
+      new GetTopExpenseTransactionsQuery(tenantId, dateRange, limit, scope)
     );
   }
 
   async getDailyExpenseTotals(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Promise<DailyExpenseTotal[]> {
-    return queryBus.execute<DailyExpenseTotal[]>(new GetDailyExpenseTotalsQuery(tenantId, dateRange));
+    return queryBus.execute<DailyExpenseTotal[]>(
+      new GetDailyExpenseTotalsQuery(tenantId, dateRange, scope)
+    );
   }
 
   async getExpenseOutliers(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     zThreshold: number = 2.5,
-    limit: number = 25
+    limit: number = 25,
+    scope?: AnalyticsScope
   ): Promise<ExpenseOutlierRow[]> {
     return queryBus.execute<ExpenseOutlierRow[]>(
-      new GetExpenseOutliersQuery(tenantId, dateRange, zThreshold, limit)
+      new GetExpenseOutliersQuery(tenantId, dateRange, zThreshold, limit, scope)
     );
   }
 }

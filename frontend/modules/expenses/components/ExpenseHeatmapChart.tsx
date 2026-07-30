@@ -10,10 +10,12 @@ import type { ExpenseAnalyticsDateRange } from './ExpenseAnalyticsFilterBar';
 
 interface ExpenseHeatmapChartProps {
   dateRange: ExpenseAnalyticsDateRange;
+  /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
+  licensePlate?: string;
 }
 
-export function ExpenseHeatmapChart({ dateRange }: ExpenseHeatmapChartProps) {
-  const { data, isLoading, error } = useExpenseCategoryOverTime(dateRange);
+export function ExpenseHeatmapChart({ dateRange, licensePlate }: ExpenseHeatmapChartProps) {
+  const { data, isLoading, error } = useExpenseCategoryOverTime(dateRange, licensePlate);
 
   const { months, categories, cellMap, max } = useMemo(() => {
     const monthSet = new Set<string>();

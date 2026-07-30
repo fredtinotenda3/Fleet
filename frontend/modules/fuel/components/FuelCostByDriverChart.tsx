@@ -15,6 +15,8 @@ const BAR_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(-
 
 interface FuelCostByDriverChartProps {
   dateRange: FuelAnalyticsDateRange;
+  /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
+  licensePlate?: string;
 }
 
 function DriverCostTooltip({ active, payload }: any) {
@@ -39,8 +41,8 @@ function DriverCostTooltip({ active, payload }: any) {
   );
 }
 
-export function FuelCostByDriverChart({ dateRange }: FuelCostByDriverChartProps) {
-  const { data, isLoading, error } = useFuelByDriver(dateRange, 10, 'cost');
+export function FuelCostByDriverChart({ dateRange, licensePlate }: FuelCostByDriverChartProps) {
+  const { data, isLoading, error } = useFuelByDriver(dateRange, 10, 'cost', licensePlate);
 
   return (
     <Card>

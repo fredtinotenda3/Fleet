@@ -1,5 +1,4 @@
-//modules/fuel/queries/handlers/get-fueling-frequency-by-vehicle.handler.ts
-
+// modules/fuel/queries/handlers/get-fueling-frequency-by-vehicle.handler.ts
 import { IQueryHandler } from '@/server/cqrs/query';
 import { GetFuelingFrequencyByVehicleQuery } from '../get-fueling-frequency-by-vehicle.query';
 import { FuelRepository } from '@/modules/fuel/repositories/fuel.repository';
@@ -11,6 +10,6 @@ export class GetFuelingFrequencyByVehicleHandler
   constructor(private readonly fuelRepo: FuelRepository) {}
 
   async execute(query: GetFuelingFrequencyByVehicleQuery): Promise<FuelFrequencyByVehicleRow[]> {
-    return this.fuelRepo.getFuelingFrequencyByVehicle(query.tenantId, query.dateRange, query.limit);
+    return this.fuelRepo.getFuelingFrequencyByVehicle(query.tenantId, query.dateRange, query.limit, query.scope);
   }
 }

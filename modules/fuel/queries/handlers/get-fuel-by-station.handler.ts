@@ -1,5 +1,4 @@
-//modules/fuel/queries/handlers/get-fuel-by-station.handler.ts
-
+// modules/fuel/queries/handlers/get-fuel-by-station.handler.ts
 import { IQueryHandler } from '@/server/cqrs/query';
 import { GetFuelByStationQuery } from '../get-fuel-by-station.query';
 import { FuelRepository } from '@/modules/fuel/repositories/fuel.repository';
@@ -9,6 +8,6 @@ export class GetFuelByStationHandler implements IQueryHandler<GetFuelByStationQu
   constructor(private readonly fuelRepo: FuelRepository) {}
 
   async execute(query: GetFuelByStationQuery): Promise<FuelByStationRow[]> {
-    return this.fuelRepo.getFuelByStation(query.tenantId, query.dateRange, query.limit);
+    return this.fuelRepo.getFuelByStation(query.tenantId, query.dateRange, query.limit, query.scope);
   }
 }

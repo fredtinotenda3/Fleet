@@ -38,7 +38,6 @@ export interface FuelImportRowResult {
   success: boolean;
   identifier?: string;
   error?: string;
-  /** True when the row was skipped as a duplicate rather than failing validation. */
   duplicate?: boolean;
 }
 
@@ -74,6 +73,16 @@ function buildRangeParams(dateRange?: { startDate?: Date; endDate?: Date }) {
   };
 }
 
+/**
+ * Vehicle-Level Analytics: every analytics call below accepts an
+ * optional `licensePlate`. Passing it scopes the SAME query/chart to
+ * that one vehicle (server-side, via AnalyticsScope) -- omit it for
+ * today's unscoped fleet-wide behaviour. No new endpoints.
+ */
+function scopeParams(licensePlate?: string) {
+  return licensePlate ? { license_plate: licensePlate } : {};
+}
+
 export const fuelApi = {
   async list(params: Partial<FuelListParams>): Promise<PaginatedResponse<FuelLog>> {
     return apiClient.get<PaginatedResponse<FuelLog>>(BASE, { params: buildListQuery(params) });
@@ -95,13 +104,6 @@ export const fuelApi = {
     return apiClient.delete<{ message: string }>(BASE, { params: { id, soft } });
   },
 
-  /**
-   * Enterprise Export Framework (Phase 2). Fuel logs export lives behind
-   * ?action=export on the shared /api/fuellogs route (no dedicated
-   * /export subroute), same as every other action on this module. Sends
-   * the same filter fields as list() so the backend re-queries the full
-   * authorized, filtered result set (capped at EXPORT_ROW_CAP).
-   */
   async exportFile(filters: Partial<FuelTableFilters>, format: ExportFormat = 'csv'): Promise<ExportBlobResponse> {
     return apiClient.getBlob(BASE, {
       params: {
@@ -119,33 +121,56 @@ export const fuelApi = {
     });
   },
 
-  async getStats(dateRange?: { startDate?: Date; endDate?: Date }): Promise<FuelStats> {
-    return apiClient.get<FuelStats>(BASE, { params: { action: 'stats', ...buildRangeParams(dateRange) } });
+  async getStats(
+    dateRange?: { startDate?: Date; endDate?: Date },
+    licensePlate?: string
+  ): Promise<FuelStats> {
+    return apiClient.get<FuelStats>(BASE, {
+      params: { action: 'stats', ...buildRangeParams(dateRange), ...scopeParams(licensePlate) },
+    });
   },
 
-  async getKpis(dateRange?: { startDate?: Date; endDate?: Date }): Promise<FuelKpis> {
-    return apiClient.get<FuelKpis>(BASE, { params: { action: 'kpis', ...buildRangeParams(dateRange) } });
+  async getKpis(
+    dateRange?: { startDate?: Date; endDate?: Date },
+    licensePlate?: string
+  ): Promise<FuelKpis> {
+    return apiClient.get<FuelKpis>(BASE, {
+      params: { action: 'kpis', ...buildRangeParams(dateRange), ...scopeParams(licensePlate) },
+    });
   },
 
-  async getAbnormalConsumption(threshold: number = 2): Promise<AbnormalFuelConsumptionRow[]> {
-    return apiClient.get<AbnormalFuelConsumptionRow[]>(BASE, { params: { action: 'abnormal', threshold } });
+  async getAbnormalConsumption(threshold: number = 2, licensePlate?: string): Promise<AbnormalFuelConsumptionRow[]> {
+    return apiClient.get<AbnormalFuelConsumptionRow[]>(BASE, {
+      params: { action: 'abnormal', threshold, ...scopeParams(licensePlate) },
+    });
   },
 
-  async getMonthlyConsumption(months: number = 12): Promise<MonthlyFuelConsumptionPoint[]> {
-    return apiClient.get<MonthlyFuelConsumptionPoint[]>(BASE, { params: { action: 'monthly', months } });
+  async getMonthlyConsumption(months: number = 12, licensePlate?: string): Promise<MonthlyFuelConsumptionPoint[]> {
+    return apiClient.get<MonthlyFuelConsumptionPoint[]>(BASE, {
+      params: { action: 'monthly', months, ...scopeParams(licensePlate) },
+    });
   },
 
-  async getTopConsumers(limit: number = 5): Promise<TopFuelConsumerRow[]> {
-    return apiClient.get<TopFuelConsumerRow[]>(BASE, { params: { action: 'top-consumers', limit } });
+  async getTopConsumers(limit: number = 5, licensePlate?: string): Promise<TopFuelConsumerRow[]> {
+    return apiClient.get<TopFuelConsumerRow[]>(BASE, {
+      params: { action: 'top-consumers', limit, ...scopeParams(licensePlate) },
+    });
   },
 
   async getByDriver(
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 10,
-    sortBy: FuelByDriverSort = 'volume'
+    sortBy: FuelByDriverSort = 'volume',
+    licensePlate?: string
   ): Promise<DriverFuelConsumptionRow[]> {
     return apiClient.get<DriverFuelConsumptionRow[]>(BASE, {
-      params: { action: 'by-driver', limit, sortBy, ...buildRangeParams(dateRange) },
+      params: {
+        action: 'by-driver',
+        limit,
+        sortBy,
+        ...buildRangeParams(dateRange),
+        ...scopeParams(licensePlate),
+      },
     });
   },
 
@@ -161,16 +186,10 @@ export const fuelApi = {
   },
 
   async importLogs(records: Record<string, unknown>[]): Promise<FuelImportResponse> {
-    // FIX: this call was using apiClient's default 30000ms timeout, so the
-    // browser aborted the fetch (surfacing as "Request timeout") right as
-    // the server was still working through the batch -- the server itself
-    // finished fine (see the `200 in 30390ms` log), the client just wasn't
-    // waiting long enough. Import is a bulk op scaling with row count
-    // (MAX_IMPORT_ROWS = 2000), so it needs its own generous timeout.
     return apiClient.post<FuelImportResponse>(`${BASE}/import`, { records }, { timeout: 180_000 });
   },
 
-  // ---- Enterprise analytics ----
+  // ---- Enterprise analytics (scope-aware) ----
 
   async getVehicleFuelTimeline(params: {
     license_plate?: string;
@@ -188,59 +207,83 @@ export const fuelApi = {
 
   async getFuelByStation(
     dateRange?: { startDate?: Date; endDate?: Date },
-    limit: number = 15
+    limit: number = 15,
+    licensePlate?: string
   ): Promise<FuelByStationRow[]> {
     return apiClient.get<FuelByStationRow[]>(BASE, {
-      params: { action: 'by-station', limit, ...buildRangeParams(dateRange) },
+      params: { action: 'by-station', limit, ...buildRangeParams(dateRange), ...scopeParams(licensePlate) },
     });
   },
 
   async getFuelActivityTrend(
     granularity: FuelTrendGranularity,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    licensePlate?: string
   ): Promise<FuelActivityTrendPoint[]> {
     return apiClient.get<FuelActivityTrendPoint[]>(BASE, {
-      params: { action: 'activity-trend', granularity, ...buildRangeParams(dateRange) },
+      params: {
+        action: 'activity-trend',
+        granularity,
+        ...buildRangeParams(dateRange),
+        ...scopeParams(licensePlate),
+      },
     });
   },
 
   async getAverageFuelPriceTrend(
     dateRange?: { startDate?: Date; endDate?: Date },
-    granularity: FuelTrendGranularity = 'month'
+    granularity: FuelTrendGranularity = 'month',
+    licensePlate?: string
   ): Promise<FuelPriceTrendPoint[]> {
     return apiClient.get<FuelPriceTrendPoint[]>(BASE, {
-      params: { action: 'price-trend', granularity, ...buildRangeParams(dateRange) },
+      params: {
+        action: 'price-trend',
+        granularity,
+        ...buildRangeParams(dateRange),
+        ...scopeParams(licensePlate),
+      },
     });
   },
 
   async getFuelTypeDistribution(
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    licensePlate?: string
   ): Promise<FuelTypeDistributionRow[]> {
     return apiClient.get<FuelTypeDistributionRow[]>(BASE, {
-      params: { action: 'type-distribution', ...buildRangeParams(dateRange) },
+      params: { action: 'type-distribution', ...buildRangeParams(dateRange), ...scopeParams(licensePlate) },
     });
   },
 
   async getFuelingFrequencyByVehicle(
     dateRange?: { startDate?: Date; endDate?: Date },
-    limit: number = 20
+    limit: number = 20,
+    licensePlate?: string
   ): Promise<FuelFrequencyByVehicleRow[]> {
     return apiClient.get<FuelFrequencyByVehicleRow[]>(BASE, {
-      params: { action: 'frequency-by-vehicle', limit, ...buildRangeParams(dateRange) },
+      params: {
+        action: 'frequency-by-vehicle',
+        limit,
+        ...buildRangeParams(dateRange),
+        ...scopeParams(licensePlate),
+      },
     });
   },
 
   async getFuelCostDistribution(
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    licensePlate?: string
   ): Promise<FuelCostDistributionBucket[]> {
     return apiClient.get<FuelCostDistributionBucket[]>(BASE, {
-      params: { action: 'cost-distribution', ...buildRangeParams(dateRange) },
+      params: { action: 'cost-distribution', ...buildRangeParams(dateRange), ...scopeParams(licensePlate) },
     });
   },
 
-  async getFuelEntryHeatmap(dateRange?: { startDate?: Date; endDate?: Date }): Promise<FuelHeatmapCell[]> {
+  async getFuelEntryHeatmap(
+    dateRange?: { startDate?: Date; endDate?: Date },
+    licensePlate?: string
+  ): Promise<FuelHeatmapCell[]> {
     return apiClient.get<FuelHeatmapCell[]>(BASE, {
-      params: { action: 'heatmap', ...buildRangeParams(dateRange) },
+      params: { action: 'heatmap', ...buildRangeParams(dateRange), ...scopeParams(licensePlate) },
     });
   },
 };

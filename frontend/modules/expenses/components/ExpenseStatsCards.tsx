@@ -36,13 +36,6 @@ function getRangeForPeriod(period: StatsPeriod): { startDate?: Date; endDate?: D
   return { startDate: start, endDate: end };
 }
 
-/**
- * Small colored icon badge, replacing the previous plain muted-foreground
- * icon. Each stat gets a distinct semantic accent (spend = primary,
- * average = success, category count = info, top category = accent) so
- * the four cards are scannable at a glance rather than four identical
- * gray icons.
- */
 function StatIcon({
   icon: Icon,
   tone,
@@ -66,11 +59,6 @@ function StatIcon({
   );
 }
 
-/**
- * Same deterministic hash used by ExpensesTable's CategoryBadge, so the
- * "Top category" figure here always matches the color that category
- * shows as in the table below -- one category, one color, everywhere.
- */
 const CHART_COLOR_COUNT = 6;
 
 function categoryColorIndex(label: string): number {
@@ -81,44 +69,24 @@ function categoryColorIndex(label: string): number {
   return (hash % CHART_COLOR_COUNT) + 1;
 }
 
-export function ExpenseStatsCards() {
-  /**
-   * FIX: this previously defaulted to 'month', which silently scoped the
-   * dashboard's KPI cards ("Total expenses", "Average expense",
-   * "Categories used", "Top category") to the current calendar month on
-   * every page load -- while the cards themselves read as if they were
-   * showing all-time figures, and the paired KPIsWidget on the main
-   * dashboard explicitly labels the same number "All recorded expenses".
-   * That mismatch (a few current-month rows vs. the full 101-record
-   * history going back to April) is exactly what produced the
-   * dashboard-vs-list-page total discrepancy. Defaulting to 'all' makes
-   * getRangeForPeriod() return `undefined`, which (paired with the fixed
-   * useExpenseStats hook) sends no date filter at all and matches the
-   * backend's own all-time aggregation. The selector still lets the
-   * person narrow to This month / Last 30 days / This year on demand.
-   */
+interface ExpenseStatsCardsProps {
+  /** Vehicle-Level Analytics: scope every stat to a single vehicle instead of the fleet. */
+  licensePlate?: string;
+}
+
+export function ExpenseStatsCards({ licensePlate }: ExpenseStatsCardsProps = {}) {
   const [period, setPeriod] = useState<StatsPeriod>('all');
   const dateRange = useMemo(() => getRangeForPeriod(period), [period]);
-  const { data: stats, isLoading, error } = useExpenseStats(dateRange);
+  const { data: stats, isLoading, error } = useExpenseStats(dateRange, licensePlate);
 
   const topCategory = stats?.topCategories?.[0];
-
-  // FIX (crash -- "Cannot convert undefined or null to object"):
-  // `stats ? Object.keys(stats.byType).length : 0` only guarded against
-  // `stats` itself being undefined -- it did not check whether `byType`
-  // was present ON `stats`. If the response resolved but `byType` was
-  // missing (stale cached response, partial envelope, or any shape drift
-  // between deploys), `Object.keys(undefined)` threw and took down the
-  // whole page. Guarding `stats?.byType` directly (not just `stats`)
-  // makes this impossible regardless of what the rest of the object
-  // looks like.
   const categoryCount = stats?.byType ? Object.keys(stats.byType).length : 0;
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <Label className="text-sm text-muted-foreground">
-          Fleet expense totals &middot; {PERIOD_LABELS[period]}
+          {licensePlate ? `${licensePlate} expense totals` : 'Fleet expense totals'} &middot; {PERIOD_LABELS[period]}
         </Label>
         <Select value={period} onValueChange={(v) => setPeriod(v as StatsPeriod)}>
           <SelectTrigger className="w-40">

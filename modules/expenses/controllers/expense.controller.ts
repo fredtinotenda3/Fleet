@@ -24,6 +24,7 @@ import {
   EXPENSE_EXPORT_SHEET_NAME,
   EXPENSE_EXPORT_BASE_FILENAME,
 } from '../export/expense-export.columns';
+import { AnalyticsScope, vehicleScope } from '@/shared/types/analytics-scope.types';
 
 bootstrapCqrs();
 
@@ -36,6 +37,19 @@ function parseDateRangeParams(req: NextRequest): { startDate?: Date; endDate?: D
     startDate: start ? new Date(start) : undefined,
     endDate: end ? new Date(end) : undefined,
   };
+}
+
+/**
+ * Vehicle-Level Analytics: mirrors FuelController.parseAnalyticsScope.
+ * Every analytics action accepts an optional `?license_plate=`; omitting
+ * it reproduces today's fleet-wide result exactly.
+ */
+function parseAnalyticsScope(req: NextRequest): AnalyticsScope | undefined {
+  const licensePlate = req.nextUrl.searchParams.get('license_plate');
+  if (licensePlate && licensePlate.trim().length > 0) {
+    return vehicleScope(licensePlate);
+  }
+  return undefined;
 }
 
 export class ExpenseController {
@@ -80,13 +94,6 @@ export class ExpenseController {
     }
   }
 
-  /**
-   * Phase 2 Enterprise Export Framework: exports the COMPLETE set of
-   * expenses matching the caller's current filters and authorization
-   * scope, not just the page of results currently loaded in the UI
-   * table. Reuses the exact same auth/tenant-context/filter parsing as
-   * getExpenses above.
-   */
   async exportExpenses(req: NextRequest) {
     try {
       const authContext = await getAuthContext(req);
@@ -140,12 +147,6 @@ export class ExpenseController {
     }
   }
 
-  /**
-   * FIX (critical -- org-unit scope bypass on single-record access):
-   * same bug/fix as VehicleController.loadInScopeVehicle -- getExpenses
-   * (list) was the only endpoint applying org-unit scoping;
-   * getExpense/updateExpense/deleteExpense checked only tenantId.
-   */
   private async loadInScopeExpense(req: NextRequest, id: string) {
     const authContext = await getAuthContext(req);
     if (!authContext) {
@@ -263,7 +264,8 @@ export class ExpenseController {
               endDate: new Date(searchParams.get('endDate')!),
             }
           : undefined;
-      const stats = await expenseQueryService.getExpenseStats(tenantId, dateRange);
+      const scope = parseAnalyticsScope(req);
+      const stats = await expenseQueryService.getExpenseStats(tenantId, dateRange, scope);
       return successResponse(stats);
     } catch (error) {
       return this.handleError(error);
@@ -274,7 +276,8 @@ export class ExpenseController {
     try {
       const tenantId = await getTenantFromRequest(req);
       const months = Number(req.nextUrl.searchParams.get('months') || '12');
-      const trends = await expenseQueryService.getMonthlyTrends(tenantId, months);
+      const scope = parseAnalyticsScope(req);
+      const trends = await expenseQueryService.getMonthlyTrends(tenantId, months, scope);
       return successResponse(trends);
     } catch (error) {
       return this.handleError(error);
@@ -302,7 +305,11 @@ export class ExpenseController {
   async getCategoryOverTime(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const data = await expenseQueryService.getExpenseCategoryOverTime(tenantId, parseDateRangeParams(req));
+      const data = await expenseQueryService.getExpenseCategoryOverTime(
+        tenantId,
+        parseDateRangeParams(req),
+        parseAnalyticsScope(req)
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -313,7 +320,12 @@ export class ExpenseController {
     try {
       const tenantId = await getTenantFromRequest(req);
       const limit = Number(req.nextUrl.searchParams.get('limit') || '10');
-      const data = await expenseQueryService.getTopVehiclesByExpense(tenantId, parseDateRangeParams(req), limit);
+      const data = await expenseQueryService.getTopVehiclesByExpense(
+        tenantId,
+        parseDateRangeParams(req),
+        limit,
+        parseAnalyticsScope(req)
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -324,7 +336,12 @@ export class ExpenseController {
     try {
       const tenantId = await getTenantFromRequest(req);
       const vehicleLimit = Number(req.nextUrl.searchParams.get('vehicleLimit') || '8');
-      const data = await expenseQueryService.getVehicleExpenseBreakdown(tenantId, parseDateRangeParams(req), vehicleLimit);
+      const data = await expenseQueryService.getVehicleExpenseBreakdown(
+        tenantId,
+        parseDateRangeParams(req),
+        vehicleLimit,
+        parseAnalyticsScope(req)
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -334,7 +351,11 @@ export class ExpenseController {
   async getAmountDistribution(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const data = await expenseQueryService.getExpenseAmountDistribution(tenantId, parseDateRangeParams(req));
+      const data = await expenseQueryService.getExpenseAmountDistribution(
+        tenantId,
+        parseDateRangeParams(req),
+        parseAnalyticsScope(req)
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -345,7 +366,12 @@ export class ExpenseController {
     try {
       const tenantId = await getTenantFromRequest(req);
       const jobLimit = Number(req.nextUrl.searchParams.get('jobLimit') || '10');
-      const data = await expenseQueryService.getJobTripExpense(tenantId, parseDateRangeParams(req), jobLimit);
+      const data = await expenseQueryService.getJobTripExpense(
+        tenantId,
+        parseDateRangeParams(req),
+        jobLimit,
+        parseAnalyticsScope(req)
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -355,7 +381,11 @@ export class ExpenseController {
   async getCategorySummary(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const data = await expenseQueryService.getExpenseCategorySummary(tenantId, parseDateRangeParams(req));
+      const data = await expenseQueryService.getExpenseCategorySummary(
+        tenantId,
+        parseDateRangeParams(req),
+        parseAnalyticsScope(req)
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -366,7 +396,12 @@ export class ExpenseController {
     try {
       const tenantId = await getTenantFromRequest(req);
       const limit = Number(req.nextUrl.searchParams.get('limit') || '10');
-      const data = await expenseQueryService.getTopExpenseTransactions(tenantId, parseDateRangeParams(req), limit);
+      const data = await expenseQueryService.getTopExpenseTransactions(
+        tenantId,
+        parseDateRangeParams(req),
+        limit,
+        parseAnalyticsScope(req)
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -376,7 +411,11 @@ export class ExpenseController {
   async getDailyTotals(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const data = await expenseQueryService.getDailyExpenseTotals(tenantId, parseDateRangeParams(req));
+      const data = await expenseQueryService.getDailyExpenseTotals(
+        tenantId,
+        parseDateRangeParams(req),
+        parseAnalyticsScope(req)
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -389,7 +428,13 @@ export class ExpenseController {
       const searchParams = req.nextUrl.searchParams;
       const zThreshold = Number(searchParams.get('zThreshold') || '2.5');
       const limit = Number(searchParams.get('limit') || '25');
-      const data = await expenseQueryService.getExpenseOutliers(tenantId, parseDateRangeParams(req), zThreshold, limit);
+      const data = await expenseQueryService.getExpenseOutliers(
+        tenantId,
+        parseDateRangeParams(req),
+        zThreshold,
+        limit,
+        parseAnalyticsScope(req)
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);

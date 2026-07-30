@@ -26,6 +26,8 @@ const BAR_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(-
 
 interface FuelByStationChartProps {
   dateRange: FuelAnalyticsDateRange;
+  /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
+  licensePlate?: string;
 }
 
 function StationTooltip({ active, payload }: any) {
@@ -50,9 +52,9 @@ function StationTooltip({ active, payload }: any) {
   );
 }
 
-export function FuelByStationChart({ dateRange }: FuelByStationChartProps) {
+export function FuelByStationChart({ dateRange, licensePlate }: FuelByStationChartProps) {
   const [sortMode, setSortMode] = useState<SortMode>('spend');
-  const { data, isLoading, error } = useFuelByStation(dateRange, 15);
+  const { data, isLoading, error } = useFuelByStation(dateRange, 15, licensePlate);
 
   const sorted = useMemo(() => {
     if (!data) return [];

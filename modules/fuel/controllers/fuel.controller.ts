@@ -8,6 +8,7 @@ import { fuelQueryService } from '../services/fuel-query.service';
 import { FuelFilters } from '@/shared/types/fuel.types';
 import type { FuelByDriverSort } from '../queries/get-fuel-by-driver.query';
 import type { FuelTrendGranularity } from '@/shared/types/fuel.types';
+import { AnalyticsScope, vehicleScope } from '@/shared/types/analytics-scope.types';
 import { validatePaginationParams } from '@/shared/utils/pagination.utils';
 import {
   successResponse,
@@ -43,9 +44,6 @@ export interface ImportRowResult {
   success: boolean;
   identifier?: string;
   error?: string;
-  /** True when this row was skipped because it duplicates an existing
-   *  fuel log or another row earlier in the same file. Always false
-   *  when `success` is true. */
   duplicate?: boolean;
 }
 
@@ -70,11 +68,24 @@ function parseDateRange(searchParams: URLSearchParams): { startDate?: Date; endD
 }
 
 /**
- * FIX (ðŸŸ  perf / timeout root cause): the import loop used to call
- * driverRepository.findByNameOrCode(...) and a one-off fuel-station regex
- * query PER ROW. Resolving both ONCE before the loop into in-memory maps
- * removes ~2 DB round trips Ã— row count.
+ * Vehicle-Level Analytics entry point: every analytics action below
+ * accepts an optional `?license_plate=` query param -- the SAME param
+ * already used by the fleet-wide log list and the vehicle-timeline
+ * endpoint -- and turns it into an AnalyticsScope. No new endpoints, no
+ * duplicated business logic: it is the exact same repository method,
+ * the exact same aggregation pipeline, just with the base $match
+ * narrowed to that one vehicle via AnalyticsScopeService. Omitting the
+ * param (the default for every existing caller) reproduces today's
+ * fleet-wide result exactly.
  */
+function parseAnalyticsScope(searchParams: URLSearchParams): AnalyticsScope | undefined {
+  const licensePlate = searchParams.get('license_plate');
+  if (licensePlate && licensePlate.trim().length > 0) {
+    return vehicleScope(licensePlate);
+  }
+  return undefined;
+}
+
 interface DriverLookupEntry {
   id: string;
 }
@@ -129,26 +140,11 @@ async function buildStationLookup(tenantId: string): Promise<Map<string, string>
   return map;
 }
 
-// ---------------------------------------------------------------------
-// NEW: duplicate detection for bulk fuel-log imports.
-//
-// A "duplicate" is defined as the SAME vehicle + SAME calendar day +
-// SAME fuel volume + SAME cost -- matching the exact criteria the
-// person's own upstream data-cleaning tooling already used for
-// cross-sheet dedup (see their Transformation Log: "Exact duplicate of
-// a transaction already present on an earlier sheet (same plate/date/
-// volume/cost/driver/fuel type)"). We intentionally key on
-// plate+date+volume+cost only (not driver/fuel_type) so this also
-// catches duplicates against records already sitting in the database
-// from a prior manual entry or an earlier import run, where those extra
-// fields may not always be populated consistently.
-// ---------------------------------------------------------------------
-
 function normalizeDedupDate(value: unknown): string {
   if (value === null || value === undefined || value === '') return '';
   const d = value instanceof Date ? value : new Date(value as string | number);
   if (Number.isNaN(d.getTime())) return String(value);
-  return d.toISOString().slice(0, 10); // calendar day only
+  return d.toISOString().slice(0, 10);
 }
 
 function normalizeDedupNumber(value: unknown): string {
@@ -157,7 +153,6 @@ function normalizeDedupNumber(value: unknown): string {
   return (Math.round(n * 100) / 100).toFixed(2);
 }
 
-/** Returns null if there isn't enough data on the row to form a reliable key (missing plate). */
 function buildFuelDedupKey(row: {
   license_plate?: unknown;
   date?: unknown;
@@ -169,12 +164,6 @@ function buildFuelDedupKey(row: {
   return [plate, normalizeDedupDate(row.date), normalizeDedupNumber(row.fuel_volume), normalizeDedupNumber(row.cost)].join('|');
 }
 
-/**
- * Pre-fetches every existing (non-deleted) fuel log for the vehicles
- * touched by this batch, scoped to the batch's own date range, and
- * reduces them to a Set of dedup keys. One query for the whole import
- * instead of one per row.
- */
 async function buildExistingFuelLogKeys(
   tenantId: string,
   plates: string[],
@@ -189,7 +178,6 @@ async function buildExistingFuelLogKeys(
     license_plate: { $in: plates },
   };
   if (dateRange) {
-    // Small buffer on either side to be safe against timezone-boundary rounding.
     const bufferedMin = new Date(dateRange.min.getTime() - 24 * 60 * 60 * 1000);
     const bufferedMax = new Date(dateRange.max.getTime() + 24 * 60 * 60 * 1000);
     match.date = { $gte: bufferedMin, $lte: bufferedMax };
@@ -273,13 +261,6 @@ export class FuelController {
     }
   }
 
-  /**
-   * Phase 2 Enterprise Export Framework: exports the COMPLETE set of
-   * fuel logs matching the caller's current filters and authorization
-   * scope, not just the page of results currently loaded in the UI
-   * table. Reuses the exact same auth/tenant-context/filter parsing as
-   * getFuelLogs above.
-   */
   async exportFuelLogs(req: NextRequest) {
     try {
       const authContext = await getAuthContext(req);
@@ -338,12 +319,6 @@ export class FuelController {
     }
   }
 
-  /**
-   * FIX (critical -- org-unit scope bypass on single-record access):
-   * same bug/fix as VehicleController.loadInScopeVehicle -- getFuelLogs
-   * (list) was the only endpoint applying org-unit scoping;
-   * getFuelLog/updateFuelLog/deleteFuelLog checked only tenantId.
-   */
   private async loadInScopeFuelLog(req: NextRequest, id: string) {
     const authContext = await getAuthContext(req);
     if (!authContext) {
@@ -415,13 +390,9 @@ export class FuelController {
         );
       }
 
-      // Batch-resolve drivers + stations ONCE for the whole import.
       const [{ byKey: driverByKey, ambiguousKeys: ambiguousDriverKeys, byId: driverById }, stationLookup] =
         await Promise.all([buildDriverLookup(tenantId), buildStationLookup(tenantId)]);
 
-      // NEW: pre-fetch existing fuel logs for the vehicles in this batch so
-      // we can detect duplicates against data already in the database,
-      // without querying per row.
       const distinctPlates = Array.from(
         new Set(
           records
@@ -444,10 +415,6 @@ export class FuelController {
       }
 
       const existingKeys = await buildExistingFuelLogKeys(tenantId, distinctPlates, batchDateRange);
-      // Tracks keys created earlier in THIS SAME batch, to catch
-      // duplicates within the file itself (e.g. the same transaction
-      // appearing on two source sheets, or the file being uploaded twice
-      // in one go).
       const seenInBatch = new Set<string>();
 
       const results: ImportRowResult[] = [];
@@ -462,7 +429,6 @@ export class FuelController {
           typeof rawRow.license_plate === 'string' ? rawRow.license_plate.toUpperCase() : undefined;
 
         try {
-          // --- Duplicate check happens before any DB write for this row ---
           const dedupKey = buildFuelDedupKey(rawRow);
           if (dedupKey && (existingKeys.has(dedupKey) || seenInBatch.has(dedupKey))) {
             duplicates += 1;
@@ -582,8 +548,10 @@ export class FuelController {
   async getFuelStats(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const dateRange = parseDateRange(req.nextUrl.searchParams);
-      const stats = await fuelQueryService.getFuelStats(tenantId, dateRange);
+      const searchParams = req.nextUrl.searchParams;
+      const dateRange = parseDateRange(searchParams);
+      const scope = parseAnalyticsScope(searchParams);
+      const stats = await fuelQueryService.getFuelStats(tenantId, dateRange, scope);
       return successResponse(stats);
     } catch (error) {
       return this.handleError(error);
@@ -593,8 +561,10 @@ export class FuelController {
   async getMonthlyConsumption(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const months = Number(req.nextUrl.searchParams.get('months') || '12');
-      const data = await fuelQueryService.getMonthlyFuelConsumption(tenantId, months);
+      const searchParams = req.nextUrl.searchParams;
+      const months = Number(searchParams.get('months') || '12');
+      const scope = parseAnalyticsScope(searchParams);
+      const data = await fuelQueryService.getMonthlyFuelConsumption(tenantId, months, scope);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -604,8 +574,10 @@ export class FuelController {
   async getTopConsumers(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const limit = Number(req.nextUrl.searchParams.get('limit') || '5');
-      const data = await fuelQueryService.getTopFuelConsumers(tenantId, limit);
+      const searchParams = req.nextUrl.searchParams;
+      const limit = Number(searchParams.get('limit') || '5');
+      const scope = parseAnalyticsScope(searchParams);
+      const data = await fuelQueryService.getTopFuelConsumers(tenantId, limit, scope);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -619,8 +591,9 @@ export class FuelController {
       const limit = Number(searchParams.get('limit') || '10');
       const sortBy = (searchParams.get('sortBy') as FuelByDriverSort) || 'volume';
       const dateRange = parseDateRange(searchParams);
+      const scope = parseAnalyticsScope(searchParams);
 
-      const data = await fuelQueryService.getFuelByDriver(tenantId, dateRange, limit, sortBy);
+      const data = await fuelQueryService.getFuelByDriver(tenantId, dateRange, limit, sortBy, scope);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -630,8 +603,10 @@ export class FuelController {
   async getFuelKpis(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const dateRange = parseDateRange(req.nextUrl.searchParams);
-      const kpis = await fuelQueryService.getFuelKpis(tenantId, dateRange);
+      const searchParams = req.nextUrl.searchParams;
+      const dateRange = parseDateRange(searchParams);
+      const scope = parseAnalyticsScope(searchParams);
+      const kpis = await fuelQueryService.getFuelKpis(tenantId, dateRange, scope);
       return successResponse(kpis);
     } catch (error) {
       return this.handleError(error);
@@ -641,17 +616,18 @@ export class FuelController {
   async getAbnormalConsumption(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const threshold = Number(req.nextUrl.searchParams.get('threshold') || '2');
-      const data = await fuelQueryService.getAbnormalConsumption(tenantId, threshold);
+      const searchParams = req.nextUrl.searchParams;
+      const threshold = Number(searchParams.get('threshold') || '2');
+      const scope = parseAnalyticsScope(searchParams);
+      const data = await fuelQueryService.getAbnormalConsumption(tenantId, threshold, scope);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
     }
   }
 
-  // ---- Enterprise analytics ----
+  // ---- Enterprise analytics (scope-aware) ----
 
-  /** #1 Vehicle Fuel Activity Timeline */
   async getVehicleFuelTimeline(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
@@ -670,22 +646,21 @@ export class FuelController {
     }
   }
 
-  /** #4 Fuel Spend by Station + #8 Top Fuel Stations (same data, sorted client-side) */
   async getFuelByStation(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
       const searchParams = req.nextUrl.searchParams;
       const limit = Number(searchParams.get('limit') || '15');
       const dateRange = parseDateRange(searchParams);
+      const scope = parseAnalyticsScope(searchParams);
 
-      const data = await fuelQueryService.getFuelByStation(tenantId, dateRange, limit);
+      const data = await fuelQueryService.getFuelByStation(tenantId, dateRange, limit, scope);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
     }
   }
 
-  /** #3 Fuel Activity Trend */
   async getFuelActivityTrend(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
@@ -694,15 +669,15 @@ export class FuelController {
       const granularity: FuelTrendGranularity =
         granularityParam && VALID_GRANULARITIES.includes(granularityParam) ? granularityParam : 'month';
       const dateRange = parseDateRange(searchParams);
+      const scope = parseAnalyticsScope(searchParams);
 
-      const data = await fuelQueryService.getFuelActivityTrend(tenantId, granularity, dateRange);
+      const data = await fuelQueryService.getFuelActivityTrend(tenantId, granularity, dateRange, scope);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
     }
   }
 
-  /** #5 Average Fuel Price Trend */
   async getAverageFuelPriceTrend(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
@@ -711,59 +686,63 @@ export class FuelController {
       const granularity: FuelTrendGranularity =
         granularityParam && VALID_GRANULARITIES.includes(granularityParam) ? granularityParam : 'month';
       const dateRange = parseDateRange(searchParams);
+      const scope = parseAnalyticsScope(searchParams);
 
-      const data = await fuelQueryService.getAverageFuelPriceTrend(tenantId, dateRange, granularity);
+      const data = await fuelQueryService.getAverageFuelPriceTrend(tenantId, dateRange, granularity, scope);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
     }
   }
 
-  /** #6 Fuel Type Distribution */
   async getFuelTypeDistribution(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const dateRange = parseDateRange(req.nextUrl.searchParams);
-      const data = await fuelQueryService.getFuelTypeDistribution(tenantId, dateRange);
+      const searchParams = req.nextUrl.searchParams;
+      const dateRange = parseDateRange(searchParams);
+      const scope = parseAnalyticsScope(searchParams);
+      const data = await fuelQueryService.getFuelTypeDistribution(tenantId, dateRange, scope);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
     }
   }
 
-  /** #7 Fueling Frequency by Vehicle */
   async getFuelingFrequencyByVehicle(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
       const searchParams = req.nextUrl.searchParams;
       const limit = Number(searchParams.get('limit') || '20');
       const dateRange = parseDateRange(searchParams);
+      const scope = parseAnalyticsScope(searchParams);
 
-      const data = await fuelQueryService.getFuelingFrequencyByVehicle(tenantId, dateRange, limit);
+      const data = await fuelQueryService.getFuelingFrequencyByVehicle(tenantId, dateRange, limit, scope);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
     }
   }
 
-  /** #9 Fuel Cost Distribution */
   async getFuelCostDistribution(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const dateRange = parseDateRange(req.nextUrl.searchParams);
-      const data = await fuelQueryService.getFuelCostDistribution(tenantId, dateRange);
+      const searchParams = req.nextUrl.searchParams;
+      const dateRange = parseDateRange(searchParams);
+      const scope = parseAnalyticsScope(searchParams);
+      const data = await fuelQueryService.getFuelCostDistribution(tenantId, dateRange, scope);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
     }
   }
 
-  /** #10 Fuel Entry Heatmap */
   async getFuelEntryHeatmap(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const dateRange = parseDateRange(req.nextUrl.searchParams);
-      const data = await fuelQueryService.getFuelEntryHeatmap(tenantId, dateRange);
+      const searchParams = req.nextUrl.searchParams;
+      const dateRange = parseDateRange(searchParams);
+      const scope = parseAnalyticsScope(searchParams);
+      const data = await fuelQueryService.getFuelEntryHeatmap(tenantId, dateRange, scope);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);

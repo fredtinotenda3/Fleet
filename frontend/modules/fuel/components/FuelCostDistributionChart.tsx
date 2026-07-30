@@ -12,6 +12,8 @@ import type { FuelAnalyticsDateRange } from './FuelAnalyticsFilterBar';
 
 interface FuelCostDistributionChartProps {
   dateRange: FuelAnalyticsDateRange;
+  /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
+  licensePlate?: string;
 }
 
 interface BucketDatum {
@@ -41,8 +43,8 @@ function DistributionTooltip({ active, payload }: any) {
   );
 }
 
-export function FuelCostDistributionChart({ dateRange }: FuelCostDistributionChartProps) {
-  const { data, isLoading, error } = useFuelCostDistribution(dateRange);
+export function FuelCostDistributionChart({ dateRange, licensePlate }: FuelCostDistributionChartProps) {
+  const { data, isLoading, error } = useFuelCostDistribution(dateRange, licensePlate);
 
   const chartData = useMemo<BucketDatum[]>(() => {
     const buckets = data ?? [];

@@ -9,7 +9,12 @@ export class GetFuelKpisHandler implements IQueryHandler<GetFuelKpisQuery, FuelK
   constructor(private readonly fuelRepo: FuelRepository) {}
 
   async execute(query: GetFuelKpisQuery): Promise<FuelKpis> {
-    return this.fuelRepo.getFuelKpis(query.tenantId, query.dateRange);
+    return this.fuelRepo.getFuelKpis(
+      query.tenantId,
+      query.dateRange,
+      query.tripDistanceByVehicle,
+      query.prevTripDistanceByVehicle,
+      query.scope
+    );
   }
 }
-

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 // modules/fuel/services/fuel-query.service.ts
 
 import { queryBus } from '@/server/cqrs/query-bus';
@@ -36,6 +35,7 @@ import {
   FuelHeatmapCell,
 } from '@/shared/types/fuel.types';
 import { PaginatedResponse, PaginationParams } from '@/shared/types/common.types';
+import { AnalyticsScope, isFleetScope } from '@/shared/types/analytics-scope.types';
 import { fuelRepository } from '../repositories/fuel.repository';
 import { tripRepository } from '@/modules/trips/repositories/trip.repository';
 
@@ -58,28 +58,31 @@ export class FuelQueryService {
 
   async getFuelStats(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Promise<FuelStats> {
     return queryBus.execute<FuelStats>(
-      new GetFuelStatsQuery(tenantId, dateRange)
+      new GetFuelStatsQuery(tenantId, dateRange, scope)
     );
   }
 
   async getMonthlyFuelConsumption(
     tenantId: string,
-    months: number = 12
+    months: number = 12,
+    scope?: AnalyticsScope
   ): Promise<Array<{ month: string; fuel: number; cost: number }>> {
     return queryBus.execute<Array<{ month: string; fuel: number; cost: number }>>(
-      new GetMonthlyFuelConsumptionQuery(tenantId, months)
+      new GetMonthlyFuelConsumptionQuery(tenantId, months, scope)
     );
   }
 
   async getTopFuelConsumers(
     tenantId: string,
-    limit: number = 5
+    limit: number = 5,
+    scope?: AnalyticsScope
   ): Promise<Array<{ license_plate: string; totalFuel: number; totalCost: number }>> {
     return queryBus.execute<Array<{ license_plate: string; totalFuel: number; totalCost: number }>>(
-      new GetTopFuelConsumersQuery(tenantId, limit)
+      new GetTopFuelConsumersQuery(tenantId, limit, scope)
     );
   }
 
@@ -87,16 +90,28 @@ export class FuelQueryService {
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 10,
-    sortBy: FuelByDriverSort = 'volume'
+    sortBy: FuelByDriverSort = 'volume',
+    scope?: AnalyticsScope
   ): Promise<DriverFuelConsumptionRow[]> {
     return queryBus.execute<DriverFuelConsumptionRow[]>(
-      new GetFuelByDriverQuery(tenantId, dateRange, limit, sortBy)
+      new GetFuelByDriverQuery(tenantId, dateRange, limit, sortBy, scope)
     );
   }
 
+  /**
+   * Scope-aware KPI cards. When `scope` is a vehicle scope, the trip
+   * distance fallback maps are still computed fleet-wide (trip data has
+   * no scope filter here) but only the entries matching the scoped
+   * vehicle's license_plate are ever consulted downstream, since
+   * FuelRepository.getFuelKpis's own per-vehicle grouping is already
+   * narrowed to that single vehicle by the scope-filtered base match --
+   * so results are correct for "Vehicle Analytics" without any change to
+   * the trip-distance computation itself.
+   */
   async getFuelKpis(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Promise<FuelKpis> {
     const now = new Date();
     const rangeEnd = dateRange?.endDate ?? now;
@@ -114,20 +129,22 @@ export class FuelQueryService {
       tenantId,
       dateRange,
       tripDistanceByVehicle,
-      prevTripDistanceByVehicle
+      prevTripDistanceByVehicle,
+      scope
     );
   }
 
   async getAbnormalConsumption(
     tenantId: string,
-    threshold: number = 2
+    threshold: number = 2,
+    scope?: AnalyticsScope
   ): Promise<AbnormalFuelConsumptionRow[]> {
     return queryBus.execute<AbnormalFuelConsumptionRow[]>(
-      new GetAbnormalFuelConsumptionQuery(tenantId, threshold)
+      new GetAbnormalFuelConsumptionQuery(tenantId, threshold, scope)
     );
   }
 
-  // ---- Enterprise analytics ----
+  // ---- Enterprise analytics (all scope-aware) ----
 
   async getVehicleFuelTimeline(
     tenantId: string,
@@ -141,67 +158,82 @@ export class FuelQueryService {
   async getFuelByStation(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    limit: number = 15
+    limit: number = 15,
+    scope?: AnalyticsScope
   ): Promise<FuelByStationRow[]> {
     return queryBus.execute<FuelByStationRow[]>(
-      new GetFuelByStationQuery(tenantId, dateRange, limit)
+      new GetFuelByStationQuery(tenantId, dateRange, limit, scope)
     );
   }
 
   async getFuelActivityTrend(
     tenantId: string,
     granularity: FuelTrendGranularity,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Promise<FuelActivityTrendPoint[]> {
     return queryBus.execute<FuelActivityTrendPoint[]>(
-      new GetFuelActivityTrendQuery(tenantId, granularity, dateRange)
+      new GetFuelActivityTrendQuery(tenantId, granularity, dateRange, scope)
     );
   }
 
   async getAverageFuelPriceTrend(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    granularity: FuelTrendGranularity = 'month'
+    granularity: FuelTrendGranularity = 'month',
+    scope?: AnalyticsScope
   ): Promise<FuelPriceTrendPoint[]> {
     return queryBus.execute<FuelPriceTrendPoint[]>(
-      new GetAverageFuelPriceTrendQuery(tenantId, dateRange, granularity)
+      new GetAverageFuelPriceTrendQuery(tenantId, dateRange, granularity, scope)
     );
   }
 
   async getFuelTypeDistribution(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Promise<FuelTypeDistributionRow[]> {
     return queryBus.execute<FuelTypeDistributionRow[]>(
-      new GetFuelTypeDistributionQuery(tenantId, dateRange)
+      new GetFuelTypeDistributionQuery(tenantId, dateRange, scope)
     );
   }
 
+  /**
+   * Note: when `scope` is a vehicle scope this necessarily returns at
+   * most one row (that vehicle). Left scope-aware anyway rather than
+   * special-cased, so the frontend never has to know which charts
+   * "don't support" vehicle scope -- the engine just answers correctly
+   * either way, per the "every vehicle behaves like a miniature fleet"
+   * requirement.
+   */
   async getFuelingFrequencyByVehicle(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    limit: number = 20
+    limit: number = 20,
+    scope?: AnalyticsScope
   ): Promise<FuelFrequencyByVehicleRow[]> {
     return queryBus.execute<FuelFrequencyByVehicleRow[]>(
-      new GetFuelingFrequencyByVehicleQuery(tenantId, dateRange, limit)
+      new GetFuelingFrequencyByVehicleQuery(tenantId, dateRange, limit, scope)
     );
   }
 
   async getFuelCostDistribution(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Promise<FuelCostDistributionBucket[]> {
     return queryBus.execute<FuelCostDistributionBucket[]>(
-      new GetFuelCostDistributionQuery(tenantId, dateRange)
+      new GetFuelCostDistributionQuery(tenantId, dateRange, scope)
     );
   }
 
   async getFuelEntryHeatmap(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Promise<FuelHeatmapCell[]> {
     return queryBus.execute<FuelHeatmapCell[]>(
-      new GetFuelEntryHeatmapQuery(tenantId, dateRange)
+      new GetFuelEntryHeatmapQuery(tenantId, dateRange, scope)
     );
   }
 }

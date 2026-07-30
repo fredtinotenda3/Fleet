@@ -29,6 +29,8 @@ import connectToDatabase from '@/infrastructure/database/mongodb';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 import { EXPORT_ROW_CAP, ExportDataset } from '@/shared/export';
+import { AnalyticsScope } from '@/shared/types/analytics-scope.types';
+import { analyticsScopeService } from '@/modules/analytics/services/analytics-scope.service';
 
 interface VehiclePeriodAggregate {
   _id: string;
@@ -55,18 +57,27 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     );
   }
 
-  /** Shared tenant + date-range match stage builder used by every analytics aggregation below. */
+  /**
+   * Shared tenant + date-range + analytics-scope match stage builder used by
+   * every analytics aggregation below. `scope` is the Vehicle-Level
+   * Analytics narrowing (or a future driver/branch/department scope) --
+   * omitting it (or passing `{ type: 'fleet' }`) reproduces today's
+   * fleet-wide behaviour exactly, so every existing fleet chart is
+   * unaffected by this change.
+   */
   private buildBaseMatch(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Record<string, unknown> {
-    const match: Record<string, unknown> = { isDeleted: { $ne: true } };
+    let match: Record<string, unknown> = { isDeleted: { $ne: true } };
     if (!this.isSuperAdminTenant(tenantId)) match.tenantId = tenantId;
     if (dateRange?.startDate || dateRange?.endDate) {
       match.date = {};
       if (dateRange.startDate) (match.date as any).$gte = dateRange.startDate;
       if (dateRange.endDate) (match.date as any).$lte = dateRange.endDate;
     }
+    match = analyticsScopeService.applyScope(match, scope);
     return match;
   }
 
@@ -312,10 +323,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
 
   async getFuelStats(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Promise<FuelStats> {
     const collection = await this.getCollection();
-    const filter = this.buildBaseMatch(tenantId, dateRange);
+    const filter = this.buildBaseMatch(tenantId, dateRange, scope);
 
     const pipeline = [
       { $match: filter },
@@ -377,12 +389,13 @@ export class FuelRepository extends BaseRepository<FuelLog> {
 
   async getMonthlyFuelConsumption(
     tenantId: string,
-    months: number = 12
+    months: number = 12,
+    scope?: AnalyticsScope
   ): Promise<Array<{ month: string; fuel: number; cost: number }>> {
     const collection = await this.getCollection();
     const startDate = new Date();
     startDate.setMonth(startDate.getMonth() - months);
-    const matchStage = this.buildBaseMatch(tenantId, { startDate });
+    const matchStage = this.buildBaseMatch(tenantId, { startDate }, scope);
 
     const pipeline = [
       { $match: matchStage },
@@ -402,10 +415,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
 
   async getTopFuelConsumers(
     tenantId: string,
-    limit: number = 5
+    limit: number = 5,
+    scope?: AnalyticsScope
   ): Promise<Array<{ license_plate: string; totalFuel: number; totalCost: number }>> {
     const collection = await this.getCollection();
-    const matchStage = this.buildBaseMatch(tenantId);
+    const matchStage = this.buildBaseMatch(tenantId, undefined, scope);
 
     const pipeline = [
       { $match: matchStage },
@@ -446,10 +460,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 10,
-    sortBy: 'volume' | 'cost' = 'volume'
+    sortBy: 'volume' | 'cost' = 'volume',
+    scope?: AnalyticsScope
   ): Promise<DriverFuelConsumptionRow[]> {
     const collection = await this.getCollection();
-    const matchStage = this.buildBaseMatch(tenantId, dateRange);
+    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope);
     const sortField = sortBy === 'cost' ? 'totalCost' : 'totalFuel';
 
     const pipeline = [
@@ -512,7 +527,8 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     tripDistanceByVehicle?: Record<string, number>,
-    prevTripDistanceByVehicle?: Record<string, number>
+    prevTripDistanceByVehicle?: Record<string, number>,
+    scope?: AnalyticsScope
   ): Promise<FuelKpis> {
     const collection = await this.getCollection();
     const now = new Date();
@@ -523,7 +539,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     const prevRangeEnd = new Date(rangeStart.getTime() - 1);
     const prevRangeStart = new Date(prevRangeEnd.getTime() - periodMs);
 
-    const baseMatch = this.buildBaseMatch(tenantId);
+    // Scoping here (e.g. to a single vehicle) naturally collapses the
+    // existing per-vehicle grouping below to that one vehicle -- the same
+    // "fleet of one" principle used throughout this refactor. No separate
+    // vehicle-KPI calculation is introduced.
+    const baseMatch = this.buildBaseMatch(tenantId, undefined, scope);
 
     const aggregateByVehicle = async (start: Date, end: Date): Promise<VehiclePeriodAggregate[]> => {
       const pipeline = [
@@ -625,10 +645,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
 
   async getAbnormalConsumption(
     tenantId: string,
-    threshold: number = DEFAULT_ABNORMAL_CONSUMPTION_MULTIPLIER
+    threshold: number = DEFAULT_ABNORMAL_CONSUMPTION_MULTIPLIER,
+    scope?: AnalyticsScope
   ): Promise<AbnormalFuelConsumptionRow[]> {
     const collection = await this.getCollection();
-    const matchStage = this.buildBaseMatch(tenantId);
+    const matchStage = this.buildBaseMatch(tenantId, undefined, scope);
 
     const pipeline = [
       { $match: matchStage },
@@ -721,10 +742,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
   async getFuelByStation(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    limit: number = 15
+    limit: number = 15,
+    scope?: AnalyticsScope
   ): Promise<FuelByStationRow[]> {
     const collection = await this.getCollection();
-    const matchStage = this.buildBaseMatch(tenantId, dateRange);
+    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope);
 
     const pipeline = [
       { $match: matchStage },
@@ -789,10 +811,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
   async getFuelActivityTrend(
     tenantId: string,
     granularity: FuelTrendGranularity,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Promise<FuelActivityTrendPoint[]> {
     const collection = await this.getCollection();
-    const matchStage = this.buildBaseMatch(tenantId, dateRange);
+    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope);
 
     const pipeline = [
       { $match: matchStage },
@@ -821,10 +844,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
   async getAverageFuelPriceTrend(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    granularity: FuelTrendGranularity = 'month'
+    granularity: FuelTrendGranularity = 'month',
+    scope?: AnalyticsScope
   ): Promise<FuelPriceTrendPoint[]> {
     const collection = await this.getCollection();
-    const matchStage = this.buildBaseMatch(tenantId, dateRange);
+    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope);
 
     const pipeline = [
       { $match: { ...matchStage, fuel_volume: { $gt: 0 } } },
@@ -848,10 +872,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
   /** #6 Fuel Type Distribution -- litres/cost/percentage per fuel_type. */
   async getFuelTypeDistribution(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Promise<FuelTypeDistributionRow[]> {
     const collection = await this.getCollection();
-    const matchStage = this.buildBaseMatch(tenantId, dateRange);
+    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope);
 
     const pipeline = [
       { $match: matchStage },
@@ -881,10 +906,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
   async getFuelingFrequencyByVehicle(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    limit: number = 20
+    limit: number = 20,
+    scope?: AnalyticsScope
   ): Promise<FuelFrequencyByVehicleRow[]> {
     const collection = await this.getCollection();
-    const matchStage = this.buildBaseMatch(tenantId, dateRange);
+    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope);
 
     const pipeline = [
       { $match: matchStage },
@@ -915,10 +941,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
   /** #9 Fuel Cost Distribution -- histogram buckets via $bucketAuto (server picks even boundaries). */
   async getFuelCostDistribution(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Promise<FuelCostDistributionBucket[]> {
     const collection = await this.getCollection();
-    const matchStage = this.buildBaseMatch(tenantId, dateRange);
+    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope);
 
     const count = await collection.countDocuments(matchStage as Filter<FuelLog>);
     if (count === 0) return [];
@@ -951,10 +978,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
    */
   async getFuelEntryHeatmap(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    scope?: AnalyticsScope
   ): Promise<FuelHeatmapCell[]> {
     const collection = await this.getCollection();
-    const matchStage = this.buildBaseMatch(tenantId, dateRange);
+    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope);
 
     const pipeline = [
       { $match: matchStage },

@@ -7,8 +7,18 @@ import { LoadingState } from '@/shared/ui/feedback/LoadingState';
 import { useTopFuelConsumers } from '../hooks/useFuel';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 
-export function FuelTopConsumersChart() {
-  const { data: topConsumers, isLoading, error } = useTopFuelConsumers(5);
+interface FuelTopConsumersChartProps {
+  /**
+   * Vehicle-Level Analytics: scoping this chart to a single vehicle is
+   * supported by the underlying query for API consistency, but a
+   * "top consumers" ranking is not meaningful for a scope of one -- use
+   * FuelKpiCards / FuelActivityTrendChart on a vehicle dashboard instead.
+   */
+  licensePlate?: string;
+}
+
+export function FuelTopConsumersChart({ licensePlate }: FuelTopConsumersChartProps = {}) {
+  const { data: topConsumers, isLoading, error } = useTopFuelConsumers(5, licensePlate);
 
   if (isLoading) {
     return (

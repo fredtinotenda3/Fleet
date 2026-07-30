@@ -14,6 +14,8 @@ import type { ExpenseAnalyticsDateRange } from './ExpenseAnalyticsFilterBar';
 
 interface VehicleExpenseBreakdownChartProps {
   dateRange: ExpenseAnalyticsDateRange;
+  /** Vehicle-Level Analytics: scoping supported for API consistency; fleet-only in practice (see TopVehiclesByExpenseChart). */
+  licensePlate?: string;
 }
 
 function VehicleBreakdownTooltip({ active, payload, label }: any) {
@@ -37,8 +39,8 @@ function VehicleBreakdownTooltip({ active, payload, label }: any) {
   );
 }
 
-export function VehicleExpenseBreakdownChart({ dateRange }: VehicleExpenseBreakdownChartProps) {
-  const { data, isLoading, error } = useVehicleExpenseBreakdown(dateRange, 8);
+export function VehicleExpenseBreakdownChart({ dateRange, licensePlate }: VehicleExpenseBreakdownChartProps) {
+  const { data, isLoading, error } = useVehicleExpenseBreakdown(dateRange, 8, licensePlate);
   const { data: expenseTypes } = useExpenseTypes();
   const { open, setOpen, filter, openDrawer } = useExpenseDrawer();
 

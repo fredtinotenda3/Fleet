@@ -12,12 +12,14 @@ import type { ExpenseAnalyticsDateRange } from './ExpenseAnalyticsFilterBar';
 
 interface ExpenseCalendarHeatmapChartProps {
   dateRange: ExpenseAnalyticsDateRange;
+  /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
+  licensePlate?: string;
 }
 
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-export function ExpenseCalendarHeatmapChart({ dateRange }: ExpenseCalendarHeatmapChartProps) {
-  const { data, isLoading, error } = useDailyExpenseTotals(dateRange);
+export function ExpenseCalendarHeatmapChart({ dateRange, licensePlate }: ExpenseCalendarHeatmapChartProps) {
+  const { data, isLoading, error } = useDailyExpenseTotals(dateRange, licensePlate);
   const { open, setOpen, filter, openDrawer } = useExpenseDrawer();
 
   const { weeks, max, rangeStart, rangeEnd } = useMemo(() => {
@@ -30,7 +32,6 @@ export function ExpenseCalendarHeatmapChart({ dateRange }: ExpenseCalendarHeatma
     const start = new Date(sortedDates[0]);
     const end = new Date(sortedDates[sortedDates.length - 1]);
 
-    // Align the grid to start on a Sunday for a clean weekly-column layout.
     const gridStart = new Date(start);
     gridStart.setDate(gridStart.getDate() - gridStart.getDay());
 
@@ -60,7 +61,7 @@ export function ExpenseCalendarHeatmapChart({ dateRange }: ExpenseCalendarHeatma
     if (day.count === 0) return;
     const start = new Date(day.date);
     const end = new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
-    openDrawer({ label: day.date, startDate: start, endDate: end });
+    openDrawer({ label: day.date, startDate: start, endDate: end, license_plate: licensePlate });
   }
 
   return (
@@ -76,7 +77,7 @@ export function ExpenseCalendarHeatmapChart({ dateRange }: ExpenseCalendarHeatma
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <div className="rounded-lg h-40 skeleton" />
+            <div className="h-40 rounded-lg skeleton" />
           ) : error || weeks.length === 0 ? (
             <p className="text-sm text-muted-foreground">No expenses in this range.</p>
           ) : (

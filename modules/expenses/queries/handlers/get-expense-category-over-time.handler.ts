@@ -1,5 +1,4 @@
-//modules/expenses/queries/handlers/get-expense-category-over-time.handler.ts
-
+// modules/expenses/queries/handlers/get-expense-category-over-time.handler.ts
 import { IQueryHandler } from '@/server/cqrs/query';
 import { GetExpenseCategoryOverTimeQuery } from '../get-expense-category-over-time.query';
 import { ExpenseRepository } from '@/modules/expenses/repositories/expense.repository';
@@ -11,6 +10,6 @@ export class GetExpenseCategoryOverTimeHandler
   constructor(private readonly expenseRepo: ExpenseRepository) {}
 
   async execute(query: GetExpenseCategoryOverTimeQuery): Promise<ExpenseCategoryOverTimePoint[]> {
-    return this.expenseRepo.getExpenseCategoryOverTime(query.tenantId, query.dateRange);
+    return this.expenseRepo.getExpenseCategoryOverTime(query.tenantId, query.dateRange, query.scope);
   }
 }

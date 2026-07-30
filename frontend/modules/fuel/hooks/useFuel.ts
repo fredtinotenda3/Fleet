@@ -24,25 +24,26 @@ export const fuelKeys = {
   list: (params: Partial<FuelListParams>) => [...fuelKeys.lists(), params] as const,
   details: () => [...fuelKeys.all, 'detail'] as const,
   detail: (id: string) => [...fuelKeys.details(), id] as const,
-  stats: (range?: string) => [...fuelKeys.all, 'stats', range] as const,
-  kpis: (range?: string) => [...fuelKeys.all, 'kpis', range] as const,
-  abnormal: (threshold: number) => [...fuelKeys.all, 'abnormal', threshold] as const,
-  monthly: (months: number) => [...fuelKeys.all, 'monthly', months] as const,
-  topConsumers: (limit: number) => [...fuelKeys.all, 'top-consumers', limit] as const,
-  byDriver: (range?: string, limit?: number, sortBy?: FuelByDriverSort) =>
-    [...fuelKeys.all, 'by-driver', range, limit, sortBy] as const,
+  stats: (range?: string, scope?: string) => [...fuelKeys.all, 'stats', range, scope] as const,
+  kpis: (range?: string, scope?: string) => [...fuelKeys.all, 'kpis', range, scope] as const,
+  abnormal: (threshold: number, scope?: string) => [...fuelKeys.all, 'abnormal', threshold, scope] as const,
+  monthly: (months: number, scope?: string) => [...fuelKeys.all, 'monthly', months, scope] as const,
+  topConsumers: (limit: number, scope?: string) => [...fuelKeys.all, 'top-consumers', limit, scope] as const,
+  byDriver: (range?: string, limit?: number, sortBy?: FuelByDriverSort, scope?: string) =>
+    [...fuelKeys.all, 'by-driver', range, limit, sortBy, scope] as const,
   vehicleTimeline: (plate?: string, range?: string) =>
     [...fuelKeys.all, 'vehicle-timeline', plate, range] as const,
-  byStation: (range?: string, limit?: number) => [...fuelKeys.all, 'by-station', range, limit] as const,
-  activityTrend: (granularity: FuelTrendGranularity, range?: string) =>
-    [...fuelKeys.all, 'activity-trend', granularity, range] as const,
-  priceTrend: (range?: string, granularity?: FuelTrendGranularity) =>
-    [...fuelKeys.all, 'price-trend', range, granularity] as const,
-  typeDistribution: (range?: string) => [...fuelKeys.all, 'type-distribution', range] as const,
-  frequencyByVehicle: (range?: string, limit?: number) =>
-    [...fuelKeys.all, 'frequency-by-vehicle', range, limit] as const,
-  costDistribution: (range?: string) => [...fuelKeys.all, 'cost-distribution', range] as const,
-  heatmap: (range?: string) => [...fuelKeys.all, 'heatmap', range] as const,
+  byStation: (range?: string, limit?: number, scope?: string) =>
+    [...fuelKeys.all, 'by-station', range, limit, scope] as const,
+  activityTrend: (granularity: FuelTrendGranularity, range?: string, scope?: string) =>
+    [...fuelKeys.all, 'activity-trend', granularity, range, scope] as const,
+  priceTrend: (range?: string, granularity?: FuelTrendGranularity, scope?: string) =>
+    [...fuelKeys.all, 'price-trend', range, granularity, scope] as const,
+  typeDistribution: (range?: string, scope?: string) => [...fuelKeys.all, 'type-distribution', range, scope] as const,
+  frequencyByVehicle: (range?: string, limit?: number, scope?: string) =>
+    [...fuelKeys.all, 'frequency-by-vehicle', range, limit, scope] as const,
+  costDistribution: (range?: string, scope?: string) => [...fuelKeys.all, 'cost-distribution', range, scope] as const,
+  heatmap: (range?: string, scope?: string) => [...fuelKeys.all, 'heatmap', range, scope] as const,
 };
 
 export function useFuelLogsList(params: Partial<FuelListParams>) {
@@ -64,42 +65,49 @@ export function useFuelLog(id: string | undefined, options?: Partial<UseQueryOpt
   });
 }
 
-export function useFuelStats(dateRange?: DateRange) {
+/**
+ * Vehicle-Level Analytics: pass `licensePlate` to scope this hook (and
+ * every other analytics hook below) to a single vehicle. Omit it for
+ * the existing fleet-wide behaviour -- this is the ONLY change needed
+ * to turn a fleet chart into a per-vehicle chart, since the underlying
+ * component doesn't need to know it's scoped.
+ */
+export function useFuelStats(dateRange?: DateRange, licensePlate?: string) {
   return useQuery({
-    queryKey: fuelKeys.stats(rangeKey(dateRange)),
-    queryFn: () => fuelApi.getStats(dateRange),
+    queryKey: fuelKeys.stats(rangeKey(dateRange), licensePlate),
+    queryFn: () => fuelApi.getStats(dateRange, licensePlate),
     staleTime: 60_000,
   });
 }
 
-export function useFuelKpis(dateRange?: DateRange) {
+export function useFuelKpis(dateRange?: DateRange, licensePlate?: string) {
   return useQuery({
-    queryKey: fuelKeys.kpis(rangeKey(dateRange)),
-    queryFn: () => fuelApi.getKpis(dateRange),
+    queryKey: fuelKeys.kpis(rangeKey(dateRange), licensePlate),
+    queryFn: () => fuelApi.getKpis(dateRange, licensePlate),
     staleTime: 60_000,
   });
 }
 
-export function useAbnormalFuelConsumption(threshold: number = 2) {
+export function useAbnormalFuelConsumption(threshold: number = 2, licensePlate?: string) {
   return useQuery({
-    queryKey: fuelKeys.abnormal(threshold),
-    queryFn: () => fuelApi.getAbnormalConsumption(threshold),
+    queryKey: fuelKeys.abnormal(threshold, licensePlate),
+    queryFn: () => fuelApi.getAbnormalConsumption(threshold, licensePlate),
     staleTime: 60_000,
   });
 }
 
-export function useMonthlyFuelConsumption(months: number = 12) {
+export function useMonthlyFuelConsumption(months: number = 12, licensePlate?: string) {
   return useQuery({
-    queryKey: fuelKeys.monthly(months),
-    queryFn: () => fuelApi.getMonthlyConsumption(months),
+    queryKey: fuelKeys.monthly(months, licensePlate),
+    queryFn: () => fuelApi.getMonthlyConsumption(months, licensePlate),
     staleTime: 60_000,
   });
 }
 
-export function useTopFuelConsumers(limit: number = 5) {
+export function useTopFuelConsumers(limit: number = 5, licensePlate?: string) {
   return useQuery({
-    queryKey: fuelKeys.topConsumers(limit),
-    queryFn: () => fuelApi.getTopConsumers(limit),
+    queryKey: fuelKeys.topConsumers(limit, licensePlate),
+    queryFn: () => fuelApi.getTopConsumers(limit, licensePlate),
     staleTime: 60_000,
   });
 }
@@ -107,11 +115,12 @@ export function useTopFuelConsumers(limit: number = 5) {
 export function useFuelByDriver(
   dateRange?: DateRange,
   limit: number = 10,
-  sortBy: FuelByDriverSort = 'volume'
+  sortBy: FuelByDriverSort = 'volume',
+  licensePlate?: string
 ) {
   return useQuery({
-    queryKey: fuelKeys.byDriver(rangeKey(dateRange), limit, sortBy),
-    queryFn: () => fuelApi.getByDriver(dateRange, limit, sortBy),
+    queryKey: fuelKeys.byDriver(rangeKey(dateRange), limit, sortBy, licensePlate),
+    queryFn: () => fuelApi.getByDriver(dateRange, limit, sortBy, licensePlate),
     staleTime: 60_000,
   });
 }
@@ -134,9 +143,8 @@ export function useVehicleFuelHistory(licensePlate: string | undefined, limit: n
   });
 }
 
-// ---- Enterprise analytics ----
+// ---- Enterprise analytics (scope-aware) ----
 
-/** #1 Vehicle Fuel Activity Timeline. Omit `license_plate` for "All Vehicles". */
 export function useVehicleFuelTimeline(licensePlate: string | undefined, dateRange?: DateRange) {
   return useQuery({
     queryKey: fuelKeys.vehicleTimeline(licensePlate, rangeKey(dateRange)),
@@ -145,65 +153,66 @@ export function useVehicleFuelTimeline(licensePlate: string | undefined, dateRan
   });
 }
 
-/** #4 Fuel Spend by Station + #8 Top Fuel Stations share this hook/query. */
-export function useFuelByStation(dateRange?: DateRange, limit: number = 15) {
+export function useFuelByStation(dateRange?: DateRange, limit: number = 15, licensePlate?: string) {
   return useQuery({
-    queryKey: fuelKeys.byStation(rangeKey(dateRange), limit),
-    queryFn: () => fuelApi.getFuelByStation(dateRange, limit),
+    queryKey: fuelKeys.byStation(rangeKey(dateRange), limit, licensePlate),
+    queryFn: () => fuelApi.getFuelByStation(dateRange, limit, licensePlate),
     staleTime: 60_000,
   });
 }
 
-/** #3 Fuel Activity Trend (combined bar + line) */
-export function useFuelActivityTrend(granularity: FuelTrendGranularity, dateRange?: DateRange) {
+export function useFuelActivityTrend(
+  granularity: FuelTrendGranularity,
+  dateRange?: DateRange,
+  licensePlate?: string
+) {
   return useQuery({
-    queryKey: fuelKeys.activityTrend(granularity, rangeKey(dateRange)),
-    queryFn: () => fuelApi.getFuelActivityTrend(granularity, dateRange),
+    queryKey: fuelKeys.activityTrend(granularity, rangeKey(dateRange), licensePlate),
+    queryFn: () => fuelApi.getFuelActivityTrend(granularity, dateRange, licensePlate),
     staleTime: 60_000,
   });
 }
 
-/** #5 Average Fuel Price Trend */
-export function useAverageFuelPriceTrend(dateRange?: DateRange, granularity: FuelTrendGranularity = 'month') {
+export function useAverageFuelPriceTrend(
+  dateRange?: DateRange,
+  granularity: FuelTrendGranularity = 'month',
+  licensePlate?: string
+) {
   return useQuery({
-    queryKey: fuelKeys.priceTrend(rangeKey(dateRange), granularity),
-    queryFn: () => fuelApi.getAverageFuelPriceTrend(dateRange, granularity),
+    queryKey: fuelKeys.priceTrend(rangeKey(dateRange), granularity, licensePlate),
+    queryFn: () => fuelApi.getAverageFuelPriceTrend(dateRange, granularity, licensePlate),
     staleTime: 60_000,
   });
 }
 
-/** #6 Fuel Type Distribution */
-export function useFuelTypeDistribution(dateRange?: DateRange) {
+export function useFuelTypeDistribution(dateRange?: DateRange, licensePlate?: string) {
   return useQuery({
-    queryKey: fuelKeys.typeDistribution(rangeKey(dateRange)),
-    queryFn: () => fuelApi.getFuelTypeDistribution(dateRange),
+    queryKey: fuelKeys.typeDistribution(rangeKey(dateRange), licensePlate),
+    queryFn: () => fuelApi.getFuelTypeDistribution(dateRange, licensePlate),
     staleTime: 60_000,
   });
 }
 
-/** #7 Fueling Frequency by Vehicle */
-export function useFuelingFrequencyByVehicle(dateRange?: DateRange, limit: number = 20) {
+export function useFuelingFrequencyByVehicle(dateRange?: DateRange, limit: number = 20, licensePlate?: string) {
   return useQuery({
-    queryKey: fuelKeys.frequencyByVehicle(rangeKey(dateRange), limit),
-    queryFn: () => fuelApi.getFuelingFrequencyByVehicle(dateRange, limit),
+    queryKey: fuelKeys.frequencyByVehicle(rangeKey(dateRange), limit, licensePlate),
+    queryFn: () => fuelApi.getFuelingFrequencyByVehicle(dateRange, limit, licensePlate),
     staleTime: 60_000,
   });
 }
 
-/** #9 Fuel Cost Distribution (histogram) */
-export function useFuelCostDistribution(dateRange?: DateRange) {
+export function useFuelCostDistribution(dateRange?: DateRange, licensePlate?: string) {
   return useQuery({
-    queryKey: fuelKeys.costDistribution(rangeKey(dateRange)),
-    queryFn: () => fuelApi.getFuelCostDistribution(dateRange),
+    queryKey: fuelKeys.costDistribution(rangeKey(dateRange), licensePlate),
+    queryFn: () => fuelApi.getFuelCostDistribution(dateRange, licensePlate),
     staleTime: 60_000,
   });
 }
 
-/** #10 Fuel Entry Heatmap */
-export function useFuelEntryHeatmap(dateRange?: DateRange) {
+export function useFuelEntryHeatmap(dateRange?: DateRange, licensePlate?: string) {
   return useQuery({
-    queryKey: fuelKeys.heatmap(rangeKey(dateRange)),
-    queryFn: () => fuelApi.getFuelEntryHeatmap(dateRange),
+    queryKey: fuelKeys.heatmap(rangeKey(dateRange), licensePlate),
+    queryFn: () => fuelApi.getFuelEntryHeatmap(dateRange, licensePlate),
     staleTime: 60_000,
   });
 }

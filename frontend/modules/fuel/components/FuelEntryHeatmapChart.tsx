@@ -14,10 +14,12 @@ const HOURS = Array.from({ length: 24 }, (_, i) => i);
 
 interface FuelEntryHeatmapChartProps {
   dateRange: FuelAnalyticsDateRange;
+  /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
+  licensePlate?: string;
 }
 
-export function FuelEntryHeatmapChart({ dateRange }: FuelEntryHeatmapChartProps) {
-  const { data, isLoading, error } = useFuelEntryHeatmap(dateRange);
+export function FuelEntryHeatmapChart({ dateRange, licensePlate }: FuelEntryHeatmapChartProps) {
+  const { data, isLoading, error } = useFuelEntryHeatmap(dateRange, licensePlate);
 
   const { grid, max } = useMemo(() => {
     const cells = new Map<string, number>();

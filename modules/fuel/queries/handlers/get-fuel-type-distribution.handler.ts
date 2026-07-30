@@ -1,5 +1,4 @@
-//modules/fuel/queries/handlers/get-fuel-type-distribution.handler.ts
-
+// modules/fuel/queries/handlers/get-fuel-type-distribution.handler.ts
 import { IQueryHandler } from '@/server/cqrs/query';
 import { GetFuelTypeDistributionQuery } from '../get-fuel-type-distribution.query';
 import { FuelRepository } from '@/modules/fuel/repositories/fuel.repository';
@@ -11,6 +10,6 @@ export class GetFuelTypeDistributionHandler
   constructor(private readonly fuelRepo: FuelRepository) {}
 
   async execute(query: GetFuelTypeDistributionQuery): Promise<FuelTypeDistributionRow[]> {
-    return this.fuelRepo.getFuelTypeDistribution(query.tenantId, query.dateRange);
+    return this.fuelRepo.getFuelTypeDistribution(query.tenantId, query.dateRange, query.scope);
   }
 }

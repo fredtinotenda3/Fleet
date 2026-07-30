@@ -1,5 +1,4 @@
-//modules/fuel/queries/handlers/get-fuel-cost-distribution.handler.ts
-
+// modules/fuel/queries/handlers/get-fuel-cost-distribution.handler.ts
 import { IQueryHandler } from '@/server/cqrs/query';
 import { GetFuelCostDistributionQuery } from '../get-fuel-cost-distribution.query';
 import { FuelRepository } from '@/modules/fuel/repositories/fuel.repository';
@@ -11,6 +10,6 @@ export class GetFuelCostDistributionHandler
   constructor(private readonly fuelRepo: FuelRepository) {}
 
   async execute(query: GetFuelCostDistributionQuery): Promise<FuelCostDistributionBucket[]> {
-    return this.fuelRepo.getFuelCostDistribution(query.tenantId, query.dateRange);
+    return this.fuelRepo.getFuelCostDistribution(query.tenantId, query.dateRange, query.scope);
   }
 }

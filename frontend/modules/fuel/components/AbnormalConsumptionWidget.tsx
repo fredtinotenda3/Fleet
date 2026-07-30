@@ -8,6 +8,11 @@ import { Badge } from '@/frontend/shared/ui/data-display/badge';
 import { useAbnormalFuelConsumption } from '../hooks/useFuel';
 import { formatDate } from '@/shared/utils/date.utils';
 
+interface AbnormalConsumptionWidgetProps {
+  /** Vehicle-Level Analytics: scope this widget to a single vehicle instead of the fleet. */
+  licensePlate?: string;
+}
+
 /**
  * FIX: title changed from "Abnormal consumption detected" to
  * "Abnormal consumption (all-time pattern)" and the description now
@@ -21,8 +26,8 @@ import { formatDate } from '@/shared/utils/date.utils';
  * underlying numbers, which read as a bug/inconsistency to anyone
  * viewing both on the Fuel dashboard at once.
  */
-export function AbnormalConsumptionWidget() {
-  const { data: abnormalLogs, isLoading, error } = useAbnormalFuelConsumption(2);
+export function AbnormalConsumptionWidget({ licensePlate }: AbnormalConsumptionWidgetProps = {}) {
+  const { data: abnormalLogs, isLoading, error } = useAbnormalFuelConsumption(2, licensePlate);
 
   if (isLoading) {
     return (

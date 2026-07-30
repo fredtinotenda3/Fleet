@@ -11,6 +11,8 @@ import type { ExpenseAnalyticsDateRange } from './ExpenseAnalyticsFilterBar';
 
 interface ExpenseAmountDistributionChartProps {
   dateRange: ExpenseAnalyticsDateRange;
+  /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
+  licensePlate?: string;
 }
 
 interface BucketDatum {
@@ -34,8 +36,8 @@ function DistributionTooltip({ active, payload }: any) {
   );
 }
 
-export function ExpenseAmountDistributionChart({ dateRange }: ExpenseAmountDistributionChartProps) {
-  const { data, isLoading, error } = useExpenseAmountDistribution(dateRange);
+export function ExpenseAmountDistributionChart({ dateRange, licensePlate }: ExpenseAmountDistributionChartProps) {
+  const { data, isLoading, error } = useExpenseAmountDistribution(dateRange, licensePlate);
 
   const chartData = useMemo<BucketDatum[]>(() => {
     return (data ?? []).map((bucket) => ({
