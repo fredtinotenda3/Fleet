@@ -1,4 +1,8 @@
-//frontend/modules/trips/components/DriverUtilizationChart.tsx
+// frontend/modules/trips/components/DriverUtilizationChart.tsx
+//
+// VEHICLE-SCOPE ADDITION: optional `licensePlate` prop, forwarded to
+// useDriverUtilization, so this ranks "drivers of this vehicle" when
+// used inside VehicleTripAnalyticsPanel instead of fleet-wide drivers.
 
 'use client';
 
@@ -12,11 +16,17 @@ import type { TripUtilizationSort } from '../types';
 interface DriverUtilizationChartProps {
   dateRange?: { startDate?: Date; endDate?: Date };
   sortBy?: TripUtilizationSort;
+  licensePlate?: string;
   onDrillDown?: (filter: TripDrawerFilter) => void;
 }
 
-export function DriverUtilizationChart({ dateRange, sortBy = 'trips', onDrillDown }: DriverUtilizationChartProps) {
-  const { data, isLoading, error } = useDriverUtilization(dateRange, 15, sortBy);
+export function DriverUtilizationChart({
+  dateRange,
+  sortBy = 'trips',
+  licensePlate,
+  onDrillDown,
+}: DriverUtilizationChartProps) {
+  const { data, isLoading, error } = useDriverUtilization(dateRange, 15, sortBy, licensePlate);
 
   if (isLoading) {
     return (
@@ -42,7 +52,11 @@ export function DriverUtilizationChart({ dateRange, sortBy = 'trips', onDrillDow
     <Card>
       <CardHeader>
         <CardTitle>Driver utilization</CardTitle>
-        <CardDescription>Trips and distance by driver -- click a bar to drill down</CardDescription>
+        <CardDescription>
+          {licensePlate
+            ? 'Drivers of this vehicle -- click a bar to drill down'
+            : 'Trips and distance by driver -- click a bar to drill down'}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <div style={{ width: '100%', height: 280 }}>
@@ -65,6 +79,7 @@ export function DriverUtilizationChart({ dateRange, sortBy = 'trips', onDrillDow
                   onDrillDown?.({
                     label: entry.driverName,
                     driver_id: entry.driver_id ?? undefined,
+                    license_plate: licensePlate,
                     startDate: dateRange?.startDate,
                     endDate: dateRange?.endDate,
                   })

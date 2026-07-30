@@ -19,9 +19,9 @@ export const tripKeys = {
   details: () => [...tripKeys.all, 'detail'] as const,
   detail: (id: string) => [...tripKeys.details(), id] as const,
   stats: (range?: string) => [...tripKeys.all, 'stats', range] as const,
-  kpis: (range?: string) => [...tripKeys.all, 'kpis', range] as const,
-  exceptions: (range?: string, zThreshold?: number) =>
-    [...tripKeys.all, 'exceptions', range, zThreshold] as const,
+  kpis: (range?: string, licensePlate?: string) => [...tripKeys.all, 'kpis', range, licensePlate] as const,
+  exceptions: (range?: string, zThreshold?: number, licensePlate?: string) =>
+    [...tripKeys.all, 'exceptions', range, zThreshold, licensePlate] as const,
 };
 
 export function useTripsList(params: Partial<TripListParams>) {
@@ -51,21 +51,33 @@ export function useTripStats(dateRange?: DateRange) {
   });
 }
 
-/** PHASE 1: executive KPI cards for the Trip Analytics page. */
-export function useTripKpis(dateRange?: DateRange) {
+/**
+ * PHASE 1: executive KPI cards for the Trip Analytics page.
+ * VEHICLE-SCOPE ADDITION: optional `licensePlate` scopes the KPI set
+ * to a single vehicle -- used by VehicleTripAnalyticsPanel.
+ */
+export function useTripKpis(dateRange?: DateRange, licensePlate?: string) {
   return useQuery({
-    queryKey: tripKeys.kpis(rangeKey(dateRange)),
-    queryFn: () => tripsApi.getKpis(dateRange),
+    queryKey: tripKeys.kpis(rangeKey(dateRange), licensePlate),
+    queryFn: () => tripsApi.getKpis(dateRange, licensePlate),
     staleTime: 60_000,
   });
 }
 
-/** PHASE 1: exception analytics (duration outliers, odometer
- *  inconsistencies, possible duplicates, missing driver). */
-export function useTripExceptions(dateRange?: DateRange, zThreshold: number = 2.5, limit: number = 50) {
+/**
+ * PHASE 1: exception analytics (duration outliers, odometer
+ * inconsistencies, possible duplicates, missing driver).
+ * VEHICLE-SCOPE ADDITION: optional `licensePlate`.
+ */
+export function useTripExceptions(
+  dateRange?: DateRange,
+  zThreshold: number = 2.5,
+  limit: number = 50,
+  licensePlate?: string
+) {
   return useQuery({
-    queryKey: tripKeys.exceptions(rangeKey(dateRange), zThreshold),
-    queryFn: () => tripsApi.getExceptions(dateRange, zThreshold, limit),
+    queryKey: tripKeys.exceptions(rangeKey(dateRange), zThreshold, licensePlate),
+    queryFn: () => tripsApi.getExceptions(dateRange, zThreshold, limit, licensePlate),
     staleTime: 60_000,
   });
 }

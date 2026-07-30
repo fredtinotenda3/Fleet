@@ -1,6 +1,10 @@
 // frontend/modules/trips/components/TripMonthlyTrendChart.tsx
 //
 // PHASE 2 enterprise analytics -- mirrors FuelMonthlyTrendChart.tsx.
+//
+// VEHICLE-SCOPE ADDITION: optional `licensePlate` prop, forwarded to
+// useMonthlyTripTrend, so a single vehicle's monthly trend renders when
+// used inside VehicleTripAnalyticsPanel.
 
 'use client';
 
@@ -9,8 +13,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/fro
 import { useMonthlyTripTrend } from '../hooks/useTripAnalytics';
 import { formatDistance } from '@/shared/utils/distance.utils';
 
-export function TripMonthlyTrendChart() {
-  const { data: monthlyData, isLoading, error } = useMonthlyTripTrend(12);
+interface TripMonthlyTrendChartProps {
+  months?: number;
+  licensePlate?: string;
+}
+
+export function TripMonthlyTrendChart({ months = 12, licensePlate }: TripMonthlyTrendChartProps = {}) {
+  const { data: monthlyData, isLoading, error } = useMonthlyTripTrend(months, licensePlate);
 
   if (isLoading) {
     return (
@@ -36,7 +45,11 @@ export function TripMonthlyTrendChart() {
     <Card>
       <CardHeader>
         <CardTitle>Monthly trip trend</CardTitle>
-        <CardDescription>Trips, distance, and driving hours -- last 12 months</CardDescription>
+        <CardDescription>
+          {licensePlate
+            ? `Trips, distance, and driving hours for ${licensePlate} -- last ${months} months`
+            : `Trips, distance, and driving hours -- last ${months} months`}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <div style={{ width: '100%', height: 260 }}>

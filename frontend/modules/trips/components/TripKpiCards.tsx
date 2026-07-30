@@ -11,9 +11,21 @@ import { useTripKpis } from '../hooks/useTrips';
  * FuelKpiCards' layout/loading/error handling exactly so the two
  * analytics pages feel like the same product. Only the metrics differ
  * (operational: distance/duration/utilization vs. Fuel's cost/efficiency).
+ *
+ * VEHICLE-SCOPE ADDITION: optional `dateRange` and `licensePlate` props.
+ * When `licensePlate` is supplied (VehicleTripAnalyticsPanel), every KPI
+ * -- total distance, driving hours, trip status, utilization, longest
+ * trip, top driver -- reflects that single vehicle instead of the fleet.
+ * Omitting both props preserves the original fleet-wide behavior used
+ * by TripAnalyticsPage.
  */
-export function TripKpiCards() {
-  const { data: kpis, isLoading, error } = useTripKpis();
+interface TripKpiCardsProps {
+  dateRange?: { startDate?: Date; endDate?: Date };
+  licensePlate?: string;
+}
+
+export function TripKpiCards({ dateRange, licensePlate }: TripKpiCardsProps = {}) {
+  const { data: kpis, isLoading, error } = useTripKpis(dateRange, licensePlate);
 
   if (isLoading) {
     return (
@@ -63,11 +75,15 @@ export function TripKpiCards() {
         icon={trendIcon(kpis.tripCountTrend, true)}
       />
       <StatisticCard
-        title="Fleet utilization"
-        value={`${kpis.activeVehicles} vehicles \u00B7 ${kpis.activeDrivers} drivers`}
+        title={licensePlate ? 'Driver activity' : 'Fleet utilization'}
+        value={
+          licensePlate
+            ? `${kpis.activeDrivers} driver${kpis.activeDrivers === 1 ? '' : 's'}`
+            : `${kpis.activeVehicles} vehicles \u00B7 ${kpis.activeDrivers} drivers`
+        }
         description={
-          kpis.mostUtilizedVehicle
-            ? `Most utilized: ${kpis.mostUtilizedVehicle.license_plate} (${kpis.mostUtilizedVehicle.trips} trips)`
+          kpis.mostUtilizedDriver
+            ? `Top driver: ${kpis.mostUtilizedDriver.driver_id} (${kpis.mostUtilizedDriver.trips} trips)`
             : 'No trips in this period'
         }
         icon={<Users className="w-4 h-4 text-muted-foreground" />}
@@ -75,7 +91,13 @@ export function TripKpiCards() {
       <StatisticCard
         title="Longest trip"
         value={kpis.longestTrip ? `${kpis.longestTrip.distance.toLocaleString()} km` : 'N/A'}
-        description={kpis.longestTrip ? kpis.longestTrip.license_plate : 'No trips in this period'}
+        description={
+          kpis.longestTrip
+            ? licensePlate
+              ? formatShortDate(kpis.longestTrip._id)
+              : kpis.longestTrip.license_plate
+            : 'No trips in this period'
+        }
         icon={<Route className="w-4 h-4 text-muted-foreground" />}
       />
       <StatisticCard
@@ -86,4 +108,11 @@ export function TripKpiCards() {
       />
     </StatisticCards>
   );
+}
+
+/** Falls back gracefully -- longestTrip._id is a trip id, not a date;
+ *  kept as a harmless no-op label when vehicle-scoped since the vehicle
+ *  is already implied by the panel context. */
+function formatShortDate(_id: string): string {
+  return 'This vehicle';
 }

@@ -1,4 +1,7 @@
-//frontend/modules/trips/components/TripDayOfWeekHeatmapChart.tsx
+// frontend/modules/trips/components/TripDayOfWeekHeatmapChart.tsx
+//
+// VEHICLE-SCOPE ADDITION: optional `licensePlate` prop, forwarded to
+// useTripDayOfWeekHeatmap.
 
 'use client';
 
@@ -8,12 +11,13 @@ import { useTripDayOfWeekHeatmap } from '../hooks/useTripAnalytics';
 
 interface TripDayOfWeekHeatmapChartProps {
   dateRange?: { startDate?: Date; endDate?: Date };
+  licensePlate?: string;
 }
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-export function TripDayOfWeekHeatmapChart({ dateRange }: TripDayOfWeekHeatmapChartProps) {
-  const { data, isLoading, error } = useTripDayOfWeekHeatmap(dateRange);
+export function TripDayOfWeekHeatmapChart({ dateRange, licensePlate }: TripDayOfWeekHeatmapChartProps) {
+  const { data, isLoading, error } = useTripDayOfWeekHeatmap(dateRange, licensePlate);
 
   const grid = useMemo(() => {
     const cells = new Map<string, { count: number; distance: number }>();
@@ -58,7 +62,9 @@ export function TripDayOfWeekHeatmapChart({ dateRange }: TripDayOfWeekHeatmapCha
     <Card>
       <CardHeader>
         <CardTitle>Trip activity heatmap</CardTitle>
-        <CardDescription>Trips by day of week and hour</CardDescription>
+        <CardDescription>
+          {licensePlate ? 'This vehicle\u2019s trips by day of week and hour' : 'Trips by day of week and hour'}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="overflow-x-auto">

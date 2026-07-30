@@ -3,6 +3,9 @@
 // PHASE 3: Cost vs Distance scatter -- each point is one linked trip.
 // Only renders trips that have at least one linked fuel log or
 // expense (unlinked trips have no cost to plot).
+//
+// VEHICLE-SCOPE ADDITION: optional `licensePlate` prop, forwarded to
+// useTripCostAnalytics / useTripCostSummary.
 
 'use client';
 
@@ -14,11 +17,12 @@ import { formatDistance } from '@/shared/utils/distance.utils';
 
 interface TripCostAnalyticsChartProps {
   dateRange?: { startDate?: Date; endDate?: Date };
+  licensePlate?: string;
 }
 
-export function TripCostAnalyticsChart({ dateRange }: TripCostAnalyticsChartProps) {
-  const { data, isLoading, error } = useTripCostAnalytics(dateRange, 200);
-  const { data: summary } = useTripCostSummary(dateRange);
+export function TripCostAnalyticsChart({ dateRange, licensePlate }: TripCostAnalyticsChartProps) {
+  const { data, isLoading, error } = useTripCostAnalytics(dateRange, 200, licensePlate);
+  const { data: summary } = useTripCostSummary(dateRange, licensePlate);
 
   if (isLoading) {
     return (
@@ -35,8 +39,9 @@ export function TripCostAnalyticsChart({ dateRange }: TripCostAnalyticsChartProp
         <CardHeader>
           <CardTitle>Cost vs. distance</CardTitle>
           <CardDescription>
-            No trips are linked to fuel logs or expenses yet. Link a trip when logging fuel
-            or an expense to see cost-per-trip analytics here.
+            {licensePlate
+              ? 'This vehicle has no trips linked to fuel logs or expenses yet. Link a trip when logging fuel or an expense to see cost-per-trip analytics here.'
+              : 'No trips are linked to fuel logs or expenses yet. Link a trip when logging fuel or an expense to see cost-per-trip analytics here.'}
           </CardDescription>
         </CardHeader>
       </Card>

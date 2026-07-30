@@ -46,10 +46,20 @@ function buildListQuery(params: Partial<TripListParams>) {
   };
 }
 
-function buildRangeQuery(dateRange?: { startDate?: Date; endDate?: Date }) {
+/**
+ * VEHICLE-SCOPE ADDITION: optional `licensePlate` third argument.
+ * When provided it's added to the query as `license_plate`, the same
+ * param name used by the list endpoint -- backend controller resolves
+ * it via parseLicensePlate() for every analytics route below.
+ */
+function buildRangeQuery(
+  dateRange?: { startDate?: Date; endDate?: Date },
+  licensePlate?: string
+) {
   const params: Record<string, string | undefined> = {};
   if (dateRange?.startDate) params.startDate = dateRange.startDate.toISOString();
   if (dateRange?.endDate) params.endDate = dateRange.endDate.toISOString();
+  if (licensePlate) params.license_plate = licensePlate;
   return params;
 }
 
@@ -66,31 +76,37 @@ export const tripsApi = {
     return apiClient.get<TripStats>(`${BASE}/stats`, { params: buildRangeQuery(dateRange) });
   },
 
-  /** PHASE 1 */
-  async getKpis(dateRange?: { startDate?: Date; endDate?: Date }): Promise<TripKpis> {
-    return apiClient.get<TripKpis>(`${BASE}/kpis`, { params: buildRangeQuery(dateRange) });
+  /** PHASE 1. VEHICLE-SCOPE ADDITION: optional licensePlate. */
+  async getKpis(
+    dateRange?: { startDate?: Date; endDate?: Date },
+    licensePlate?: string
+  ): Promise<TripKpis> {
+    return apiClient.get<TripKpis>(`${BASE}/kpis`, { params: buildRangeQuery(dateRange, licensePlate) });
   },
 
-  /** PHASE 1 */
+  /** PHASE 1. VEHICLE-SCOPE ADDITION: optional licensePlate. */
   async getExceptions(
     dateRange?: { startDate?: Date; endDate?: Date },
     zThreshold: number = 2.5,
-    limit: number = 50
+    limit: number = 50,
+    licensePlate?: string
   ): Promise<TripExceptionRow[]> {
     const params: Record<string, string | number | undefined> = {
-      ...buildRangeQuery(dateRange),
+      ...buildRangeQuery(dateRange, licensePlate),
       zThreshold,
       limit,
     };
     return apiClient.get<TripExceptionRow[]>(`${BASE}/exceptions`, { params });
   },
 
-  /** PHASE 2: Monthly Trip Trend */
-  async getMonthlyTrend(months: number = 12): Promise<TripMonthlyTrendPoint[]> {
-    return apiClient.get<TripMonthlyTrendPoint[]>(`${BASE}/monthly-trend`, { params: { months } });
+  /** PHASE 2: Monthly Trip Trend. VEHICLE-SCOPE ADDITION: optional licensePlate. */
+  async getMonthlyTrend(months: number = 12, licensePlate?: string): Promise<TripMonthlyTrendPoint[]> {
+    return apiClient.get<TripMonthlyTrendPoint[]>(`${BASE}/monthly-trend`, {
+      params: { months, license_plate: licensePlate },
+    });
   },
 
-  /** PHASE 2: Vehicle Utilization ranking */
+  /** PHASE 2: Vehicle Utilization ranking (fleet-wide; no vehicle scope by design). */
   async getVehicleUtilization(
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 20,
@@ -104,35 +120,38 @@ export const tripsApi = {
     return apiClient.get<VehicleUtilizationRow[]>(`${BASE}/vehicle-utilization`, { params });
   },
 
-  /** PHASE 2: Driver Utilization ranking */
+  /** PHASE 2: Driver Utilization ranking. VEHICLE-SCOPE ADDITION: optional licensePlate. */
   async getDriverUtilization(
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 20,
-    sortBy: TripUtilizationSort = 'trips'
+    sortBy: TripUtilizationSort = 'trips',
+    licensePlate?: string
   ): Promise<DriverUtilizationRow[]> {
     const params: Record<string, string | number | undefined> = {
-      ...buildRangeQuery(dateRange),
+      ...buildRangeQuery(dateRange, licensePlate),
       limit,
       sortBy,
     };
     return apiClient.get<DriverUtilizationRow[]>(`${BASE}/driver-utilization`, { params });
   },
 
-  /** PHASE 2: Distance Distribution histogram */
+  /** PHASE 2: Distance Distribution histogram. VEHICLE-SCOPE ADDITION: optional licensePlate. */
   async getDistanceDistribution(
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    licensePlate?: string
   ): Promise<TripDistanceDistributionBucket[]> {
     return apiClient.get<TripDistanceDistributionBucket[]>(`${BASE}/distance-distribution`, {
-      params: buildRangeQuery(dateRange),
+      params: buildRangeQuery(dateRange, licensePlate),
     });
   },
 
-  /** PHASE 2: Day-of-week x hour heatmap */
+  /** PHASE 2: Day-of-week x hour heatmap. VEHICLE-SCOPE ADDITION: optional licensePlate. */
   async getDayOfWeekHeatmap(
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    licensePlate?: string
   ): Promise<TripHeatmapCell[]> {
     return apiClient.get<TripHeatmapCell[]>(`${BASE}/day-of-week`, {
-      params: buildRangeQuery(dateRange),
+      params: buildRangeQuery(dateRange, licensePlate),
     });
   },
 

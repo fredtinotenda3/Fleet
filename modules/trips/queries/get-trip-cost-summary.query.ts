@@ -1,4 +1,7 @@
-//modules/trips/queries/get-trip-cost-summary.query.ts
+// modules/trips/queries/get-trip-cost-summary.query.ts
+//
+// VEHICLE-SCOPE ADDITION: optional licensePlate narrows the fleet-wide
+// cost summary to a single vehicle's operating cost.
 
 import { BaseQuery } from '@/server/cqrs/query';
 
@@ -7,7 +10,8 @@ export class GetTripCostSummaryQuery extends BaseQuery {
 
   constructor(
     public readonly tenantId: string,
-    public readonly dateRange?: { startDate?: Date; endDate?: Date }
+    public readonly dateRange?: { startDate?: Date; endDate?: Date },
+    public readonly licensePlate?: string
   ) {
     super(GetTripCostSummaryQuery.queryName);
   }

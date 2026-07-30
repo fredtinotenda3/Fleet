@@ -41,10 +41,18 @@ export class TripRepository extends BaseRepository<Trip> {
    * match used by every analytics aggregation below. Mirrors
    * FuelRepository.buildBaseMatch / ExpenseRepository.buildBaseMatch so
    * the three modules' analytics methods read the same way.
+   *
+   * VEHICLE-SCOPE ADDITION: optional third `licensePlate` argument lets
+   * every analytics aggregation below narrow from "fleet" to "this one
+   * vehicle" without a single line of duplicated aggregation logic --
+   * this is the entire mechanism behind Vehicle-Level Trip Analytics.
+   * Mirrors FuelRepository/ExpenseRepository's identical vehicle-scope
+   * addition to their own buildBaseMatch.
    */
   private buildBaseMatch(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    licensePlate?: string
   ): Record<string, unknown> {
     const match: Record<string, unknown> = { isDeleted: { $ne: true } };
     if (!this.isSuperAdminTenant(tenantId)) {
@@ -54,6 +62,9 @@ export class TripRepository extends BaseRepository<Trip> {
       match.date = {};
       if (dateRange.startDate) (match.date as any).$gte = dateRange.startDate;
       if (dateRange.endDate) (match.date as any).$lte = dateRange.endDate;
+    }
+    if (licensePlate) {
+      match.license_plate = licensePlate.toUpperCase();
     }
     return match;
   }
@@ -370,10 +381,16 @@ export class TripRepository extends BaseRepository<Trip> {
    * same two-pass shape as FuelRepository.getFuelKpis, but trip KPIs
    * don't need FuelKpis' per-vehicle odometer-fallback complexity since
    * distance_calculated is already normalized at write time.
+   *
+   * VEHICLE-SCOPE ADDITION: optional `licensePlate` narrows both the
+   * current-period and previous-period match. When scoped, activeVehicles
+   * naturally resolves to 1 and mostUtilizedVehicle to that vehicle --
+   * both fields remain meaningful, just no longer fleet-wide.
    */
   async getTripKpis(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    licensePlate?: string
   ): Promise<TripKpis> {
     const collection = await this.getCollection();
     const now = new Date();
@@ -383,8 +400,8 @@ export class TripRepository extends BaseRepository<Trip> {
     const prevRangeEnd = new Date(rangeStart.getTime() - 1);
     const prevRangeStart = new Date(prevRangeEnd.getTime() - periodMs);
 
-    const currentMatch = this.buildBaseMatch(tenantId, { startDate: rangeStart, endDate: rangeEnd });
-    const prevMatch = this.buildBaseMatch(tenantId, { startDate: prevRangeStart, endDate: prevRangeEnd });
+    const currentMatch = this.buildBaseMatch(tenantId, { startDate: rangeStart, endDate: rangeEnd }, licensePlate);
+    const prevMatch = this.buildBaseMatch(tenantId, { startDate: prevRangeStart, endDate: prevRangeEnd }, licensePlate);
 
     const pipeline = [
       { $match: currentMatch },
@@ -508,15 +525,20 @@ export class TripRepository extends BaseRepository<Trip> {
    * duplicate trips, and missing driver -- these last three are
    * data-integrity issues, not statistical outliers, so a fixed rule
    * is more honest than a z-score for them.
+   *
+   * VEHICLE-SCOPE ADDITION: optional `licensePlate` narrows every
+   * sub-aggregation (duration outliers, odometer inconsistency,
+   * duplicates, missing driver) to a single vehicle's rows.
    */
   async getTripExceptions(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     zThreshold: number = 2.5,
-    limit: number = 50
+    limit: number = 50,
+    licensePlate?: string
   ): Promise<TripExceptionRow[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange);
+    const match = this.buildBaseMatch(tenantId, dateRange, licensePlate);
     const exceptions: TripExceptionRow[] = [];
 
     // 1. Duration outliers per vehicle (z-score), mirrors getExpenseOutliers.
@@ -660,15 +682,21 @@ export class TripRepository extends BaseRepository<Trip> {
     return exceptions.slice(0, limit * 4);
   }
 
-  /** PHASE 2: Monthly Trip Trend -- trips + distance + driving hours per month. */
+  /**
+   * PHASE 2: Monthly Trip Trend -- trips + distance + driving hours per month.
+   *
+   * VEHICLE-SCOPE ADDITION: optional `licensePlate` narrows the trend
+   * to a single vehicle's monthly activity.
+   */
   async getMonthlyTripTrend(
     tenantId: string,
-    months: number = 12
+    months: number = 12,
+    licensePlate?: string
   ): Promise<TripMonthlyTrendPoint[]> {
     const collection = await this.getCollection();
     const startDate = new Date();
     startDate.setMonth(startDate.getMonth() - months);
-    const match = this.buildBaseMatch(tenantId, { startDate });
+    const match = this.buildBaseMatch(tenantId, { startDate }, licensePlate);
 
     const pipeline = [
       { $match: match },
@@ -734,15 +762,21 @@ export class TripRepository extends BaseRepository<Trip> {
    * driver_id to a single "Unassigned" bucket -- same fix as
    * FuelRepository.getFuelByDriver, for the same reason ($ifNull alone
    * doesn't catch empty-string values from a controlled <Select>).
+   *
+   * VEHICLE-SCOPE ADDITION: optional `licensePlate` narrows the ranking
+   * to "which drivers have driven THIS vehicle" instead of the whole
+   * fleet -- the vehicleCount field then reports 0 or 1 per driver
+   * relative to this single vehicle, which is expected/correct.
    */
   async getDriverUtilization(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 20,
-    sortBy: 'trips' | 'distance' = 'trips'
+    sortBy: 'trips' | 'distance' = 'trips',
+    licensePlate?: string
   ): Promise<DriverUtilizationRow[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange);
+    const match = this.buildBaseMatch(tenantId, dateRange, licensePlate);
     const sortField = sortBy === 'distance' ? 'totalDistance' : 'trips';
 
     const pipeline = [
@@ -801,13 +835,19 @@ export class TripRepository extends BaseRepository<Trip> {
     });
   }
 
-  /** PHASE 2: Distance Distribution histogram (mirrors getFuelCostDistribution). */
+  /**
+   * PHASE 2: Distance Distribution histogram (mirrors getFuelCostDistribution).
+   *
+   * VEHICLE-SCOPE ADDITION: optional `licensePlate` narrows the
+   * histogram to a single vehicle's trip-distance spread.
+   */
   async getTripDistanceDistribution(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    licensePlate?: string
   ): Promise<TripDistanceDistributionBucket[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange);
+    const match = this.buildBaseMatch(tenantId, dateRange, licensePlate);
 
     const count = await collection.countDocuments(match as Filter<Trip>);
     if (count === 0) return [];
@@ -832,13 +872,19 @@ export class TripRepository extends BaseRepository<Trip> {
     }));
   }
 
-  /** PHASE 2: Day-of-week x hour-of-day heatmap (mirrors getFuelEntryHeatmap, plus distance). */
+  /**
+   * PHASE 2: Day-of-week x hour-of-day heatmap (mirrors getFuelEntryHeatmap, plus distance).
+   *
+   * VEHICLE-SCOPE ADDITION: optional `licensePlate` narrows the heatmap
+   * to a single vehicle's activity pattern.
+   */
   async getTripsByDayOfWeek(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    licensePlate?: string
   ): Promise<TripHeatmapCell[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange);
+    const match = this.buildBaseMatch(tenantId, dateRange, licensePlate);
 
     const pipeline = [
       { $match: match },
@@ -869,14 +915,20 @@ export class TripRepository extends BaseRepository<Trip> {
    * can't be it isn't meaningful to report "$0 cost" for a trip that
    * was simply never linked), but ARE still counted correctly as
    * "unlinked" by getTripCostSummary below via a separate total.
+   *
+   * VEHICLE-SCOPE ADDITION: optional `licensePlate` narrows the
+   * underlying trip match before the fuel/expense joins run, so a
+   * vehicle's Cost vs. Distance scatter only plots that vehicle's
+   * linked trips.
    */
   async getTripCostAnalytics(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    limit: number = 100
+    limit: number = 100,
+    licensePlate?: string
   ): Promise<TripCostAnalyticsRow[]> {
     const db = await connectToDatabase();
-    const tripMatch = this.buildBaseMatch(tenantId, dateRange);
+    const tripMatch = this.buildBaseMatch(tenantId, dateRange, licensePlate);
 
     const pipeline = [
       { $match: tripMatch },
@@ -939,12 +991,17 @@ export class TripRepository extends BaseRepository<Trip> {
    * PHASE 3: fleet-wide summary for KPI cards. Reuses the same
    * per-trip join as getTripCostAnalytics but without the row limit,
    * since it only needs aggregate totals, not the row list.
+   *
+   * VEHICLE-SCOPE ADDITION: optional `licensePlate`, forwarded straight
+   * through to getTripCostAnalytics -- the summary then reflects a
+   * single vehicle's operating cost instead of the fleet's.
    */
   async getTripCostSummary(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    licensePlate?: string
   ): Promise<TripCostSummary> {
-    const rows = await this.getTripCostAnalytics(tenantId, dateRange, 100000);
+    const rows = await this.getTripCostAnalytics(tenantId, dateRange, 100000, licensePlate);
 
     const totalFuelCost = rows.reduce((sum, r) => sum + r.fuelCost, 0);
     const totalExpenseCost = rows.reduce((sum, r) => sum + r.expenseCost, 0);

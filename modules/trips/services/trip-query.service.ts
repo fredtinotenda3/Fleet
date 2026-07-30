@@ -63,37 +63,42 @@ export class TripQueryService {
     );
   }
 
-  /** PHASE 1 */
+  /** PHASE 1. VEHICLE-SCOPE ADDITION: optional licensePlate. */
   async getTripKpis(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    licensePlate?: string
   ): Promise<TripKpis> {
-    return queryBus.execute<TripKpis>(new GetTripKpisQuery(tenantId, dateRange));
+    return queryBus.execute<TripKpis>(new GetTripKpisQuery(tenantId, dateRange, licensePlate));
   }
 
-  /** PHASE 1 */
+  /** PHASE 1. VEHICLE-SCOPE ADDITION: optional licensePlate. */
   async getTripExceptions(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     zThreshold: number = 2.5,
-    limit: number = 50
+    limit: number = 50,
+    licensePlate?: string
   ): Promise<TripExceptionRow[]> {
     return queryBus.execute<TripExceptionRow[]>(
-      new GetTripExceptionsQuery(tenantId, dateRange, zThreshold, limit)
+      new GetTripExceptionsQuery(tenantId, dateRange, zThreshold, limit, licensePlate)
     );
   }
 
-  /** PHASE 2: Monthly Trip Trend */
+  /** PHASE 2: Monthly Trip Trend. VEHICLE-SCOPE ADDITION: optional licensePlate. */
   async getMonthlyTripTrend(
     tenantId: string,
-    months: number = 12
+    months: number = 12,
+    licensePlate?: string
   ): Promise<TripMonthlyTrendPoint[]> {
     return queryBus.execute<TripMonthlyTrendPoint[]>(
-      new GetMonthlyTripTrendQuery(tenantId, months)
+      new GetMonthlyTripTrendQuery(tenantId, months, licensePlate)
     );
   }
 
-  /** PHASE 2: Vehicle Utilization */
+  /** PHASE 2: Vehicle Utilization (fleet-wide ranking; not vehicle-scoped
+   *  by design -- scoping this to one vehicle collapses it to a single
+   *  bar, so it is intentionally left fleet-only). */
   async getVehicleUtilization(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
@@ -105,55 +110,62 @@ export class TripQueryService {
     );
   }
 
-  /** PHASE 2: Driver Utilization */
+  /** PHASE 2: Driver Utilization. VEHICLE-SCOPE ADDITION: optional licensePlate. */
   async getDriverUtilization(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 20,
-    sortBy: 'trips' | 'distance' = 'trips'
+    sortBy: 'trips' | 'distance' = 'trips',
+    licensePlate?: string
   ): Promise<DriverUtilizationRow[]> {
     return queryBus.execute<DriverUtilizationRow[]>(
-      new GetDriverUtilizationQuery(tenantId, dateRange, limit, sortBy)
+      new GetDriverUtilizationQuery(tenantId, dateRange, limit, sortBy, licensePlate)
     );
   }
 
-  /** PHASE 2: Distance Distribution histogram */
+  /** PHASE 2: Distance Distribution histogram. VEHICLE-SCOPE ADDITION: optional licensePlate. */
   async getTripDistanceDistribution(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    licensePlate?: string
   ): Promise<TripDistanceDistributionBucket[]> {
     return queryBus.execute<TripDistanceDistributionBucket[]>(
-      new GetTripDistanceDistributionQuery(tenantId, dateRange)
+      new GetTripDistanceDistributionQuery(tenantId, dateRange, licensePlate)
     );
   }
 
-  /** PHASE 2: Day-of-week x hour heatmap */
+  /** PHASE 2: Day-of-week x hour heatmap. VEHICLE-SCOPE ADDITION: optional licensePlate. */
   async getTripsByDayOfWeek(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    licensePlate?: string
   ): Promise<TripHeatmapCell[]> {
     return queryBus.execute<TripHeatmapCell[]>(
-      new GetTripsByDayOfWeekQuery(tenantId, dateRange)
+      new GetTripsByDayOfWeekQuery(tenantId, dateRange, licensePlate)
     );
   }
 
-  /** PHASE 3: Cross-module cost analytics rows (fuel/expense joined per trip). */
+  /** PHASE 3: Cross-module cost analytics rows. VEHICLE-SCOPE ADDITION: optional licensePlate. */
   async getTripCostAnalytics(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    limit: number = 100
+    limit: number = 100,
+    licensePlate?: string
   ): Promise<TripCostAnalyticsRow[]> {
     return queryBus.execute<TripCostAnalyticsRow[]>(
-      new GetTripCostAnalyticsQuery(tenantId, dateRange, limit)
+      new GetTripCostAnalyticsQuery(tenantId, dateRange, limit, licensePlate)
     );
   }
 
-  /** PHASE 3: Fleet-wide cost summary for KPI cards. */
+  /** PHASE 3: Fleet/vehicle cost summary for KPI cards. VEHICLE-SCOPE ADDITION: optional licensePlate. */
   async getTripCostSummary(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    licensePlate?: string
   ): Promise<TripCostSummary> {
-    return queryBus.execute<TripCostSummary>(new GetTripCostSummaryQuery(tenantId, dateRange));
+    return queryBus.execute<TripCostSummary>(
+      new GetTripCostSummaryQuery(tenantId, dateRange, licensePlate)
+    );
   }
 }
 

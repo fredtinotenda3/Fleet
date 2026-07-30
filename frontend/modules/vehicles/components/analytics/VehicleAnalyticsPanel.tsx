@@ -2,9 +2,9 @@
 //
 // Root of the Vehicle Detail page's "Analytics" tab -- mirrors the
 // enterprise nav tree (Fleet > Vehicle > Analytics > Fuel/Expenses/
-// Trips/Maintenance/...). Fuel and Expenses are fully wired; Trips and
-// Maintenance are placeholders until their AnalyticsScope wiring lands,
-// following the exact same pattern used here.
+// Trips/Maintenance/...). Fuel, Expenses, and Trips are now fully
+// wired; Maintenance remains a placeholder until its AnalyticsScope
+// wiring lands, following the exact same reuse pattern used here.
 
 'use client';
 
@@ -13,6 +13,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/frontend/shared/ui/n
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
 import { VehicleFuelAnalyticsPanel } from './VehicleFuelAnalyticsPanel';
 import { VehicleExpenseAnalyticsPanel } from './VehicleExpenseAnalyticsPanel';
+import { VehicleTripAnalyticsPanel } from './VehicleTripAnalyticsPanel';
 
 interface VehicleAnalyticsPanelProps {
   licensePlate: string;
@@ -24,7 +25,7 @@ function ComingSoonPanel({ label }: { label: string }) {
       <p className="font-medium text-foreground">{label} analytics coming soon</p>
       <p className="text-sm text-muted-foreground">
         This vehicle&apos;s {label.toLowerCase()} analytics will reuse the same fleet-wide {label.toLowerCase()} components,
-        scoped to this vehicle -- the same pattern already used for Fuel and Expenses.
+        scoped to this vehicle -- the same pattern already used for Fuel, Expenses, and Trips.
       </p>
     </div>
   );
@@ -40,8 +41,8 @@ export function VehicleAnalyticsPanel({ licensePlate }: VehicleAnalyticsPanelPro
         <TabsTrigger value="expenses">
           <Receipt className="h-3.5 w-3.5" /> Expenses
         </TabsTrigger>
-        <TabsTrigger value="trips" disabled>
-          <Route className="h-3.5 w-3.5" /> Trips <Badge variant="outline" className="ml-1">Soon</Badge>
+        <TabsTrigger value="trips">
+          <Route className="h-3.5 w-3.5" /> Trips
         </TabsTrigger>
         <TabsTrigger value="maintenance" disabled>
           <Wrench className="h-3.5 w-3.5" /> Maintenance <Badge variant="outline" className="ml-1">Soon</Badge>
@@ -55,7 +56,7 @@ export function VehicleAnalyticsPanel({ licensePlate }: VehicleAnalyticsPanelPro
         <VehicleExpenseAnalyticsPanel licensePlate={licensePlate} />
       </TabsContent>
       <TabsContent value="trips" className="mt-4">
-        <ComingSoonPanel label="Trip" />
+        <VehicleTripAnalyticsPanel licensePlate={licensePlate} />
       </TabsContent>
       <TabsContent value="maintenance" className="mt-4">
         <ComingSoonPanel label="Maintenance" />

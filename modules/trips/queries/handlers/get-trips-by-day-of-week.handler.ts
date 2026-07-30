@@ -11,6 +11,6 @@ export class GetTripsByDayOfWeekHandler
   constructor(private readonly tripRepo: TripRepository) {}
 
   async execute(query: GetTripsByDayOfWeekQuery): Promise<TripHeatmapCell[]> {
-    return this.tripRepo.getTripsByDayOfWeek(query.tenantId, query.dateRange);
+    return this.tripRepo.getTripsByDayOfWeek(query.tenantId, query.dateRange, query.licensePlate);
   }
 }

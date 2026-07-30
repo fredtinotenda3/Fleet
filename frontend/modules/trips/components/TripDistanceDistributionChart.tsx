@@ -1,4 +1,7 @@
-//frontend/modules/trips/components/TripDistanceDistributionChart.tsx
+// frontend/modules/trips/components/TripDistanceDistributionChart.tsx
+//
+// VEHICLE-SCOPE ADDITION: optional `licensePlate` prop, forwarded to
+// useTripDistanceDistribution.
 
 'use client';
 
@@ -8,10 +11,11 @@ import { useTripDistanceDistribution } from '../hooks/useTripAnalytics';
 
 interface TripDistanceDistributionChartProps {
   dateRange?: { startDate?: Date; endDate?: Date };
+  licensePlate?: string;
 }
 
-export function TripDistanceDistributionChart({ dateRange }: TripDistanceDistributionChartProps) {
-  const { data, isLoading, error } = useTripDistanceDistribution(dateRange);
+export function TripDistanceDistributionChart({ dateRange, licensePlate }: TripDistanceDistributionChartProps) {
+  const { data, isLoading, error } = useTripDistanceDistribution(dateRange, licensePlate);
 
   if (isLoading) {
     return (
@@ -42,7 +46,9 @@ export function TripDistanceDistributionChart({ dateRange }: TripDistanceDistrib
     <Card>
       <CardHeader>
         <CardTitle>Distance distribution</CardTitle>
-        <CardDescription>Number of trips by distance range</CardDescription>
+        <CardDescription>
+          {licensePlate ? 'Number of this vehicle\u2019s trips by distance range' : 'Number of trips by distance range'}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <div style={{ width: '100%', height: 260 }}>

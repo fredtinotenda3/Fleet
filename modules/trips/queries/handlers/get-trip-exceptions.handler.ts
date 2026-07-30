@@ -11,6 +11,12 @@ export class GetTripExceptionsHandler
   constructor(private readonly tripRepo: TripRepository) {}
 
   async execute(query: GetTripExceptionsQuery): Promise<TripExceptionRow[]> {
-    return this.tripRepo.getTripExceptions(query.tenantId, query.dateRange, query.zThreshold, query.limit);
+    return this.tripRepo.getTripExceptions(
+      query.tenantId,
+      query.dateRange,
+      query.zThreshold,
+      query.limit,
+      query.licensePlate
+    );
   }
 }

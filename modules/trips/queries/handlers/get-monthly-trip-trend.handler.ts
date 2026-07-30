@@ -11,6 +11,6 @@ export class GetMonthlyTripTrendHandler
   constructor(private readonly tripRepo: TripRepository) {}
 
   async execute(query: GetMonthlyTripTrendQuery): Promise<TripMonthlyTrendPoint[]> {
-    return this.tripRepo.getMonthlyTripTrend(query.tenantId, query.months);
+    return this.tripRepo.getMonthlyTripTrend(query.tenantId, query.months, query.licensePlate);
   }
 }

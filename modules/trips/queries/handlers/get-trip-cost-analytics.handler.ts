@@ -1,4 +1,4 @@
-//modules/trips/queries/handlers/get-trip-cost-analytics.handler.ts
+// modules/trips/queries/handlers/get-trip-cost-analytics.handler.ts
 
 import { IQueryHandler } from '@/server/cqrs/query';
 import { GetTripCostAnalyticsQuery } from '../get-trip-cost-analytics.query';
@@ -11,6 +11,11 @@ export class GetTripCostAnalyticsHandler
   constructor(private readonly tripRepo: TripRepository) {}
 
   async execute(query: GetTripCostAnalyticsQuery): Promise<TripCostAnalyticsRow[]> {
-    return this.tripRepo.getTripCostAnalytics(query.tenantId, query.dateRange, query.limit);
+    return this.tripRepo.getTripCostAnalytics(
+      query.tenantId,
+      query.dateRange,
+      query.limit,
+      query.licensePlate
+    );
   }
 }

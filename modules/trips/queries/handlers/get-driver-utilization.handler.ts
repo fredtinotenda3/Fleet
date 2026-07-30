@@ -1,4 +1,4 @@
-//modules/trips/queries/handlers/get-driver-utilization.handler.ts
+// modules/trips/queries/handlers/get-driver-utilization.handler.ts
 
 import { IQueryHandler } from '@/server/cqrs/query';
 import { GetDriverUtilizationQuery } from '../get-driver-utilization.query';
@@ -15,7 +15,8 @@ export class GetDriverUtilizationHandler
       query.tenantId,
       query.dateRange,
       query.limit,
-      query.sortBy
+      query.sortBy,
+      query.licensePlate
     );
   }
 }

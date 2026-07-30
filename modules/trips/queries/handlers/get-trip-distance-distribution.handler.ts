@@ -13,6 +13,6 @@ export class GetTripDistanceDistributionHandler
   async execute(
     query: GetTripDistanceDistributionQuery
   ): Promise<TripDistanceDistributionBucket[]> {
-    return this.tripRepo.getTripDistanceDistribution(query.tenantId, query.dateRange);
+    return this.tripRepo.getTripDistanceDistribution(query.tenantId, query.dateRange, query.licensePlate);
   }
 }

@@ -9,6 +9,6 @@ export class GetTripKpisHandler implements IQueryHandler<GetTripKpisQuery, TripK
   constructor(private readonly tripRepo: TripRepository) {}
 
   async execute(query: GetTripKpisQuery): Promise<TripKpis> {
-    return this.tripRepo.getTripKpis(query.tenantId, query.dateRange);
+    return this.tripRepo.getTripKpis(query.tenantId, query.dateRange, query.licensePlate);
   }
 }

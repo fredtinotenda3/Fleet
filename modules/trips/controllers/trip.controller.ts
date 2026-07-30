@@ -52,6 +52,18 @@ function parseTripFilters(searchParams: URLSearchParams): TripFilters {
   };
 }
 
+/**
+ * VEHICLE-SCOPE ADDITION: shared license_plate parsing for the
+ * analytics endpoints below, mirroring the same `?license_plate=`
+ * query param already used across Fuel and Expense analytics. Returns
+ * undefined (fleet-wide) when the param is absent, uppercased when
+ * present to match how license_plate is always stored.
+ */
+function parseLicensePlate(searchParams: URLSearchParams): string | undefined {
+  const value = searchParams.get('license_plate');
+  return value ? value.toUpperCase() : undefined;
+}
+
 export class TripController {
   async getTrips(req: NextRequest) {
     try {
@@ -279,7 +291,11 @@ export class TripController {
     }
   }
 
-  /** PHASE 1: executive KPI cards endpoint, backing GET /api/trips/kpis */
+  /**
+   * PHASE 1: executive KPI cards endpoint, backing GET /api/trips/kpis
+   * VEHICLE-SCOPE ADDITION: honors ?license_plate= to scope KPIs to a
+   * single vehicle -- same param used across Fuel/Expense analytics.
+   */
   async getTripKpis(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
@@ -292,15 +308,19 @@ export class TripController {
               endDate: new Date(searchParams.get('endDate')!),
             }
           : undefined;
+      const licensePlate = parseLicensePlate(searchParams);
 
-      const kpis = await tripQueryService.getTripKpis(tenantId, dateRange);
+      const kpis = await tripQueryService.getTripKpis(tenantId, dateRange, licensePlate);
       return successResponse(kpis);
     } catch (error) {
       return this.handleError(error);
     }
   }
 
-  /** PHASE 1: exception analytics endpoint, backing GET /api/trips/exceptions */
+  /**
+   * PHASE 1: exception analytics endpoint, backing GET /api/trips/exceptions
+   * VEHICLE-SCOPE ADDITION: honors ?license_plate=.
+   */
   async getTripExceptions(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
@@ -315,8 +335,9 @@ export class TripController {
           : undefined;
       const zThreshold = Number(searchParams.get('zThreshold') || '2.5');
       const limit = Number(searchParams.get('limit') || '50');
+      const licensePlate = parseLicensePlate(searchParams);
 
-      const exceptions = await tripQueryService.getTripExceptions(tenantId, dateRange, zThreshold, limit);
+      const exceptions = await tripQueryService.getTripExceptions(tenantId, dateRange, zThreshold, limit, licensePlate);
       return successResponse(exceptions);
     } catch (error) {
       return this.handleError(error);
@@ -334,20 +355,28 @@ export class TripController {
       : undefined;
   }
 
-  /** PHASE 2: monthly trip trend, backing GET /api/trips/monthly-trend */
+  /**
+   * PHASE 2: monthly trip trend, backing GET /api/trips/monthly-trend
+   * VEHICLE-SCOPE ADDITION: honors ?license_plate=.
+   */
   async getMonthlyTripTrend(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
       const months = Number(req.nextUrl.searchParams.get('months') || '12');
+      const licensePlate = parseLicensePlate(req.nextUrl.searchParams);
 
-      const data = await tripQueryService.getMonthlyTripTrend(tenantId, months);
+      const data = await tripQueryService.getMonthlyTripTrend(tenantId, months, licensePlate);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
     }
   }
 
-  /** PHASE 2: vehicle utilization, backing GET /api/trips/vehicle-utilization */
+  /**
+   * PHASE 2: vehicle utilization, backing GET /api/trips/vehicle-utilization
+   * (fleet-wide ranking; intentionally not vehicle-scoped -- see
+   * TripQueryService.getVehicleUtilization for rationale).
+   */
   async getVehicleUtilization(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
@@ -363,7 +392,10 @@ export class TripController {
     }
   }
 
-  /** PHASE 2: driver utilization, backing GET /api/trips/driver-utilization */
+  /**
+   * PHASE 2: driver utilization, backing GET /api/trips/driver-utilization
+   * VEHICLE-SCOPE ADDITION: honors ?license_plate=.
+   */
   async getDriverUtilization(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
@@ -371,61 +403,78 @@ export class TripController {
       const dateRange = this.parseDateRange(req);
       const limit = Number(searchParams.get('limit') || '20');
       const sortBy = (searchParams.get('sortBy') as 'trips' | 'distance') || 'trips';
+      const licensePlate = parseLicensePlate(searchParams);
 
-      const data = await tripQueryService.getDriverUtilization(tenantId, dateRange, limit, sortBy);
+      const data = await tripQueryService.getDriverUtilization(tenantId, dateRange, limit, sortBy, licensePlate);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
     }
   }
 
-  /** PHASE 2: distance distribution histogram, backing GET /api/trips/distance-distribution */
+  /**
+   * PHASE 2: distance distribution histogram, backing GET /api/trips/distance-distribution
+   * VEHICLE-SCOPE ADDITION: honors ?license_plate=.
+   */
   async getTripDistanceDistribution(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
       const dateRange = this.parseDateRange(req);
+      const licensePlate = parseLicensePlate(req.nextUrl.searchParams);
 
-      const data = await tripQueryService.getTripDistanceDistribution(tenantId, dateRange);
+      const data = await tripQueryService.getTripDistanceDistribution(tenantId, dateRange, licensePlate);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
     }
   }
 
-  /** PHASE 2: day-of-week x hour heatmap, backing GET /api/trips/day-of-week */
+  /**
+   * PHASE 2: day-of-week x hour heatmap, backing GET /api/trips/day-of-week
+   * VEHICLE-SCOPE ADDITION: honors ?license_plate=.
+   */
   async getTripsByDayOfWeek(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
       const dateRange = this.parseDateRange(req);
+      const licensePlate = parseLicensePlate(req.nextUrl.searchParams);
 
-      const data = await tripQueryService.getTripsByDayOfWeek(tenantId, dateRange);
+      const data = await tripQueryService.getTripsByDayOfWeek(tenantId, dateRange, licensePlate);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
     }
   }
 
-  /** PHASE 3: cross-module cost analytics rows, backing GET /api/trips/cost-analytics */
+  /**
+   * PHASE 3: cross-module cost analytics rows, backing GET /api/trips/cost-analytics
+   * VEHICLE-SCOPE ADDITION: honors ?license_plate=.
+   */
   async getTripCostAnalytics(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
       const dateRange = this.parseDateRange(req);
       const limit = Number(req.nextUrl.searchParams.get('limit') || '100');
+      const licensePlate = parseLicensePlate(req.nextUrl.searchParams);
 
-      const data = await tripQueryService.getTripCostAnalytics(tenantId, dateRange, limit);
+      const data = await tripQueryService.getTripCostAnalytics(tenantId, dateRange, limit, licensePlate);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
     }
   }
 
-  /** PHASE 3: fleet-wide cost summary, backing GET /api/trips/cost-summary */
+  /**
+   * PHASE 3: fleet-wide cost summary, backing GET /api/trips/cost-summary
+   * VEHICLE-SCOPE ADDITION: honors ?license_plate=.
+   */
   async getTripCostSummary(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
       const dateRange = this.parseDateRange(req);
+      const licensePlate = parseLicensePlate(req.nextUrl.searchParams);
 
-      const data = await tripQueryService.getTripCostSummary(tenantId, dateRange);
+      const data = await tripQueryService.getTripCostSummary(tenantId, dateRange, licensePlate);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
