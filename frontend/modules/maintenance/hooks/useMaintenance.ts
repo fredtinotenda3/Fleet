@@ -36,10 +36,16 @@ export function useMaintenanceRecord(id: string | undefined, options?: Partial<U
   });
 }
 
-export function useMaintenanceStats() {
+/**
+ * Vehicle-Level Analytics: accepts an optional `licensePlate` to narrow
+ * the SAME fleet-wide stats calculation to a single vehicle. Omitting it
+ * reproduces today's fleet-wide behaviour (used by the fleet Maintenance
+ * dashboard); passing it is what VehicleMaintenanceAnalyticsPanel uses.
+ */
+export function useMaintenanceStats(licensePlate?: string) {
   return useQuery({
-    queryKey: maintenanceKeys.stats(),
-    queryFn: () => maintenanceApi.getStats(),
+    queryKey: [...maintenanceKeys.stats(), licensePlate ?? 'fleet'],
+    queryFn: () => maintenanceApi.getStats(licensePlate),
     staleTime: 60_000,
   });
 }
@@ -79,10 +85,15 @@ export function useAllMaintenanceRecords(filters: Partial<MaintenanceListParams>
   });
 }
 
-export function useMaintenanceCostTrend(months: number = 12) {
+/**
+ * Vehicle-Level Analytics: accepts an optional `licensePlate` to narrow
+ * the SAME cost-trend calculation to a single vehicle. Omitting it
+ * reproduces today's fleet-wide chart.
+ */
+export function useMaintenanceCostTrend(months: number = 12, licensePlate?: string) {
   return useQuery({
-    queryKey: [...maintenanceKeys.all, 'cost-trend', months],
-    queryFn: () => maintenanceApi.getCostTrend(months),
+    queryKey: [...maintenanceKeys.all, 'cost-trend', months, licensePlate ?? 'fleet'],
+    queryFn: () => maintenanceApi.getCostTrend(months, licensePlate),
     staleTime: 60_000,
   });
 }
@@ -107,6 +118,21 @@ export function useDowntimeEstimate(limit: number = 20) {
   return useQuery({
     queryKey: [...maintenanceKeys.all, 'downtime-estimate', limit],
     queryFn: () => maintenanceApi.getDowntimeEstimate(limit),
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * Vehicle-Level Analytics: single-vehicle-only derived insights (days
+ * since last service, avg. service interval, next upcoming reminder,
+ * breakdown frequency). There is no fleet-wide equivalent, so
+ * `licensePlate` is required and the query is disabled until it's set.
+ */
+export function useVehicleMaintenanceInsights(licensePlate: string | undefined) {
+  return useQuery({
+    queryKey: [...maintenanceKeys.all, 'vehicle-insights', licensePlate ?? ''],
+    queryFn: () => maintenanceApi.getVehicleInsights(licensePlate as string),
+    enabled: Boolean(licensePlate),
     staleTime: 60_000,
   });
 }

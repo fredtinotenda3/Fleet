@@ -11,6 +11,6 @@ export class GetMaintenanceStatsHandler
   constructor(private readonly maintenanceRepo: MaintenanceRepository) {}
 
   async execute(query: GetMaintenanceStatsQuery): Promise<MaintenanceStats> {
-    return this.maintenanceRepo.getMaintenanceStats(query.tenantId);
+    return this.maintenanceRepo.getMaintenanceStats(query.tenantId, query.licensePlate);
   }
 }

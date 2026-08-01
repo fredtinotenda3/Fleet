@@ -14,3 +14,6 @@ export { MaintenanceCostTrendChart } from './MaintenanceCostTrendChart';
 export { RepairFrequencyByVehicleChart } from './RepairFrequencyByVehicleChart';
 export { MostExpensiveVehiclesChart } from './MostExpensiveVehiclesChart';
 export { DowntimeEstimateChart } from './DowntimeEstimateChart';
+
+// Vehicle-Level Analytics
+export { VehicleMaintenanceInsightsCards } from './VehicleMaintenanceInsightsCards';

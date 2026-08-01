@@ -25,6 +25,7 @@ import { GetMaintenanceCostTrendQuery } from './queries/get-maintenance-cost-tre
 import { GetRepairFrequencyByVehicleQuery } from './queries/get-repair-frequency-by-vehicle.query';
 import { GetMostExpensiveVehiclesQuery } from './queries/get-most-expensive-vehicles.query';
 import { GetMaintenanceDowntimeEstimateQuery } from './queries/get-maintenance-downtime-estimate.query';
+import { GetVehicleMaintenanceInsightsQuery } from './queries/get-vehicle-maintenance-insights.query';
 
 import { GetRemindersHandler } from './queries/handlers/get-reminders.handler';
 import { GetReminderByIdHandler } from './queries/handlers/get-reminder-by-id.handler';
@@ -35,6 +36,7 @@ import { GetMaintenanceCostTrendHandler } from './queries/handlers/get-maintenan
 import { GetRepairFrequencyByVehicleHandler } from './queries/handlers/get-repair-frequency-by-vehicle.handler';
 import { GetMostExpensiveVehiclesHandler } from './queries/handlers/get-most-expensive-vehicles.handler';
 import { GetMaintenanceDowntimeEstimateHandler } from './queries/handlers/get-maintenance-downtime-estimate.handler';
+import { GetVehicleMaintenanceInsightsHandler } from './queries/handlers/get-vehicle-maintenance-insights.handler';
 
 export function registerMaintenanceCqrsHandlers(
   commandBus: CommandBus,
@@ -59,4 +61,7 @@ export function registerMaintenanceCqrsHandlers(
   queryBus.register(GetRepairFrequencyByVehicleQuery, new GetRepairFrequencyByVehicleHandler(maintenanceRepository));
   queryBus.register(GetMostExpensiveVehiclesQuery, new GetMostExpensiveVehiclesHandler(maintenanceRepository));
   queryBus.register(GetMaintenanceDowntimeEstimateQuery, new GetMaintenanceDowntimeEstimateHandler(maintenanceRepository));
+
+  // Vehicle-Level Analytics
+  queryBus.register(GetVehicleMaintenanceInsightsQuery, new GetVehicleMaintenanceInsightsHandler(maintenanceRepository));
 }

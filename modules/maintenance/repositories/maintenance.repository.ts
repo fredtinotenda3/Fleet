@@ -1,11 +1,15 @@
 // modules/maintenance/repositories/maintenance.repository.ts
 
 import { BaseRepository } from '@/server/repositories/base.repository';
-import {
+import type {
   Reminder,
   ReminderStatus,
   MaintenanceFilters,
   MaintenanceStats,
+  VehicleMaintenanceInsights,
+  RepairFrequencyByVehicleRow,
+  MostExpensiveVehicleRow,
+  DowntimeEstimatePoint,
 } from '@/shared/types/maintenance.types';
 import {
   PaginationParams,
@@ -250,13 +254,20 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
    * "5 records show Overdue" contradiction. Overdue must be defined by
    * business meaning (not yet resolved, past due), independent of which
    * exact status string is currently stored.
+   *
+   * Vehicle-Level Analytics: accepts an optional `licensePlate` -- when
+   * provided, every count below is narrowed to that vehicle's records,
+   * exercising the exact same aggregation logic as the fleet-wide call
+   * (`SUM(all vehicles)` becomes `SUM(where license_plate == plate)`).
+   * Omitting it reproduces today's fleet-wide behaviour byte-for-byte.
    */
-  async getMaintenanceStats(tenantId: string): Promise<MaintenanceStats> {
+  async getMaintenanceStats(tenantId: string, licensePlate?: string): Promise<MaintenanceStats> {
     const collection = await this.getCollection();
     const isSuperAdmin = this.isSuperAdminTenant(tenantId);
 
     const filter: Record<string, unknown> = { isDeleted: { $ne: true } };
     if (!isSuperAdmin) filter.tenantId = tenantId;
+    if (licensePlate) filter.license_plate = licensePlate.toUpperCase();
 
     const now = new Date();
     const UNRESOLVED = { $nin: ['completed', 'cancelled'] };
@@ -380,10 +391,18 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
   // Enterprise analytics additions (Maintenance Analytics Enhancement)
   // ---------------------------------------------------------------------
 
-  /** Monthly cost trend across completed records, based on estimated_cost. */
+  /**
+   * Monthly cost trend across completed records, based on estimated_cost.
+   *
+   * Vehicle-Level Analytics: accepts an optional `licensePlate` -- same
+   * pipeline, same grouping, narrowed to a single vehicle's records when
+   * provided. This is the reusable-scope pattern applied to the existing
+   * chart engine: no separate vehicle-cost-trend implementation exists.
+   */
   async getCostTrend(
     tenantId: string,
-    months: number = 12
+    months: number = 12,
+    licensePlate?: string
   ): Promise<import('@/shared/types/maintenance.types').MaintenanceCostTrendPoint[]> {
     const collection = await this.getCollection();
     const isSuperAdmin = this.isSuperAdminTenant(tenantId);
@@ -396,6 +415,7 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
       completion_date: { $gte: startDate },
     };
     if (!isSuperAdmin) match.tenantId = tenantId;
+    if (licensePlate) match.license_plate = licensePlate.toUpperCase();
 
     const pipeline = [
       { $match: match },
@@ -417,11 +437,11 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
     }));
   }
 
-  /** Completed-record count per vehicle, ranked descending -- "which vehicles need work most often". */
+  /** Completed-record count per vehicle, ranked descending -- "which vehicles need work most often". Fleet-wide ranking only (no single-vehicle equivalent, mirrors Fuel's "top consumers"). */
   async getRepairFrequencyByVehicle(
     tenantId: string,
     limit: number = 20
-  ): Promise<import('@/shared/types/maintenance.types').RepairFrequencyByVehicleRow[]> {
+  ): Promise<RepairFrequencyByVehicleRow[]> {
     const collection = await this.getCollection();
     const isSuperAdmin = this.isSuperAdminTenant(tenantId);
     const match: Record<string, unknown> = { isDeleted: { $ne: true }, status: 'completed' };
@@ -449,15 +469,15 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
     ];
 
     return collection.aggregate(pipeline).toArray() as unknown as Promise<
-      import('@/shared/types/maintenance.types').RepairFrequencyByVehicleRow[]
+      RepairFrequencyByVehicleRow[]
     >;
   }
 
-  /** Vehicles ranked by cumulative estimated maintenance cost. */
+  /** Vehicles ranked by cumulative estimated maintenance cost. Fleet-wide ranking only. */
   async getMostExpensiveVehicles(
     tenantId: string,
     limit: number = 20
-  ): Promise<import('@/shared/types/maintenance.types').MostExpensiveVehicleRow[]> {
+  ): Promise<MostExpensiveVehicleRow[]> {
     const collection = await this.getCollection();
     const isSuperAdmin = this.isSuperAdminTenant(tenantId);
     const match: Record<string, unknown> = { isDeleted: { $ne: true }, status: 'completed' };
@@ -485,7 +505,7 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
     ];
 
     return collection.aggregate(pipeline).toArray() as unknown as Promise<
-      import('@/shared/types/maintenance.types').MostExpensiveVehicleRow[]
+      MostExpensiveVehicleRow[]
     >;
   }
 
@@ -496,11 +516,12 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
    * downtime-end fields today (see MaintenanceCostTrendPoint doc comment
    * for the same caveat applied to cost). Negative averages (completed
    * before due) are floored to 0 rather than shown as "negative downtime".
+   * Fleet-wide ranking only.
    */
   async getDowntimeEstimate(
     tenantId: string,
     limit: number = 20
-  ): Promise<import('@/shared/types/maintenance.types').DowntimeEstimatePoint[]> {
+  ): Promise<DowntimeEstimatePoint[]> {
     const collection = await this.getCollection();
     const isSuperAdmin = this.isSuperAdminTenant(tenantId);
     const match: Record<string, unknown> = {
@@ -540,8 +561,130 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
     ];
 
     return collection.aggregate(pipeline).toArray() as unknown as Promise<
-      import('@/shared/types/maintenance.types').DowntimeEstimatePoint[]
+      DowntimeEstimatePoint[]
     >;
+  }
+
+  // ---------------------------------------------------------------------
+  // Vehicle-Level Analytics: single-vehicle-only derived insights.
+  // These have no fleet-wide equivalent -- they are computed purely from
+  // one vehicle's own reminder history (last service, service interval,
+  // next due, breakdown frequency), unlike getMaintenanceStats/getCostTrend
+  // above which are the SAME fleet calculation narrowed by license_plate.
+  // ---------------------------------------------------------------------
+
+  /**
+   * Derives:
+   *  - daysSinceLastService: days since the most recent completion_date
+   *    among this vehicle's completed records.
+   *  - averageServiceIntervalDays: average gap (in days) between
+   *    consecutive completions, when there are 2+ completed records.
+   *  - nextUpcomingReminder: the soonest unresolved (not completed/
+   *    cancelled) reminder by due_date -- "Upcoming Maintenance
+   *    Prediction" based on already-scheduled data.
+   *  - breakdownFrequency: count of completed records categorized
+   *    'emergency'.
+   *  - totalMaintenanceCost / completedRecordCount: sum/count across
+   *    this vehicle's completed records.
+   *
+   * Two small queries (completed records sorted ascending by
+   * completion_date, plus the single earliest unresolved reminder) are
+   * sufficient for typical per-vehicle reminder volumes and keep the
+   * interval/frequency math simple and auditable in application code
+   * rather than a harder-to-verify aggregation pipeline.
+   */
+  async getVehicleMaintenanceInsights(
+    tenantId: string,
+    licensePlate: string
+  ): Promise<VehicleMaintenanceInsights> {
+    const collection = await this.getCollection();
+    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+    const plate = licensePlate.toUpperCase();
+
+    const baseMatch: Record<string, unknown> = {
+      isDeleted: { $ne: true },
+      license_plate: plate,
+    };
+    if (!isSuperAdmin) baseMatch.tenantId = tenantId;
+
+    const now = new Date();
+
+    const [completedRecords, upcoming] = await Promise.all([
+      collection
+        .find({
+          ...baseMatch,
+          status: 'completed',
+          completion_date: { $exists: true },
+        } as Filter<Reminder>)
+        .sort({ completion_date: 1 })
+        .toArray(),
+      collection
+        .find({
+          ...baseMatch,
+          status: { $nin: ['completed', 'cancelled'] },
+        } as Filter<Reminder>)
+        .sort({ due_date: 1 })
+        .limit(1)
+        .toArray(),
+    ]);
+
+    let daysSinceLastService: number | null = null;
+    let averageServiceIntervalDays: number | null = null;
+    let totalMaintenanceCost = 0;
+    let breakdownFrequency = 0;
+
+    if (completedRecords.length > 0) {
+      const lastCompletion = new Date(
+        completedRecords[completedRecords.length - 1].completion_date as unknown as Date
+      );
+      daysSinceLastService = Math.max(
+        0,
+        Math.floor((now.getTime() - lastCompletion.getTime()) / (1000 * 60 * 60 * 24))
+      );
+
+      totalMaintenanceCost = completedRecords.reduce(
+        (sum, r) => sum + (r.estimated_cost || 0),
+        0
+      );
+
+      breakdownFrequency = completedRecords.filter((r) => r.category === 'emergency').length;
+
+      if (completedRecords.length >= 2) {
+        const gaps: number[] = [];
+        for (let i = 1; i < completedRecords.length; i++) {
+          const prev = new Date(completedRecords[i - 1].completion_date as unknown as Date).getTime();
+          const curr = new Date(completedRecords[i].completion_date as unknown as Date).getTime();
+          gaps.push((curr - prev) / (1000 * 60 * 60 * 24));
+        }
+        averageServiceIntervalDays = Math.round(
+          gaps.reduce((sum, g) => sum + g, 0) / gaps.length
+        );
+      }
+    }
+
+    let nextUpcomingReminder: VehicleMaintenanceInsights['nextUpcomingReminder'] = null;
+    if (upcoming.length > 0) {
+      const reminder = upcoming[0];
+      const dueDate = new Date(reminder.due_date as unknown as Date);
+      const daysUntilDue = Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+
+      nextUpcomingReminder = {
+        title: reminder.title,
+        due_date: dueDate.toISOString(),
+        daysUntilDue,
+        priority: reminder.priority,
+      };
+    }
+
+    return {
+      license_plate: plate,
+      daysSinceLastService,
+      averageServiceIntervalDays,
+      nextUpcomingReminder,
+      breakdownFrequency,
+      totalMaintenanceCost: Math.round(totalMaintenanceCost * 100) / 100,
+      completedRecordCount: completedRecords.length,
+    };
   }
 }
 

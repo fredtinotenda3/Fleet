@@ -282,10 +282,12 @@ export class MaintenanceController {
     }
   }
 
+  /** Vehicle-Level Analytics: reads optional `license_plate` query param to narrow the same fleet stats calculation to one vehicle. */
   async getMaintenanceStats(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const stats = await maintenanceQueryService.getMaintenanceStats(tenantId);
+      const licensePlate = req.nextUrl.searchParams.get('license_plate') || undefined;
+      const stats = await maintenanceQueryService.getMaintenanceStats(tenantId, licensePlate);
       return successResponse(stats);
     } catch (error) {
       return this.handleError(error);
@@ -372,11 +374,13 @@ export class MaintenanceController {
 
   // ---- Enterprise analytics ----
 
+  /** Vehicle-Level Analytics: reads optional `license_plate` query param to narrow the trend chart to one vehicle. */
   async getCostTrend(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
       const months = Number(req.nextUrl.searchParams.get('months') || '12');
-      const data = await maintenanceQueryService.getCostTrend(tenantId, months);
+      const licensePlate = req.nextUrl.searchParams.get('license_plate') || undefined;
+      const data = await maintenanceQueryService.getCostTrend(tenantId, months, licensePlate);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -410,6 +414,28 @@ export class MaintenanceController {
       const tenantId = await getTenantFromRequest(req);
       const limit = Number(req.nextUrl.searchParams.get('limit') || '20');
       const data = await maintenanceQueryService.getDowntimeEstimate(tenantId, limit);
+      return successResponse(data);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  // ---- Vehicle-Level Analytics ----
+
+  /**
+   * Single-vehicle-only derived insights (days since last service, avg.
+   * service interval, next upcoming reminder, breakdown frequency).
+   * `license_plate` is required -- there's no fleet-wide equivalent of
+   * this endpoint.
+   */
+  async getVehicleInsights(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const licensePlate = req.nextUrl.searchParams.get('license_plate');
+      if (!licensePlate) {
+        return errorResponse('license_plate is required', 'VALIDATION_ERROR', 400);
+      }
+      const data = await maintenanceQueryService.getVehicleMaintenanceInsights(tenantId, licensePlate);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);

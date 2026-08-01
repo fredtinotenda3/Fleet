@@ -1,4 +1,3 @@
-
 // modules/maintenance/services/maintenance-query.service.ts
 
 import { queryBus } from '@/server/cqrs/query-bus';
@@ -11,6 +10,7 @@ import { GetMaintenanceCostTrendQuery } from '../queries/get-maintenance-cost-tr
 import { GetRepairFrequencyByVehicleQuery } from '../queries/get-repair-frequency-by-vehicle.query';
 import { GetMostExpensiveVehiclesQuery } from '../queries/get-most-expensive-vehicles.query';
 import { GetMaintenanceDowntimeEstimateQuery } from '../queries/get-maintenance-downtime-estimate.query';
+import { GetVehicleMaintenanceInsightsQuery } from '../queries/get-vehicle-maintenance-insights.query';
 import {
   Reminder,
   MaintenanceFilters,
@@ -19,6 +19,7 @@ import {
   RepairFrequencyByVehicleRow,
   MostExpensiveVehicleRow,
   DowntimeEstimatePoint,
+  VehicleMaintenanceInsights,
 } from '@/shared/types/maintenance.types';
 import { PaginatedResponse, PaginationParams } from '@/shared/types/common.types';
 
@@ -39,9 +40,10 @@ export class MaintenanceQueryService {
     );
   }
 
-  async getMaintenanceStats(tenantId: string): Promise<MaintenanceStats> {
+  /** Vehicle-Level Analytics: pass licensePlate to narrow to a single vehicle. */
+  async getMaintenanceStats(tenantId: string, licensePlate?: string): Promise<MaintenanceStats> {
     return queryBus.execute<MaintenanceStats>(
-      new GetMaintenanceStatsQuery(tenantId)
+      new GetMaintenanceStatsQuery(tenantId, licensePlate)
     );
   }
 
@@ -62,9 +64,14 @@ export class MaintenanceQueryService {
 
   // ---- Enterprise analytics ----
 
-  async getCostTrend(tenantId: string, months: number = 12): Promise<MaintenanceCostTrendPoint[]> {
+  /** Vehicle-Level Analytics: pass licensePlate to narrow the trend to a single vehicle. */
+  async getCostTrend(
+    tenantId: string,
+    months: number = 12,
+    licensePlate?: string
+  ): Promise<MaintenanceCostTrendPoint[]> {
     return queryBus.execute<MaintenanceCostTrendPoint[]>(
-      new GetMaintenanceCostTrendQuery(tenantId, months)
+      new GetMaintenanceCostTrendQuery(tenantId, months, licensePlate)
     );
   }
 
@@ -92,6 +99,17 @@ export class MaintenanceQueryService {
   ): Promise<DowntimeEstimatePoint[]> {
     return queryBus.execute<DowntimeEstimatePoint[]>(
       new GetMaintenanceDowntimeEstimateQuery(tenantId, limit)
+    );
+  }
+
+  // ---- Vehicle-Level Analytics ----
+
+  async getVehicleMaintenanceInsights(
+    tenantId: string,
+    licensePlate: string
+  ): Promise<VehicleMaintenanceInsights> {
+    return queryBus.execute<VehicleMaintenanceInsights>(
+      new GetVehicleMaintenanceInsightsQuery(tenantId, licensePlate)
     );
   }
 }

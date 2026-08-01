@@ -25,6 +25,9 @@ export const GET = withAuth(
     if (action === 'most-expensive-vehicles') return await maintenanceController.getMostExpensiveVehicles(req);
     if (action === 'downtime-estimate') return await maintenanceController.getDowntimeEstimate(req);
 
+    // Vehicle-Level Analytics: single-vehicle-only derived insights
+    if (action === 'vehicle-insights') return await maintenanceController.getVehicleInsights(req);
+
     if (id) return await maintenanceController.getReminder(req, id);
 
     return await maintenanceController.getReminders(req);

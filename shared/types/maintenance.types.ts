@@ -100,3 +100,36 @@ export interface DowntimeEstimatePoint {
   estimatedDowntimeDays: number;
   recordCount: number;
 }
+
+// ---------------------------------------------------------------------
+// Vehicle-Level Analytics additions
+// ---------------------------------------------------------------------
+
+/**
+ * Vehicle-scoped maintenance insights that have no meaningful fleet-wide
+ * equivalent (unlike stats/cost-trend, which are simply the SAME
+ * calculation narrowed by license_plate). These are derived purely from
+ * this one vehicle's reminder history:
+ *  - daysSinceLastService / averageServiceIntervalDays: derived from
+ *    completed records' completion_date.
+ *  - nextUpcomingReminder: the earliest unresolved (not completed/
+ *    cancelled) reminder by due_date -- "Upcoming Maintenance Prediction"
+ *    in the spec, based on scheduled data (no ML forecasting invented).
+ *  - breakdownFrequency: count of completed records whose category is
+ *    'emergency' -- the closest available proxy for unplanned breakdowns
+ *    given the existing category taxonomy.
+ */
+export interface VehicleMaintenanceInsights {
+  license_plate: string;
+  daysSinceLastService: number | null;
+  averageServiceIntervalDays: number | null;
+  nextUpcomingReminder: {
+    title: string;
+    due_date: string;
+    daysUntilDue: number;
+    priority?: string;
+  } | null;
+  breakdownFrequency: number;
+  totalMaintenanceCost: number;
+  completedRecordCount: number;
+}

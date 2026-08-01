@@ -7,8 +7,18 @@ import { StatisticCard, StatisticCards } from '@/frontend/shared/ui/data-display
 import { LoadingState } from '@/shared/ui/feedback/LoadingState';
 import { useMaintenanceStats } from '../hooks/useMaintenance';
 
-export function MaintenanceStatsCards() {
-  const { data: stats, isLoading } = useMaintenanceStats();
+interface MaintenanceStatsCardsProps {
+  /**
+   * Vehicle-Level Analytics: when set, narrows the SAME fleet-wide stats
+   * calculation to a single vehicle (SUM(all vehicles) -> SUM(where
+   * license_plate == licensePlate)). Omitted on the fleet Maintenance
+   * dashboard; passed by VehicleMaintenanceAnalyticsPanel.
+   */
+  licensePlate?: string;
+}
+
+export function MaintenanceStatsCards({ licensePlate }: MaintenanceStatsCardsProps) {
+  const { data: stats, isLoading } = useMaintenanceStats(licensePlate);
 
   if (isLoading || !stats) {
     return <LoadingState type="stats" />;

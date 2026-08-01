@@ -11,6 +11,6 @@ export class GetMaintenanceCostTrendHandler
   constructor(private readonly maintenanceRepo: MaintenanceRepository) {}
 
   async execute(query: GetMaintenanceCostTrendQuery): Promise<MaintenanceCostTrendPoint[]> {
-    return this.maintenanceRepo.getCostTrend(query.tenantId, query.months);
+    return this.maintenanceRepo.getCostTrend(query.tenantId, query.months, query.licensePlate);
   }
 }

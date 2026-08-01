@@ -7,8 +7,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/fro
 import { useMaintenanceCostTrend } from '../hooks/useMaintenance';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 
-export function MaintenanceCostTrendChart() {
-  const { data, isLoading, error } = useMaintenanceCostTrend(12);
+interface MaintenanceCostTrendChartProps {
+  /**
+   * Vehicle-Level Analytics: when set, narrows the SAME monthly cost
+   * trend calculation to a single vehicle. Omitted on the fleet
+   * Maintenance Analytics page; passed by VehicleMaintenanceAnalyticsPanel.
+   */
+  licensePlate?: string;
+}
+
+export function MaintenanceCostTrendChart({ licensePlate }: MaintenanceCostTrendChartProps) {
+  const { data, isLoading, error } = useMaintenanceCostTrend(12, licensePlate);
 
   return (
     <Card>

@@ -100,8 +100,9 @@ export const maintenanceApi = {
     );
   },
 
-  async getStats(): Promise<MaintenanceStats> {
-    return apiClient.get<MaintenanceStats>(BASE, { params: { action: 'stats' } });
+  /** Vehicle-Level Analytics: pass licensePlate to narrow the same fleet stats query to a single vehicle. */
+  async getStats(licensePlate?: string): Promise<MaintenanceStats> {
+    return apiClient.get<MaintenanceStats>(BASE, { params: { action: 'stats', license_plate: licensePlate } });
   },
 
   async getOverdue(): Promise<Reminder[]> {
@@ -120,8 +121,9 @@ export const maintenanceApi = {
 
   // ---- Enterprise analytics additions ----
 
-  async getCostTrend(months: number = 12): Promise<import('../types').MaintenanceCostTrendPoint[]> {
-    return apiClient.get(BASE, { params: { action: 'cost-trend', months } });
+  /** Vehicle-Level Analytics: pass licensePlate to narrow the trend chart to a single vehicle. */
+  async getCostTrend(months: number = 12, licensePlate?: string): Promise<import('../types').MaintenanceCostTrendPoint[]> {
+    return apiClient.get(BASE, { params: { action: 'cost-trend', months, license_plate: licensePlate } });
   },
 
   async getRepairFrequencyByVehicle(limit: number = 20): Promise<import('../types').RepairFrequencyByVehicleRow[]> {
@@ -145,5 +147,16 @@ export const maintenanceApi = {
    */
   async recalculateOverdue(): Promise<{ updatedCount: number }> {
     return apiClient.get<{ updatedCount: number }>(`${BASE}/update-status`);
+  },
+
+  // ---- Vehicle-Level Analytics ----
+
+  /**
+   * Single-vehicle-only derived insights (days since last service, avg.
+   * service interval, next upcoming reminder, breakdown frequency).
+   * There is no fleet-wide equivalent of this call.
+   */
+  async getVehicleInsights(licensePlate: string): Promise<import('../types').VehicleMaintenanceInsights> {
+    return apiClient.get(BASE, { params: { action: 'vehicle-insights', license_plate: licensePlate } });
   },
 };

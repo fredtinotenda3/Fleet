@@ -104,4 +104,5 @@ export type {
   RepairFrequencyByVehicleRow,
   MostExpensiveVehicleRow,
   DowntimeEstimatePoint,
+  VehicleMaintenanceInsights,
 } from '@/shared/types/maintenance.types';
