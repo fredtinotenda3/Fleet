@@ -30,7 +30,6 @@ export class CustomRoleService {
 
     const role = await this.repo.create(
       {
-        tenantId,
         organizationId: tenantId,
         name: data.name.trim(),
         description: data.description,

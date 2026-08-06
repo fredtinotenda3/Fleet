@@ -5,8 +5,8 @@
 import { ColumnDef } from '@tanstack/react-table';
 import { DataTable } from '@/shared/ui/tables/DataTable';
 import { Expense } from '@/shared/types/expense.types';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Badge } from '@/frontend/shared/ui/data-display/badge';
+import { Button } from '@/frontend/shared/ui/button';
 import { Edit, Trash2, Eye } from 'lucide-react';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import { formatDate } from '@/shared/utils/date.utils';

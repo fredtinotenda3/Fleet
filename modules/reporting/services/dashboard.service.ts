@@ -26,7 +26,6 @@ export class DashboardService {
 
     const created = await this.repo.create(
       {
-        tenantId,
         name: data.name,
         description: data.description,
         isExecutive: data.isExecutive ?? false,

@@ -13,10 +13,12 @@
 // pool, one set of monitored slow-query logs, and no duplicate handshake
 // overhead on startup.
 
-import connectToDatabase, { clientPromise } from '@/infrastructure/database/mongodb';
+import connectToDatabase, { getClientPromise } from '@/infrastructure/database/mongodb';
 import type { Db, MongoClient } from 'mongodb';
 
 export default connectToDatabase;
-export { clientPromise };
+// `clientPromise` was an eagerly-created promise; it is now a lazy
+// getter so importing this file no longer opens a connection.
+export { getClientPromise };
 export type { Db, MongoClient };
 export type ConnectToDatabase = typeof connectToDatabase;

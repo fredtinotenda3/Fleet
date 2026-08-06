@@ -2,7 +2,7 @@
 
 export type * from './types';
 export type * from './schemas';
-export * from './services';
+export * from './services/fuel.api';
 export * from './hooks';
 export * from './store';
 export * from './utils';

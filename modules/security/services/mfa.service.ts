@@ -57,7 +57,6 @@ export class MfaService {
     const secret = generateBase32Secret();
     await this.factorRepo.create(
       {
-        tenantId,
         userId,
         type: 'totp',
         secretEncrypted: this.encryption.encrypt(secret),

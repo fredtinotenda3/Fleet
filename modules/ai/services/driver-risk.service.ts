@@ -14,6 +14,7 @@ import {
 import { organizationRepository } from '@/modules/organizations/repositories/organization.repository';
 import { tripRepository } from '@/modules/trips/repositories/trip.repository';
 import { telematicsRepository } from '@/modules/telematics/repositories/telematics.repository';
+import { resolveOrganization } from '@/server/tenancy/organization-resolver';
 
 export class DriverRiskService extends BaseAIService {
   protected readonly serviceName = 'DriverRisk';
@@ -21,7 +22,7 @@ export class DriverRiskService extends BaseAIService {
 
   async calculateDriverRisk(tenantId: string): Promise<AIBatchResult<DriverRiskScore>> {
     try {
-      const organization = await organizationRepository.findById(tenantId, tenantId, false, true);
+      const organization = await resolveOrganization(tenantId);
       if (!organization) {
         return {
           success: false,

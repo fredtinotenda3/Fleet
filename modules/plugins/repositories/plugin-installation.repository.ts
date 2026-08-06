@@ -20,7 +20,6 @@ export class PluginInstallationRepository extends BaseRepository<PluginInstallat
     return super.create(
       {
         ...data,
-        tenantId: organizationId,
       },
       organizationId,
       userId

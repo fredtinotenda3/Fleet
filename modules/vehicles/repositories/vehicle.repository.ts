@@ -1,3 +1,5 @@
+import { resolveTenantScope } from '@/server/tenancy/tenant-scope';
+import { prefixMatch, containsMatch } from '@/shared/utils/regex.utils';
 // modules/vehicles/repositories/vehicle.repository.ts
 
 import { Filter, Document, ObjectId } from 'mongodb';
@@ -18,12 +20,18 @@ import { EXPORT_ROW_CAP, ExportDataset } from '@/shared/export';
 export class VehicleRepository extends BaseRepository<Vehicle> {
   protected collectionName = 'tblvehicles';
 
-  private isSuperAdminTenant(tenantId: string): boolean {
-    return (
-      tenantId === 'default' ||
-      tenantId === 'system' ||
-      tenantId === 'super_admin'
-    );
+  /**
+   * FIX (tenant-isolation drift): this was a private per-repository copy
+   * of the "which tenantId means skip filtering" rule. Six repositories
+   * each maintained their own, and they drifted -- base.repository.ts's
+   * own comments document a production bug where the dashboard and the
+   * list page disagreed. All copies now delegate to the single
+   * fail-closed resolver in server/tenancy/tenant-scope.ts, where the
+   * legacy 'default'/'system'/'super_admin' values are REJECTED rather
+   * than treated as platform-wide access.
+   */
+  private isPlatformScopeTenant(tenantId: string): boolean {
+    return resolveTenantScope(tenantId).kind === 'platform';
   }
 
   async findByLicensePlate(
@@ -34,7 +42,7 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
       { license_plate: licensePlate.toUpperCase() } as Filter<Vehicle>,
       tenantId,
       false,
-      this.isSuperAdminTenant(tenantId)
+      this.isPlatformScopeTenant(tenantId)
     );
   }
 
@@ -49,7 +57,7 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
       tenantId,
       {},
       false,
-      this.isSuperAdminTenant(tenantId)
+      this.isPlatformScopeTenant(tenantId)
     );
   }
 
@@ -60,10 +68,10 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
   ): Promise<PaginatedResponse<Vehicle>> {
     const filter: Filter<Vehicle> = {
       $or: [
-        { license_plate: { $regex: searchTerm, $options: 'i' } },
-        { make: { $regex: searchTerm, $options: 'i' } },
-        { model: { $regex: searchTerm, $options: 'i' } },
-        { vin: { $regex: searchTerm, $options: 'i' } },
+        { license_plate: containsMatch(searchTerm) },
+        { make: containsMatch(searchTerm) },
+        { model: containsMatch(searchTerm) },
+        { vin: containsMatch(searchTerm) },
       ],
     } as Filter<Vehicle>;
     return this.findWithPagination(
@@ -71,7 +79,7 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
       pagination,
       tenantId,
       false,
-      this.isSuperAdminTenant(tenantId)
+      this.isPlatformScopeTenant(tenantId)
     );
   }
 
@@ -81,7 +89,7 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
     tenantId: string
   ): Promise<PaginatedResponse<Vehicle>> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+    const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
 
     const query: Record<string, unknown> = {
       isDeleted: { $ne: true },
@@ -92,28 +100,22 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
     }
 
     if (filters.license_plate) {
-      query.license_plate = {
-        $regex: `^${filters.license_plate}`,
-        $options: 'i',
-      };
+      query.license_plate = prefixMatch(filters.license_plate);
     }
     if (filters.status) {
       query.status = filters.status;
     }
     if (filters.make) {
-      query.make = { $regex: `^${filters.make}`, $options: 'i' };
+      query.make = prefixMatch(filters.make);
     }
     if (filters.model) {
-      query.model = { $regex: `^${filters.model}`, $options: 'i' };
+      query.model = prefixMatch(filters.model);
     }
     if (filters.year) {
       query.year = filters.year;
     }
     if (filters.vehicle_type) {
-      query.vehicle_type = {
-        $regex: `^${filters.vehicle_type}`,
-        $options: 'i',
-      };
+      query.vehicle_type = prefixMatch(filters.vehicle_type);
     }
 
     const { page, limit } = pagination;
@@ -156,33 +158,27 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
     };
 
     // Tenant isolation — super admins skip this, same as getFilteredVehicles
-    if (!this.isSuperAdminTenant(context.organizationId)) {
+    if (!this.isPlatformScopeTenant(context.organizationId)) {
       query.tenantId = context.organizationId;
     }
 
     if (filters.license_plate) {
-      query.license_plate = {
-        $regex: `^${filters.license_plate}`,
-        $options: 'i',
-      };
+      query.license_plate = prefixMatch(filters.license_plate);
     }
     if (filters.status) {
       query.status = filters.status;
     }
     if (filters.make) {
-      query.make = { $regex: `^${filters.make}`, $options: 'i' };
+      query.make = prefixMatch(filters.make);
     }
     if (filters.model) {
-      query.model = { $regex: `^${filters.model}`, $options: 'i' };
+      query.model = prefixMatch(filters.model);
     }
     if (filters.year) {
       query.year = filters.year;
     }
     if (filters.vehicle_type) {
-      query.vehicle_type = {
-        $regex: `^${filters.vehicle_type}`,
-        $options: 'i',
-      };
+      query.vehicle_type = prefixMatch(filters.vehicle_type);
     }
 
     // Apply org-unit scope filter on top of everything else
@@ -265,7 +261,7 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
 
   async getVehicleStats(tenantId: string): Promise<VehicleStats> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+    const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
 
     const baseFilter: Record<string, unknown> = {
       isDeleted: { $ne: true },
@@ -302,7 +298,7 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
       tenantId,
       {},
       false,
-      this.isSuperAdminTenant(tenantId)
+      this.isPlatformScopeTenant(tenantId)
     );
   }
 
@@ -311,7 +307,7 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
     tenantId: string
   ): Promise<Vehicle[]> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+    const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
 
     const baseFilter: Record<string, unknown> = {
       isDeleted: { $ne: true },
@@ -370,7 +366,7 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
     endDate: Date
   ): Promise<Document[]> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+    const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
 
     const baseFilter: Record<string, unknown> = {
       isDeleted: { $ne: true },

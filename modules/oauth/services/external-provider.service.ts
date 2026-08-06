@@ -52,7 +52,6 @@ export class ExternalProviderService {
 
     const created = await this.repo.create(
       {
-        tenantId: organizationId, // Add this line - using organizationId as tenantId
         organizationId,
         providerId,
         type: data.type,

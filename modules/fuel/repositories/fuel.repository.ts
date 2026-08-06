@@ -1,3 +1,5 @@
+import { resolveTenantScope } from '@/server/tenancy/tenant-scope';
+import { prefixMatch, containsMatch } from '@/shared/utils/regex.utils';
 // modules/fuel/repositories/fuel.repository.ts
 
 import { BaseRepository } from '@/server/repositories/base.repository';
@@ -49,12 +51,18 @@ export const DEFAULT_ABNORMAL_CONSUMPTION_MULTIPLIER = 2;
 export class FuelRepository extends BaseRepository<FuelLog> {
   protected collectionName = 'tblfuellogs';
 
-  private isSuperAdminTenant(tenantId: string): boolean {
-    return (
-      tenantId === 'default' ||
-      tenantId === 'system' ||
-      tenantId === 'super_admin'
-    );
+  /**
+   * FIX (tenant-isolation drift): this was a private per-repository copy
+   * of the "which tenantId means skip filtering" rule. Six repositories
+   * each maintained their own, and they drifted -- base.repository.ts's
+   * own comments document a production bug where the dashboard and the
+   * list page disagreed. All copies now delegate to the single
+   * fail-closed resolver in server/tenancy/tenant-scope.ts, where the
+   * legacy 'default'/'system'/'super_admin' values are REJECTED rather
+   * than treated as platform-wide access.
+   */
+  private isPlatformScopeTenant(tenantId: string): boolean {
+    return resolveTenantScope(tenantId).kind === 'platform';
   }
 
   /**
@@ -68,16 +76,29 @@ export class FuelRepository extends BaseRepository<FuelLog> {
   private buildBaseMatch(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Record<string, unknown> {
     let match: Record<string, unknown> = { isDeleted: { $ne: true } };
-    if (!this.isSuperAdminTenant(tenantId)) match.tenantId = tenantId;
+    if (!this.isPlatformScopeTenant(tenantId)) match.tenantId = tenantId;
     if (dateRange?.startDate || dateRange?.endDate) {
       match.date = {};
       if (dateRange.startDate) (match.date as any).$gte = dateRange.startDate;
       if (dateRange.endDate) (match.date as any).$lte = dateRange.endDate;
     }
     match = analyticsScopeService.applyScope(match, scope);
+    // FIX (Phase B -- repository/analytics scoping completeness): every
+    // analytics aggregation below previously isolated only by tenantId,
+    // never by org unit, so a Branch/Fleet/Workshop Manager's dashboard
+    // charts silently showed org-wide totals while the matching list page
+    // (buildScopedQuery, below) was already correctly org-unit scoped --
+    // the same "dashboard vs. list page disagree on scope" bug class this
+    // file's PLATFORM_SENTINEL_TENANT_IDS fix addressed for tenant
+    // isolation. Passing `context` narrows analytics the same way.
+    if (context) {
+      const orgUnitFilter = tenantScopeService.buildFilter<FuelLog>(context, 'orgUnitId');
+      match = { ...match, ...orgUnitFilter };
+    }
     return match;
   }
 
@@ -187,7 +208,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     const filter: Record<string, unknown> = {};
 
     if (filters.license_plate) {
-      filter.license_plate = { $regex: filters.license_plate, $options: 'i' };
+      filter.license_plate = containsMatch(filters.license_plate);
     }
     if (filters.unit_id) filter.unit_id = filters.unit_id;
     if (filters.payment_method) filter.payment_method = filters.payment_method;
@@ -220,12 +241,12 @@ export class FuelRepository extends BaseRepository<FuelLog> {
       isDeleted: { $ne: true },
     };
 
-    if (!this.isSuperAdminTenant(context.organizationId)) {
+    if (!this.isPlatformScopeTenant(context.organizationId)) {
       query.tenantId = context.organizationId;
     }
 
     if (filters.license_plate) {
-      query.license_plate = { $regex: filters.license_plate, $options: 'i' };
+      query.license_plate = containsMatch(filters.license_plate);
     }
     if (filters.unit_id) query.unit_id = filters.unit_id;
     if (filters.payment_method) query.payment_method = filters.payment_method;
@@ -324,10 +345,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
   async getFuelStats(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<FuelStats> {
     const collection = await this.getCollection();
-    const filter = this.buildBaseMatch(tenantId, dateRange, scope);
+    const filter = this.buildBaseMatch(tenantId, dateRange, scope, context);
 
     const pipeline = [
       { $match: filter },
@@ -390,12 +412,13 @@ export class FuelRepository extends BaseRepository<FuelLog> {
   async getMonthlyFuelConsumption(
     tenantId: string,
     months: number = 12,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<Array<{ month: string; fuel: number; cost: number }>> {
     const collection = await this.getCollection();
     const startDate = new Date();
     startDate.setMonth(startDate.getMonth() - months);
-    const matchStage = this.buildBaseMatch(tenantId, { startDate }, scope);
+    const matchStage = this.buildBaseMatch(tenantId, { startDate }, scope, context);
 
     const pipeline = [
       { $match: matchStage },
@@ -416,10 +439,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
   async getTopFuelConsumers(
     tenantId: string,
     limit: number = 5,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<Array<{ license_plate: string; totalFuel: number; totalCost: number }>> {
     const collection = await this.getCollection();
-    const matchStage = this.buildBaseMatch(tenantId, undefined, scope);
+    const matchStage = this.buildBaseMatch(tenantId, undefined, scope, context);
 
     const pipeline = [
       { $match: matchStage },
@@ -461,10 +485,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 10,
     sortBy: 'volume' | 'cost' = 'volume',
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<DriverFuelConsumptionRow[]> {
     const collection = await this.getCollection();
-    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope);
+    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope, context);
     const sortField = sortBy === 'cost' ? 'totalCost' : 'totalFuel';
 
     const pipeline = [
@@ -528,7 +553,8 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     dateRange?: { startDate?: Date; endDate?: Date },
     tripDistanceByVehicle?: Record<string, number>,
     prevTripDistanceByVehicle?: Record<string, number>,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<FuelKpis> {
     const collection = await this.getCollection();
     const now = new Date();
@@ -543,7 +569,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     // existing per-vehicle grouping below to that one vehicle -- the same
     // "fleet of one" principle used throughout this refactor. No separate
     // vehicle-KPI calculation is introduced.
-    const baseMatch = this.buildBaseMatch(tenantId, undefined, scope);
+    const baseMatch = this.buildBaseMatch(tenantId, undefined, scope, context);
 
     const aggregateByVehicle = async (start: Date, end: Date): Promise<VehiclePeriodAggregate[]> => {
       const pipeline = [
@@ -646,10 +672,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
   async getAbnormalConsumption(
     tenantId: string,
     threshold: number = DEFAULT_ABNORMAL_CONSUMPTION_MULTIPLIER,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<AbnormalFuelConsumptionRow[]> {
     const collection = await this.getCollection();
-    const matchStage = this.buildBaseMatch(tenantId, undefined, scope);
+    const matchStage = this.buildBaseMatch(tenantId, undefined, scope, context);
 
     const pipeline = [
       { $match: matchStage },
@@ -689,10 +716,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
   /** #1 Vehicle Fuel Activity Timeline -- entries per day, optionally scoped to one vehicle. */
   async getVehicleFuelTimeline(
     tenantId: string,
-    filters: { license_plate?: string; startDate?: Date; endDate?: Date }
+    filters: { license_plate?: string; startDate?: Date; endDate?: Date },
+    context?: TenantContext
   ): Promise<VehicleFuelTimelinePoint[]> {
     const collection = await this.getCollection();
-    const matchStage = this.buildBaseMatch(tenantId, filters);
+    const matchStage = this.buildBaseMatch(tenantId, filters, undefined, context);
     if (filters.license_plate) {
       matchStage.license_plate = filters.license_plate.toUpperCase();
     }
@@ -743,10 +771,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 15,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<FuelByStationRow[]> {
     const collection = await this.getCollection();
-    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope);
+    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope, context);
 
     const pipeline = [
       { $match: matchStage },
@@ -812,10 +841,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     tenantId: string,
     granularity: FuelTrendGranularity,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<FuelActivityTrendPoint[]> {
     const collection = await this.getCollection();
-    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope);
+    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope, context);
 
     const pipeline = [
       { $match: matchStage },
@@ -845,10 +875,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     granularity: FuelTrendGranularity = 'month',
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<FuelPriceTrendPoint[]> {
     const collection = await this.getCollection();
-    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope);
+    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope, context);
 
     const pipeline = [
       { $match: { ...matchStage, fuel_volume: { $gt: 0 } } },
@@ -873,10 +904,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
   async getFuelTypeDistribution(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<FuelTypeDistributionRow[]> {
     const collection = await this.getCollection();
-    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope);
+    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope, context);
 
     const pipeline = [
       { $match: matchStage },
@@ -907,10 +939,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 20,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<FuelFrequencyByVehicleRow[]> {
     const collection = await this.getCollection();
-    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope);
+    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope, context);
 
     const pipeline = [
       { $match: matchStage },
@@ -942,10 +975,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
   async getFuelCostDistribution(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<FuelCostDistributionBucket[]> {
     const collection = await this.getCollection();
-    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope);
+    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope, context);
 
     const count = await collection.countDocuments(matchStage as Filter<FuelLog>);
     if (count === 0) return [];
@@ -979,10 +1013,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
   async getFuelEntryHeatmap(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<FuelHeatmapCell[]> {
     const collection = await this.getCollection();
-    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope);
+    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope, context);
 
     const pipeline = [
       { $match: matchStage },

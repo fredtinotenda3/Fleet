@@ -3,14 +3,8 @@
 import { queryBus } from '@/server/cqrs/query-bus';
 import { GetRemindersQuery } from '../queries/get-reminders.query';
 import { GetReminderByIdQuery } from '../queries/get-reminder-by-id.query';
-import { GetMaintenanceStatsQuery } from '../queries/get-maintenance-stats.query';
 import { GetOverdueRemindersQuery } from '../queries/get-overdue-reminders.query';
 import { GetUpcomingRemindersQuery } from '../queries/get-upcoming-reminders.query';
-import { GetMaintenanceCostTrendQuery } from '../queries/get-maintenance-cost-trend.query';
-import { GetRepairFrequencyByVehicleQuery } from '../queries/get-repair-frequency-by-vehicle.query';
-import { GetMostExpensiveVehiclesQuery } from '../queries/get-most-expensive-vehicles.query';
-import { GetMaintenanceDowntimeEstimateQuery } from '../queries/get-maintenance-downtime-estimate.query';
-import { GetVehicleMaintenanceInsightsQuery } from '../queries/get-vehicle-maintenance-insights.query';
 import {
   Reminder,
   MaintenanceFilters,
@@ -22,7 +16,18 @@ import {
   VehicleMaintenanceInsights,
 } from '@/shared/types/maintenance.types';
 import { PaginatedResponse, PaginationParams } from '@/shared/types/common.types';
+import type { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { maintenanceRepository } from '../repositories/maintenance.repository';
 
+// FIX (Phase B -- repository/analytics scoping completeness): same
+// change as the other three domains -- the 6 analytics methods below
+// used to route through queryBus -> Query class -> Handler, none of
+// which carried `context`. These now call the (already org-unit-scoped)
+// repository directly. CRUD/list methods (getFilteredReminders,
+// getReminderById) and the cross-tenant cron methods (getOverdueReminders,
+// getUpcomingReminders -- intentionally NOT org-unit scoped, see
+// MaintenanceRepository) are unchanged and still routed through the CQRS
+// bus.
 export class MaintenanceQueryService {
   async getFilteredReminders(
     filters: MaintenanceFilters,
@@ -41,10 +46,12 @@ export class MaintenanceQueryService {
   }
 
   /** Vehicle-Level Analytics: pass licensePlate to narrow to a single vehicle. */
-  async getMaintenanceStats(tenantId: string, licensePlate?: string): Promise<MaintenanceStats> {
-    return queryBus.execute<MaintenanceStats>(
-      new GetMaintenanceStatsQuery(tenantId, licensePlate)
-    );
+  async getMaintenanceStats(
+    tenantId: string,
+    licensePlate?: string,
+    context?: TenantContext
+  ): Promise<MaintenanceStats> {
+    return maintenanceRepository.getMaintenanceStats(tenantId, licensePlate, context);
   }
 
   async getOverdueReminders(tenantId: string): Promise<Reminder[]> {
@@ -68,49 +75,44 @@ export class MaintenanceQueryService {
   async getCostTrend(
     tenantId: string,
     months: number = 12,
-    licensePlate?: string
+    licensePlate?: string,
+    context?: TenantContext
   ): Promise<MaintenanceCostTrendPoint[]> {
-    return queryBus.execute<MaintenanceCostTrendPoint[]>(
-      new GetMaintenanceCostTrendQuery(tenantId, months, licensePlate)
-    );
+    return maintenanceRepository.getCostTrend(tenantId, months, licensePlate, context);
   }
 
   async getRepairFrequencyByVehicle(
     tenantId: string,
-    limit: number = 20
+    limit: number = 20,
+    context?: TenantContext
   ): Promise<RepairFrequencyByVehicleRow[]> {
-    return queryBus.execute<RepairFrequencyByVehicleRow[]>(
-      new GetRepairFrequencyByVehicleQuery(tenantId, limit)
-    );
+    return maintenanceRepository.getRepairFrequencyByVehicle(tenantId, limit, context);
   }
 
   async getMostExpensiveVehicles(
     tenantId: string,
-    limit: number = 20
+    limit: number = 20,
+    context?: TenantContext
   ): Promise<MostExpensiveVehicleRow[]> {
-    return queryBus.execute<MostExpensiveVehicleRow[]>(
-      new GetMostExpensiveVehiclesQuery(tenantId, limit)
-    );
+    return maintenanceRepository.getMostExpensiveVehicles(tenantId, limit, context);
   }
 
   async getDowntimeEstimate(
     tenantId: string,
-    limit: number = 20
+    limit: number = 20,
+    context?: TenantContext
   ): Promise<DowntimeEstimatePoint[]> {
-    return queryBus.execute<DowntimeEstimatePoint[]>(
-      new GetMaintenanceDowntimeEstimateQuery(tenantId, limit)
-    );
+    return maintenanceRepository.getDowntimeEstimate(tenantId, limit, context);
   }
 
   // ---- Vehicle-Level Analytics ----
 
   async getVehicleMaintenanceInsights(
     tenantId: string,
-    licensePlate: string
+    licensePlate: string,
+    context?: TenantContext
   ): Promise<VehicleMaintenanceInsights> {
-    return queryBus.execute<VehicleMaintenanceInsights>(
-      new GetVehicleMaintenanceInsightsQuery(tenantId, licensePlate)
-    );
+    return maintenanceRepository.getVehicleMaintenanceInsights(tenantId, licensePlate, context);
   }
 }
 

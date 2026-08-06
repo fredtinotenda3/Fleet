@@ -1,6 +1,24 @@
 // shared/validations/organization.schema.ts
 
 import { z } from 'zod';
+import {
+  Role,
+  ORGANIZATION_ROLES,
+  ASSIGNABLE_ORGANIZATION_ROLES,
+} from '@/server/permissions/roles';
+
+/**
+ * PHASE A (enterprise role/scope foundation): these two used to be
+ * separately hardcoded `z.enum([...])` arrays here (one per schema,
+ * three total across this file) that had to be updated by hand every
+ * time a role was added -- and had already drifted out of sync with
+ * server/permissions/roles.ts before this fix (neither included
+ * BRANCH_MANAGER/DEPARTMENT_MANAGER/WORKSHOP_MANAGER/SUPERVISOR/
+ * ORGANIZATION_ADMIN). Both are now derived from the single source of
+ * truth in roles.ts.
+ */
+const organizationRoleEnum = z.enum(ORGANIZATION_ROLES as [Role, ...Role[]]);
+const assignableRoleEnum = z.enum(ASSIGNABLE_ORGANIZATION_ROLES as [Role, ...Role[]]);
 
 export const organizationCreateSchema = z.object({
   name: z.string().min(1, 'Organization name is required').max(100, 'Name too long'),
@@ -50,30 +68,13 @@ export const organizationUpdateSchema = z.object({
 
 export const organizationInviteSchema = z.object({
   email: z.string().email('Invalid email address'),
-  role: z.enum([
-    'organization_owner',
-    'fleet_manager',
-    'accountant',
-    'dispatcher',
-    'driver',
-    'mechanic',
-    'auditor',
-    'viewer',
-  ]),
+  role: organizationRoleEnum,
   /** Optional branch/org unit the invitee is scoped to once they accept. */
   orgUnitId: z.string().optional(),
 });
 
 export const organizationMemberRoleUpdateSchema = z.object({
-  role: z.enum([
-    'fleet_manager',
-    'accountant',
-    'dispatcher',
-    'driver',
-    'mechanic',
-    'auditor',
-    'viewer',
-  ]),
+  role: assignableRoleEnum,
 });
 
 /**
@@ -85,15 +86,7 @@ export const organizationMemberRoleUpdateSchema = z.object({
 export const addMemberDirectSchema = z.object({
   name: z.string().min(1, 'Name is required').max(100, 'Name too long'),
   email: z.string().email('Invalid email address'),
-  role: z.enum([
-    'fleet_manager',
-    'accountant',
-    'dispatcher',
-    'driver',
-    'mechanic',
-    'auditor',
-    'viewer',
-  ]),
+  role: assignableRoleEnum,
   password: z
     .string()
     .min(8, 'Password must be at least 8 characters')

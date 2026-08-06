@@ -49,7 +49,32 @@ export const notificationListQuerySchema = z.object({
   unreadOnly: z.coerce.boolean().default(false),
 });
 
-// Export the inferred type
+/**
+ * NEW (Phase C): payload for creating an org-unit broadcast notification
+ * (e.g. "fleet-wide alert"), as opposed to a direct userId-targeted one.
+ * `orgUnitId` is required -- this is what the TenantScopedRepository-style
+ * read filter matches against.
+ */
+export const notificationBroadcastCreateSchema = z.object({
+  orgUnitId: z.string().min(1, 'orgUnitId is required'),
+  type: notificationTypeSchema,
+  title: z.string().min(1).max(200),
+  message: z.string().min(1).max(2000),
+  priority: z.enum(['low', 'medium', 'high', 'critical']).default('medium'),
+  actionUrl: z.string().url().optional(),
+  actionLabel: z.string().max(100).optional(),
+  expiresAt: z.coerce.date().optional(),
+  // FIX: z.record() requires an explicit key-type argument in this zod
+  // version -- z.record(z.unknown()) resolved to a 1-arg call and threw
+  // "argument for 'valueType' was not provided" (it was reading
+  // z.unknown() as the keyType and finding no valueType after it).
+  data: z.record(z.string(), z.unknown()).optional(),
+});
+
+// Export the inferred types
 export type NotificationPreferencesUpdateInput = z.infer<
   typeof notificationPreferencesUpdateSchema
+>;
+export type NotificationBroadcastCreateInput = z.infer<
+  typeof notificationBroadcastCreateSchema
 >;

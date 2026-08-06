@@ -1,3 +1,4 @@
+import { resolveTenantScope } from '@/server/tenancy/tenant-scope';
 // modules/vehicles/queries/handlers/get-vehicle-by-id.handler.ts
 
 import { IQueryHandler } from '@/server/cqrs/query';
@@ -6,11 +7,7 @@ import { VehicleRepository } from '@/modules/vehicles/repositories/vehicle.repos
 import { Vehicle } from '@/shared/types/vehicle.types';
 import { NotFoundError } from '@/server/errors/app.errors';
 
-function isSuperAdminTenant(tenantId: string): boolean {
-  return (
-    tenantId === 'default' || tenantId === 'system' || tenantId === 'super_admin'
-  );
-}
+// Sentinel logic moved to server/tenancy/tenant-scope.ts (fail-closed).
 
 export class GetVehicleByIdHandler
   implements IQueryHandler<GetVehicleByIdQuery, Vehicle>
@@ -22,7 +19,7 @@ export class GetVehicleByIdHandler
       query.vehicleId,
       query.tenantId,
       false,
-      isSuperAdminTenant(query.tenantId)
+      resolveTenantScope(query.tenantId).kind === 'platform'
     );
     if (!vehicle) {
       throw new NotFoundError('Vehicle not found');

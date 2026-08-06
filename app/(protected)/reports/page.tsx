@@ -1,16 +1,14 @@
-// app/(protected)/reports/page.tsx
-//
-// Entry point for /reports - the Executive Dashboard is the landing view of
-// the Reporting Center.
-
-import type { Metadata } from 'next';
+import { PermissionGuard } from '@/frontend/shared/guards/PermissionGuard';
+import { Permission } from '@/server/permissions/roles';
 import ExecutiveDashboard from '@/frontend/modules/reports/pages/ExecutiveDashboard';
 
-export const metadata: Metadata = {
-  title: 'Executive Dashboard | Reports',
-  description: 'Fleet-wide cost, utilization, and health KPIs.',
-};
-
 export default function ReportsPage() {
-  return <ExecutiveDashboard />;
+  return (
+    <PermissionGuard
+      permission={Permission.REPORT_VIEW}
+      fallback={<div className="p-6 text-sm text-muted-foreground">You don&apos;t have access to reports.</div>}
+    >
+      <ExecutiveDashboard />
+    </PermissionGuard>
+  );
 }

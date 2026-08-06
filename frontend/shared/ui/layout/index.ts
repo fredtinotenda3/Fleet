@@ -1,5 +1,5 @@
 export { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "./accordion"
 export { Sheet, SheetTrigger, SheetClose, SheetContent, SheetHeader, SheetFooter, SheetTitle, SheetDescription } from "./sheet"
-export { Drawer, DrawerPortal, DrawerOverlay, DrawerSwipeHandle, DrawerTrigger, DrawerClose, DrawerContent, DrawerHeader, DrawerFooter, DrawerTitle, DrawerDescription } from "./drawer"
+export { Drawer, DrawerPortal, DrawerOverlay, DrawerSwipeHandle, DrawerTrigger, DrawerClose, DrawerContent, DrawerHeader, DrawerFooter, DrawerTitle, DrawerDescription } from "./Drawer"
 export { ScrollArea, ScrollBar } from "./scroll-area"
 export { Collapsible, CollapsibleTrigger, CollapsibleContent } from "./collapsible"

@@ -1,40 +1,60 @@
 // workers/report.worker.ts
 
 import { BaseWorker } from '@/infrastructure/queue/worker-base.service';
-import { reportService } from '@/modules/reports/services/report.service';
-import { ReportConfig } from '@/modules/reports/types/report.types';
-
-interface GenerateReportPayload {
-  config: ReportConfig;
-  reportId?: string;
-}
+import { reportExecutionService } from '@/modules/reporting/services/report-execution.service';
+import { JobType } from '@/infrastructure/queue/queue.service';
 
 /**
- * Closes the gap flagged in modules/reports/services/report.service.ts's
- * own comments: GENERATE_REPORT jobs were queued (both from
- * generateReport() and scheduleReport()'s cron repeat) but nothing ever
- * consumed them. This worker calls the same executeGeneration() method
- * the report service already exposes for exactly this purpose.
- * Scheduled (recurring) reports arrive without a pre-created `reportId`
- * â€” the report record is created fresh on each run.
+ * FIX (broken worker — imported a module that does not exist).
+ *
+ * This worker was written against `@/modules/reports/services/report.service`
+ * exposing `generateReport(config, tenantId, userId)` and
+ * `executeGeneration(reportId, config, tenantId, userId)`. Neither the
+ * module nor those signatures exist anywhere in the codebase — the real
+ * module is `modules/reporting` and the real entry point is
+ * `reportExecutionService.executeGeneration(executionId, tenantId, userId)`.
+ *
+ * Because next.config.ts set `ignoreBuildErrors: true`, this never
+ * surfaced at build time; the worker would simply have thrown
+ * MODULE_NOT_FOUND on first execution, so queued report jobs were never
+ * actually processed.
+ *
+ * Rewritten against the real contract. ReportExecutionService enqueues
+ * `JobType.EXPORT_DATA` with payload `{ kind: 'execution', executionId }`
+ * (see its createExecution path), so that is exactly what this consumes.
  */
-export class ReportWorker extends BaseWorker<GenerateReportPayload> {
+interface ReportExecutionJobPayload {
+  kind?: string;
+  executionId?: string;
+}
+
+export class ReportWorker extends BaseWorker<ReportExecutionJobPayload> {
   constructor() {
-    super('generate-report');
+    super(JobType.EXPORT_DATA);
   }
 
-  protected async process(_jobName: string, payload: GenerateReportPayload, tenantId: string, userId?: string): Promise<void> {
-    let reportId = payload.reportId;
+  protected async process(
+    _jobName: string,
+    payload: ReportExecutionJobPayload,
+    tenantId: string,
+    userId?: string
+  ): Promise<void> {
+    // The EXPORT_DATA queue carries more than one kind of job; ignore
+    // anything that is not a report execution rather than failing it,
+    // so unrelated export jobs are left for their own consumer.
+    if (payload?.kind !== 'execution') return;
 
-    if (!reportId) {
-      const created = await reportService.generateReport(payload.config, tenantId, userId || 'system');
-      reportId = created._id!;
-      // generateReport() itself re-enqueues a GENERATE_REPORT job with
-      // this reportId set, so this invocation is done; the follow-up
-      // job (with reportId present) does the actual generation below.
-      return;
+    const { executionId } = payload;
+    if (!executionId) {
+      throw new Error(
+        'Report execution job is missing executionId; refusing to run an unscoped generation.'
+      );
     }
 
-    await reportService.executeGeneration(reportId, payload.config, tenantId, userId || 'system');
+    // tenantId comes from the job envelope, which the enqueueing service
+    // stamps from the requesting user's resolved tenant. It is passed
+    // straight through so the generation is scoped to the same tenant
+    // that requested it — never widened.
+    await reportExecutionService.executeGeneration(executionId, tenantId, userId ?? 'system');
   }
 }

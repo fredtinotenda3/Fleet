@@ -15,9 +15,9 @@ export class PluginRepository extends BaseRepository<RegisteredPlugin> {
   protected collectionName = 'tblplugins';
 
   /**
-   * Override create to auto-populate tenantId as 'system'.
+   * Override create to auto-populate tenantId as PLATFORM_OWNER_TENANT_ID.
    * The plugin catalogue is platform-global — it doesn't belong to any
-   * specific organization, so tenantId is always 'system'.
+   * specific organization, so tenantId is always PLATFORM_OWNER_TENANT_ID.
    */
   async create(
     data: Omit<RegisteredPlugin, '_id' | 'tenantId' | 'createdAt' | 'updatedAt' | 'isDeleted' | 'deletedAt'>,
@@ -27,21 +27,20 @@ export class PluginRepository extends BaseRepository<RegisteredPlugin> {
     return super.create(
       {
         ...data,
-        tenantId: 'system',
       },
-      tenantId,
+      PLATFORM_OWNER_TENANT_ID,
       userId
     );
   }
 
   async findByPluginId(pluginId: string): Promise<RegisteredPlugin | null> {
-    return this.findOne({ pluginId } as Filter<RegisteredPlugin>, 'system', false, true);
+    return this.findOne({ pluginId } as Filter<RegisteredPlugin>, PLATFORM_OWNER_TENANT_ID);
   }
 
   async listPublished(): Promise<RegisteredPlugin[]> {
     return this.findMany(
       { status: 'published' } as Filter<RegisteredPlugin>,
-      'system',
+      PLATFORM_OWNER_TENANT_ID,
       { sortBy: 'createdAt', sortOrder: 'desc' },
       false,
       true
@@ -49,7 +48,7 @@ export class PluginRepository extends BaseRepository<RegisteredPlugin> {
   }
 
   async listAll(): Promise<RegisteredPlugin[]> {
-    return this.findMany({} as Filter<RegisteredPlugin>, 'system', {}, false, true);
+    return this.findMany({} as Filter<RegisteredPlugin>, PLATFORM_OWNER_TENANT_ID, {}, false, true);
   }
 }
 

@@ -1,3 +1,4 @@
+import { prefixMatch, containsMatch } from '@/shared/utils/regex.utils';
 // modules/security/repositories/audit-log.repository.ts
 
 import connectToDatabase from '@/infrastructure/database/mongodb';
@@ -59,7 +60,7 @@ export class AuditLogRepository {
     if (filters.tenantId) query.tenantId = filters.tenantId;
     if (filters.category) query.category = filters.category;
     if (filters.severity) query.severity = filters.severity;
-    if (filters.action) query.action = { $regex: filters.action, $options: 'i' };
+    if (filters.action) query.action = containsMatch(filters.action);
     if (filters.entityType) query.entityType = filters.entityType;
     if (filters.entityId) query.entityId = filters.entityId;
     if (filters.userId) query.userId = filters.userId;

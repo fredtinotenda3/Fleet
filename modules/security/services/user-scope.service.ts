@@ -11,7 +11,7 @@ import { ConflictError, NotFoundError, ValidationError } from '@/server/errors/a
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { UserScopeAssignedEvent } from '../events/UserScopeAssignedEvent';
 import { UserScopeRevokedEvent } from '../events/UserScopeRevokedEvent';
-import { rolePermissions } from '@/server/permissions/roles';
+import { Role, rolePermissions, ROLE_ORG_UNIT_LEVEL } from '@/server/permissions/roles';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
 
 export class UserScopeService {
@@ -39,6 +39,32 @@ export class UserScopeService {
       }
     } else if (!(data.role in rolePermissions)) {
       throw new ValidationError(`Unknown static role: ${data.role}`);
+    } else {
+      /**
+       * PHASE A (enterprise role/scope foundation): reject assigning a
+       * level-restricted static role (BRANCH_MANAGER, DEPARTMENT_MANAGER,
+       * FLEET_MANAGER, WORKSHOP_MANAGER) to an org unit whose `type`
+       * doesn't match -- e.g. a BRANCH_MANAGER scope assignment must
+       * target a `branch`-type org unit, not a `department` or
+       * `workshop`. Without this, a mis-scoped assignment would silently
+       * grant a role's full permission set (WORKSHOP_MANAGER's
+       * inventory/work-order management, say) over the wrong kind of
+       * unit, since TenantContextService.resolveContext() only checks
+       * *which* org unit ids are accessible, not whether the role/unit
+       * pairing is sane in the first place.
+       *
+       * Roles not present in ROLE_ORG_UNIT_LEVEL (SUPERVISOR, DRIVER,
+       * MECHANIC, ACCOUNTANT, DISPATCHER, AUDITOR, VIEWER, and the two
+       * full-visibility roles) are unrestricted and may be scoped to any
+       * org unit type.
+       */
+      const expectedLevel = ROLE_ORG_UNIT_LEVEL[data.role as Role];
+      if (expectedLevel && orgUnit.type !== expectedLevel) {
+        throw new ValidationError(
+          `Role "${data.role}" must be assigned to a "${expectedLevel}"-type org unit, ` +
+            `but "${orgUnit.name}" is type "${orgUnit.type}"`
+        );
+      }
     }
 
     const existing = await this.repo.findByUserAndOrgUnit(data.userId, data.orgUnitId, tenantId);
@@ -48,7 +74,6 @@ export class UserScopeService {
 
     const created = await this.repo.create(
       {
-        tenantId,
         organizationId: tenantId,
         userId: data.userId,
         orgUnitId: data.orgUnitId,

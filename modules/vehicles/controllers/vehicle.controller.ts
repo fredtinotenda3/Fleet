@@ -57,7 +57,7 @@ export class VehicleController {
         authContext.userId,
         authContext.tenantId,
         authContext.roles,
-        authContext.isSuperAdmin,
+        authContext.isPlatformAdmin,
         authContext.orgUnitId
       );
 
@@ -113,7 +113,7 @@ export class VehicleController {
         authContext.userId,
         authContext.tenantId,
         authContext.roles,
-        authContext.isSuperAdmin,
+        authContext.isPlatformAdmin,
         authContext.orgUnitId
       );
 
@@ -186,7 +186,7 @@ export class VehicleController {
       authContext.userId,
       authContext.tenantId,
       authContext.roles,
-      authContext.isSuperAdmin,
+      authContext.isPlatformAdmin,
       authContext.orgUnitId
     );
 

@@ -1,3 +1,4 @@
+import { prefixMatch, containsMatch } from '@/shared/utils/regex.utils';
 // modules/vendors/repositories/vendor.repository.ts
 import { Filter } from 'mongodb';
 import { BaseRepository } from '@/server/repositories/base.repository';
@@ -13,8 +14,8 @@ export class VendorRepository extends BaseRepository<Vendor> {
     if (filters.status) filter.status = filters.status;
     if (filters.search) {
       filter.$or = [
-        { name: { $regex: filters.search, $options: 'i' } },
-        { taxId: { $regex: filters.search, $options: 'i' } },
+        { name: containsMatch(filters.search) },
+        { taxId: containsMatch(filters.search) },
       ];
     }
     return this.findWithPagination(filter as Filter<Vendor>, pagination, tenantId);

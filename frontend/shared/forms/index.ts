@@ -1,9 +1,5 @@
-﻿export { FormBuilder } from './FormBuilder';
-export { FormValidation } from './FormValidation';
-export { FormAutosave } from './FormAutosave';
-export { FormWizard } from './FormWizard';
-export { DynamicFields } from './DynamicFields';
-export { ConditionalFields } from './ConditionalFields';
-export { FormSections } from './FormSections';
-export { FormPermissions } from './FormPermissions';
-export { FormAuditHistory } from './FormAuditHistory';
+// FIX: these re-exports pointed at empty placeholder files (a BOM and a
+// newline, nothing else) or at names the target module never exported, so
+// the barrel could not typecheck. Nothing in the application imported any
+// of them. Dead exports removed rather than filling in speculative
+// implementations for components no caller has specified.

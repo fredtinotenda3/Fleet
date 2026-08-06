@@ -20,9 +20,31 @@ export type {
   OrganizationInvite,
 };
 
+/**
+ * FIX (Phase E, task 7): this was a hardcoded duplicate of the Role
+ * enum in server/permissions/roles.ts that had drifted out of sync --
+ * missing every Phase A role (BRANCH_MANAGER, DEPARTMENT_MANAGER,
+ * FLEET_MANAGER already present, WORKSHOP_MANAGER, SUPERVISOR,
+ * ORGANIZATION_ADMIN). The exact same drift was already caught and
+ * fixed on the backend (see organization.service.ts's VALID_ROLES /
+ * ASSIGNABLE_ROLES comment), but the fix never made it to this
+ * frontend mirror, so none of those five roles could be assigned,
+ * labeled, or displayed anywhere in the UI even though the backend
+ * (organizationService.addMemberDirect, ASSIGNABLE_ORGANIZATION_ROLES)
+ * has accepted them since Phase A. Kept as a plain string union
+ * (rather than importing the Role enum directly) to avoid pulling a
+ * server module into every consumer of this type -- keep this list in
+ * sync with Role by hand until it's worth extracting a shared
+ * roles-list package both sides import from.
+ */
 export type OrganizationRole =
   | 'organization_owner'
+  | 'organization_admin'
+  | 'branch_manager'
+  | 'department_manager'
   | 'fleet_manager'
+  | 'workshop_manager'
+  | 'supervisor'
   | 'accountant'
   | 'dispatcher'
   | 'driver'
@@ -32,7 +54,12 @@ export type OrganizationRole =
 
 export const ORGANIZATION_ROLES: OrganizationRole[] = [
   'organization_owner',
+  'organization_admin',
+  'branch_manager',
+  'department_manager',
   'fleet_manager',
+  'workshop_manager',
+  'supervisor',
   'accountant',
   'dispatcher',
   'driver',
@@ -47,7 +74,12 @@ export const ASSIGNABLE_ROLES: OrganizationRole[] = ORGANIZATION_ROLES.filter(
 
 export const ROLE_LABELS: Record<OrganizationRole, string> = {
   organization_owner: 'Owner',
+  organization_admin: 'Organization Admin',
+  branch_manager: 'Branch Manager',
+  department_manager: 'Department Manager',
   fleet_manager: 'Fleet Manager',
+  workshop_manager: 'Workshop Manager',
+  supervisor: 'Supervisor',
   accountant: 'Accountant',
   dispatcher: 'Dispatcher',
   driver: 'Driver',
@@ -148,7 +180,7 @@ export interface OrgUnitNode {
   // and the raw Mongo document shape returned by every org-unit API route
   // (OrgUnitService/OrgUnitRepository never rename `_id` to `id`). This
   // type previously declared `id`, which does not exist anywhere in the
-  // API response — every comparison against it silently evaluated
+  // API response â€” every comparison against it silently evaluated
   // `undefined !== undefined`, which is how parent-dropdown filtering
   // broke. Use `_id` everywhere, matching the rest of the codebase's
   // entities (e.g. Organization).

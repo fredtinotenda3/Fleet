@@ -3,7 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getToken } from 'next-auth/jwt';
-import { Role } from '@/server/permissions/roles';
+import { Permission, permissionService } from '@/server/permissions/roles';
 import { applySecurityHeaders } from '@/infrastructure/security/security-headers';
 import {
   verifyAccessTokenEdge,
@@ -141,11 +141,19 @@ export default async function middleware(req: NextRequest) {
     return applySecurityHeaders(NextResponse.redirect(signInUrl));
   }
 
-  const isSuperAdmin =
-    roles.includes(Role.SUPER_ADMIN) || roles.includes(Role.ORGANIZATION_OWNER);
-
+  // FIX (Phase E, verification gap #7): this used to be a hardcoded
+  // role list -- `roles.includes(Role.FLEET_MANAGER) || isSuperAdmin`
+  // where isSuperAdmin only checked SUPER_ADMIN/ORGANIZATION_OWNER --
+  // which (a) let FLEET_MANAGER into /admin despite never holding
+  // Permission.ORG_MANAGE, and (b) never recognized ORGANIZATION_ADMIN
+  // (Phase A's owner-equivalent role), so an org admin was bounced out
+  // of /admin despite holding an identical permission set to the
+  // owner. Routed through the same PermissionService every other
+  // authorization check in this codebase uses
+  // (server/permissions/roles.ts), so this can't drift out of sync
+  // with the role model again the way it just did.
   const isAdminPath = path.startsWith('/admin');
-  if (isAdminPath && !roles.includes(Role.FLEET_MANAGER) && !isSuperAdmin) {
+  if (isAdminPath && !permissionService.hasPermission(roles, Permission.ORG_MANAGE)) {
     return applySecurityHeaders(NextResponse.redirect(new URL('/dashboard', req.url)));
   }
 

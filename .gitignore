@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Repair/forensics output may contain customer identifiers — keep local
+reports/*
+!reports/.gitkeep

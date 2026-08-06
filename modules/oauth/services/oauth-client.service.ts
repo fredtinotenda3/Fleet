@@ -46,7 +46,6 @@ export class OAuthClientService {
 
     const created = await this.clientRepo.create(
       {
-        tenantId: organizationId, // ← ADD THIS
         organizationId,
         clientId,
         clientSecretHash: secretHash,

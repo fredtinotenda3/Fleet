@@ -63,7 +63,7 @@ function clearAccessTokenCookie(response: NextResponse): void {
  * modules/security/services/refresh-token.service.ts for the rotation
  * model. As of Slice 6d, `login` also gates on MFA: if the account has
  * a verified TOTP factor, a login request without `code`/`backupCode`
- * returns `{ mfaRequired: true }` instead of tokens â€” the client
+ * returns `{ mfaRequired: true }` instead of tokens — the client
  * resubmits the SAME login body with the code added. There is no
  * separate challenge id to track or expire: every attempt re-verifies
  * the password from scratch, so there is nothing extra to leak.
@@ -98,7 +98,8 @@ export class TokenController {
       }
 
       const db = await connectToDatabase();
-      const admin = await db.collection('tbladmin').findOne({ Email: parsed.data.email });
+      // FIX: use lowercased email variable for case-insensitive lookup
+      const admin = await db.collection('tbladmin').findOne({ Email: email });
 
       if (!admin) {
         await threatDetectionService.recordLoginAttempt({
@@ -137,7 +138,7 @@ export class TokenController {
       if (mfaEnabled) {
         if (!parsed.data.code && !parsed.data.backupCode) {
           // Password stage succeeded but the second factor is still
-          // outstanding â€” issue nothing, and don't count this as a
+          // outstanding — issue nothing, and don't count this as a
           // failed attempt against the lockout counter.
           return successResponse({ mfaRequired: true });
         }

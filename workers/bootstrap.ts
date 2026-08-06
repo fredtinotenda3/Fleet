@@ -11,6 +11,8 @@ import { BillingWorker } from './billing.worker';
 import { TelemetryWorker } from './telemetry.worker';
 import { CleanupWorker } from './cleanup.worker';
 import { BackupWorker } from './backup.worker';
+import { analyticsRefreshWorker } from './analytics-refresh.worker';
+import { slaComplianceWorker } from '@/infrastructure/queue/workers/sla-compliance.worker';
 import { bootstrapDefaultSchedules } from '@/server/scheduler/bootstrap-schedules';
 import { bootstrapReporting } from '@/modules/reporting/registry/bootstrap-reporting';
 import { monitoring } from '@/infrastructure/monitoring/logger';
@@ -42,12 +44,12 @@ export async function bootstrapWorkers(): Promise<void> {
 
   if (!process.env.REDIS_URL) {
     monitoring.logWarn(
-      '[Workers] REDIS_URL not configured — background workers disabled'
+      '[Workers] REDIS_URL not configured â€” background workers disabled'
     );
     return;
   }
 
-  // Phase 9 — Enterprise Observability: initialize OpenTelemetry SDK
+  // Phase 9 â€” Enterprise Observability: initialize OpenTelemetry SDK
   // and start periodic queue-depth gauge collection before workers start
   await initObservability();
   startQueueGaugePoller();
@@ -67,6 +69,21 @@ export async function bootstrapWorkers(): Promise<void> {
     new TelemetryWorker('telemetry-jobs'),
     new CleanupWorker('cleanup-jobs'),
     new BackupWorker(),
+    /**
+     * FIX (Phase D finalization): bootstrap-schedules.ts registers the
+     * 'analytics-refresh' (every 6h), 'sla-process-due' (every 5min),
+     * and 'compliance-recalculate-statuses' (daily) cron schedules,
+     * which enqueue onto the 'refresh-analytics' and 'cleanup-jobs'
+     * BullMQ queues respectively -- but neither worker below was ever
+     * added to this array, so those jobs accumulated unprocessed
+     * indefinitely despite both files already containing the correct
+     * Phase D BackgroundJobScopeService-based fix. Both are exported as
+     * singletons (matching webhookWorker/reportExecutionWorker above),
+     * not classes, so they are referenced directly rather than
+     * constructed here.
+     */
+    analyticsRefreshWorker,
+    slaComplianceWorker,
   ];
 
   for (const worker of workers) {

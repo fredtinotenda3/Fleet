@@ -20,6 +20,8 @@ import {
 } from '../events/compliance.events';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
 import { monitoring } from '@/infrastructure/monitoring/logger';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import '../types/compliance.tenancy-addendum';
 
 function addRecurrence(date: Date, recurrence: ComplianceRule['recurrence']): Date {
   const next = new Date(date);
@@ -120,6 +122,36 @@ export class ComplianceService {
 
   async list(entityType: ComplianceAppliesTo | undefined, status: string | undefined, pagination: PaginationParams, tenantId: string): Promise<PaginatedResponse<ComplianceRecord>> {
     return this.recordRepo.getFiltered(entityType, status, tenantId, pagination);
+  }
+
+  /**
+   * Org-unit-scoped variant of list(), for RECORDS only.
+   *
+   * listRules() has no scoped variant on purpose: a compliance rule is
+   * an organization-wide policy, and scoping it would mean the same
+   * vehicle is judged compliant in one branch and not in another. See
+   * the split documented in server/tenancy/module-scope.registry.ts.
+   */
+  async listInScope(
+    entityType: ComplianceAppliesTo | undefined,
+    status: string | undefined,
+    pagination: PaginationParams,
+    context: TenantContext
+  ): Promise<PaginatedResponse<ComplianceRecord>> {
+    return this.recordRepo.getFilteredInScope(entityType, status, context, pagination);
+  }
+
+  /** Scoped single-record read. 404 for an out-of-scope record. */
+  async getInScope(id: string, context: TenantContext): Promise<ComplianceRecord> {
+    const record = await this.recordRepo.findById(id, context.organizationId);
+    if (!record) throw new NotFoundError('Compliance record not found');
+    if (
+      context.accessibleOrgUnitIds !== null &&
+      (!record.orgUnitId || !context.accessibleOrgUnitIds.includes(record.orgUnitId))
+    ) {
+      throw new NotFoundError('Compliance record not found');
+    }
+    return record;
   }
 
   async get(id: string, tenantId: string): Promise<ComplianceRecord> {

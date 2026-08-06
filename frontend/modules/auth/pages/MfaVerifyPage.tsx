@@ -3,6 +3,8 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { useSessionStore } from '@/frontend/shared/store/session.store';
+import { resolveLandingPath } from '@/server/permissions/landing';
 import { MfaVerificationForm } from '../components/MfaVerificationForm';
 
 export function MfaVerifyPage() {
@@ -12,7 +14,7 @@ export function MfaVerifyPage() {
       <div>
         <h1 className="text-2xl font-semibold">Verify your identity</h1>
       </div>
-      <MfaVerificationForm onSuccess={() => router.push('/dashboard')} />
+      <MfaVerificationForm onSuccess={() => router.push(resolveLandingPath(useSessionStore.getState().user?.roles ?? []))} />
     </div>
   );
 }

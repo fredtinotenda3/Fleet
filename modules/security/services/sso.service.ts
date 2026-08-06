@@ -44,7 +44,6 @@ export class SsoService {
 
     const created = await this.repo.create(
       {
-        tenantId,
         organizationId: data.organizationId,
         provider: 'oidc',
         displayName: data.displayName,

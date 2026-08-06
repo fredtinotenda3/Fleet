@@ -1,3 +1,5 @@
+import { resolveTenantScope } from '@/server/tenancy/tenant-scope';
+import { prefixMatch, containsMatch } from '@/shared/utils/regex.utils';
 // modules/expenses/repositories/expense.repository.ts
 
 import { Filter, ObjectId } from 'mongodb';
@@ -30,12 +32,18 @@ import { analyticsScopeService } from '@/modules/analytics/services/analytics-sc
 export class ExpenseRepository extends BaseRepository<Expense> {
   protected collectionName = 'tblexpenses';
 
-  private isSuperAdminTenant(tenantId: string): boolean {
-    return (
-      tenantId === 'default' ||
-      tenantId === 'system' ||
-      tenantId === 'super_admin'
-    );
+  /**
+   * FIX (tenant-isolation drift): this was a private per-repository copy
+   * of the "which tenantId means skip filtering" rule. Six repositories
+   * each maintained their own, and they drifted -- base.repository.ts's
+   * own comments document a production bug where the dashboard and the
+   * list page disagreed. All copies now delegate to the single
+   * fail-closed resolver in server/tenancy/tenant-scope.ts, where the
+   * legacy 'default'/'system'/'super_admin' values are REJECTED rather
+   * than treated as platform-wide access.
+   */
+  private isPlatformScopeTenant(tenantId: string): boolean {
+    return resolveTenantScope(tenantId).kind === 'platform';
   }
 
   private expenseTypeLookupStages() {
@@ -60,16 +68,26 @@ export class ExpenseRepository extends BaseRepository<Expense> {
   private buildBaseMatch(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Record<string, unknown> {
     let match: Record<string, unknown> = { isDeleted: { $ne: true } };
-    if (!this.isSuperAdminTenant(tenantId)) match.tenantId = tenantId;
+    if (!this.isPlatformScopeTenant(tenantId)) match.tenantId = tenantId;
     if (dateRange?.startDate || dateRange?.endDate) {
       match.date = {};
       if (dateRange.startDate) (match.date as any).$gte = dateRange.startDate;
       if (dateRange.endDate) (match.date as any).$lte = dateRange.endDate;
     }
     match = analyticsScopeService.applyScope(match, scope);
+    // FIX (Phase B -- repository/analytics scoping completeness): mirrors
+    // FuelRepository.buildBaseMatch -- analytics previously isolated only
+    // by tenantId, never by org unit, so Branch/Fleet/Workshop Manager
+    // dashboards silently showed org-wide totals while buildScopedMatch
+    // (list page) was already correctly org-unit scoped.
+    if (context) {
+      const orgUnitFilter = tenantScopeService.buildFilter<Expense>(context, 'orgUnitId');
+      match = { ...match, ...orgUnitFilter };
+    }
     return match;
   }
 
@@ -77,13 +95,14 @@ export class ExpenseRepository extends BaseRepository<Expense> {
   private previousPeriodMatch(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Record<string, unknown> | null {
     if (!dateRange?.startDate || !dateRange?.endDate) return null;
     const periodMs = dateRange.endDate.getTime() - dateRange.startDate.getTime();
     const prevEnd = new Date(dateRange.startDate.getTime() - 1);
     const prevStart = new Date(prevEnd.getTime() - periodMs);
-    return this.buildBaseMatch(tenantId, { startDate: prevStart, endDate: prevEnd }, scope);
+    return this.buildBaseMatch(tenantId, { startDate: prevStart, endDate: prevEnd }, scope, context);
   }
 
   async findByLicensePlate(
@@ -104,13 +123,13 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     pagination: PaginationParams
   ): Promise<PaginatedResponse<Expense>> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+    const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
 
     const match: Record<string, unknown> = { isDeleted: { $ne: true } };
     if (!isSuperAdmin) match.tenantId = tenantId;
 
     if (filters.license_plate) {
-      match.license_plate = { $regex: filters.license_plate, $options: 'i' };
+      match.license_plate = containsMatch(filters.license_plate);
     }
     if (filters.type) {
       match.expense_type_id = new ObjectId(filters.type);
@@ -166,12 +185,12 @@ export class ExpenseRepository extends BaseRepository<Expense> {
 
   private buildScopedMatch(filters: ExpenseFilters, context: TenantContext): Record<string, unknown> {
     const match: Record<string, unknown> = { isDeleted: { $ne: true } };
-    if (!this.isSuperAdminTenant(context.organizationId)) {
+    if (!this.isPlatformScopeTenant(context.organizationId)) {
       match.tenantId = context.organizationId;
     }
 
     if (filters.license_plate) {
-      match.license_plate = { $regex: filters.license_plate, $options: 'i' };
+      match.license_plate = containsMatch(filters.license_plate);
     }
     if (filters.type) {
       match.expense_type_id = new ObjectId(filters.type);
@@ -272,12 +291,13 @@ export class ExpenseRepository extends BaseRepository<Expense> {
   async getExpenseStats(
     tenantId: string,
     dateRange?: DateRange,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<ExpenseStats> {
     const collection = await this.getCollection();
 
     let filter: Record<string, unknown> = { isDeleted: { $ne: true } };
-    if (!this.isSuperAdminTenant(tenantId)) filter.tenantId = tenantId;
+    if (!this.isPlatformScopeTenant(tenantId)) filter.tenantId = tenantId;
     if (dateRange) {
       filter.date = { $gte: dateRange.startDate, $lte: dateRange.endDate };
     }
@@ -333,13 +353,14 @@ export class ExpenseRepository extends BaseRepository<Expense> {
   async getMonthlyTrends(
     tenantId: string,
     months: number = 12,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<Array<{ month: string; total: number }>> {
     const collection = await this.getCollection();
     const startDate = new Date();
     startDate.setMonth(startDate.getMonth() - months);
 
-    const match = this.buildBaseMatch(tenantId, { startDate }, scope);
+    const match = this.buildBaseMatch(tenantId, { startDate }, scope, context);
 
     const pipeline = [
       { $match: match },
@@ -359,16 +380,24 @@ export class ExpenseRepository extends BaseRepository<Expense> {
   async getExpenseAnalytics(
     tenantId: string,
     startDate: Date,
-    endDate: Date
+    endDate: Date,
+    context?: TenantContext
   ): Promise<any[]> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+    const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
 
     const match: Record<string, unknown> = {
       isDeleted: { $ne: true },
       date: { $gte: startDate, $lte: endDate },
     };
     if (!isSuperAdmin) match.tenantId = tenantId;
+    // FIX (Phase B): this legacy aggregation had no org-unit scoping at
+    // all (not even the buildBaseMatch AnalyticsScope narrowing) -- add
+    // the same optional context-based scoping as every other method here.
+    if (context) {
+      const orgUnitFilter = tenantScopeService.buildFilter<Expense>(context, 'orgUnitId');
+      Object.assign(match, orgUnitFilter);
+    }
 
     const pipeline = [
       { $match: match },
@@ -391,10 +420,11 @@ export class ExpenseRepository extends BaseRepository<Expense> {
   async getExpenseCategoryOverTime(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<ExpenseCategoryOverTimePoint[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange, scope);
+    const match = this.buildBaseMatch(tenantId, dateRange, scope, context);
 
     const pipeline = [
       { $match: match },
@@ -427,10 +457,11 @@ export class ExpenseRepository extends BaseRepository<Expense> {
   async getExpenseCategorySummary(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<CategorySummary[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange, scope);
+    const match = this.buildBaseMatch(tenantId, dateRange, scope, context);
 
     const grandTotalResult = await collection
       .aggregate([{ $match: match }, { $group: { _id: null, total: { $sum: '$amount' } } }])
@@ -476,7 +507,7 @@ export class ExpenseRepository extends BaseRepository<Expense> {
       }
     }
 
-    const prevMatch = this.previousPeriodMatch(tenantId, dateRange, scope);
+    const prevMatch = this.previousPeriodMatch(tenantId, dateRange, scope, context);
     let prevTotalsByCategory = new Map<string, number>();
     if (prevMatch) {
       const prevPipeline = [
@@ -522,10 +553,11 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 10,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<TopVehicleExpenseRow[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange, scope);
+    const match = this.buildBaseMatch(tenantId, dateRange, scope, context);
 
     const pipeline = [
       { $match: match },
@@ -588,7 +620,7 @@ export class ExpenseRepository extends BaseRepository<Expense> {
       }
     }
 
-    const prevMatch = this.previousPeriodMatch(tenantId, dateRange, scope);
+    const prevMatch = this.previousPeriodMatch(tenantId, dateRange, scope, context);
     let prevTotalsByPlate = new Map<string, number>();
     if (prevMatch && plates.length > 0) {
       const prevPipeline = [
@@ -625,10 +657,11 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     vehicleLimit: number = 8,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<VehicleExpenseBreakdownRow[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange, scope);
+    const match = this.buildBaseMatch(tenantId, dateRange, scope, context);
 
     const topPlatesPipeline = [
       { $match: match },
@@ -670,10 +703,11 @@ export class ExpenseRepository extends BaseRepository<Expense> {
   async getExpenseAmountDistribution(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<ExpenseAmountDistributionBucket[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange, scope);
+    const match = this.buildBaseMatch(tenantId, dateRange, scope, context);
 
     const count = await collection.countDocuments(match as Filter<Expense>);
     if (count === 0) return [];
@@ -696,10 +730,11 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     jobLimit: number = 10,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<JobTripExpenseRow[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange, scope);
+    const match = this.buildBaseMatch(tenantId, dateRange, scope, context);
 
     const jobKeyExpr = {
       $cond: [
@@ -753,10 +788,11 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 10,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<TopExpenseTransactionRow[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange, scope);
+    const match = this.buildBaseMatch(tenantId, dateRange, scope, context);
 
     const pipeline = [
       { $match: match },
@@ -783,7 +819,8 @@ export class ExpenseRepository extends BaseRepository<Expense> {
   async getDailyExpenseTotals(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<DailyExpenseTotal[]> {
     const collection = await this.getCollection();
     const endDate = dateRange?.endDate ?? new Date();
@@ -791,7 +828,7 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     const earliestAllowedStart = new Date(endDate.getTime() - 366 * 24 * 60 * 60 * 1000);
     const startDate = requestedStart < earliestAllowedStart ? earliestAllowedStart : requestedStart;
 
-    const match = this.buildBaseMatch(tenantId, { startDate, endDate }, scope);
+    const match = this.buildBaseMatch(tenantId, { startDate, endDate }, scope, context);
 
     const pipeline = [
       { $match: match },
@@ -818,10 +855,11 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     dateRange?: { startDate?: Date; endDate?: Date },
     zThreshold: number = 2.5,
     limit: number = 25,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<ExpenseOutlierRow[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange, scope);
+    const match = this.buildBaseMatch(tenantId, dateRange, scope, context);
 
     const pipeline = [
       { $match: match },

@@ -33,7 +33,6 @@ export class ResourcePermissionService {
 
     const created = await this.repo.create(
       {
-        tenantId,
         organizationId: tenantId,
         subjectType: data.subjectType,
         subjectId: data.subjectId,

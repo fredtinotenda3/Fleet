@@ -147,7 +147,6 @@ export class OAuthTokenService {
 
     await this.tokenRepo.create(
       {
-        tenantId: client.organizationId, // ← ADD THIS
         clientId: client.clientId,
         userId: client.createdBy,
         tokenHash,

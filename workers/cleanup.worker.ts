@@ -8,6 +8,7 @@ import { apiKeyRepository } from '@/modules/security/repositories/api-key.reposi
 import { resourcePermissionRepository } from '@/modules/security/repositories/resource-permission.repository';
 import { permissionCacheService } from '@/modules/security/services/permission-cache.service';
 import { OutboxRepository } from '@/server/events/outbox/OutboxRepository';
+import { backgroundJobScopeService } from '@/server/scheduler/background-job-scope.service';
 import { monitoring } from '@/infrastructure/monitoring/logger';
 
 const outboxRepository = new OutboxRepository();
@@ -38,13 +39,24 @@ export class CleanupWorker extends BaseWorker<Record<string, never>> {
       }
 
       case 'cleanup-notifications': {
-        const db = await (await import('@/infrastructure/database/mongodb')).default();
-        const orgs = await db.collection('tblorganizations').find({ isDeleted: { $ne: true } }).project({ tenantId: 1 }).toArray();
+        /**
+         * FIX (Phase D -- enterprise organization-aware background
+         * processing): this previously hand-rolled its own
+         * `db.collection('tblorganizations').find(...)` scan --
+         * duplicated, near-identically, in billing.worker.ts,
+         * telemetry.worker.ts, and sla-compliance.worker.ts. Now goes
+         * through BackgroundJobScopeService instead of querying
+         * tblorganizations directly. A failure purging one
+         * organization's notifications is caught, audited, and skipped
+         * rather than aborting the purge for every other organization.
+         */
         let total = 0;
-        for (const org of orgs) {
-          total += await notificationService.cleanupOldNotifications(org.tenantId, 30);
-        }
-        monitoring.logInfo(`[CleanupWorker] Purged ${total} old notification(s)`);
+        const summary = await backgroundJobScopeService.forEachOrganization('cleanup-notifications', async (scope) => {
+          total += await notificationService.cleanupOldNotifications(scope.organizationId, 30);
+        });
+        monitoring.logInfo(
+          `[CleanupWorker] Purged ${total} old notification(s) across ${summary.organizationsProcessed} organization(s)`
+        );
         return;
       }
 

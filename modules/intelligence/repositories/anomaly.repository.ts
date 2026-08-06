@@ -1,11 +1,20 @@
 // modules/intelligence/repositories/anomaly.repository.ts
 
 import { Filter } from 'mongodb';
-import { BaseRepository } from '@/server/repositories/base.repository';
+import { TenantScopedRepository } from '@/server/repositories/tenant-scoped.repository';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { Anomaly, AnomalyFilters, AnomalyStatus } from '@/shared/types/anomaly.types';
+import '@/shared/types/anomaly.tenancy-addendum';
 import { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 
-export class AnomalyRepository extends BaseRepository<Anomaly> {
+/**
+ * SCOPED (Phase F). A derived record cannot be less protected than its
+ * inputs, or analytics becomes a bypass for the scoping applied to the
+ * source collections: the fuel logs are hidden, but "unusual fuel spend
+ * on AHA2127" is not.
+ */
+export class AnomalyRepository extends TenantScopedRepository<Anomaly> {
   protected collectionName = 'tblanomalies';
 
   async getFiltered(
@@ -27,6 +36,31 @@ export class AnomalyRepository extends BaseRepository<Anomaly> {
     };
 
     return this.findWithPagination(filter as Filter<Anomaly>, paginationParams, tenantId);
+  }
+
+  /** Org-unit-scoped variant of getFiltered. */
+  async getFilteredInScope(
+    filters: AnomalyFilters,
+    context: TenantContext,
+    pagination: PaginationParams
+  ): Promise<PaginatedResponse<Anomaly>> {
+    const filter: Record<string, unknown> = {};
+
+    if (filters.category) filter.category = filters.category;
+    if (filters.severity) filter.severity = filters.severity;
+    if (filters.status) filter.status = filters.status;
+    if (filters.licensePlate) filter.licensePlate = filters.licensePlate;
+
+    const paginationParams: PaginationParams & { sort?: Record<string, 1 | -1> } = {
+      ...pagination,
+      sort: (pagination as any).sort || { detectedAt: -1 },
+    };
+
+    return this.findWithPaginationInScope(
+      filter as Filter<Anomaly>,
+      paginationParams,
+      context
+    );
   }
 
   /**
@@ -69,6 +103,37 @@ export class AnomalyRepository extends BaseRepository<Anomaly> {
     const results = await collection
       .aggregate([
         { $match: { tenantId, status: 'open', isDeleted: { $ne: true } } },
+        { $group: { _id: '$severity', count: { $sum: 1 } } },
+      ])
+      .toArray();
+
+    const counts: Record<string, number> = { low: 0, medium: 0, high: 0, critical: 0 };
+    for (const r of results) counts[r._id as string] = r.count;
+    return counts;
+  }
+
+  /**
+   * Org-unit-scoped variant of countOpenBySeverity.
+   *
+   * The scope predicate is merged into the $match stage, so it applies
+   * before the $group rather than being subtracted afterwards. An
+   * unscoped aggregate leaks COUNTS instead of rows -- quieter than a
+   * list leak and easier to ship, but it still tells a branch manager
+   * how many critical anomalies exist across the whole organization.
+   */
+  async countOpenBySeverityInScope(context: TenantContext): Promise<Record<string, number>> {
+    const collection = await this.getCollection();
+    const scopeFilter = tenantScopeService.buildFilter<Anomaly>(context, 'orgUnitId');
+    const results = await collection
+      .aggregate([
+        {
+          $match: {
+            tenantId: context.organizationId,
+            status: 'open',
+            isDeleted: { $ne: true },
+            ...scopeFilter,
+          },
+        },
         { $group: { _id: '$severity', count: { $sum: 1 } } },
       ])
       .toArray();

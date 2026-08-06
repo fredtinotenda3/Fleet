@@ -1,3 +1,4 @@
+import { PLATFORM_OWNER_TENANT_ID } from '@/server/tenancy/tenant-scope';
 // server/scheduler/cron-engine.service.ts
 
 import { queueService, JobType } from '@/infrastructure/queue/queue.service';
@@ -36,20 +37,19 @@ export class CronEngineService {
         cron: data.cron,
         payload: data.payload || {},
         status: 'active',
-        tenantId: 'system',
       },
-      'system',
+      PLATFORM_OWNER_TENANT_ID,
       userId
     );
 
     await this.registerRepeatable(created);
-    await auditLog.log({ action: 'SCHEDULED_JOB_CREATED', userId, tenantId: 'system', entityType: 'scheduled_job', entityId: created._id, metadata: { name: created.name, cron: created.cron } });
+    await auditLog.log({ action: 'SCHEDULED_JOB_CREATED', userId, tenantId: PLATFORM_OWNER_TENANT_ID, entityType: 'scheduled_job', entityId: created._id, metadata: { name: created.name, cron: created.cron } });
 
     return created;
   }
 
   async update(id: string, data: ScheduledJobUpdateDTO, userId: string): Promise<ScheduledJob> {
-    const existing = await scheduledJobRepository.findById(id, 'system', false, true);
+    const existing = await scheduledJobRepository.findById(id, PLATFORM_OWNER_TENANT_ID, false, true);
     if (!existing) throw new NotFoundError('Scheduled job not found');
     if (data.cron && !CRON_PATTERN.test(data.cron)) {
       throw new ValidationError(`Invalid cron expression: "${data.cron}"`);
@@ -61,14 +61,14 @@ export class CronEngineService {
       await this.unregisterRepeatable(existing);
     }
 
-    const updated = await scheduledJobRepository.update(id, data as Partial<ScheduledJob>, 'system', userId, true);
+    const updated = await scheduledJobRepository.update(id, data as Partial<ScheduledJob>, PLATFORM_OWNER_TENANT_ID, userId, true);
     if (!updated) throw new NotFoundError('Scheduled job not found');
 
     if (updated.status === 'active') {
       await this.registerRepeatable(updated);
     }
 
-    await auditLog.log({ action: 'SCHEDULED_JOB_UPDATED', userId, tenantId: 'system', entityType: 'scheduled_job', entityId: id, metadata: data as Record<string, unknown> });
+    await auditLog.log({ action: 'SCHEDULED_JOB_UPDATED', userId, tenantId: PLATFORM_OWNER_TENANT_ID, entityType: 'scheduled_job', entityId: id, metadata: data as Record<string, unknown> });
     return updated;
   }
 
@@ -81,11 +81,11 @@ export class CronEngineService {
   }
 
   async delete(id: string, userId: string): Promise<void> {
-    const existing = await scheduledJobRepository.findById(id, 'system', false, true);
+    const existing = await scheduledJobRepository.findById(id, PLATFORM_OWNER_TENANT_ID, false, true);
     if (!existing) throw new NotFoundError('Scheduled job not found');
     await this.unregisterRepeatable(existing);
-    await scheduledJobRepository.hardDelete(id, 'system', true);
-    await auditLog.log({ action: 'SCHEDULED_JOB_DELETED', userId, tenantId: 'system', entityType: 'scheduled_job', entityId: id, metadata: { name: existing.name } });
+    await scheduledJobRepository.hardDelete(id, PLATFORM_OWNER_TENANT_ID, true);
+    await auditLog.log({ action: 'SCHEDULED_JOB_DELETED', userId, tenantId: PLATFORM_OWNER_TENANT_ID, entityType: 'scheduled_job', entityId: id, metadata: { name: existing.name } });
   }
 
   async list(): Promise<ScheduledJob[]> {
@@ -109,7 +109,7 @@ export class CronEngineService {
   private async registerRepeatable(job: ScheduledJob): Promise<void> {
     await queueService.addJob(
       job.jobType,
-      { type: job.jobType, payload: job.payload, tenantId: 'system' },
+      { type: job.jobType, payload: job.payload, tenantId: PLATFORM_OWNER_TENANT_ID },
       { repeat: { cron: job.cron }, jobId: `scheduled:${job._id}` }
     );
   }

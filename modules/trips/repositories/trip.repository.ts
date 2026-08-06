@@ -1,3 +1,5 @@
+import { resolveTenantScope } from '@/server/tenancy/tenant-scope';
+import { prefixMatch, containsMatch } from '@/shared/utils/regex.utils';
 // modules/trips/repositories/trip.repository.ts
 
 import { BaseRepository } from '@/server/repositories/base.repository';
@@ -28,12 +30,18 @@ import connectToDatabase from '@/lib/mongodb';
 export class TripRepository extends BaseRepository<Trip> {
   protected collectionName = 'tbltrips';
 
-  private isSuperAdminTenant(tenantId: string): boolean {
-    return (
-      tenantId === 'default' ||
-      tenantId === 'system' ||
-      tenantId === 'super_admin'
-    );
+  /**
+   * FIX (tenant-isolation drift): this was a private per-repository copy
+   * of the "which tenantId means skip filtering" rule. Six repositories
+   * each maintained their own, and they drifted -- base.repository.ts's
+   * own comments document a production bug where the dashboard and the
+   * list page disagreed. All copies now delegate to the single
+   * fail-closed resolver in server/tenancy/tenant-scope.ts, where the
+   * legacy 'default'/'system'/'super_admin' values are REJECTED rather
+   * than treated as platform-wide access.
+   */
+  private isPlatformScopeTenant(tenantId: string): boolean {
+    return resolveTenantScope(tenantId).kind === 'platform';
   }
 
   /**
@@ -52,10 +60,11 @@ export class TripRepository extends BaseRepository<Trip> {
   private buildBaseMatch(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    licensePlate?: string
+    licensePlate?: string,
+    context?: TenantContext
   ): Record<string, unknown> {
     const match: Record<string, unknown> = { isDeleted: { $ne: true } };
-    if (!this.isSuperAdminTenant(tenantId)) {
+    if (!this.isPlatformScopeTenant(tenantId)) {
       match.tenantId = tenantId;
     }
     if (dateRange?.startDate || dateRange?.endDate) {
@@ -65,6 +74,16 @@ export class TripRepository extends BaseRepository<Trip> {
     }
     if (licensePlate) {
       match.license_plate = licensePlate.toUpperCase();
+    }
+    // FIX (Phase B -- repository/analytics scoping completeness): mirrors
+    // FuelRepository.buildBaseMatch / ExpenseRepository.buildBaseMatch --
+    // analytics previously isolated only by tenantId, never by org unit,
+    // so Branch/Fleet/Workshop Manager dashboards silently showed
+    // org-wide totals while buildScopedQuery (list page) was already
+    // correctly org-unit scoped.
+    if (context) {
+      const orgUnitFilter = tenantScopeService.buildFilter<Trip>(context, 'orgUnitId');
+      Object.assign(match, orgUnitFilter);
     }
     return match;
   }
@@ -89,10 +108,7 @@ export class TripRepository extends BaseRepository<Trip> {
     const filter: Record<string, unknown> = {};
 
     if (filters.license_plate) {
-      filter.license_plate = {
-        $regex: filters.license_plate,
-        $options: 'i',
-      };
+      filter.license_plate = containsMatch(filters.license_plate);
     }
     if (filters.mode) filter.mode = filters.mode;
     if (filters.driver_id) filter.driver_id = filters.driver_id;
@@ -129,15 +145,12 @@ export class TripRepository extends BaseRepository<Trip> {
       isDeleted: { $ne: true },
     };
 
-    if (!this.isSuperAdminTenant(context.organizationId)) {
+    if (!this.isPlatformScopeTenant(context.organizationId)) {
       query.tenantId = context.organizationId;
     }
 
     if (filters.license_plate) {
-      query.license_plate = {
-        $regex: filters.license_plate,
-        $options: 'i',
-      };
+      query.license_plate = containsMatch(filters.license_plate);
     }
     if (filters.mode) query.mode = filters.mode;
     if (filters.driver_id) query.driver_id = filters.driver_id;
@@ -223,10 +236,11 @@ export class TripRepository extends BaseRepository<Trip> {
 
   async getTripStats(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    context?: TenantContext
   ): Promise<TripStats> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+    const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
 
     const filter: Record<string, unknown> = {
       isDeleted: { $ne: true },
@@ -239,6 +253,10 @@ export class TripRepository extends BaseRepository<Trip> {
       filter.date = {};
       if (dateRange.startDate) (filter.date as any).$gte = dateRange.startDate;
       if (dateRange.endDate) (filter.date as any).$lte = dateRange.endDate;
+    }
+    // FIX (Phase B): legacy aggregation had no org-unit scoping at all.
+    if (context) {
+      Object.assign(filter, tenantScopeService.buildFilter<Trip>(context, 'orgUnitId'));
     }
 
     const pipeline = [
@@ -301,10 +319,11 @@ export class TripRepository extends BaseRepository<Trip> {
 
   async getDailyDistance(
     tenantId: string,
-    days: number = 30
+    days: number = 30,
+    context?: TenantContext
   ): Promise<Array<{ date: string; distance: number }>> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+    const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
 
@@ -314,6 +333,10 @@ export class TripRepository extends BaseRepository<Trip> {
     };
     if (!isSuperAdmin) {
       matchStage.tenantId = tenantId;
+    }
+    // FIX (Phase B): legacy aggregation had no org-unit scoping at all.
+    if (context) {
+      Object.assign(matchStage, tenantScopeService.buildFilter<Trip>(context, 'orgUnitId'));
     }
 
     const pipeline = [
@@ -347,10 +370,11 @@ export class TripRepository extends BaseRepository<Trip> {
   async getDistanceByVehicle(
     tenantId: string,
     startDate: Date,
-    endDate: Date
+    endDate: Date,
+    context?: TenantContext
   ): Promise<Record<string, number>> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+    const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
 
     const match: Record<string, unknown> = {
       isDeleted: { $ne: true },
@@ -358,6 +382,10 @@ export class TripRepository extends BaseRepository<Trip> {
     };
     if (!isSuperAdmin) {
       match.tenantId = tenantId;
+    }
+    // FIX (Phase B): legacy aggregation had no org-unit scoping at all.
+    if (context) {
+      Object.assign(match, tenantScopeService.buildFilter<Trip>(context, 'orgUnitId'));
     }
 
     const pipeline = [
@@ -390,7 +418,8 @@ export class TripRepository extends BaseRepository<Trip> {
   async getTripKpis(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    licensePlate?: string
+    licensePlate?: string,
+    context?: TenantContext
   ): Promise<TripKpis> {
     const collection = await this.getCollection();
     const now = new Date();
@@ -400,8 +429,8 @@ export class TripRepository extends BaseRepository<Trip> {
     const prevRangeEnd = new Date(rangeStart.getTime() - 1);
     const prevRangeStart = new Date(prevRangeEnd.getTime() - periodMs);
 
-    const currentMatch = this.buildBaseMatch(tenantId, { startDate: rangeStart, endDate: rangeEnd }, licensePlate);
-    const prevMatch = this.buildBaseMatch(tenantId, { startDate: prevRangeStart, endDate: prevRangeEnd }, licensePlate);
+    const currentMatch = this.buildBaseMatch(tenantId, { startDate: rangeStart, endDate: rangeEnd }, licensePlate, context);
+    const prevMatch = this.buildBaseMatch(tenantId, { startDate: prevRangeStart, endDate: prevRangeEnd }, licensePlate, context);
 
     const pipeline = [
       { $match: currentMatch },
@@ -535,10 +564,11 @@ export class TripRepository extends BaseRepository<Trip> {
     dateRange?: { startDate?: Date; endDate?: Date },
     zThreshold: number = 2.5,
     limit: number = 50,
-    licensePlate?: string
+    licensePlate?: string,
+    context?: TenantContext
   ): Promise<TripExceptionRow[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange, licensePlate);
+    const match = this.buildBaseMatch(tenantId, dateRange, licensePlate, context);
     const exceptions: TripExceptionRow[] = [];
 
     // 1. Duration outliers per vehicle (z-score), mirrors getExpenseOutliers.
@@ -691,12 +721,13 @@ export class TripRepository extends BaseRepository<Trip> {
   async getMonthlyTripTrend(
     tenantId: string,
     months: number = 12,
-    licensePlate?: string
+    licensePlate?: string,
+    context?: TenantContext
   ): Promise<TripMonthlyTrendPoint[]> {
     const collection = await this.getCollection();
     const startDate = new Date();
     startDate.setMonth(startDate.getMonth() - months);
-    const match = this.buildBaseMatch(tenantId, { startDate }, licensePlate);
+    const match = this.buildBaseMatch(tenantId, { startDate }, licensePlate, context);
 
     const pipeline = [
       { $match: match },
@@ -725,10 +756,11 @@ export class TripRepository extends BaseRepository<Trip> {
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 20,
-    sortBy: 'trips' | 'distance' = 'trips'
+    sortBy: 'trips' | 'distance' = 'trips',
+    context?: TenantContext
   ): Promise<VehicleUtilizationRow[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange);
+    const match = this.buildBaseMatch(tenantId, dateRange, undefined, context);
     const sortField = sortBy === 'distance' ? 'totalDistance' : 'trips';
 
     const pipeline = [
@@ -773,10 +805,11 @@ export class TripRepository extends BaseRepository<Trip> {
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 20,
     sortBy: 'trips' | 'distance' = 'trips',
-    licensePlate?: string
+    licensePlate?: string,
+    context?: TenantContext
   ): Promise<DriverUtilizationRow[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange, licensePlate);
+    const match = this.buildBaseMatch(tenantId, dateRange, licensePlate, context);
     const sortField = sortBy === 'distance' ? 'totalDistance' : 'trips';
 
     const pipeline = [
@@ -844,10 +877,11 @@ export class TripRepository extends BaseRepository<Trip> {
   async getTripDistanceDistribution(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    licensePlate?: string
+    licensePlate?: string,
+    context?: TenantContext
   ): Promise<TripDistanceDistributionBucket[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange, licensePlate);
+    const match = this.buildBaseMatch(tenantId, dateRange, licensePlate, context);
 
     const count = await collection.countDocuments(match as Filter<Trip>);
     if (count === 0) return [];
@@ -881,10 +915,11 @@ export class TripRepository extends BaseRepository<Trip> {
   async getTripsByDayOfWeek(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    licensePlate?: string
+    licensePlate?: string,
+    context?: TenantContext
   ): Promise<TripHeatmapCell[]> {
     const collection = await this.getCollection();
-    const match = this.buildBaseMatch(tenantId, dateRange, licensePlate);
+    const match = this.buildBaseMatch(tenantId, dateRange, licensePlate, context);
 
     const pipeline = [
       { $match: match },
@@ -925,10 +960,11 @@ export class TripRepository extends BaseRepository<Trip> {
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 100,
-    licensePlate?: string
+    licensePlate?: string,
+    context?: TenantContext
   ): Promise<TripCostAnalyticsRow[]> {
     const db = await connectToDatabase();
-    const tripMatch = this.buildBaseMatch(tenantId, dateRange, licensePlate);
+    const tripMatch = this.buildBaseMatch(tenantId, dateRange, licensePlate, context);
 
     const pipeline = [
       { $match: tripMatch },
@@ -999,9 +1035,10 @@ export class TripRepository extends BaseRepository<Trip> {
   async getTripCostSummary(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    licensePlate?: string
+    licensePlate?: string,
+    context?: TenantContext
   ): Promise<TripCostSummary> {
-    const rows = await this.getTripCostAnalytics(tenantId, dateRange, 100000, licensePlate);
+    const rows = await this.getTripCostAnalytics(tenantId, dateRange, 100000, licensePlate, context);
 
     const totalFuelCost = rows.reduce((sum, r) => sum + r.fuelCost, 0);
     const totalExpenseCost = rows.reduce((sum, r) => sum + r.expenseCost, 0);

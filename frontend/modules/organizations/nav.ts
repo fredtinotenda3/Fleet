@@ -5,6 +5,15 @@
 // component can import icons/permission gates without pulling in every
 // route helper, and so this list is the single place to add/remove an
 // admin nav entry.
+//
+// VERIFIED (Phase E, final audit): no change required. isVisible below
+// delegates to canManageMembers() in ./utils, which was migrated off
+// the hardcoded `role === 'organization_owner' || role === 'fleet_manager'`
+// check during this same Phase E pass and now resolves through
+// permissionService.hasPermission(..., Permission.ORG_MEMBERS_MANAGE).
+// Since this file only ever calls canManageMembers() -- never compares
+// a role string itself -- it was already permission-based by
+// inheritance once utils/index.ts was fixed. No edit needed here.
 
 import { Settings2, ShieldCheck, LineChart } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';

@@ -19,6 +19,7 @@ import {
 } from '@/server/utils/context.utils';
 import { getAuthContext } from '@/server/auth/auth-context';
 import { tenantContextService } from '@/modules/tenancy/services/tenant-context.service';
+import type { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 import { tripRepository } from '../repositories/trip.repository';
 import { exportService, fileDownloadResponse } from '@/shared/export';
@@ -64,6 +65,24 @@ function parseLicensePlate(searchParams: URLSearchParams): string | undefined {
   return value ? value.toUpperCase() : undefined;
 }
 
+/**
+ * FIX (Phase B -- repository/analytics scoping completeness): mirrors
+ * FuelController.resolveTenantContext / ExpenseController.resolveTenantContext.
+ */
+async function resolveTenantContext(req: NextRequest): Promise<TenantContext> {
+  const authContext = await getAuthContext(req);
+  if (!authContext) {
+    throw new UnauthorizedError('Authentication required');
+  }
+  return tenantContextService.resolveContext(
+    authContext.userId,
+    authContext.tenantId,
+    authContext.roles,
+    authContext.isPlatformAdmin,
+    authContext.orgUnitId
+  );
+}
+
 export class TripController {
   async getTrips(req: NextRequest) {
     try {
@@ -76,7 +95,7 @@ export class TripController {
         authContext.userId,
         authContext.tenantId,
         authContext.roles,
-        authContext.isSuperAdmin,
+        authContext.isPlatformAdmin,
         authContext.orgUnitId
       );
 
@@ -129,7 +148,7 @@ export class TripController {
         authContext.userId,
         authContext.tenantId,
         authContext.roles,
-        authContext.isSuperAdmin,
+        authContext.isPlatformAdmin,
         authContext.orgUnitId
       );
 
@@ -185,7 +204,7 @@ export class TripController {
       authContext.userId,
       authContext.tenantId,
       authContext.roles,
-      authContext.isSuperAdmin,
+      authContext.isPlatformAdmin,
       authContext.orgUnitId
     );
 
@@ -261,7 +280,7 @@ export class TripController {
 
   async getTripStats(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
 
       const dateRange =
@@ -272,7 +291,7 @@ export class TripController {
             }
           : undefined;
 
-      const stats = await tripQueryService.getTripStats(tenantId, dateRange);
+      const stats = await tripQueryService.getTripStats(tenantContext.organizationId, dateRange, tenantContext);
       return successResponse(stats);
     } catch (error) {
       return this.handleError(error);
@@ -281,10 +300,10 @@ export class TripController {
 
   async getDailyDistance(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const days = Number(req.nextUrl.searchParams.get('days') || '30');
 
-      const data = await tripQueryService.getDailyDistance(tenantId, days);
+      const data = await tripQueryService.getDailyDistance(tenantContext.organizationId, days, tenantContext);
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -298,7 +317,7 @@ export class TripController {
    */
   async getTripKpis(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
 
       const dateRange =
@@ -310,7 +329,12 @@ export class TripController {
           : undefined;
       const licensePlate = parseLicensePlate(searchParams);
 
-      const kpis = await tripQueryService.getTripKpis(tenantId, dateRange, licensePlate);
+      const kpis = await tripQueryService.getTripKpis(
+        tenantContext.organizationId,
+        dateRange,
+        licensePlate,
+        tenantContext
+      );
       return successResponse(kpis);
     } catch (error) {
       return this.handleError(error);
@@ -323,7 +347,7 @@ export class TripController {
    */
   async getTripExceptions(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
 
       const dateRange =
@@ -337,7 +361,14 @@ export class TripController {
       const limit = Number(searchParams.get('limit') || '50');
       const licensePlate = parseLicensePlate(searchParams);
 
-      const exceptions = await tripQueryService.getTripExceptions(tenantId, dateRange, zThreshold, limit, licensePlate);
+      const exceptions = await tripQueryService.getTripExceptions(
+        tenantContext.organizationId,
+        dateRange,
+        zThreshold,
+        limit,
+        licensePlate,
+        tenantContext
+      );
       return successResponse(exceptions);
     } catch (error) {
       return this.handleError(error);
@@ -361,11 +392,16 @@ export class TripController {
    */
   async getMonthlyTripTrend(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const months = Number(req.nextUrl.searchParams.get('months') || '12');
       const licensePlate = parseLicensePlate(req.nextUrl.searchParams);
 
-      const data = await tripQueryService.getMonthlyTripTrend(tenantId, months, licensePlate);
+      const data = await tripQueryService.getMonthlyTripTrend(
+        tenantContext.organizationId,
+        months,
+        licensePlate,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -379,13 +415,19 @@ export class TripController {
    */
   async getVehicleUtilization(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
       const dateRange = this.parseDateRange(req);
       const limit = Number(searchParams.get('limit') || '20');
       const sortBy = (searchParams.get('sortBy') as 'trips' | 'distance') || 'trips';
 
-      const data = await tripQueryService.getVehicleUtilization(tenantId, dateRange, limit, sortBy);
+      const data = await tripQueryService.getVehicleUtilization(
+        tenantContext.organizationId,
+        dateRange,
+        limit,
+        sortBy,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -398,14 +440,21 @@ export class TripController {
    */
   async getDriverUtilization(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
       const dateRange = this.parseDateRange(req);
       const limit = Number(searchParams.get('limit') || '20');
       const sortBy = (searchParams.get('sortBy') as 'trips' | 'distance') || 'trips';
       const licensePlate = parseLicensePlate(searchParams);
 
-      const data = await tripQueryService.getDriverUtilization(tenantId, dateRange, limit, sortBy, licensePlate);
+      const data = await tripQueryService.getDriverUtilization(
+        tenantContext.organizationId,
+        dateRange,
+        limit,
+        sortBy,
+        licensePlate,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -418,11 +467,16 @@ export class TripController {
    */
   async getTripDistanceDistribution(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const dateRange = this.parseDateRange(req);
       const licensePlate = parseLicensePlate(req.nextUrl.searchParams);
 
-      const data = await tripQueryService.getTripDistanceDistribution(tenantId, dateRange, licensePlate);
+      const data = await tripQueryService.getTripDistanceDistribution(
+        tenantContext.organizationId,
+        dateRange,
+        licensePlate,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -435,11 +489,16 @@ export class TripController {
    */
   async getTripsByDayOfWeek(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const dateRange = this.parseDateRange(req);
       const licensePlate = parseLicensePlate(req.nextUrl.searchParams);
 
-      const data = await tripQueryService.getTripsByDayOfWeek(tenantId, dateRange, licensePlate);
+      const data = await tripQueryService.getTripsByDayOfWeek(
+        tenantContext.organizationId,
+        dateRange,
+        licensePlate,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -452,12 +511,18 @@ export class TripController {
    */
   async getTripCostAnalytics(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const dateRange = this.parseDateRange(req);
       const limit = Number(req.nextUrl.searchParams.get('limit') || '100');
       const licensePlate = parseLicensePlate(req.nextUrl.searchParams);
 
-      const data = await tripQueryService.getTripCostAnalytics(tenantId, dateRange, limit, licensePlate);
+      const data = await tripQueryService.getTripCostAnalytics(
+        tenantContext.organizationId,
+        dateRange,
+        limit,
+        licensePlate,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -470,11 +535,16 @@ export class TripController {
    */
   async getTripCostSummary(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const dateRange = this.parseDateRange(req);
       const licensePlate = parseLicensePlate(req.nextUrl.searchParams);
 
-      const data = await tripQueryService.getTripCostSummary(tenantId, dateRange, licensePlate);
+      const data = await tripQueryService.getTripCostSummary(
+        tenantContext.organizationId,
+        dateRange,
+        licensePlate,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);

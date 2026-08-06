@@ -2,7 +2,10 @@
 
 import { NextRequest } from 'next/server';
 import { notificationService } from '../services/notification.service';
-import { notificationPreferencesUpdateSchema } from '@/shared/validations/notification.schema';
+import {
+  notificationPreferencesUpdateSchema,
+  notificationBroadcastCreateSchema,
+} from '@/shared/validations/notification.schema';
 import { validatePaginationParams } from '@/shared/utils/pagination.utils';
 import {
   successResponse,
@@ -13,24 +16,54 @@ import { AppError, ValidationError } from '@/server/errors/app.errors';
 import {
   getTenantFromRequest,
   getUserIdFromRequest,
+  getUserRolesFromRequest,
+  isSuperAdmin,
 } from '@/server/utils/context.utils';
+import { tenantContextService } from '@/modules/tenancy/services/tenant-context.service';
+import { authorizeBroadcast } from '../authorization/notification-broadcast.authorization';
+
+/**
+ * Reads the "which of my accessible org units is active right now"
+ * header -- per the audit note on tenant-context.service.ts, this only
+ * ever narrows *within* what resolveContext() already computed from
+ * real UserScopeAssignment records; it is never itself a source of
+ * access.
+ */
+function getActiveOrgUnitId(req: NextRequest): string | undefined {
+  return req.headers.get('x-org-unit-id') ?? undefined;
+}
 
 export class NotificationController {
+  private async resolveContext(req: NextRequest, tenantId: string, userId: string) {
+    const [roles, superAdmin] = await Promise.all([
+      getUserRolesFromRequest(req),
+      isSuperAdmin(req),
+    ]);
+    return tenantContextService.resolveContext(
+      userId,
+      tenantId,
+      roles,
+      superAdmin,
+      getActiveOrgUnitId(req)
+    );
+  }
+
   async getNotifications(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
       const userId = await getUserIdFromRequest(req);
-      const searchParams = req.nextUrl.searchParams;
+      const context = await this.resolveContext(req, tenantId, userId);
 
+      const searchParams = req.nextUrl.searchParams;
       const { page, limit } = validatePaginationParams(
         searchParams.get('page'),
         searchParams.get('limit')
       );
       const unreadOnly = searchParams.get('unreadOnly') === 'true';
 
-      const result = await notificationService.getNotifications(
+      const result = await notificationService.getNotificationsInScope(
         userId,
-        tenantId,
+        context,
         { page, limit },
         unreadOnly
       );
@@ -45,8 +78,9 @@ export class NotificationController {
     try {
       const tenantId = await getTenantFromRequest(req);
       const userId = await getUserIdFromRequest(req);
+      const context = await this.resolveContext(req, tenantId, userId);
 
-      const count = await notificationService.getUnreadCount(userId, tenantId);
+      const count = await notificationService.getUnreadCountInScope(userId, context);
       return successResponse({ count });
     } catch (error) {
       return this.handleError(error);
@@ -57,8 +91,9 @@ export class NotificationController {
     try {
       const tenantId = await getTenantFromRequest(req);
       const userId = await getUserIdFromRequest(req);
+      const context = await this.resolveContext(req, tenantId, userId);
 
-      await notificationService.markAsRead(id, userId, tenantId);
+      await notificationService.markAsReadInScope(id, userId, context);
       return successResponse({ message: 'Notification marked as read' });
     } catch (error) {
       return this.handleError(error);
@@ -69,9 +104,59 @@ export class NotificationController {
     try {
       const tenantId = await getTenantFromRequest(req);
       const userId = await getUserIdFromRequest(req);
+      const context = await this.resolveContext(req, tenantId, userId);
 
-      const count = await notificationService.markAllAsRead(userId, tenantId);
+      const count = await notificationService.markAllAsReadInScope(userId, context);
       return successResponse({ message: 'All notifications marked as read', count });
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /**
+   * FIX (Phase C -- write-path security): previously created a broadcast
+   * for any authenticated user, for any orgUnitId, with no role or
+   * scope check at all -- an authenticated Driver could broadcast to a
+   * branch they have no assignment to. Now gated by authorizeBroadcast()
+   * (role check + TenantContextService scope resolution + org-unit
+   * membership check) before sendBroadcastNotification() is ever
+   * called. See notification-broadcast.authorization.ts for the
+   * requirement-by-requirement rationale.
+   */
+  async createBroadcast(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const userId = await getUserIdFromRequest(req);
+      const body = await req.json();
+
+      const parsed = notificationBroadcastCreateSchema.safeParse(body);
+      if (!parsed.success) {
+        throw new ValidationError('Invalid broadcast payload', parsed.error.flatten());
+      }
+
+      const [roles, superAdmin] = await Promise.all([
+        getUserRolesFromRequest(req),
+        isSuperAdmin(req),
+      ]);
+
+      const { orgUnitId, ...notification } = parsed.data;
+
+      await authorizeBroadcast({
+        userId,
+        tenantId,
+        roles,
+        isSuperAdmin: superAdmin,
+        activeOrgUnitId: getActiveOrgUnitId(req),
+        targetOrgUnitId: orgUnitId,
+      });
+
+      const created = await notificationService.sendBroadcastNotification(
+        orgUnitId,
+        tenantId,
+        notification
+      );
+
+      return successResponse(created);
     } catch (error) {
       return this.handleError(error);
     }
@@ -100,9 +185,8 @@ export class NotificationController {
         throw new ValidationError('Invalid preferences payload', parsed.error.flatten());
       }
 
-      // Transform data to ensure channels are complete if provided
       const updateData: any = {};
-      
+
       if (parsed.data.channels) {
         updateData.channels = {
           in_app: parsed.data.channels.in_app ?? false,
@@ -110,11 +194,11 @@ export class NotificationController {
           push: parsed.data.channels.push ?? false,
         };
       }
-      
+
       if (parsed.data.types) {
         updateData.types = parsed.data.types;
       }
-      
+
       if (parsed.data.digest) {
         updateData.digest = {
           enabled: parsed.data.digest.enabled ?? false,

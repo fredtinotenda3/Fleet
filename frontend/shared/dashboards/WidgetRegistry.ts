@@ -1,7 +1,7 @@
-﻿
-// frontend/shared/dashboards/WidgetRegistry.ts
+﻿// frontend/shared/dashboards/WidgetRegistry.ts
 
 import type { ComponentType } from 'react';
+import { Permission } from '@/server/permissions/roles';
 import { KPIsWidget } from './widgets/KPIsWidget';
 import { FleetStatusWidget } from './widgets/FleetStatusWidget';
 import { MaintenanceWidget } from './widgets/MaintenanceWidget';
@@ -31,7 +31,24 @@ export interface WidgetDefinition {
   description: string;
   size: WidgetSize;
   component: ComponentType;
-  roles?: string[];
+  /**
+   * FIX (Phase E, objective 3+6): was `roles?: string[]`, matched via
+   * raw string comparison. Only `aiRecommendations` was ever gated
+   * (`['organization_owner', 'fleet_manager', 'auditor']`), which
+   * excluded BRANCH_MANAGER/DEPARTMENT_MANAGER/WORKSHOP_MANAGER despite
+   * all three holding ANALYTICS_VIEW. Now every data widget is gated on
+   * the Permission that already governs its underlying data (mirrors
+   * the page-level permission for that domain, e.g. `fuel` uses
+   * FUEL_VIEW same as the /fuel pages) resolved via
+   * permissionService.hasAnyPermission. Combined with each role's
+   * org-unit-scoped queries (TenantContextService, Phase A), this is
+   * what makes one shared dashboard shell actually render differently
+   * per role -- e.g. DRIVER holds neither FUEL_VIEW, EXPENSE_VIEW, nor
+   * ANALYTICS_VIEW, so a driver's dashboard naturally reduces to
+   * fleetStatus/maintenance/trips/map/alerts, without a bespoke
+   * "driver dashboard" component.
+   */
+  permission?: Permission[];
 }
 
 export const WIDGET_REGISTRY: Record<WidgetKey, WidgetDefinition> = {
@@ -41,6 +58,7 @@ export const WIDGET_REGISTRY: Record<WidgetKey, WidgetDefinition> = {
     description: 'Headline fleet, maintenance, expense, and fuel numbers.',
     size: 'full',
     component: KPIsWidget,
+    permission: [Permission.ANALYTICS_VIEW],
   },
   fleetStatus: {
     key: 'fleetStatus',
@@ -48,6 +66,7 @@ export const WIDGET_REGISTRY: Record<WidgetKey, WidgetDefinition> = {
     description: 'Active, maintenance, and inactive vehicle breakdown.',
     size: 'md',
     component: FleetStatusWidget,
+    permission: [Permission.VEHICLE_VIEW],
   },
   aiRecommendations: {
     key: 'aiRecommendations',
@@ -55,7 +74,7 @@ export const WIDGET_REGISTRY: Record<WidgetKey, WidgetDefinition> = {
     description: 'Fleet health score, risk flags, and recommendations.',
     size: 'lg',
     component: AIRecommendationsWidget,
-    roles: ['organization_owner', 'fleet_manager', 'auditor'],
+    permission: [Permission.ANALYTICS_VIEW],
   },
   maintenance: {
     key: 'maintenance',
@@ -63,6 +82,7 @@ export const WIDGET_REGISTRY: Record<WidgetKey, WidgetDefinition> = {
     description: 'Overdue and upcoming service reminders.',
     size: 'md',
     component: MaintenanceWidget,
+    permission: [Permission.MAINTENANCE_VIEW],
   },
   fuel: {
     key: 'fuel',
@@ -70,6 +90,7 @@ export const WIDGET_REGISTRY: Record<WidgetKey, WidgetDefinition> = {
     description: 'Monthly fuel volume and cost trend.',
     size: 'md',
     component: FuelWidget,
+    permission: [Permission.FUEL_VIEW],
   },
   expenses: {
     key: 'expenses',
@@ -77,6 +98,7 @@ export const WIDGET_REGISTRY: Record<WidgetKey, WidgetDefinition> = {
     description: 'Spending by category.',
     size: 'md',
     component: ExpensesWidget,
+    permission: [Permission.EXPENSE_VIEW],
   },
   trips: {
     key: 'trips',
@@ -84,6 +106,7 @@ export const WIDGET_REGISTRY: Record<WidgetKey, WidgetDefinition> = {
     description: 'Latest logged trips and total distance.',
     size: 'md',
     component: TripsWidget,
+    permission: [Permission.TRIP_VIEW, Permission.DRIVER_VIEW_TRIPS],
   },
   alerts: {
     key: 'alerts',
@@ -91,6 +114,8 @@ export const WIDGET_REGISTRY: Record<WidgetKey, WidgetDefinition> = {
     description: 'Recent notifications across the organization.',
     size: 'md',
     component: AlertsWidget,
+    // No permission: personal/self-service notification feed, same as
+    // the rest of the notification read path (unchanged from Phase C).
   },
   map: {
     key: 'map',
@@ -98,6 +123,7 @@ export const WIDGET_REGISTRY: Record<WidgetKey, WidgetDefinition> = {
     description: 'Fleet location preview.',
     size: 'md',
     component: MapsWidget,
+    permission: [Permission.VEHICLE_VIEW],
   },
 };
 

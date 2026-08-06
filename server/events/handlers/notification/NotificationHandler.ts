@@ -153,8 +153,8 @@ export class NotificationHandler implements IEventHandler<DomainEvent> {
 
   private async getFleetManagers(tenantId: string): Promise<string[]> {
     try {
-      const { organizationRepository } = await import('@/modules/organizations/repositories/organization.repository');
-      const org = await organizationRepository.findById(tenantId, tenantId, false, true);
+      const { resolveOrganization } = await import('@/server/tenancy/organization-resolver');
+      const org = await resolveOrganization(tenantId);
       if (!org) return [];
       return org.members
         .filter((m) => m.role === 'fleet_manager' || m.role === 'organization_owner')
@@ -166,8 +166,8 @@ export class NotificationHandler implements IEventHandler<DomainEvent> {
 
   private async getAccountants(tenantId: string): Promise<string[]> {
     try {
-      const { organizationRepository } = await import('@/modules/organizations/repositories/organization.repository');
-      const org = await organizationRepository.findById(tenantId, tenantId, false, true);
+      const { resolveOrganization } = await import('@/server/tenancy/organization-resolver');
+      const org = await resolveOrganization(tenantId);
       if (!org) return [];
       return org.members
         .filter((m) => m.role === 'accountant' || m.role === 'organization_owner')

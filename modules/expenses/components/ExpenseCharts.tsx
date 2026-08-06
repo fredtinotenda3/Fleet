@@ -17,7 +17,7 @@ import {
   Cell,
   Legend,
 } from 'recharts';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/frontend/shared/ui/data-display/card';
 import { CHART_COLORS } from '@/shared/utils/chart.utils';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import { LoadingState } from '@/shared/ui/feedback/LoadingState';

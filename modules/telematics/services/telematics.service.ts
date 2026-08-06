@@ -12,6 +12,7 @@ import { webSocketManager } from '@/infrastructure/websocket/server';
 import { queueService, JobType } from '@/infrastructure/queue/queue.service';
 import { notificationService } from '@/modules/notifications/services/notification.service';
 import { organizationRepository } from '@/modules/organizations/repositories/organization.repository';
+import { resolveOrganization } from '@/server/tenancy/organization-resolver';
 
 const SPEEDING_THRESHOLD_KMH = 120;
 const LOW_FUEL_THRESHOLD_PERCENT = 10;
@@ -150,7 +151,7 @@ export class TelematicsService {
    */
   private async getFleetManagerIds(tenantId: string): Promise<string[]> {
     try {
-      const organization = await organizationRepository.findById(tenantId, tenantId, false, true);
+      const organization = await resolveOrganization(tenantId);
       if (!organization) return [];
 
       return organization.members

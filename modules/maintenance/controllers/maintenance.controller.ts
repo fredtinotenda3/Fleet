@@ -19,6 +19,7 @@ import {
 } from '@/server/utils/context.utils';
 import { getAuthContext } from '@/server/auth/auth-context';
 import { tenantContextService } from '@/modules/tenancy/services/tenant-context.service';
+import type { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 import { maintenanceRepository } from '../repositories/maintenance.repository';
 import { exportService, fileDownloadResponse } from '@/shared/export';
@@ -45,6 +46,27 @@ export interface ImportResponse {
   results: ImportRowResult[];
 }
 
+/**
+ * FIX (Phase B -- repository/analytics scoping completeness): mirrors
+ * FuelController/ExpenseController/TripController.resolveTenantContext.
+ * NOT used by getOverdueReminders/getUpcomingReminders -- those are
+ * intentionally cross-tenant cron-facing reads (see
+ * MaintenanceRepository), not per-request dashboard scoping.
+ */
+async function resolveTenantContext(req: NextRequest): Promise<TenantContext> {
+  const authContext = await getAuthContext(req);
+  if (!authContext) {
+    throw new UnauthorizedError('Authentication required');
+  }
+  return tenantContextService.resolveContext(
+    authContext.userId,
+    authContext.tenantId,
+    authContext.roles,
+    authContext.isPlatformAdmin,
+    authContext.orgUnitId
+  );
+}
+
 export class MaintenanceController {
   async getReminders(req: NextRequest) {
     try {
@@ -57,7 +79,7 @@ export class MaintenanceController {
         authContext.userId,
         authContext.tenantId,
         authContext.roles,
-        authContext.isSuperAdmin,
+        authContext.isPlatformAdmin,
         authContext.orgUnitId
       );
 
@@ -130,7 +152,7 @@ export class MaintenanceController {
         authContext.userId,
         authContext.tenantId,
         authContext.roles,
-        authContext.isSuperAdmin,
+        authContext.isPlatformAdmin,
         authContext.orgUnitId
       );
 
@@ -198,7 +220,7 @@ export class MaintenanceController {
       authContext.userId,
       authContext.tenantId,
       authContext.roles,
-      authContext.isSuperAdmin,
+      authContext.isPlatformAdmin,
       authContext.orgUnitId
     );
 
@@ -285,9 +307,13 @@ export class MaintenanceController {
   /** Vehicle-Level Analytics: reads optional `license_plate` query param to narrow the same fleet stats calculation to one vehicle. */
   async getMaintenanceStats(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const licensePlate = req.nextUrl.searchParams.get('license_plate') || undefined;
-      const stats = await maintenanceQueryService.getMaintenanceStats(tenantId, licensePlate);
+      const stats = await maintenanceQueryService.getMaintenanceStats(
+        tenantContext.organizationId,
+        licensePlate,
+        tenantContext
+      );
       return successResponse(stats);
     } catch (error) {
       return this.handleError(error);
@@ -377,10 +403,15 @@ export class MaintenanceController {
   /** Vehicle-Level Analytics: reads optional `license_plate` query param to narrow the trend chart to one vehicle. */
   async getCostTrend(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const months = Number(req.nextUrl.searchParams.get('months') || '12');
       const licensePlate = req.nextUrl.searchParams.get('license_plate') || undefined;
-      const data = await maintenanceQueryService.getCostTrend(tenantId, months, licensePlate);
+      const data = await maintenanceQueryService.getCostTrend(
+        tenantContext.organizationId,
+        months,
+        licensePlate,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -389,9 +420,13 @@ export class MaintenanceController {
 
   async getRepairFrequencyByVehicle(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const limit = Number(req.nextUrl.searchParams.get('limit') || '20');
-      const data = await maintenanceQueryService.getRepairFrequencyByVehicle(tenantId, limit);
+      const data = await maintenanceQueryService.getRepairFrequencyByVehicle(
+        tenantContext.organizationId,
+        limit,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -400,9 +435,13 @@ export class MaintenanceController {
 
   async getMostExpensiveVehicles(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const limit = Number(req.nextUrl.searchParams.get('limit') || '20');
-      const data = await maintenanceQueryService.getMostExpensiveVehicles(tenantId, limit);
+      const data = await maintenanceQueryService.getMostExpensiveVehicles(
+        tenantContext.organizationId,
+        limit,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -411,9 +450,13 @@ export class MaintenanceController {
 
   async getDowntimeEstimate(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const limit = Number(req.nextUrl.searchParams.get('limit') || '20');
-      const data = await maintenanceQueryService.getDowntimeEstimate(tenantId, limit);
+      const data = await maintenanceQueryService.getDowntimeEstimate(
+        tenantContext.organizationId,
+        limit,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -430,12 +473,16 @@ export class MaintenanceController {
    */
   async getVehicleInsights(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const licensePlate = req.nextUrl.searchParams.get('license_plate');
       if (!licensePlate) {
         return errorResponse('license_plate is required', 'VALIDATION_ERROR', 400);
       }
-      const data = await maintenanceQueryService.getVehicleMaintenanceInsights(tenantId, licensePlate);
+      const data = await maintenanceQueryService.getVehicleMaintenanceInsights(
+        tenantContext.organizationId,
+        licensePlate,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);

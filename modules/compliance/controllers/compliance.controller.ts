@@ -5,6 +5,7 @@ import { validatePaginationParams } from '@/shared/utils/pagination.utils';
 import { successResponse, paginatedResponse, errorResponse, createdResponse } from '@/server/utils/response.utils';
 import { AppError, ValidationError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
+import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
 
 export class ComplianceController {
   async listRules(req: NextRequest) {
@@ -30,10 +31,13 @@ export class ComplianceController {
 
   async list(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      // RECORDS are scoped. listRules() below is deliberately left
+      // organization-wide: a rule scoped per branch would mean the same
+      // vehicle is judged compliant in one branch and not in another.
+      const context = await resolveTenantContext(req);
       const sp = req.nextUrl.searchParams;
       const { page, limit } = validatePaginationParams(sp.get('page'), sp.get('limit'));
-      const result = await complianceService.list((sp.get('entityType') as any) || undefined, sp.get('status') || undefined, { page, limit }, tenantId);
+      const result = await complianceService.listInScope((sp.get('entityType') as any) || undefined, sp.get('status') || undefined, { page, limit }, context);
       return paginatedResponse(result.data, result.pagination);
     } catch (error) {
       return this.handleError(error);
@@ -42,8 +46,8 @@ export class ComplianceController {
 
   async get(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      return successResponse(await complianceService.get(id, tenantId));
+      const context = await resolveTenantContext(req);
+      return successResponse(await complianceService.getInScope(id, context));
     } catch (error) {
       return this.handleError(error);
     }
@@ -62,10 +66,13 @@ export class ComplianceController {
 
   async resolveRecord(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const context = await resolveTenantContext(req);
       const userId = await getUserIdFromRequest(req);
       const body = await req.json().catch(() => ({}));
-      return successResponse(await complianceService.resolveRecord(id, tenantId, userId, body?.documentUrl));
+      // Read gate before the write -- marking another branch's vehicle
+      // compliant is a cross-unit mutation of a legal record.
+      await complianceService.getInScope(id, context);
+      return successResponse(await complianceService.resolveRecord(id, context.organizationId, userId, body?.documentUrl));
     } catch (error) {
       return this.handleError(error);
     }
@@ -73,11 +80,12 @@ export class ComplianceController {
 
   async waiveRecord(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const context = await resolveTenantContext(req);
       const userId = await getUserIdFromRequest(req);
       const { reason } = await req.json();
       if (!reason) throw new ValidationError('reason is required');
-      return successResponse(await complianceService.waiveRecord(id, reason, tenantId, userId));
+      await complianceService.getInScope(id, context);
+      return successResponse(await complianceService.waiveRecord(id, reason, context.organizationId, userId));
     } catch (error) {
       return this.handleError(error);
     }

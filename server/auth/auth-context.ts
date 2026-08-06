@@ -10,12 +10,43 @@ import { sessionService } from '@/modules/security/services/session.service';
 import { apiKeyService } from '@/modules/security/services/api-key.service';
 import { tokenService } from '@/infrastructure/security/token.service';
 import { ACCESS_TOKEN_COOKIE_NAME } from '@/infrastructure/security/edge-token-verify';
+import { PLATFORM_SCOPE_TENANT_ID } from '@/server/tenancy/tenant-scope';
 
 export interface AuthContext {
   userId: string;
   tenantId: string;
   roles: string[];
   permissions: Permission[];
+  /**
+   * FIX (critical -- one boolean doing two unrelated jobs).
+   *
+   * `isSuperAdmin` used to mean BOTH:
+   *   (a) "may bypass RBAC permission checks" -- correct for an
+   *       ORGANIZATION_OWNER acting inside their own organization, and
+   *   (b) "may read and write across every tenant" -- catastrophic for
+   *       an ORGANIZATION_OWNER, and the mechanism by which one
+   *       organization could see another's data.
+   *
+   * Because it was a single flag set to `isPlatformSuperAdmin ||
+   * roles.includes(ORGANIZATION_OWNER)`, any call site that forwarded it
+   * into a repository's tenant-filter argument silently granted (b) to
+   * every org owner. That is a breach one careless argument away in all
+   * 40 modules on the unscoped path.
+   *
+   * The two meanings are now separate fields:
+   *   canBypassRbac   -- SUPER_ADMIN or ORGANIZATION_OWNER. Permission
+   *                      checks only. NEVER widens a tenant query.
+   *   isPlatformAdmin -- SUPER_ADMIN only. The single flag that may
+   *                      widen a query beyond one tenant.
+   *
+   * `isSuperAdmin` is retained as a deprecated alias of canBypassRbac so
+   * the ~174 existing references keep their (correct) permission-check
+   * semantics. Anything scoping data must read isPlatformAdmin.
+   */
+  canBypassRbac: boolean;
+  /** SUPER_ADMIN only. The ONLY flag permitted to widen tenant scope. */
+  isPlatformAdmin: boolean;
+  /** @deprecated Alias of canBypassRbac. Never use for data scoping. */
   isSuperAdmin: boolean;
   /**
    * Optional active branch/department/fleet scope for this request,
@@ -61,6 +92,8 @@ async function getAuthContextFromApiKey(req: NextRequest): Promise<AuthContext |
     tenantId: record.organizationId,
     roles: [],
     permissions: record.permissions as Permission[],
+    canBypassRbac: false,
+    isPlatformAdmin: false,
     isSuperAdmin: false,
     isApiKey: true,
     apiKeyId: record._id,
@@ -114,14 +147,37 @@ async function getAuthContextFromAccessToken(req: NextRequest): Promise<AuthCont
   }
 
   const roles = verified.roles || [];
-  const isPlatformSuperAdmin = roles.includes(Role.SUPER_ADMIN);
-  const isSuperAdmin = isPlatformSuperAdmin || roles.includes(Role.ORGANIZATION_OWNER);
+  const isPlatformAdmin = roles.includes(Role.SUPER_ADMIN);
+  const canBypassRbac = isPlatformAdmin || roles.includes(Role.ORGANIZATION_OWNER);
 
   const permissions = roles
     .flatMap((role) => permissionService.getPermissionsForRole(role as Role))
     .filter((value, index, all) => all.indexOf(value) === index);
 
-  const tenantId = isPlatformSuperAdmin ? 'default' : verified.tenantId || 'default';
+  /**
+   * FIX (critical -- fail-open tenant fallback). Was:
+   *   isPlatformSuperAdmin ? 'default' : verified.tenantId || 'default'
+   * Both branches produced the legacy sentinel 'default', which
+   * BaseRepository treated as "return every tenant's rows". The `||
+   * 'default'` fallback meant a token carrying NO tenant claim silently
+   * escalated to platform-wide read access.
+   *
+   * Now: a real SUPER_ADMIN gets the one explicit platform sentinel;
+   * everyone else must present a real tenant claim. A token without one
+   * is treated as having no valid credential (null) rather than
+   * defaulting to anything.
+   */
+  if (!isPlatformAdmin && !verified.tenantId) {
+    console.warn(
+      '[auth-context] Rejecting access token with no tenant claim for user',
+      verified.userId
+    );
+    return null;
+  }
+
+  const tenantId = isPlatformAdmin
+    ? PLATFORM_SCOPE_TENANT_ID
+    : (verified.tenantId as string);
 
   if (verified.sessionId) {
     const valid = await sessionService.isSessionValid(verified.sessionId, tenantId).catch(() => true);
@@ -142,7 +198,9 @@ async function getAuthContextFromAccessToken(req: NextRequest): Promise<AuthCont
     tenantId,
     roles,
     permissions,
-    isSuperAdmin,
+    canBypassRbac,
+    isPlatformAdmin,
+    isSuperAdmin: canBypassRbac,
     orgUnitId: orgUnitId || undefined,
     sessionId: verified.sessionId,
   };
@@ -152,13 +210,13 @@ async function getAuthContextFromAccessToken(req: NextRequest): Promise<AuthCont
  * Single canonical place that resolves a request's auth context.
  *
  * Resolution order:
- *   1. API key (X-API-Key header or `Authorization: ApiKey <key>`) â€”
+ *   1. API key (X-API-Key header or `Authorization: ApiKey <key>`) Ã¢â‚¬â€
  *      machine-to-machine credentials, checked first since ruling them
  *      out is a cheap prefix check that never touches token/cookie
  *      verification machinery.
  *   2. Custom access token (httpOnly cookie or `Authorization: Bearer`)
- *      â€” this app's actual login flow (see fix note above).
- *   3. NextAuth session JWT â€” the browser cookie flow, hardened here
+ *      Ã¢â‚¬â€ this app's actual login flow (see fix note above).
+ *   3. NextAuth session JWT Ã¢â‚¬â€ the browser cookie flow, hardened here
  *      with a live revocation check against the UserSession store via
  *      the token's `sid` claim (stamped by lib/authOptions.ts at
  *      sign-in, alongside creating the matching UserSession row). Kept
@@ -215,14 +273,23 @@ export async function getAuthContext(req: NextRequest): Promise<AuthContext | nu
    * token, so tenant-scoped queries stay correctly scoped to their own
    * organization while still bypassing RBAC permission checks within it.
    */
-  const isPlatformSuperAdmin = roles.includes(Role.SUPER_ADMIN);
-  const isSuperAdmin = isPlatformSuperAdmin || roles.includes(Role.ORGANIZATION_OWNER);
+  const isPlatformAdmin = roles.includes(Role.SUPER_ADMIN);
+  const canBypassRbac = isPlatformAdmin || roles.includes(Role.ORGANIZATION_OWNER);
 
   const permissions = roles
     .flatMap((role) => permissionService.getPermissionsForRole(role as Role))
     .filter((value, index, all) => all.indexOf(value) === index);
 
-  const tenantId = isPlatformSuperAdmin ? 'default' : (token as any).tenantId || 'default';
+  // Same fail-closed rule as the access-token branch above: no implicit
+  // 'default' fallback, because 'default' meant "every tenant".
+  if (!isPlatformAdmin && !(token as any).tenantId) {
+    console.warn('[auth-context] Rejecting session with no tenant claim for user', token.sub);
+    return null;
+  }
+
+  const tenantId = isPlatformAdmin
+    ? PLATFORM_SCOPE_TENANT_ID
+    : ((token as any).tenantId as string);
   const sessionId = (token as any).sid as string | undefined;
 
   if (sessionId) {
@@ -230,8 +297,8 @@ export async function getAuthContext(req: NextRequest): Promise<AuthContext | nu
     if (!valid) {
       // The session backing this JWT has been explicitly revoked (e.g.
       // "log out this device" from another session, or an admin forcing
-      // a logout). The JWT signature is still cryptographically valid â€”
-      // stateless JWTs can't be un-signed â€” but the session it points to
+      // a logout). The JWT signature is still cryptographically valid Ã¢â‚¬â€
+      // stateless JWTs can't be un-signed Ã¢â‚¬â€ but the session it points to
       // no longer exists, so treat the request as unauthenticated. Fails
       // open on infrastructure errors so a session-store hiccup never
       // locks every user out of the app.
@@ -248,7 +315,9 @@ export async function getAuthContext(req: NextRequest): Promise<AuthContext | nu
     tenantId,
     roles,
     permissions,
-    isSuperAdmin,
+    canBypassRbac,
+    isPlatformAdmin,
+    isSuperAdmin: canBypassRbac,
     orgUnitId: orgUnitId || undefined,
     sessionId,
   };
@@ -263,19 +332,19 @@ export async function requireAuthContext(req: NextRequest): Promise<AuthContext>
 }
 
 export function hasPermission(context: AuthContext, permission: Permission): boolean {
-  return context.isSuperAdmin || context.permissions.includes(permission);
+  return context.canBypassRbac || context.permissions.includes(permission);
 }
 
 export function hasAnyPermission(context: AuthContext, permissions: Permission[]): boolean {
-  return context.isSuperAdmin || permissions.some((p) => context.permissions.includes(p));
+  return context.canBypassRbac || permissions.some((p) => context.permissions.includes(p));
 }
 
 export function hasAllPermissions(context: AuthContext, permissions: Permission[]): boolean {
-  return context.isSuperAdmin || permissions.every((p) => context.permissions.includes(p));
+  return context.canBypassRbac || permissions.every((p) => context.permissions.includes(p));
 }
 
 export function hasRole(context: AuthContext, roles: string[]): boolean {
-  return context.isSuperAdmin || context.roles.some((r) => roles.includes(r));
+  return context.canBypassRbac || context.roles.some((r) => roles.includes(r));
 }
 
 export async function canPerform(
@@ -288,7 +357,7 @@ export async function canPerform(
     userId: context.userId,
     tenantId: context.tenantId,
     roles: context.roles,
-    isSuperAdmin: context.isSuperAdmin,
+    isSuperAdmin: context.canBypassRbac,
     permission,
     resource: resource || (context.orgUnitId ? { type: 'org_unit', orgUnitId: context.orgUnitId } : undefined),
     userAttributes,

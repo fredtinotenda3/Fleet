@@ -28,7 +28,10 @@
 
 import { Filter } from 'mongodb';
 import { BaseRepository } from '@/server/repositories/base.repository';
+import { TenantScopedRepository } from '@/server/repositories/tenant-scoped.repository';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { ComplianceRule, ComplianceRecord, ComplianceAppliesTo } from '../types/compliance.types';
+import '../types/compliance.tenancy-addendum';
 import { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
 
 export class ComplianceRuleRepository extends BaseRepository<ComplianceRule> {
@@ -39,7 +42,14 @@ export class ComplianceRuleRepository extends BaseRepository<ComplianceRule> {
   }
 }
 
-export class ComplianceRecordRepository extends BaseRepository<ComplianceRecord> {
+/**
+ * SCOPED (Phase F) -- records only. ComplianceRuleRepository above stays
+ * organization-wide on purpose: a rule scoped per branch would mean the
+ * same vehicle is judged compliant in one branch and not in another.
+ * A RECORD is evidence about one vehicle or driver and inherits that
+ * subject's scope.
+ */
+export class ComplianceRecordRepository extends TenantScopedRepository<ComplianceRecord> {
   protected collectionName = 'tblcompliancerecords';
 
   async getFiltered(entityType: ComplianceAppliesTo | undefined, status: string | undefined, tenantId: string, pagination: PaginationParams): Promise<PaginatedResponse<ComplianceRecord>> {
@@ -63,6 +73,39 @@ export class ComplianceRecordRepository extends BaseRepository<ComplianceRecord>
    */
   async findAllOpen(tenantId: string): Promise<ComplianceRecord[]> {
     return this.findMany({ status: { $in: ['pending', 'due_soon', 'overdue'] } } as Filter<ComplianceRecord>, tenantId);
+  }
+
+  /** Org-unit-scoped variant of getFiltered. */
+  async getFilteredInScope(
+    entityType: ComplianceAppliesTo | undefined,
+    status: string | undefined,
+    context: TenantContext,
+    pagination: PaginationParams
+  ): Promise<PaginatedResponse<ComplianceRecord>> {
+    const filter: Record<string, unknown> = {};
+    if (entityType) filter.entityType = entityType;
+    if (status) filter.status = status;
+    return this.findWithPaginationInScope(
+      filter as Filter<ComplianceRecord>,
+      pagination,
+      context
+    );
+  }
+
+  /** Org-unit-scoped variant of findOpenForEntity. */
+  async findOpenForEntityInScope(
+    entityType: ComplianceAppliesTo,
+    entityId: string,
+    context: TenantContext
+  ): Promise<ComplianceRecord[]> {
+    return this.findManyInScope(
+      {
+        entityType,
+        entityId,
+        status: { $in: ['pending', 'due_soon', 'overdue'] },
+      } as Filter<ComplianceRecord>,
+      context
+    );
   }
 }
 

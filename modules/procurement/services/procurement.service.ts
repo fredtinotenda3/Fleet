@@ -24,6 +24,8 @@ import {
 } from '../events/procurement.events';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
 import { inventoryService } from '@/modules/inventory/services/inventory.service';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import '../types/procurement.tenancy-addendum';
 
 function computeTotal(items: { quantity: number; unitCost: number }[]): number {
   return items.reduce((sum, i) => sum + i.quantity * i.unitCost, 0);
@@ -92,6 +94,36 @@ export class ProcurementService {
 
   async listRequests(status: PurchaseRequestStatus | undefined, pagination: PaginationParams, tenantId: string): Promise<PaginatedResponse<PurchaseRequest>> {
     return this.prRepo.getFiltered(status, tenantId, pagination);
+  }
+
+  /** Org-unit-scoped variant of listRequests(). */
+  async listRequestsInScope(
+    status: PurchaseRequestStatus | undefined,
+    pagination: PaginationParams,
+    context: TenantContext
+  ): Promise<PaginatedResponse<PurchaseRequest>> {
+    return this.prRepo.getFilteredInScope(status, context, pagination);
+  }
+
+  /**
+   * Scoped single-request read.
+   *
+   * This one is load-bearing beyond visibility. BRANCH_MANAGER holds
+   * Permission.PROCUREMENT_APPROVE, so approveRequest/rejectRequest look
+   * a request up by id within the tenant -- and the tenant is the whole
+   * organization. Without this gate, any branch manager can approve any
+   * other branch's spend. The approve/reject paths below call this.
+   */
+  async getRequestInScope(id: string, context: TenantContext): Promise<PurchaseRequest> {
+    const pr = await this.prRepo.findById(id, context.organizationId);
+    if (!pr) throw new NotFoundError('Purchase request not found');
+    if (
+      context.accessibleOrgUnitIds !== null &&
+      (!pr.orgUnitId || !context.accessibleOrgUnitIds.includes(pr.orgUnitId))
+    ) {
+      throw new NotFoundError('Purchase request not found');
+    }
+    return pr;
   }
 
   async getRequest(id: string, tenantId: string): Promise<PurchaseRequest> {
@@ -210,6 +242,29 @@ export class ProcurementService {
 
   async listOrders(status: PurchaseOrderStatus | undefined, vendorId: string | undefined, pagination: PaginationParams, tenantId: string): Promise<PaginatedResponse<PurchaseOrder>> {
     return this.poRepo.getFiltered(status, vendorId, tenantId, pagination);
+  }
+
+  /** Org-unit-scoped variant of listOrders(). */
+  async listOrdersInScope(
+    status: PurchaseOrderStatus | undefined,
+    vendorId: string | undefined,
+    pagination: PaginationParams,
+    context: TenantContext
+  ): Promise<PaginatedResponse<PurchaseOrder>> {
+    return this.poRepo.getFilteredInScope(status, vendorId, context, pagination);
+  }
+
+  /** Scoped single-order read. 404 for an out-of-scope order. */
+  async getOrderInScope(id: string, context: TenantContext): Promise<PurchaseOrder> {
+    const po = await this.poRepo.findById(id, context.organizationId);
+    if (!po) throw new NotFoundError('Purchase order not found');
+    if (
+      context.accessibleOrgUnitIds !== null &&
+      (!po.orgUnitId || !context.accessibleOrgUnitIds.includes(po.orgUnitId))
+    ) {
+      throw new NotFoundError('Purchase order not found');
+    }
+    return po;
   }
 
   async getOrder(id: string, tenantId: string): Promise<PurchaseOrder> {

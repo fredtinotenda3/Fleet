@@ -6,21 +6,43 @@ import type { ExportFormat } from '@/shared/export/export.types';
 import { triggerExport, type ExportDownloadResult } from '@/shared/utils/export-download.utils';
 import { maintenanceApi } from '../services/maintenance.api';
 import type { Reminder, ReminderStatus, Priority, MaintenanceTableFilters } from '../types';
+import { Permission, permissionService } from '@/server/permissions/roles';
 
+/**
+ * FIX (Phase E, task 2): these three functions each did
+ * `roles.some((r) => [...hardcoded strings].includes(r))`. Checked
+ * every list against the real rolePermissions map in
+ * server/permissions/roles.ts and found two real drifts, not just a
+ * style issue:
+ *
+ * - canManageMaintenance/canCompleteMaintenance's role lists omitted
+ *   BRANCH_MANAGER and WORKSHOP_MANAGER even though both hold
+ *   MAINTENANCE_EDIT and MAINTENANCE_COMPLETE respectively -- Phase A
+ *   added those roles after this file was last touched, so this is
+ *   the same "list wasn't updated when a new role was added" bug
+ *   already fixed in middleware.ts and Sidebar.tsx.
+ * - canDeleteMaintenance's list included FLEET_MANAGER, but
+ *   FLEET_MANAGER does NOT hold Permission.MAINTENANCE_DELETE in
+ *   rolePermissions (only SUPER_ADMIN/ORGANIZATION_OWNER/
+ *   ORGANIZATION_ADMIN do). This is a real access-model change, not
+ *   cosmetic: a Fleet Manager who could previously delete maintenance
+ *   records here now can't, matching what rolePermissions has always
+ *   said. Flagging this explicitly rather than burying it -- if
+ *   product wants Fleet Manager to retain delete rights, the fix is
+ *   to add MAINTENANCE_DELETE to rolePermissions[FLEET_MANAGER] in
+ *   roles.ts (the single source of truth), not to special-case it
+ *   here again.
+ */
 export function canManageMaintenance(roles: string[]): boolean {
-  return roles.some((r) =>
-    ['super_admin', 'organization_owner', 'fleet_manager', 'mechanic'].includes(r)
-  );
+  return permissionService.hasPermission(roles, Permission.MAINTENANCE_EDIT);
 }
 
 export function canDeleteMaintenance(roles: string[]): boolean {
-  return roles.some((r) => ['super_admin', 'organization_owner', 'fleet_manager'].includes(r));
+  return permissionService.hasPermission(roles, Permission.MAINTENANCE_DELETE);
 }
 
 export function canCompleteMaintenance(roles: string[]): boolean {
-  return roles.some((r) =>
-    ['super_admin', 'organization_owner', 'fleet_manager', 'mechanic'].includes(r)
-  );
+  return permissionService.hasPermission(roles, Permission.MAINTENANCE_COMPLETE);
 }
 
 export const STATUS_BADGE_CLASSES: Record<ReminderStatus, string> = {
@@ -56,14 +78,6 @@ export function formatEstimatedCost(cost?: number): string {
   return formatCurrency(cost);
 }
 
-/**
- * Enterprise Export Framework (Phase 2). Replaces exportMaintenanceToCSV/
- * exportMaintenanceToExcel, which only ever exported the currently-loaded
- * page of records. Sends the user's current filters to
- * GET /api/reminders?action=export, which re-runs the same scoped/
- * filtered query server-side with no page limit (capped at
- * EXPORT_ROW_CAP) and returns a real file.
- */
 export async function exportMaintenance(
   filters: MaintenanceTableFilters,
   format: ExportFormat = 'csv'

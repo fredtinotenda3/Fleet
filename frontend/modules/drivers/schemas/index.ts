@@ -9,7 +9,12 @@ export const driverFormSchema = z.object({
   driver_code: z.string().max(30).optional(),
   license_number: z.string().max(50).optional(),
   license_expiry: z.string().optional(),
-  status: z.enum(['active', 'inactive', 'suspended']).default('active'),
+  // NOTE: deliberately NOT `.default('active')`. A zod default makes the
+  // schema's input type differ from its output type (status optional in,
+  // required out), which makes zodResolver's Resolver<> unassignable to
+  // useForm<DriverFormValues>. The form supplies 'active' via its own
+  // defaultValues instead, keeping one consistent type.
+  status: z.enum(['active', 'inactive', 'suspended']),
   notes: z.string().max(500).optional(),
 });
 

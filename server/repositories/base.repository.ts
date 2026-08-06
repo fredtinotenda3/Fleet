@@ -22,6 +22,11 @@ import {
   calculateSkip,
 } from '@/shared/utils/pagination.utils';
 import { ConflictError } from '@/server/errors/app.errors';
+import {
+  resolveTenantScope as resolveScope,
+  assertUsableAsTenantId,
+  PLATFORM_SCOPE_TENANT_ID as PLATFORM_SCOPE,
+} from '@/server/tenancy/tenant-scope';
 
 export interface QueryOptions extends FindOptions {
   sortBy?: string;
@@ -30,33 +35,29 @@ export interface QueryOptions extends FindOptions {
 }
 
 /**
- * FIX (critical -- tenant-isolation consistency): the set of tenantId
- * values that mean "platform-level, do not filter by tenant" used to be
- * defined independently in three places -- this file (`'default' |
- * 'system'`, missing 'super_admin'), ExpenseRepository.isSuperAdminTenant()
- * and FuelRepository (`'default' | 'system' | 'super_admin'`) -- and
- * ExpenseRepository's own comments describe that exact drift causing a
- * real production bug (dashboard stats vs. list page disagreeing on
- * what "see everything" meant). Exported here as the single source of
- * truth; other repositories should import this instead of
- * redefining it.
- *
- * Note: this sentinel-based bypass only does the right thing if
- * tenantId is actually the caller's real per-tenant tenantId for
- * non-admin users. It relied on lib/authOptions.ts, which -- until the
- * accompanying fix there -- was assigning tenantId: 'default' to every
- * password-authenticated user, not just real admins. That is the root
- * cause that needed fixing; this export just makes sure every
- * repository agrees on the sentinel set once that's fixed.
+ * Tenant-scope sentinels now live in exactly one place:
+ * server/tenancy/tenant-scope.ts. The PLATFORM_SENTINEL_TENANT_IDS /
+ * isPlatformSentinelTenant exports that used to be defined here were a
+ * FAIL-OPEN mechanism -- the literal strings 'default' | 'system' |
+ * 'super_admin' silently disabled tenant filtering, and
+ * lib/authOptions.ts handed 'default' to every legacy account that had
+ * no tenantId. They are re-exported below so existing imports keep
+ * compiling, but now delegate to the fail-CLOSED implementation: those
+ * values raise TenantScopeError instead of granting global reads.
  */
-export const PLATFORM_SENTINEL_TENANT_IDS: ReadonlySet<string> = new Set([
-  'default',
-  'system',
-  'super_admin',
-]);
+export {
+  PLATFORM_SCOPE_TENANT_ID,
+  TenantScopeError,
+  resolveTenantScope,
+} from '@/server/tenancy/tenant-scope';
 
+/**
+ * @deprecated Import resolveTenantScope() from server/tenancy/tenant-scope
+ * instead. Returns true ONLY for the single explicit platform sentinel,
+ * never for the legacy fail-open values.
+ */
 export function isPlatformSentinelTenant(tenantId: string): boolean {
-  return PLATFORM_SENTINEL_TENANT_IDS.has(tenantId);
+  return tenantId === PLATFORM_SCOPE;
 }
 
 export abstract class BaseRepository<T extends BaseEntity> {
@@ -70,22 +71,44 @@ export abstract class BaseRepository<T extends BaseEntity> {
     return this.db.collection<T>(this.collectionName);
   }
 
+  /**
+   * FIX (critical -- fail-open tenant filter). This method used to be:
+   *
+   *   if (isSuperAdmin || isPlatformSentinelTenant(tenantId)) return {};
+   *
+   * Two independent ways to silently drop the tenant predicate:
+   *
+   *   a) `isSuperAdmin` was true for ORGANIZATION_OWNER as well as
+   *      SUPER_ADMIN (see server/auth/auth-context.ts), because one
+   *      boolean was doing two unrelated jobs -- "may bypass RBAC
+   *      permission checks" and "may read across tenants". An org owner
+   *      legitimately needs the first and must NEVER have the second.
+   *   b) the literal strings 'default'/'system'/'super_admin' meant
+   *      "return everything", and lib/authOptions.ts assigned 'default'
+   *      to every account whose tbladmin record lacked a tenantId.
+   *
+   * Now: scope is resolved through the single fail-closed resolver.
+   * A missing or legacy tenantId raises TenantScopeError (403) instead
+   * of widening the query. `isPlatformAdmin` is a distinct parameter
+   * that only a literal SUPER_ADMIN context ever sets to true.
+   */
   protected getTenantFilter(
     tenantId: string,
-    isSuperAdmin: boolean = false
+    isPlatformAdmin: boolean = false
   ): Filter<T> {
-    if (isSuperAdmin || isPlatformSentinelTenant(tenantId)) {
+    const scope = resolveScope(tenantId, { isPlatformAdmin });
+    if (scope.kind === 'platform') {
       return {} as Filter<T>;
     }
-    return { tenantId } as Filter<T>;
+    return { tenantId: scope.tenantId } as Filter<T>;
   }
 
   protected getActiveFilter(
     tenantId: string,
     includeDeleted: boolean = false,
-    isSuperAdmin: boolean = false
+    isPlatformAdmin: boolean = false
   ): Filter<T> {
-    const filter = this.getTenantFilter(tenantId, isSuperAdmin);
+    const filter = this.getTenantFilter(tenantId, isPlatformAdmin);
     if (!includeDeleted) {
       return { ...filter, isDeleted: { $ne: true } } as Filter<T>;
     }
@@ -122,12 +145,12 @@ export abstract class BaseRepository<T extends BaseEntity> {
     id: string,
     tenantId: string,
     includeDeleted: boolean = false,
-    isSuperAdmin: boolean = false
+    isPlatformAdmin: boolean = false
   ): Promise<T | null> {
     if (!ObjectId.isValid(id)) return null;
     const collection = await this.getCollection();
     const filter = {
-      ...this.getActiveFilter(tenantId, includeDeleted, isSuperAdmin),
+      ...this.getActiveFilter(tenantId, includeDeleted, isPlatformAdmin),
       _id: new ObjectId(id),
     } as Filter<T>;
     // `collection.findOne` returns `WithId<T> | null` (Mongo's own `_id:
@@ -140,12 +163,17 @@ export abstract class BaseRepository<T extends BaseEntity> {
     filter: Filter<T>,
     tenantId: string,
     includeDeleted: boolean = false,
-    isSuperAdmin: boolean = false
+    isPlatformAdmin: boolean = false
   ): Promise<T | null> {
     const collection = await this.getCollection();
     const finalFilter = {
-      ...this.getActiveFilter(tenantId, includeDeleted, isSuperAdmin),
       ...filter,
+      // Tenant scope is spread LAST and deliberately so: a caller-
+      // supplied filter containing a `tenantId` (or `isDeleted`) key
+      // must never be able to overwrite the scope predicate. Spreading
+      // scope first -- as this did -- made every list/search/count
+      // method silently bypassable by key collision.
+      ...this.getActiveFilter(tenantId, includeDeleted, isPlatformAdmin),
     } as Filter<T>;
     return collection.findOne(finalFilter) as unknown as Promise<T | null>;
   }
@@ -155,12 +183,17 @@ export abstract class BaseRepository<T extends BaseEntity> {
     tenantId: string,
     options: QueryOptions = {},
     includeDeleted: boolean = false,
-    isSuperAdmin: boolean = false
+    isPlatformAdmin: boolean = false
   ): Promise<T[]> {
     const collection = await this.getCollection();
     const finalFilter = {
-      ...this.getActiveFilter(tenantId, includeDeleted, isSuperAdmin),
       ...filter,
+      // Tenant scope is spread LAST and deliberately so: a caller-
+      // supplied filter containing a `tenantId` (or `isDeleted`) key
+      // must never be able to overwrite the scope predicate. Spreading
+      // scope first -- as this did -- made every list/search/count
+      // method silently bypassable by key collision.
+      ...this.getActiveFilter(tenantId, includeDeleted, isPlatformAdmin),
     } as Filter<T>;
 
     const {
@@ -183,12 +216,17 @@ export abstract class BaseRepository<T extends BaseEntity> {
     pagination: PaginationParams,
     tenantId: string,
     includeDeleted: boolean = false,
-    isSuperAdmin: boolean = false
+    isPlatformAdmin: boolean = false
   ): Promise<PaginatedResponse<T>> {
     const collection = await this.getCollection();
     const finalFilter = {
-      ...this.getActiveFilter(tenantId, includeDeleted, isSuperAdmin),
       ...filter,
+      // Tenant scope is spread LAST and deliberately so: a caller-
+      // supplied filter containing a `tenantId` (or `isDeleted`) key
+      // must never be able to overwrite the scope predicate. Spreading
+      // scope first -- as this did -- made every list/search/count
+      // method silently bypassable by key collision.
+      ...this.getActiveFilter(tenantId, includeDeleted, isPlatformAdmin),
     } as Filter<T>;
 
     const {
@@ -223,9 +261,25 @@ export abstract class BaseRepository<T extends BaseEntity> {
     const collection = await this.getCollection();
     const now = new Date();
 
+    /**
+     * FIX (critical -- write-side tenant corruption). This is the exact
+     * line that produced the reported symptom. Import routes resolve the
+     * tenant via getTenantFromRequest(), which returned the literal
+     * 'default' for any caller whose account had no tenantId. That value
+     * was then written straight onto every created row, so imported
+     * vehicles ended up carrying tenantId: 'default' -- invisible to
+     * their real organization's scoped queries, and visible to every
+     * caller whose scope was also 'default'.
+     *
+     * assertUsableAsTenantId() refuses to persist a platform sentinel or
+     * a legacy value. A misconfigured import now fails loudly at row 1
+     * instead of silently poisoning the collection.
+     */
+    const ownerTenantId = assertUsableAsTenantId(tenantId);
+
     const document = {
       ...data,
-      tenantId,
+      tenantId: ownerTenantId,
       createdAt: now,
       updatedAt: now,
       isDeleted: false,
@@ -253,12 +307,12 @@ export abstract class BaseRepository<T extends BaseEntity> {
     data: Partial<Omit<T, '_id' | 'tenantId' | 'createdAt' | 'createdBy'>>,
     tenantId: string,
     userId?: string,
-    isSuperAdmin: boolean = false
+    isPlatformAdmin: boolean = false
   ): Promise<T | null> {
     if (!ObjectId.isValid(id)) return null;
     const collection = await this.getCollection();
     const filter = {
-      ...this.getTenantFilter(tenantId, isSuperAdmin),
+      ...this.getTenantFilter(tenantId, isPlatformAdmin),
       _id: new ObjectId(id),
       isDeleted: { $ne: true },
     } as Filter<T>;
@@ -288,12 +342,12 @@ export abstract class BaseRepository<T extends BaseEntity> {
     id: string,
     tenantId: string,
     userId?: string,
-    isSuperAdmin: boolean = false
+    isPlatformAdmin: boolean = false
   ): Promise<boolean> {
     if (!ObjectId.isValid(id)) return false;
     const collection = await this.getCollection();
     const filter = {
-      ...this.getTenantFilter(tenantId, isSuperAdmin),
+      ...this.getTenantFilter(tenantId, isPlatformAdmin),
       _id: new ObjectId(id),
       isDeleted: { $ne: true },
     } as Filter<T>;
@@ -314,12 +368,12 @@ export abstract class BaseRepository<T extends BaseEntity> {
   async hardDelete(
     id: string,
     tenantId: string,
-    isSuperAdmin: boolean = false
+    isPlatformAdmin: boolean = false
   ): Promise<boolean> {
     if (!ObjectId.isValid(id)) return false;
     const collection = await this.getCollection();
     const filter = {
-      ...this.getTenantFilter(tenantId, isSuperAdmin),
+      ...this.getTenantFilter(tenantId, isPlatformAdmin),
       _id: new ObjectId(id),
     } as Filter<T>;
 
@@ -331,12 +385,17 @@ export abstract class BaseRepository<T extends BaseEntity> {
     filter: Filter<T> = {},
     tenantId: string,
     includeDeleted: boolean = false,
-    isSuperAdmin: boolean = false
+    isPlatformAdmin: boolean = false
   ): Promise<number> {
     const collection = await this.getCollection();
     const finalFilter = {
-      ...this.getActiveFilter(tenantId, includeDeleted, isSuperAdmin),
       ...filter,
+      // Tenant scope is spread LAST and deliberately so: a caller-
+      // supplied filter containing a `tenantId` (or `isDeleted`) key
+      // must never be able to overwrite the scope predicate. Spreading
+      // scope first -- as this did -- made every list/search/count
+      // method silently bypassable by key collision.
+      ...this.getActiveFilter(tenantId, includeDeleted, isPlatformAdmin),
     } as Filter<T>;
     return collection.countDocuments(finalFilter);
   }
@@ -344,9 +403,9 @@ export abstract class BaseRepository<T extends BaseEntity> {
   async exists(
     filter: Filter<T>,
     tenantId: string,
-    isSuperAdmin: boolean = false
+    isPlatformAdmin: boolean = false
   ): Promise<boolean> {
-    const c = await this.count(filter, tenantId, false, isSuperAdmin);
+    const c = await this.count(filter, tenantId, false, isPlatformAdmin);
     return c > 0;
   }
 }

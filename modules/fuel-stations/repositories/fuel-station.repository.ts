@@ -1,3 +1,4 @@
+import { prefixMatch, containsMatch } from '@/shared/utils/regex.utils';
 // modules/fuel-stations/repositories/fuel-station.repository.ts
 
 import { BaseRepository } from '@/server/repositories/base.repository';
@@ -17,9 +18,9 @@ export class FuelStationRepository extends BaseRepository<FuelStation> {
 
     if (filters.search) {
       filter.$or = [
-        { name: { $regex: filters.search, $options: 'i' } },
-        { brand: { $regex: filters.search, $options: 'i' } },
-        { city: { $regex: filters.search, $options: 'i' } },
+        { name: containsMatch(filters.search) },
+        { brand: containsMatch(filters.search) },
+        { city: containsMatch(filters.search) },
       ];
     }
     if (filters.isActive !== undefined) {

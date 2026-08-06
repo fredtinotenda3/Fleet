@@ -3,19 +3,6 @@
 import { queryBus } from '@/server/cqrs/query-bus';
 import { GetTripsQuery } from '../queries/get-trips.query';
 import { GetTripByIdQuery } from '../queries/get-trip-by-id.query';
-import { GetTripStatsQuery } from '../queries/get-trip-stats.query';
-import { GetDailyDistanceQuery } from '../queries/get-daily-distance.query';
-import { GetTripKpisQuery } from '../queries/get-trip-kpis.query';
-import { GetTripExceptionsQuery } from '../queries/get-trip-exceptions.query';
-// PHASE 2
-import { GetMonthlyTripTrendQuery } from '../queries/get-monthly-trip-trend.query';
-import { GetVehicleUtilizationQuery } from '../queries/get-vehicle-utilization.query';
-import { GetDriverUtilizationQuery } from '../queries/get-driver-utilization.query';
-import { GetTripDistanceDistributionQuery } from '../queries/get-trip-distance-distribution.query';
-import { GetTripsByDayOfWeekQuery } from '../queries/get-trips-by-day-of-week.query';
-// PHASE 3
-import { GetTripCostAnalyticsQuery } from '../queries/get-trip-cost-analytics.query';
-import { GetTripCostSummaryQuery } from '../queries/get-trip-cost-summary.query';
 import {
   Trip,
   TripFilters,
@@ -31,7 +18,16 @@ import {
   TripCostSummary,
 } from '@/shared/types/trip.types';
 import { PaginatedResponse, PaginationParams } from '@/shared/types/common.types';
+import type { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { tripRepository } from '../repositories/trip.repository';
 
+// FIX (Phase B -- repository/analytics scoping completeness): same
+// change as FuelQueryService/ExpenseQueryService -- the 12 analytics
+// methods below used to route through queryBus -> Query class -> Handler,
+// none of which carried `context`. These now call the (already
+// org-unit-scoped) repository directly. CRUD/list methods
+// (getFilteredTrips, getTripById) are unchanged and still routed through
+// the CQRS bus.
 export class TripQueryService {
   async getFilteredTrips(
     filters: TripFilters,
@@ -49,27 +45,28 @@ export class TripQueryService {
 
   async getTripStats(
     tenantId: string,
-    dateRange?: { startDate?: Date; endDate?: Date }
+    dateRange?: { startDate?: Date; endDate?: Date },
+    context?: TenantContext
   ): Promise<TripStats> {
-    return queryBus.execute<TripStats>(new GetTripStatsQuery(tenantId, dateRange));
+    return tripRepository.getTripStats(tenantId, dateRange, context);
   }
 
   async getDailyDistance(
     tenantId: string,
-    days: number = 30
+    days: number = 30,
+    context?: TenantContext
   ): Promise<Array<{ date: string; distance: number }>> {
-    return queryBus.execute<Array<{ date: string; distance: number }>>(
-      new GetDailyDistanceQuery(tenantId, days)
-    );
+    return tripRepository.getDailyDistance(tenantId, days, context);
   }
 
   /** PHASE 1. VEHICLE-SCOPE ADDITION: optional licensePlate. */
   async getTripKpis(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    licensePlate?: string
+    licensePlate?: string,
+    context?: TenantContext
   ): Promise<TripKpis> {
-    return queryBus.execute<TripKpis>(new GetTripKpisQuery(tenantId, dateRange, licensePlate));
+    return tripRepository.getTripKpis(tenantId, dateRange, licensePlate, context);
   }
 
   /** PHASE 1. VEHICLE-SCOPE ADDITION: optional licensePlate. */
@@ -78,22 +75,20 @@ export class TripQueryService {
     dateRange?: { startDate?: Date; endDate?: Date },
     zThreshold: number = 2.5,
     limit: number = 50,
-    licensePlate?: string
+    licensePlate?: string,
+    context?: TenantContext
   ): Promise<TripExceptionRow[]> {
-    return queryBus.execute<TripExceptionRow[]>(
-      new GetTripExceptionsQuery(tenantId, dateRange, zThreshold, limit, licensePlate)
-    );
+    return tripRepository.getTripExceptions(tenantId, dateRange, zThreshold, limit, licensePlate, context);
   }
 
   /** PHASE 2: Monthly Trip Trend. VEHICLE-SCOPE ADDITION: optional licensePlate. */
   async getMonthlyTripTrend(
     tenantId: string,
     months: number = 12,
-    licensePlate?: string
+    licensePlate?: string,
+    context?: TenantContext
   ): Promise<TripMonthlyTrendPoint[]> {
-    return queryBus.execute<TripMonthlyTrendPoint[]>(
-      new GetMonthlyTripTrendQuery(tenantId, months, licensePlate)
-    );
+    return tripRepository.getMonthlyTripTrend(tenantId, months, licensePlate, context);
   }
 
   /** PHASE 2: Vehicle Utilization (fleet-wide ranking; not vehicle-scoped
@@ -103,11 +98,10 @@ export class TripQueryService {
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 20,
-    sortBy: 'trips' | 'distance' = 'trips'
+    sortBy: 'trips' | 'distance' = 'trips',
+    context?: TenantContext
   ): Promise<VehicleUtilizationRow[]> {
-    return queryBus.execute<VehicleUtilizationRow[]>(
-      new GetVehicleUtilizationQuery(tenantId, dateRange, limit, sortBy)
-    );
+    return tripRepository.getVehicleUtilization(tenantId, dateRange, limit, sortBy, context);
   }
 
   /** PHASE 2: Driver Utilization. VEHICLE-SCOPE ADDITION: optional licensePlate. */
@@ -116,33 +110,30 @@ export class TripQueryService {
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 20,
     sortBy: 'trips' | 'distance' = 'trips',
-    licensePlate?: string
+    licensePlate?: string,
+    context?: TenantContext
   ): Promise<DriverUtilizationRow[]> {
-    return queryBus.execute<DriverUtilizationRow[]>(
-      new GetDriverUtilizationQuery(tenantId, dateRange, limit, sortBy, licensePlate)
-    );
+    return tripRepository.getDriverUtilization(tenantId, dateRange, limit, sortBy, licensePlate, context);
   }
 
   /** PHASE 2: Distance Distribution histogram. VEHICLE-SCOPE ADDITION: optional licensePlate. */
   async getTripDistanceDistribution(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    licensePlate?: string
+    licensePlate?: string,
+    context?: TenantContext
   ): Promise<TripDistanceDistributionBucket[]> {
-    return queryBus.execute<TripDistanceDistributionBucket[]>(
-      new GetTripDistanceDistributionQuery(tenantId, dateRange, licensePlate)
-    );
+    return tripRepository.getTripDistanceDistribution(tenantId, dateRange, licensePlate, context);
   }
 
   /** PHASE 2: Day-of-week x hour heatmap. VEHICLE-SCOPE ADDITION: optional licensePlate. */
   async getTripsByDayOfWeek(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    licensePlate?: string
+    licensePlate?: string,
+    context?: TenantContext
   ): Promise<TripHeatmapCell[]> {
-    return queryBus.execute<TripHeatmapCell[]>(
-      new GetTripsByDayOfWeekQuery(tenantId, dateRange, licensePlate)
-    );
+    return tripRepository.getTripsByDayOfWeek(tenantId, dateRange, licensePlate, context);
   }
 
   /** PHASE 3: Cross-module cost analytics rows. VEHICLE-SCOPE ADDITION: optional licensePlate. */
@@ -150,22 +141,20 @@ export class TripQueryService {
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 100,
-    licensePlate?: string
+    licensePlate?: string,
+    context?: TenantContext
   ): Promise<TripCostAnalyticsRow[]> {
-    return queryBus.execute<TripCostAnalyticsRow[]>(
-      new GetTripCostAnalyticsQuery(tenantId, dateRange, limit, licensePlate)
-    );
+    return tripRepository.getTripCostAnalytics(tenantId, dateRange, limit, licensePlate, context);
   }
 
   /** PHASE 3: Fleet/vehicle cost summary for KPI cards. VEHICLE-SCOPE ADDITION: optional licensePlate. */
   async getTripCostSummary(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    licensePlate?: string
+    licensePlate?: string,
+    context?: TenantContext
   ): Promise<TripCostSummary> {
-    return queryBus.execute<TripCostSummary>(
-      new GetTripCostSummaryQuery(tenantId, dateRange, licensePlate)
-    );
+    return tripRepository.getTripCostSummary(tenantId, dateRange, licensePlate, context);
   }
 }
 

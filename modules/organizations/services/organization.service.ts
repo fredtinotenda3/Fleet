@@ -25,6 +25,7 @@ import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { MemberJoinedEvent } from '@/modules/organizations/events/MemberJoinedEvent';
 import { userScopeService } from '@/modules/security/services/user-scope.service';
 import { orgUnitRepository } from '@/modules/security/repositories/org-unit.repository';
+import { Role, ORGANIZATION_ROLES, ASSIGNABLE_ORGANIZATION_ROLES } from '@/server/permissions/roles';
 
 export interface AddMemberDirectInput {
   name: string;
@@ -68,19 +69,21 @@ export interface CreateOrganizationInput {
 }
 
 const INVITE_EXPIRY_DAYS = 7;
-const VALID_ROLES = [
-  'organization_owner',
-  'fleet_manager',
-  'accountant',
-  'dispatcher',
-  'driver',
-  'mechanic',
-  'auditor',
-  'viewer',
-];
+
+/**
+ * PHASE A (enterprise role/scope foundation): these were a locally
+ * hardcoded duplicate of the role list in server/permissions/roles.ts
+ * that had already drifted out of sync (missing BRANCH_MANAGER,
+ * DEPARTMENT_MANAGER, WORKSHOP_MANAGER, SUPERVISOR, ORGANIZATION_ADMIN).
+ * Now sourced directly from roles.ts, the same single source of truth
+ * shared/validations/organization.schema.ts's zod enums also derive
+ * from — adding or removing a role only ever requires touching
+ * roles.ts.
+ */
+const VALID_ROLES: string[] = ORGANIZATION_ROLES;
 /** Roles assignable to a member added after org creation — everything
  *  except organization_owner, which is set once at creation time only. */
-const ASSIGNABLE_ROLES = VALID_ROLES.filter((r) => r !== 'organization_owner');
+const ASSIGNABLE_ROLES: string[] = ASSIGNABLE_ORGANIZATION_ROLES;
 
 export class OrganizationService {
   constructor(

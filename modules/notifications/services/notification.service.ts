@@ -8,6 +8,7 @@ import {
 import { notificationRepository } from '../repositories/notification.repository';
 import { notificationPreferencesRepository } from '../repositories/notification-preferences.repository';
 import { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 
 // Lazy-load the WebSocket manager to avoid circular dependencies
 let webSocketManagerPromise: Promise<any> | null = null;
@@ -29,8 +30,31 @@ type NewNotificationInput = Omit<
   | 'sentAt'
   | 'read'
   | 'readAt'
+  | 'readBy'
   | 'deliveryMethods'
   | 'isDeleted'
+>;
+
+/**
+ * NEW (Phase C): input for a broadcast (org-unit-targeted) notification.
+ * No userId -- deliberately excluded, not just optional, so a caller
+ * can't accidentally create a notification that's neither addressed to
+ * a user nor scoped to an org unit.
+ */
+type NewBroadcastNotificationInput = Omit<
+  Notification,
+  | '_id'
+  | 'createdAt'
+  | 'updatedAt'
+  | 'tenantId'
+  | 'sentAt'
+  | 'read'
+  | 'readAt'
+  | 'readBy'
+  | 'deliveryMethods'
+  | 'isDeleted'
+  | 'userId'
+  | 'orgUnitId'
 >;
 
 export class NotificationService {
@@ -113,6 +137,138 @@ export class NotificationService {
     return results.filter((r): r is Notification => r !== null);
   }
 
+  /**
+   * NEW (Phase C -- notifications hierarchy filtering). Creates a single
+   * broadcast notification scoped to `orgUnitId`; visibility is enforced
+   * entirely by NotificationRepository's TenantScopedRepository read
+   * filter (see buildVisibilityFilter) -- no per-user fan-out, no
+   * membership resolution here. This directly fixes audit gap #4: "any
+   * broadcast-style notification would currently reach every tenant
+   * user regardless of branch/fleet/workshop" -- it no longer does,
+   * because it's simply not visible to a reader whose
+   * accessibleOrgUnitIds doesn't include this orgUnitId.
+   *
+   * Deliberately bypasses per-user NotificationPreferences (there's no
+   * single user's preferences to check against a broadcast) and is
+   * always in-app only; email/SMS fan-out for broadcasts needs
+   * per-recipient resolution, which belongs to Phase D's org-unit-aware
+   * background job work, not this read-scoping fix.
+   */
+  async sendBroadcastNotification(
+    orgUnitId: string,
+    tenantId: string,
+    notification: NewBroadcastNotificationInput
+  ): Promise<Notification> {
+    const notificationData: Omit<Notification, '_id' | 'createdAt' | 'updatedAt'> = {
+      tenantId,
+      orgUnitId,
+      type: notification.type,
+      title: notification.title,
+      message: notification.message,
+      data: notification.data,
+      priority: notification.priority,
+      actionUrl: notification.actionUrl,
+      actionLabel: notification.actionLabel,
+      expiresAt: notification.expiresAt,
+      read: false,
+      readBy: [],
+      sentAt: new Date(),
+      deliveryMethods: ['in_app'],
+      isDeleted: false,
+    };
+
+    const saved = await notificationRepository.create(notificationData, tenantId);
+
+    try {
+      const wsManager = await getWebSocketManager();
+      // ASSUMPTION: infrastructure/websocket/server wasn't in the
+      // uploaded files, so I don't know if it exposes a room-based
+      // emitToOrgUnit(). Guarded so this degrades to "no real-time push,
+      // still visible on next fetch" rather than throwing if it doesn't.
+      if (typeof wsManager.emitToOrgUnit === 'function') {
+        wsManager.emitToOrgUnit(orgUnitId, 'notification:new', {
+          id: saved._id,
+          title: notification.title,
+          message: notification.message,
+          type: notification.type,
+          priority: notification.priority,
+          actionUrl: notification.actionUrl,
+        });
+      }
+    } catch {
+      // WebSocket manager may not be initialised in all environments
+    }
+
+    return saved;
+  }
+
+  // ── Legacy, tenantId-only methods (unchanged; kept for callers not yet passing TenantContext) ──
+
+  /** @deprecated Prefer getNotificationsInScope. */
+  async getNotifications(
+    userId: string,
+    tenantId: string,
+    pagination: PaginationParams,
+    unreadOnly: boolean = false
+  ): Promise<PaginatedResponse<Notification>> {
+    return notificationRepository.findByUserId(userId, tenantId, pagination, unreadOnly);
+  }
+
+  /** @deprecated Prefer markAsReadInScope. */
+  async markAsRead(notificationId: string, userId: string, tenantId: string): Promise<void> {
+    await notificationRepository.markAsRead(notificationId, userId, tenantId);
+  }
+
+  /** @deprecated Prefer markAllAsReadInScope. */
+  async markAllAsRead(userId: string, tenantId: string): Promise<number> {
+    return notificationRepository.markAllAsRead(userId, tenantId);
+  }
+
+  /** @deprecated Prefer getUnreadCountInScope. */
+  async getUnreadCount(userId: string, tenantId: string): Promise<number> {
+    return notificationRepository.getUnreadCount(userId, tenantId);
+  }
+
+  /** @deprecated Prefer getHighPriorityUnreadInScope. */
+  async getHighPriorityUnread(tenantId: string) {
+    return notificationRepository.getHighPriorityUnread(tenantId);
+  }
+
+  // ── NEW (Phase C): org-unit-hierarchy-aware variants ──
+
+  async getNotificationsInScope(
+    userId: string,
+    context: TenantContext,
+    pagination: PaginationParams,
+    unreadOnly: boolean = false
+  ): Promise<PaginatedResponse<Notification>> {
+    return notificationRepository.findByUserIdInScope(userId, context, pagination, unreadOnly);
+  }
+
+  async markAsReadInScope(notificationId: string, userId: string, context: TenantContext): Promise<void> {
+    await notificationRepository.markAsReadInScope(notificationId, userId, context);
+  }
+
+  async markAllAsReadInScope(userId: string, context: TenantContext): Promise<number> {
+    return notificationRepository.markAllAsReadInScope(userId, context);
+  }
+
+  async getUnreadCountInScope(userId: string, context: TenantContext): Promise<number> {
+    return notificationRepository.getUnreadCountInScope(userId, context);
+  }
+
+  async getHighPriorityUnreadInScope(userId: string, context: TenantContext) {
+    return notificationRepository.getHighPriorityUnreadInScope(userId, context);
+  }
+
+  async cleanupOldNotifications(tenantId: string, daysOld: number = 30): Promise<number> {
+    const [expired, old] = await Promise.all([
+      notificationRepository.deleteExpired(tenantId),
+      notificationRepository.deleteOldNotifications(tenantId, daysOld),
+    ]);
+    return expired + old;
+  }
+
   async sendMaintenanceOverdue(reminder: any, tenantId: string): Promise<void> {
     const assignee = reminder.assigned_to || reminder.createdBy;
     if (!assignee) return;
@@ -149,39 +305,6 @@ export class NotificationService {
       actionUrl: `/maintenance/${reminder._id}`,
       actionLabel: 'Schedule Service',
     } as NewNotificationInput);
-  }
-
-  async getNotifications(
-    userId: string,
-    tenantId: string,
-    pagination: PaginationParams,
-    unreadOnly: boolean = false
-  ): Promise<PaginatedResponse<Notification>> {
-    return notificationRepository.findByUserId(userId, tenantId, pagination, unreadOnly);
-  }
-
-  async markAsRead(notificationId: string, userId: string, tenantId: string): Promise<void> {
-    await notificationRepository.markAsRead(notificationId, userId, tenantId);
-  }
-
-  async markAllAsRead(userId: string, tenantId: string): Promise<number> {
-    return notificationRepository.markAllAsRead(userId, tenantId);
-  }
-
-  async getUnreadCount(userId: string, tenantId: string): Promise<number> {
-    return notificationRepository.getUnreadCount(userId, tenantId);
-  }
-
-  async getHighPriorityUnread(tenantId: string) {
-    return notificationRepository.getHighPriorityUnread(tenantId);
-  }
-
-  async cleanupOldNotifications(tenantId: string, daysOld: number = 30): Promise<number> {
-    const [expired, old] = await Promise.all([
-      notificationRepository.deleteExpired(tenantId),
-      notificationRepository.deleteOldNotifications(tenantId, daysOld),
-    ]);
-    return expired + old;
   }
 
   async getPreferences(userId: string, tenantId: string): Promise<NotificationPreferences> {

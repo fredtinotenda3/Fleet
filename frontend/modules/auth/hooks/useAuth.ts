@@ -37,7 +37,21 @@ export function useAuth() {
             id: claims?.userId || '',
             email: claims?.email || email,
             roles: claims?.roles || [],
-            tenantId: claims?.tenantId || 'default',
+            /**
+             * FIX (fail-open sentinel, client side). Was
+             * `claims?.tenantId || 'default'`. This is the same
+             * fail-open pattern that caused the original cross-tenant
+             * leak on the server, mirrored into the browser session: a
+             * token with no tenant claim silently became 'default',
+             * which every scoped UI query then sent to the API.
+             *
+             * A missing tenant claim is now carried as an empty string.
+             * The server never trusts this value for scoping anyway --
+             * it re-derives scope from the token on every request -- but
+             * a sentinel here made the client display, and cache, data
+             * under a tenant that does not exist.
+             */
+            tenantId: claims?.tenantId ?? '',
           },
           accessToken: result.accessToken,
           refreshToken: result.refreshToken,
@@ -47,7 +61,27 @@ export function useAuth() {
         setStep('done');
         return { mfaRequired: false as const };
       } catch (err: any) {
-        setError(err?.error || 'Login failed. Please check your credentials.');
+        /**
+         * FIX (internal error disclosure on the sign-in form). This
+         * rendered the server's error text verbatim to an
+         * unauthenticated visitor. A tenant-scope failure produced:
+         *
+         *   Rejected legacy sentinel tenant id "default". This value used
+         *   to disable tenant filtering entirely... run: npm run
+         *   db:backfill-user-tenants
+         *
+         * -- leaking internal architecture, an internal script name, and
+         * the fact that this specific account exists but is misconfigured.
+         *
+         * Authentication failures now show one generic message regardless
+         * of cause, so the form cannot be used to probe account state. The
+         * real reason is logged server-side for operators.
+         */
+        console.error('[useAuth] Login failed:', err);
+        setError(
+          err?.userFacingMessage ||
+            'Sign-in failed. Check your email and password, or contact your administrator if the problem continues.'
+        );
         throw err;
       } finally {
         setLoading(false);

@@ -1,3 +1,4 @@
+import { PLATFORM_OWNER_TENANT_ID } from '@/server/tenancy/tenant-scope';
 // modules/plugins/services/plugin.service.ts
 
 import { pluginRepository, PluginRepository } from '../repositories/plugin.repository';
@@ -23,6 +24,7 @@ import { PLUGIN_ENABLED, PLUGIN_DISABLED } from '../events/event-names';
 import { DomainEvent } from '@/server/events/base/DomainEvent';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
 import { organizationRepository } from '@/modules/organizations/repositories/organization.repository';
+import { resolveOrganization } from '@/server/tenancy/organization-resolver';
 
 export class PluginService {
   constructor(
@@ -43,14 +45,14 @@ export class PluginService {
 
     const created = await this.catalogueRepo.create(
       { pluginId: manifest.pluginId, manifest, isSystemPlugin, status: 'published' },
-      'system',
+      PLATFORM_OWNER_TENANT_ID,
       userId
     );
 
     await auditLog.log({
       action: 'PLUGIN_REGISTERED',
       userId,
-      tenantId: 'system',
+      tenantId: PLATFORM_OWNER_TENANT_ID,
       entityType: 'plugin',
       entityId: created._id,
       metadata: { pluginId: manifest.pluginId, version: manifest.version },
@@ -249,7 +251,7 @@ export class PluginService {
    */
   private async assertScopesAvailable(organizationId: string, requiredScopes: string[]): Promise<void> {
     if (requiredScopes.length === 0) return;
-    const organization = await organizationRepository.findById(organizationId, organizationId, false, true);
+    const organization = await resolveOrganization(organizationId);
     if (!organization) throw new NotFoundError('Organization not found');
 
     if (requiredScopes.some((s) => s.startsWith('api_key:')) && !organization.features.apiAccess) {

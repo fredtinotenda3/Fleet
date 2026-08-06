@@ -36,6 +36,7 @@ export class AnalyticsScopeService {
         return { ...match, driver_id: value };
       case 'department':
       case 'branch':
+      case 'workshop':
         return { ...match, orgUnitId: value };
       default:
         return match;

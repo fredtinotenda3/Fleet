@@ -20,6 +20,7 @@ import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { DigitalTwinUpdatedEvent } from '../events/DigitalTwinUpdatedEvent';
 import { webSocketManager } from '@/infrastructure/websocket/server';
 import { monitoring } from '@/infrastructure/monitoring/logger';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 
 const YTD_START = () => new Date(new Date().getFullYear(), 0, 1);
 
@@ -68,6 +69,42 @@ export class DigitalTwinService {
 
   async getFleetSummary(tenantId: string): Promise<FleetTwinSummary> {
     return this.repo.getFleetSummary(tenantId);
+  }
+
+  /**
+   * Org-unit-scoped variants (Phase G -- controller wiring).
+   *
+   * The context carries `accessibleOrgUnitIds`, which is the ALREADY
+   * EXPANDED closure of the caller's assigned units plus every
+   * descendant. That expansion is the whole point of the hierarchy: a
+   * Harare branch manager must see the branch AND its departments,
+   * workshops and fleets. Passing a single org unit id here instead
+   * would silently hide everything below the assigned unit.
+   */
+  async listTwinsInScope(
+    filters: DigitalTwinFilters,
+    pagination: PaginationParams,
+    context: TenantContext
+  ): Promise<PaginatedResponse<VehicleDigitalTwin>> {
+    return this.repo.listFilteredInScope(filters, context, pagination);
+  }
+
+  async getFleetSummaryInScope(context: TenantContext): Promise<FleetTwinSummary> {
+    return this.repo.getFleetSummaryInScope(context);
+  }
+
+  /**
+   * Scoped single-twin read.
+   *
+   * autoBuild is deliberately NOT offered here. Rebuilding a twin for an
+   * out-of-scope vehicle would create the very row the caller is not
+   * allowed to see, turning a read refusal into a write. An out-of-scope
+   * or absent twin is a 404 either way.
+   */
+  async getTwinInScope(vehicleId: string, context: TenantContext): Promise<VehicleDigitalTwin> {
+    const twin = await this.repo.findByVehicleIdInScope(vehicleId, context);
+    if (!twin) throw new NotFoundError('Digital twin not found');
+    return twin;
   }
 
   async acknowledgeAlert(vehicleId: string, alertId: string, tenantId: string): Promise<void> {

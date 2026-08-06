@@ -11,6 +11,10 @@ import { sessionService } from '@/modules/security/services/session.service';
 import { threatDetectionService } from '@/modules/security/services/threat-detection.service';
 import { mfaService } from '@/modules/security/services/mfa.service';
 import { Role } from '@/server/permissions/roles';
+import {
+  PLATFORM_SCOPE_TENANT_ID,
+  isLegacySentinelTenant,
+} from '@/server/tenancy/tenant-scope';
 
 interface User {
   _id: ObjectId;
@@ -41,14 +45,35 @@ interface CustomSessionUser {
   /**
    * FIX (critical -- total tenant-isolation bypass): authorize() now
    * returns the user's real tenantId so the jwt() callback below can
-   * use it instead of hardcoding AUTH_TENANT_ID for every login. See
+   * use it instead of hardcoding PRE_AUTH_BOOKKEEPING_TENANT for every login. See
    * the FIX note in the jwt() callback for the full story.
    */
   tenantId?: string;
 }
 
 const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60; // 30 days
-const AUTH_TENANT_ID = 'default';
+
+/**
+ * Tenant id used ONLY for pre-authentication bookkeeping (brute-force
+ * lockout counters, failed-login records) where no user tenant is known
+ * yet. It is deliberately NOT a data-access scope: it never reaches a
+ * repository query, and `resolveTenantScope()` rejects it if it ever
+ * tries to.
+ *
+ * FIX (critical -- this constant was the root cause of the reported
+ * cross-organization data leak). It used to be `'default'` AND was used
+ * as the fallback tenant for real user sessions:
+ *
+ *   const userTenantId = user.tenantId || PRE_AUTH_BOOKKEEPING_TENANT;
+ *
+ * Every tbladmin account predating multi-tenancy has no tenantId, so
+ * every one of them was assigned 'default' -- which
+ * BaseRepository.getTenantFilter() treated as "skip tenant filtering,
+ * return everything". Those users read across all organizations, and
+ * any CSV import they ran stamped tenantId: 'default' onto the created
+ * rows. See the fail-closed replacement in authorize() below.
+ */
+const PRE_AUTH_BOOKKEEPING_TENANT = 'pre-auth';
 
 /**
  * FIX (critical): tbladmin.Role predates the Role enum in
@@ -66,12 +91,24 @@ const AUTH_TENANT_ID = 'default';
  * this map -- do not change the default for 'admin' to SUPER_ADMIN
  * without confirming, since that re-opens the exact bypass this fix
  * closes for every account still carrying the legacy value.
+ *
+ * PHASE A (enterprise role/scope foundation): added entries for the
+ * new BRANCH_MANAGER/DEPARTMENT_MANAGER/WORKSHOP_MANAGER/SUPERVISOR/
+ * ORGANIZATION_ADMIN roles so any tbladmin record already carrying one
+ * of these string values (e.g. seeded directly against the new schema,
+ * or written by the organizations module's addMemberDirect) resolves
+ * to the correct Role instead of silently falling back to VIEWER.
  */
 const LEGACY_ROLE_MAP: Record<string, Role> = {
   admin: Role.ORGANIZATION_OWNER,
   super_admin: Role.SUPER_ADMIN,
   organization_owner: Role.ORGANIZATION_OWNER,
+  organization_admin: Role.ORGANIZATION_ADMIN,
+  branch_manager: Role.BRANCH_MANAGER,
+  department_manager: Role.DEPARTMENT_MANAGER,
   fleet_manager: Role.FLEET_MANAGER,
+  workshop_manager: Role.WORKSHOP_MANAGER,
+  supervisor: Role.SUPERVISOR,
   accountant: Role.ACCOUNTANT,
   dispatcher: Role.DISPATCHER,
   driver: Role.DRIVER,
@@ -121,7 +158,7 @@ export const authOptions: AuthOptions = {
         try {
           // Brute-force guard: reject outright while locked, without
           // even touching the database for a password comparison.
-          const lockStatus = await threatDetectionService.isLocked(email, AUTH_TENANT_ID);
+          const lockStatus = await threatDetectionService.isLocked(email, PRE_AUTH_BOOKKEEPING_TENANT);
           if (lockStatus.locked) {
             console.warn(`[authOptions] Rejected login for locked account: ${email}`);
             return null;
@@ -133,7 +170,7 @@ export const authOptions: AuthOptions = {
           if (!user) {
             await threatDetectionService.recordLoginAttempt({
               email,
-              tenantId: AUTH_TENANT_ID,
+              tenantId: PRE_AUTH_BOOKKEEPING_TENANT,
               ipAddress,
               userAgent,
               success: false,
@@ -145,7 +182,7 @@ export const authOptions: AuthOptions = {
           if (!isValidPassword) {
             await threatDetectionService.recordLoginAttempt({
               email,
-              tenantId: AUTH_TENANT_ID,
+              tenantId: PRE_AUTH_BOOKKEEPING_TENANT,
               userId: user._id.toString(),
               ipAddress,
               userAgent,
@@ -157,10 +194,80 @@ export const authOptions: AuthOptions = {
           // FIX (critical): this is the user's real data tenant --
           // previously computed here and then discarded, because it was
           // never put on the returned user object and the jwt()
-          // callback hardcoded AUTH_TENANT_ID for every password login
+          // callback hardcoded PRE_AUTH_BOOKKEEPING_TENANT for every password login
           // instead of reading it.
-          const userTenantId = user.tenantId || AUTH_TENANT_ID;
           const userId = user._id.toString();
+
+          /**
+           * FAIL CLOSED, with one deliberate and narrow exception.
+           *
+           * An ordinary account with no tenantId cannot log in, because
+           * `|| 'default'` used to hand it platform-wide read access.
+           *
+           * BUT a genuine platform SUPER_ADMIN legitimately has NO
+           * organization. Its scope comes from its role --
+           * server/auth/auth-context.ts assigns it
+           * PLATFORM_SCOPE_TENANT_ID at token time and never reads
+           * tenantId. Requiring a tenantId here locked platform admins
+           * out of their own installation, which is exactly what
+           * happened after scripts/bootstrap-platform-admin.ts cleared
+           * the legacy 'default' sentinel from a super_admin record.
+           *
+           * The exception is checked against the RESOLVED role (via
+           * resolveRole + the roles array), not against a raw string, so
+           * a record cannot self-declare platform access with an
+           * arbitrary value.
+           */
+          const declaredRoles: string[] = Array.isArray((user as { roles?: unknown }).roles)
+            ? ((user as { roles?: string[] }).roles as string[])
+            : [];
+          const isPlatformAdminAccount =
+            resolveRole(user.Role) === Role.SUPER_ADMIN ||
+            declaredRoles.map((r) => resolveRole(r)).includes(Role.SUPER_ADMIN);
+
+          const rawTenantId =
+            typeof user.tenantId === 'string' ? user.tenantId.trim() : '';
+
+          /**
+           * FIX (login blocker). This previously tested only for an EMPTY
+           * tenantId. A legacy sentinel such as 'default' is a non-empty
+           * string, so it sailed through this gate -- and then the first
+           * tenant-scoped call below (mfaService.isEnabled) hit
+           * resolveTenantScope('default'), which fails closed and throws.
+           *
+           * The result was a TenantScopeError surfacing verbatim on the
+           * sign-in form:
+           *
+           *   "Rejected legacy sentinel tenant id "default"... run: npm
+           *    run db:backfill-user-tenants"
+           *
+           * -- an internal diagnostic shown to an unauthenticated visitor,
+           * naming an internal script (one that is now disabled), for an
+           * account that simply has not been repaired yet.
+           *
+           * A sentinel is now treated exactly like a missing tenant:
+           * refused here, quietly, before anything tenant-scoped runs.
+           */
+          const hasUsableTenant =
+            rawTenantId.length > 0 && !isLegacySentinelTenant(rawTenantId);
+
+          if (!hasUsableTenant && !isPlatformAdminAccount) {
+            console.error(
+              `[authOptions] Refusing login for ${email}: tenantId ` +
+                `${rawTenantId ? `"${rawTenantId}" is a legacy sentinel` : 'is missing'} ` +
+                'and the account is not a platform admin. Fix with: npm run db:repair'
+            );
+            return null;
+          }
+
+          /**
+           * A platform admin with no organization carries the explicit
+           * platform sentinel rather than an empty string, so that
+           * nothing downstream has to interpret "" -- and so that
+           * resolveTenantScope() recognises it as platform scope instead
+           * of throwing.
+           */
+          const userTenantId = hasUsableTenant ? rawTenantId : PLATFORM_SCOPE_TENANT_ID;
 
           // MFA gate: password alone is not sufficient to complete
           // login when TOTP is enrolled and verified for this account.
@@ -177,7 +284,7 @@ export const authOptions: AuthOptions = {
             if (!valid) {
               await threatDetectionService.recordLoginAttempt({
                 email,
-                tenantId: AUTH_TENANT_ID,
+                tenantId: PRE_AUTH_BOOKKEEPING_TENANT,
                 userId,
                 ipAddress,
                 userAgent,
@@ -189,7 +296,7 @@ export const authOptions: AuthOptions = {
 
           await threatDetectionService.recordLoginAttempt({
             email,
-            tenantId: AUTH_TENANT_ID,
+            tenantId: PRE_AUTH_BOOKKEEPING_TENANT,
             userId,
             ipAddress,
             userAgent,
@@ -247,7 +354,7 @@ export const authOptions: AuthOptions = {
           // tenant-isolation bypass): this branch used to hardcode
           // every password login to
           //   roles = ['super_admin', 'organization_owner']
-          //   tenantId = AUTH_TENANT_ID ('default')
+          //   tenantId = PRE_AUTH_BOOKKEEPING_TENANT ('default')
           // regardless of who the user actually was. Combined with
           // BaseRepository.getTenantFilter() treating tenantId ===
           // 'default' as "skip tenant filtering" and auth-context.ts
@@ -260,7 +367,9 @@ export const authOptions: AuthOptions = {
           const resolvedRole = resolveRole(authUser.role);
           customToken.role = resolvedRole;
           customToken.roles = [resolvedRole];
-          customToken.tenantId = authUser.tenantId || AUTH_TENANT_ID;
+          // authorize() above already refuses to return a user without a
+          // real tenantId, so there is nothing to fall back TO here.
+          customToken.tenantId = authUser.tenantId;
           customToken.authSource = 'password';
         }
 

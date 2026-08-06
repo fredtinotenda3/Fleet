@@ -12,7 +12,7 @@ export class OrganizationRepository extends BaseRepository<Organization> {
   protected collectionName = 'tblorganizations';
 
   /**
-   * Organizations are root-tenant documents — they are looked up by slug
+   * Organizations are root-tenant documents â€” they are looked up by slug
    * or owner directly, not filtered by an existing tenantId. We pass
    * `isSuperAdmin = true` to the base methods purely to bypass the
    * tenant filter (NOT to imply elevated privilege), since at this level
@@ -211,7 +211,7 @@ export class OrganizationRepository extends BaseRepository<Organization> {
   /**
    * Extends a pending invite's expiry and returns the (still pending)
    * invite for the caller to re-queue the notification email with.
-   * Does not rotate the token — the original invite link keeps working,
+   * Does not rotate the token â€” the original invite link keeps working,
    * which is what "resend" should mean (not "invalidate and reissue").
    */
   async touchInviteExpiry(
@@ -254,7 +254,7 @@ export class OrganizationRepository extends BaseRepository<Organization> {
 
   /**
    * Atomically accepts an invite: validates it is still pending and
-   * unexpired, adds the member, and marks the invite accepted —
+   * unexpired, adds the member, and marks the invite accepted â€”
    * all in a single updateOne to avoid race conditions between
    * concurrent accept attempts.
    */
@@ -330,6 +330,47 @@ export class OrganizationRepository extends BaseRepository<Organization> {
       isDeleted: { $ne: true },
       status: 'active',
     } as Filter<Organization>);
+  }
+
+  /**
+   * PHASE D (enterprise organization-aware background processing):
+   * batched, ordered enumeration of active organizations for background
+   * jobs to iterate over. This is the single place that owns "how do we
+   * list every tenant" -- before this method existed, several workers
+   * (billing, cleanup, telemetry, sla-compliance) each ran their own
+   * `db.collection('tblorganizations').find(...)` with slightly
+   * different projections/fallbacks, duplicating the same logic. Callers
+   * should go through BackgroundJobScopeService
+   * (server/scheduler/background-job-scope.service.ts) rather than
+   * calling this directly, unless they have a reason to paginate
+   * manually.
+   *
+   * Deliberately does not use skip/limit-only pagination past a single
+   * page in a way that could double-process or drop organizations if
+   * the collection changes between pages -- callers using this in a
+   * loop should treat `offset` as advancing by the returned batch
+   * length (see BackgroundJobScopeService), which is stable enough for
+   * a background sweep even under concurrent org creation/deletion.
+   */
+  async findActiveTenantIds(
+    offset: number,
+    limit: number
+  ): Promise<Array<{ tenantId: string; name: string }>> {
+    const collection = await this.getCollection();
+    const docs = await collection
+      .find(
+        { isDeleted: { $ne: true }, status: 'active' } as Filter<Organization>,
+        { projection: { tenantId: 1, name: 1 } } as any
+      )
+      .sort({ _id: 1 })
+      .skip(offset)
+      .limit(limit)
+      .toArray();
+
+    return docs.map((doc: any) => {
+      const tenantId = doc.tenantId || doc._id.toString();
+      return { tenantId, name: doc.name || tenantId };
+    });
   }
 }
 

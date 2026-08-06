@@ -55,7 +55,6 @@ export class WebhookSubscriptionService {
 
     const created = await this.repo.create(
       {
-        tenantId,
         organizationId: tenantId,
         name: data.name.trim(),
         url: data.url,

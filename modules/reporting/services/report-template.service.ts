@@ -74,7 +74,6 @@ export class ReportTemplateService {
 
     const created = await this.repo.create(
       {
-        tenantId,
         name: data.name,
         description: data.description,
         category: data.category,

@@ -1,3 +1,5 @@
+import { resolveTenantScope } from '@/server/tenancy/tenant-scope';
+import { prefixMatch, containsMatch } from '@/shared/utils/regex.utils';
 // modules/maintenance/repositories/maintenance.repository.ts
 
 import { BaseRepository } from '@/server/repositories/base.repository';
@@ -35,12 +37,18 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
    * `tenantId: 'default'` match only picks up reminders whose tenantId
    * field is literally "default" instead of every tenant's data.
    */
-  private isSuperAdminTenant(tenantId: string): boolean {
-    return (
-      tenantId === 'default' ||
-      tenantId === 'system' ||
-      tenantId === 'super_admin'
-    );
+  /**
+   * FIX (tenant-isolation drift): this was a private per-repository copy
+   * of the "which tenantId means skip filtering" rule. Six repositories
+   * each maintained their own, and they drifted -- base.repository.ts's
+   * own comments document a production bug where the dashboard and the
+   * list page disagreed. All copies now delegate to the single
+   * fail-closed resolver in server/tenancy/tenant-scope.ts, where the
+   * legacy 'default'/'system'/'super_admin' values are REJECTED rather
+   * than treated as platform-wide access.
+   */
+  private isPlatformScopeTenant(tenantId: string): boolean {
+    return resolveTenantScope(tenantId).kind === 'platform';
   }
 
   async findByLicensePlate(
@@ -65,10 +73,7 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
     const filter: Record<string, unknown> = {};
 
     if (filters.license_plate) {
-      filter.license_plate = {
-        $regex: filters.license_plate,
-        $options: 'i',
-      };
+      filter.license_plate = containsMatch(filters.license_plate);
     }
     if (filters.status) filter.status = filters.status;
     if (filters.priority) filter.priority = filters.priority;
@@ -105,15 +110,12 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
       isDeleted: { $ne: true },
     };
 
-    if (!this.isSuperAdminTenant(context.organizationId)) {
+    if (!this.isPlatformScopeTenant(context.organizationId)) {
       query.tenantId = context.organizationId;
     }
 
     if (filters.license_plate) {
-      query.license_plate = {
-        $regex: filters.license_plate,
-        $options: 'i',
-      };
+      query.license_plate = containsMatch(filters.license_plate);
     }
     if (filters.status) query.status = filters.status;
     if (filters.priority) query.priority = filters.priority;
@@ -261,13 +263,25 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
    * (`SUM(all vehicles)` becomes `SUM(where license_plate == plate)`).
    * Omitting it reproduces today's fleet-wide behaviour byte-for-byte.
    */
-  async getMaintenanceStats(tenantId: string, licensePlate?: string): Promise<MaintenanceStats> {
+  async getMaintenanceStats(
+    tenantId: string,
+    licensePlate?: string,
+    context?: TenantContext
+  ): Promise<MaintenanceStats> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+    const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
 
     const filter: Record<string, unknown> = { isDeleted: { $ne: true } };
     if (!isSuperAdmin) filter.tenantId = tenantId;
     if (licensePlate) filter.license_plate = licensePlate.toUpperCase();
+    // FIX (Phase B -- repository/analytics scoping completeness): this
+    // aggregation previously isolated only by tenantId, never by org
+    // unit, so a Branch/Fleet/Workshop Manager's stats cards silently
+    // showed org-wide totals while getFilteredRemindersInScope (list
+    // page) was already correctly org-unit scoped.
+    if (context) {
+      Object.assign(filter, tenantScopeService.buildFilter<Reminder>(context, 'orgUnitId'));
+    }
 
     const now = new Date();
     const UNRESOLVED = { $nin: ['completed', 'cancelled'] };
@@ -402,10 +416,11 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
   async getCostTrend(
     tenantId: string,
     months: number = 12,
-    licensePlate?: string
+    licensePlate?: string,
+    context?: TenantContext
   ): Promise<import('@/shared/types/maintenance.types').MaintenanceCostTrendPoint[]> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+    const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
     const startDate = new Date();
     startDate.setMonth(startDate.getMonth() - months);
 
@@ -416,6 +431,9 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
     };
     if (!isSuperAdmin) match.tenantId = tenantId;
     if (licensePlate) match.license_plate = licensePlate.toUpperCase();
+    if (context) {
+      Object.assign(match, tenantScopeService.buildFilter<Reminder>(context, 'orgUnitId'));
+    }
 
     const pipeline = [
       { $match: match },
@@ -440,12 +458,16 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
   /** Completed-record count per vehicle, ranked descending -- "which vehicles need work most often". Fleet-wide ranking only (no single-vehicle equivalent, mirrors Fuel's "top consumers"). */
   async getRepairFrequencyByVehicle(
     tenantId: string,
-    limit: number = 20
+    limit: number = 20,
+    context?: TenantContext
   ): Promise<RepairFrequencyByVehicleRow[]> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+    const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
     const match: Record<string, unknown> = { isDeleted: { $ne: true }, status: 'completed' };
     if (!isSuperAdmin) match.tenantId = tenantId;
+    if (context) {
+      Object.assign(match, tenantScopeService.buildFilter<Reminder>(context, 'orgUnitId'));
+    }
 
     const pipeline = [
       { $match: match },
@@ -476,12 +498,16 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
   /** Vehicles ranked by cumulative estimated maintenance cost. Fleet-wide ranking only. */
   async getMostExpensiveVehicles(
     tenantId: string,
-    limit: number = 20
+    limit: number = 20,
+    context?: TenantContext
   ): Promise<MostExpensiveVehicleRow[]> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+    const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
     const match: Record<string, unknown> = { isDeleted: { $ne: true }, status: 'completed' };
     if (!isSuperAdmin) match.tenantId = tenantId;
+    if (context) {
+      Object.assign(match, tenantScopeService.buildFilter<Reminder>(context, 'orgUnitId'));
+    }
 
     const pipeline = [
       { $match: match },
@@ -520,16 +546,20 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
    */
   async getDowntimeEstimate(
     tenantId: string,
-    limit: number = 20
+    limit: number = 20,
+    context?: TenantContext
   ): Promise<DowntimeEstimatePoint[]> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+    const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
     const match: Record<string, unknown> = {
       isDeleted: { $ne: true },
       status: 'completed',
       completion_date: { $exists: true },
     };
     if (!isSuperAdmin) match.tenantId = tenantId;
+    if (context) {
+      Object.assign(match, tenantScopeService.buildFilter<Reminder>(context, 'orgUnitId'));
+    }
 
     const pipeline = [
       { $match: match },
@@ -595,10 +625,11 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
    */
   async getVehicleMaintenanceInsights(
     tenantId: string,
-    licensePlate: string
+    licensePlate: string,
+    context?: TenantContext
   ): Promise<VehicleMaintenanceInsights> {
     const collection = await this.getCollection();
-    const isSuperAdmin = this.isSuperAdminTenant(tenantId);
+    const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
     const plate = licensePlate.toUpperCase();
 
     const baseMatch: Record<string, unknown> = {
@@ -606,6 +637,9 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
       license_plate: plate,
     };
     if (!isSuperAdmin) baseMatch.tenantId = tenantId;
+    if (context) {
+      Object.assign(baseMatch, tenantScopeService.buildFilter<Reminder>(context, 'orgUnitId'));
+    }
 
     const now = new Date();
 

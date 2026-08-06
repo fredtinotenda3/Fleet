@@ -16,6 +16,7 @@ import { AppError, ValidationError, UnauthorizedError, ForbiddenError, NotFoundE
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
 import { getAuthContext } from '@/server/auth/auth-context';
 import { tenantContextService } from '@/modules/tenancy/services/tenant-context.service';
+import type { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 import { expenseRepository } from '../repositories/expense.repository';
 import { exportService, fileDownloadResponse } from '@/shared/export';
@@ -52,6 +53,27 @@ function parseAnalyticsScope(req: NextRequest): AnalyticsScope | undefined {
   return undefined;
 }
 
+/**
+ * FIX (Phase B -- repository/analytics scoping completeness): mirrors
+ * FuelController.resolveTenantContext -- every analytics action below
+ * used to call getTenantFromRequest(req) (bare tenantId string only),
+ * so charts had no way to be org-unit scoped. This resolves the same
+ * full TenantContext already used by getExpenses/exportExpenses.
+ */
+async function resolveTenantContext(req: NextRequest): Promise<TenantContext> {
+  const authContext = await getAuthContext(req);
+  if (!authContext) {
+    throw new UnauthorizedError('Authentication required');
+  }
+  return tenantContextService.resolveContext(
+    authContext.userId,
+    authContext.tenantId,
+    authContext.roles,
+    authContext.isPlatformAdmin,
+    authContext.orgUnitId
+  );
+}
+
 export class ExpenseController {
   async getExpenses(req: NextRequest) {
     try {
@@ -64,7 +86,7 @@ export class ExpenseController {
         authContext.userId,
         authContext.tenantId,
         authContext.roles,
-        authContext.isSuperAdmin,
+        authContext.isPlatformAdmin,
         authContext.orgUnitId
       );
 
@@ -105,7 +127,7 @@ export class ExpenseController {
         authContext.userId,
         authContext.tenantId,
         authContext.roles,
-        authContext.isSuperAdmin,
+        authContext.isPlatformAdmin,
         authContext.orgUnitId
       );
 
@@ -159,7 +181,7 @@ export class ExpenseController {
       authContext.userId,
       authContext.tenantId,
       authContext.roles,
-      authContext.isSuperAdmin,
+      authContext.isPlatformAdmin,
       authContext.orgUnitId
     );
 
@@ -255,7 +277,7 @@ export class ExpenseController {
 
   async getExpenseStats(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
       const dateRange =
         searchParams.get('startDate') && searchParams.get('endDate')
@@ -265,7 +287,12 @@ export class ExpenseController {
             }
           : undefined;
       const scope = parseAnalyticsScope(req);
-      const stats = await expenseQueryService.getExpenseStats(tenantId, dateRange, scope);
+      const stats = await expenseQueryService.getExpenseStats(
+        tenantContext.organizationId,
+        dateRange,
+        scope,
+        tenantContext
+      );
       return successResponse(stats);
     } catch (error) {
       return this.handleError(error);
@@ -274,10 +301,15 @@ export class ExpenseController {
 
   async getMonthlyTrends(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const months = Number(req.nextUrl.searchParams.get('months') || '12');
       const scope = parseAnalyticsScope(req);
-      const trends = await expenseQueryService.getMonthlyTrends(tenantId, months, scope);
+      const trends = await expenseQueryService.getMonthlyTrends(
+        tenantContext.organizationId,
+        months,
+        scope,
+        tenantContext
+      );
       return successResponse(trends);
     } catch (error) {
       return this.handleError(error);
@@ -286,15 +318,16 @@ export class ExpenseController {
 
   async getExpenseAnalytics(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
       if (!searchParams.get('startDate') || !searchParams.get('endDate')) {
         throw new ValidationError('startDate and endDate are required');
       }
       const analytics = await expenseQueryService.getExpenseAnalytics(
-        tenantId,
+        tenantContext.organizationId,
         new Date(searchParams.get('startDate')!),
-        new Date(searchParams.get('endDate')!)
+        new Date(searchParams.get('endDate')!),
+        tenantContext
       );
       return successResponse(analytics);
     } catch (error) {
@@ -304,11 +337,12 @@ export class ExpenseController {
 
   async getCategoryOverTime(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const data = await expenseQueryService.getExpenseCategoryOverTime(
-        tenantId,
+        tenantContext.organizationId,
         parseDateRangeParams(req),
-        parseAnalyticsScope(req)
+        parseAnalyticsScope(req),
+        tenantContext
       );
       return successResponse(data);
     } catch (error) {
@@ -318,13 +352,14 @@ export class ExpenseController {
 
   async getTopVehicles(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const limit = Number(req.nextUrl.searchParams.get('limit') || '10');
       const data = await expenseQueryService.getTopVehiclesByExpense(
-        tenantId,
+        tenantContext.organizationId,
         parseDateRangeParams(req),
         limit,
-        parseAnalyticsScope(req)
+        parseAnalyticsScope(req),
+        tenantContext
       );
       return successResponse(data);
     } catch (error) {
@@ -334,13 +369,14 @@ export class ExpenseController {
 
   async getVehicleBreakdown(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const vehicleLimit = Number(req.nextUrl.searchParams.get('vehicleLimit') || '8');
       const data = await expenseQueryService.getVehicleExpenseBreakdown(
-        tenantId,
+        tenantContext.organizationId,
         parseDateRangeParams(req),
         vehicleLimit,
-        parseAnalyticsScope(req)
+        parseAnalyticsScope(req),
+        tenantContext
       );
       return successResponse(data);
     } catch (error) {
@@ -350,11 +386,12 @@ export class ExpenseController {
 
   async getAmountDistribution(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const data = await expenseQueryService.getExpenseAmountDistribution(
-        tenantId,
+        tenantContext.organizationId,
         parseDateRangeParams(req),
-        parseAnalyticsScope(req)
+        parseAnalyticsScope(req),
+        tenantContext
       );
       return successResponse(data);
     } catch (error) {
@@ -364,13 +401,14 @@ export class ExpenseController {
 
   async getJobTripExpense(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const jobLimit = Number(req.nextUrl.searchParams.get('jobLimit') || '10');
       const data = await expenseQueryService.getJobTripExpense(
-        tenantId,
+        tenantContext.organizationId,
         parseDateRangeParams(req),
         jobLimit,
-        parseAnalyticsScope(req)
+        parseAnalyticsScope(req),
+        tenantContext
       );
       return successResponse(data);
     } catch (error) {
@@ -380,11 +418,12 @@ export class ExpenseController {
 
   async getCategorySummary(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const data = await expenseQueryService.getExpenseCategorySummary(
-        tenantId,
+        tenantContext.organizationId,
         parseDateRangeParams(req),
-        parseAnalyticsScope(req)
+        parseAnalyticsScope(req),
+        tenantContext
       );
       return successResponse(data);
     } catch (error) {
@@ -394,13 +433,14 @@ export class ExpenseController {
 
   async getTopTransactions(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const limit = Number(req.nextUrl.searchParams.get('limit') || '10');
       const data = await expenseQueryService.getTopExpenseTransactions(
-        tenantId,
+        tenantContext.organizationId,
         parseDateRangeParams(req),
         limit,
-        parseAnalyticsScope(req)
+        parseAnalyticsScope(req),
+        tenantContext
       );
       return successResponse(data);
     } catch (error) {
@@ -410,11 +450,12 @@ export class ExpenseController {
 
   async getDailyTotals(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const data = await expenseQueryService.getDailyExpenseTotals(
-        tenantId,
+        tenantContext.organizationId,
         parseDateRangeParams(req),
-        parseAnalyticsScope(req)
+        parseAnalyticsScope(req),
+        tenantContext
       );
       return successResponse(data);
     } catch (error) {
@@ -424,16 +465,17 @@ export class ExpenseController {
 
   async getOutliers(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
       const zThreshold = Number(searchParams.get('zThreshold') || '2.5');
       const limit = Number(searchParams.get('limit') || '25');
       const data = await expenseQueryService.getExpenseOutliers(
-        tenantId,
+        tenantContext.organizationId,
         parseDateRangeParams(req),
         zThreshold,
         limit,
-        parseAnalyticsScope(req)
+        parseAnalyticsScope(req),
+        tenantContext
       );
       return successResponse(data);
     } catch (error) {

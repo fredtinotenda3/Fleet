@@ -11,7 +11,6 @@ export class SessionRepository extends BaseRepository<UserSession> {
     const now = new Date();
     return this.create(
       {
-        tenantId: input.tenantId,
         userId: input.userId,
         sessionId: input.sessionId,
         status: 'active',

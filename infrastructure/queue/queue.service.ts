@@ -1,3 +1,4 @@
+
 // infrastructure/queue/queue.service.ts
 // BullMQ queue service. Redis connection is created lazily so the
 // application boots correctly in environments where REDIS_URL is absent.
@@ -46,7 +47,7 @@ export enum JobType {
   // Backups
   RUN_BACKUP = 'run-backup',
 
-  // ── FleetOps – SLA & Compliance ───────────────────────────────────
+  // â”€â”€ FleetOps â€“ SLA & Compliance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   PROCESS_SLA_TRACKINGS = 'process-sla-trackings',
   PROCESS_COMPLIANCE_STATUSES = 'process-compliance-statuses',
 }
@@ -58,10 +59,10 @@ export interface JobData {
   userId?: string;
   scheduledFor?: Date;
   priority?: JobPriority;
-  correlationId?: string; // NEW — propagated to the worker's execution context
+  correlationId?: string; // NEW â€” propagated to the worker's execution context
 }
 
-// ──────────────────── PATCH START: Redis connection with timeouts ────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ PATCH START: Redis connection with timeouts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const REDIS_CONNECT_TIMEOUT_MS = 1500;
 const REDIS_MAX_CONNECTION_RETRIES = 2;
 
@@ -117,7 +118,7 @@ export const redisConnection = new Proxy(
     },
   }
 );
-// ──────────────────── PATCH END ──────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ PATCH END â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Maps a JobType to the underlying queue it runs on. Several JobTypes
@@ -146,7 +147,7 @@ const JOB_TYPE_QUEUE_MAP: Record<JobType, QueueName> = {
   [JobType.CLEANUP_OUTBOX]: 'cleanup-jobs',
   [JobType.EXPIRE_RESOURCE_GRANTS]: 'cleanup-jobs',
   [JobType.RUN_BACKUP]: 'backup-jobs',
-  // ── FleetOps – SLA & Compliance (route to cleanup-jobs queue) ─────
+  // â”€â”€ FleetOps â€“ SLA & Compliance (route to cleanup-jobs queue) â”€â”€â”€â”€â”€
   [JobType.PROCESS_SLA_TRACKINGS]: 'cleanup-jobs',
   [JobType.PROCESS_COMPLIANCE_STATUSES]: 'cleanup-jobs',
 };
@@ -250,6 +251,18 @@ export class QueueService {
     );
   }
 
+  /**
+   * Registers the single recurring BullMQ trigger for the overdue sweep.
+   * `tenantId: 'system'` here is only a placeholder to satisfy JobData's
+   * required field for this one registration call -- it is NOT license
+   * for MaintenanceWorker to run the sweep unscoped when this job fires.
+   * (Phase D: MaintenanceWorker.process()'s 'check-overdue' branch
+   * ignores this placeholder tenantId entirely and instead walks every
+   * active organization via BackgroundJobScopeService, running the
+   * sweep once per organization's real tenantId.) This method itself
+   * touches no tenant data -- it only tells BullMQ "fire once daily" --
+   * so a single platform-level registration is correct here.
+   */
   async scheduleOverdueCheck(): Promise<any> {
     return this.addJob(
       JobType.CHECK_OVERDUE,

@@ -69,7 +69,6 @@ export class DeadLetterService {
         attemptsMade: params.attemptsMade,
         stacktrace: params.stacktrace,
         resolved: false,
-         tenantId: params.tenantId, 
       },
       params.tenantId,
       'system'

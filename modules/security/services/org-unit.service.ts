@@ -31,7 +31,6 @@ export class OrgUnitService {
 
     const created = await this.repo.create(
       {
-        tenantId: data.organizationId,
         organizationId: data.organizationId,
         type: data.type,
         name: data.name.trim(),

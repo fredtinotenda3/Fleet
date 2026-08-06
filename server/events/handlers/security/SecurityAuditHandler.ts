@@ -14,6 +14,7 @@ import {
   SECURITY_RATE_LIMIT_ANOMALY,
   AUDIT_CHAIN_INTEGRITY_FAILURE,
 } from '../../event-names';
+import { resolveOrganization } from '@/server/tenancy/organization-resolver';
 
 /**
  * Bridges the Slice 6c threat-detection events onto the audit ledger
@@ -68,7 +69,7 @@ export class SecurityAuditHandler implements IEventHandler<DomainEvent> {
   private async notifyOwners(event: DomainEvent, tenantId: string): Promise<void> {
     if (tenantId === 'default' || tenantId === 'system') return;
 
-    const organization = await organizationRepository.findById(tenantId, tenantId, false, true);
+    const organization = await resolveOrganization(tenantId);
     if (!organization) return;
 
     const ownerIds = organization.members

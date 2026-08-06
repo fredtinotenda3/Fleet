@@ -3,20 +3,6 @@
 import { queryBus } from '@/server/cqrs/query-bus';
 import { GetFuelLogsQuery } from '../queries/get-fuel-logs.query';
 import { GetFuelLogByIdQuery } from '../queries/get-fuel-log-by-id.query';
-import { GetFuelStatsQuery } from '../queries/get-fuel-stats.query';
-import { GetMonthlyFuelConsumptionQuery } from '../queries/get-monthly-fuel-consumption.query';
-import { GetTopFuelConsumersQuery } from '../queries/get-top-fuel-consumers.query';
-import { GetFuelKpisQuery } from '../queries/get-fuel-kpis.query';
-import { GetAbnormalFuelConsumptionQuery } from '../queries/get-abnormal-fuel-consumption.query';
-import { GetFuelByDriverQuery, FuelByDriverSort } from '../queries/get-fuel-by-driver.query';
-import { GetVehicleFuelTimelineQuery, VehicleFuelTimelineFilters } from '../queries/get-vehicle-fuel-timeline.query';
-import { GetFuelByStationQuery } from '../queries/get-fuel-by-station.query';
-import { GetFuelActivityTrendQuery } from '../queries/get-fuel-activity-trend.query';
-import { GetAverageFuelPriceTrendQuery } from '../queries/get-average-fuel-price-trend.query';
-import { GetFuelTypeDistributionQuery } from '../queries/get-fuel-type-distribution.query';
-import { GetFuelingFrequencyByVehicleQuery } from '../queries/get-fueling-frequency-by-vehicle.query';
-import { GetFuelCostDistributionQuery } from '../queries/get-fuel-cost-distribution.query';
-import { GetFuelEntryHeatmapQuery } from '../queries/get-fuel-entry-heatmap.query';
 import {
   FuelLog,
   FuelFilters,
@@ -36,9 +22,24 @@ import {
 } from '@/shared/types/fuel.types';
 import { PaginatedResponse, PaginationParams } from '@/shared/types/common.types';
 import { AnalyticsScope, isFleetScope } from '@/shared/types/analytics-scope.types';
+import type { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import type { FuelByDriverSort } from '../queries/get-fuel-by-driver.query';
+import type { VehicleFuelTimelineFilters } from '../queries/get-vehicle-fuel-timeline.query';
 import { fuelRepository } from '../repositories/fuel.repository';
 import { tripRepository } from '@/modules/trips/repositories/trip.repository';
 
+// FIX (Phase B -- repository/analytics scoping completeness): the 13
+// analytics methods below previously routed through queryBus -> a Query
+// class -> a Handler that simply forwarded (tenantId, dateRange, scope)
+// to the repository, with no `context` anywhere in that chain. Threading
+// org-unit scoping through 13 query classes + 13 handlers per domain
+// (~100+ files across fuel/expense/trip/maintenance, none of which carry
+// business logic beyond a repository passthrough) is disproportionate to
+// the fix. Instead these now call the (already org-unit-scoped)
+// repository directly, matching the precedent already set by
+// `getFuelKpis` below, which never went through queryBus to begin with.
+// CRUD/list methods (getFilteredLogs, getFuelLogById) are unchanged and
+// still routed through the CQRS bus.
 export class FuelQueryService {
   async getFilteredLogs(
     filters: FuelFilters,
@@ -59,31 +60,28 @@ export class FuelQueryService {
   async getFuelStats(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<FuelStats> {
-    return queryBus.execute<FuelStats>(
-      new GetFuelStatsQuery(tenantId, dateRange, scope)
-    );
+    return fuelRepository.getFuelStats(tenantId, dateRange, scope, context);
   }
 
   async getMonthlyFuelConsumption(
     tenantId: string,
     months: number = 12,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<Array<{ month: string; fuel: number; cost: number }>> {
-    return queryBus.execute<Array<{ month: string; fuel: number; cost: number }>>(
-      new GetMonthlyFuelConsumptionQuery(tenantId, months, scope)
-    );
+    return fuelRepository.getMonthlyFuelConsumption(tenantId, months, scope, context);
   }
 
   async getTopFuelConsumers(
     tenantId: string,
     limit: number = 5,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<Array<{ license_plate: string; totalFuel: number; totalCost: number }>> {
-    return queryBus.execute<Array<{ license_plate: string; totalFuel: number; totalCost: number }>>(
-      new GetTopFuelConsumersQuery(tenantId, limit, scope)
-    );
+    return fuelRepository.getTopFuelConsumers(tenantId, limit, scope, context);
   }
 
   async getFuelByDriver(
@@ -91,11 +89,10 @@ export class FuelQueryService {
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 10,
     sortBy: FuelByDriverSort = 'volume',
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<DriverFuelConsumptionRow[]> {
-    return queryBus.execute<DriverFuelConsumptionRow[]>(
-      new GetFuelByDriverQuery(tenantId, dateRange, limit, sortBy, scope)
-    );
+    return fuelRepository.getFuelByDriver(tenantId, dateRange, limit, sortBy, scope, context);
   }
 
   /**
@@ -107,11 +104,16 @@ export class FuelQueryService {
    * narrowed to that single vehicle by the scope-filtered base match --
    * so results are correct for "Vehicle Analytics" without any change to
    * the trip-distance computation itself.
+   *
+   * `context` (Phase B) is passed to both the trip-distance lookups and
+   * the fuel KPI aggregation so branch/department/workshop scoping is
+   * applied consistently across both data sources feeding this card.
    */
   async getFuelKpis(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<FuelKpis> {
     const now = new Date();
     const rangeEnd = dateRange?.endDate ?? now;
@@ -121,8 +123,8 @@ export class FuelQueryService {
     const prevRangeStart = new Date(prevRangeEnd.getTime() - periodMs);
 
     const [tripDistanceByVehicle, prevTripDistanceByVehicle] = await Promise.all([
-      tripRepository.getDistanceByVehicle(tenantId, rangeStart, rangeEnd),
-      tripRepository.getDistanceByVehicle(tenantId, prevRangeStart, prevRangeEnd),
+      tripRepository.getDistanceByVehicle(tenantId, rangeStart, rangeEnd, context),
+      tripRepository.getDistanceByVehicle(tenantId, prevRangeStart, prevRangeEnd, context),
     ]);
 
     return fuelRepository.getFuelKpis(
@@ -130,72 +132,67 @@ export class FuelQueryService {
       dateRange,
       tripDistanceByVehicle,
       prevTripDistanceByVehicle,
-      scope
+      scope,
+      context
     );
   }
 
   async getAbnormalConsumption(
     tenantId: string,
     threshold: number = 2,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<AbnormalFuelConsumptionRow[]> {
-    return queryBus.execute<AbnormalFuelConsumptionRow[]>(
-      new GetAbnormalFuelConsumptionQuery(tenantId, threshold, scope)
-    );
+    return fuelRepository.getAbnormalConsumption(tenantId, threshold, scope, context);
   }
 
   // ---- Enterprise analytics (all scope-aware) ----
 
   async getVehicleFuelTimeline(
     tenantId: string,
-    filters: VehicleFuelTimelineFilters
+    filters: VehicleFuelTimelineFilters,
+    context?: TenantContext
   ): Promise<VehicleFuelTimelinePoint[]> {
-    return queryBus.execute<VehicleFuelTimelinePoint[]>(
-      new GetVehicleFuelTimelineQuery(tenantId, filters)
-    );
+    return fuelRepository.getVehicleFuelTimeline(tenantId, filters, context);
   }
 
   async getFuelByStation(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 15,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<FuelByStationRow[]> {
-    return queryBus.execute<FuelByStationRow[]>(
-      new GetFuelByStationQuery(tenantId, dateRange, limit, scope)
-    );
+    return fuelRepository.getFuelByStation(tenantId, dateRange, limit, scope, context);
   }
 
   async getFuelActivityTrend(
     tenantId: string,
     granularity: FuelTrendGranularity,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<FuelActivityTrendPoint[]> {
-    return queryBus.execute<FuelActivityTrendPoint[]>(
-      new GetFuelActivityTrendQuery(tenantId, granularity, dateRange, scope)
-    );
+    return fuelRepository.getFuelActivityTrend(tenantId, granularity, dateRange, scope, context);
   }
 
   async getAverageFuelPriceTrend(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     granularity: FuelTrendGranularity = 'month',
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<FuelPriceTrendPoint[]> {
-    return queryBus.execute<FuelPriceTrendPoint[]>(
-      new GetAverageFuelPriceTrendQuery(tenantId, dateRange, granularity, scope)
-    );
+    return fuelRepository.getAverageFuelPriceTrend(tenantId, dateRange, granularity, scope, context);
   }
 
   async getFuelTypeDistribution(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<FuelTypeDistributionRow[]> {
-    return queryBus.execute<FuelTypeDistributionRow[]>(
-      new GetFuelTypeDistributionQuery(tenantId, dateRange, scope)
-    );
+    return fuelRepository.getFuelTypeDistribution(tenantId, dateRange, scope, context);
   }
 
   /**
@@ -210,31 +207,28 @@ export class FuelQueryService {
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 20,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<FuelFrequencyByVehicleRow[]> {
-    return queryBus.execute<FuelFrequencyByVehicleRow[]>(
-      new GetFuelingFrequencyByVehicleQuery(tenantId, dateRange, limit, scope)
-    );
+    return fuelRepository.getFuelingFrequencyByVehicle(tenantId, dateRange, limit, scope, context);
   }
 
   async getFuelCostDistribution(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<FuelCostDistributionBucket[]> {
-    return queryBus.execute<FuelCostDistributionBucket[]>(
-      new GetFuelCostDistributionQuery(tenantId, dateRange, scope)
-    );
+    return fuelRepository.getFuelCostDistribution(tenantId, dateRange, scope, context);
   }
 
   async getFuelEntryHeatmap(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<FuelHeatmapCell[]> {
-    return queryBus.execute<FuelHeatmapCell[]>(
-      new GetFuelEntryHeatmapQuery(tenantId, dateRange, scope)
-    );
+    return fuelRepository.getFuelEntryHeatmap(tenantId, dateRange, scope, context);
   }
 }
 

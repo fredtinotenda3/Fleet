@@ -11,6 +11,7 @@ import { notificationService } from '@/modules/notifications/services/notificati
 import { webSocketManager } from '@/infrastructure/websocket/server';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { InvoicePaidEvent } from '@/modules/billing/events/InvoicePaidEvent';
+import { resolveOrganization } from '@/server/tenancy/organization-resolver';
 
 export class BillingService {
   constructor(private readonly invoiceRepo: InvoiceRepository = invoiceRepository) {}
@@ -40,7 +41,7 @@ export class BillingService {
       throw new ValidationError('The free plan does not require payment');
     }
 
-    const organization = await organizationRepository.findById(organizationId, tenantId, false, true);
+    const organization = await resolveOrganization(organizationId);
     if (!organization) {
       throw new NotFoundError('Organization not found');
     }
@@ -208,12 +209,7 @@ export class BillingService {
   private async applyPlanUpgrade(invoice: Invoice): Promise<void> {
     const plan = getPlan(invoice.planId);
 
-    const organization = await organizationRepository.findById(
-      invoice.organizationId,
-      invoice.tenantId,
-      false,
-      true
-    );
+    const organization = await resolveOrganization(invoice.organizationId);
     if (!organization) {
       console.error(`[BillingService] Cannot apply upgrade: organization ${invoice.organizationId} not found`);
       return;

@@ -46,7 +46,6 @@ export class ApiKeyService {
 
     const created = await this.repo.create(
       {
-        tenantId: organizationId,
         organizationId,
         name: data.name.trim(),
         keyPrefix: `${KEY_PREFIX}_${identifier}`,

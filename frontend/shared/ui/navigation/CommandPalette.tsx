@@ -30,7 +30,10 @@ import {
   Search as SearchIcon,
   FileBarChart,
   LineChart,
+  Users,
 } from 'lucide-react';
+import { Permission, permissionService } from '@/server/permissions/roles';
+import { useSessionStore } from '@/frontend/shared/store/session.store';
 import { useUiStore } from '@/frontend/shared/store/ui.store';
 import { cn } from '@/lib/utils';
 
@@ -42,6 +45,20 @@ interface CommandEntry {
   icon: React.ComponentType<{ className?: string }>;
   action: () => void;
   keywords?: string[];
+  /**
+   * FIX (Phase E, objective 4 -- "frontend visibility: permission driven").
+   * The palette previously offered EVERY route to EVERY authenticated
+   * user. A driver could press Ctrl+K and jump straight to Organization
+   * Settings or the Audit Log. The API rejects the resulting calls, so
+   * this was never a data breach -- but it advertised the whole admin
+   * surface to users with no business seeing it, and produced a trail of
+   * 403s that read as bugs.
+   *
+   * Gated on the same Permission members as the sidebar and the API
+   * routes, resolved through the same permissionService. Omit to show an
+   * entry to every authenticated user.
+   */
+  permission?: Permission[];
 }
 
 export function CommandPalette() {
@@ -52,6 +69,8 @@ export function CommandPalette() {
   const trackVisit = useUiStore((s) => s.trackVisit);
 
   const [query, setQuery] = React.useState('');
+  const sessionUser = useSessionStore((state) => state.user);
+  const roles = React.useMemo(() => sessionUser?.roles ?? [], [sessionUser]);
   const [activeIndex, setActiveIndex] = React.useState(0);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
@@ -64,25 +83,48 @@ export function CommandPalette() {
     [router, setOpen, trackVisit]
   );
 
-  const commands: CommandEntry[] = React.useMemo(
+  const allCommands: CommandEntry[] = React.useMemo(
     () => [
       { id: 'nav-dashboard', label: 'Go to Dashboard', group: 'Navigate', icon: LayoutDashboard, action: () => navigate('/dashboard', 'Dashboard') },
-      { id: 'nav-vehicles', label: 'Go to Vehicles', group: 'Navigate', icon: Truck, action: () => navigate('/vehicles', 'Vehicles') },
-      { id: 'nav-trips', label: 'Go to Trips', group: 'Navigate', icon: Route, action: () => navigate('/trips', 'Trips') },
-      { id: 'nav-fuel', label: 'Go to Fuel Logs', group: 'Navigate', icon: FuelIcon, action: () => navigate('/fuel', 'Fuel') },
-      { id: 'nav-expenses', label: 'Go to Expenses', group: 'Navigate', icon: Wallet, action: () => navigate('/expenses', 'Expenses') },
-      { id: 'nav-maintenance', label: 'Go to Maintenance', group: 'Navigate', icon: Wrench, action: () => navigate('/maintenance', 'Maintenance') },
-      { id: 'nav-reports', label: 'Go to Reports', group: 'Navigate', icon: FileBarChart, action: () => navigate('/reports', 'Reports') },
-      { id: 'nav-analytics', label: 'Go to Analytics', group: 'Navigate', icon: LineChart, action: () => navigate('/organizations/analytics', 'Analytics') },
-      { id: 'nav-org', label: 'Go to Organization Dashboard', group: 'Navigate', icon: Building2, action: () => navigate('/organizations/dashboard', 'Organization') },
-      { id: 'nav-security', label: 'Go to Account Security', group: 'Navigate', icon: ShieldCheck, action: () => navigate('/auth/account-security', 'Account Security') },
-      { id: 'nav-settings', label: 'Go to Organization Settings', group: 'Navigate', icon: Settings, action: () => navigate('/organizations/settings', 'Settings') },
+      { id: 'nav-vehicles', label: 'Go to Vehicles', group: 'Navigate', icon: Truck, permission: [Permission.VEHICLE_VIEW], action: () => navigate('/vehicles', 'Vehicles') },
+      { id: 'nav-drivers', label: 'Go to Drivers', group: 'Navigate', icon: Users, permission: [Permission.VEHICLE_VIEW], action: () => navigate('/drivers', 'Drivers') },
+      { id: 'nav-trips', label: 'Go to Trips', group: 'Navigate', icon: Route, permission: [Permission.TRIP_VIEW, Permission.DRIVER_VIEW_TRIPS], action: () => navigate('/trips', 'Trips') },
+      { id: 'nav-trips-analytics', label: 'Go to Trip Analytics', group: 'Navigate', icon: LineChart, permission: [Permission.TRIP_VIEW], action: () => navigate('/trips/analytics', 'Trip Analytics') },
+      { id: 'nav-fuel', label: 'Go to Fuel', group: 'Navigate', icon: FuelIcon, permission: [Permission.FUEL_VIEW], action: () => navigate('/fuel', 'Fuel') },
+      { id: 'nav-fuel-stations', label: 'Go to Fuel Stations', group: 'Navigate', icon: FuelIcon, permission: [Permission.FUEL_VIEW], action: () => navigate('/fuel/stations', 'Fuel Stations') },
+      { id: 'nav-fuel-cards', label: 'Go to Fuel Cards', group: 'Navigate', icon: FuelIcon, permission: [Permission.FUEL_VIEW], action: () => navigate('/fuel/cards', 'Fuel Cards') },
+      { id: 'nav-fuel-analytics', label: 'Go to Fuel Analytics', group: 'Navigate', icon: LineChart, permission: [Permission.FUEL_VIEW], action: () => navigate('/fuel/analytics', 'Fuel Analytics') },
+      { id: 'nav-expenses', label: 'Go to Expenses', group: 'Navigate', icon: Wallet, permission: [Permission.EXPENSE_VIEW], action: () => navigate('/expenses', 'Expenses') },
+      { id: 'nav-expenses-analytics', label: 'Go to Expense Analytics', group: 'Navigate', icon: LineChart, permission: [Permission.EXPENSE_VIEW], action: () => navigate('/expenses/analytics', 'Expense Analytics') },
+      { id: 'nav-maintenance', label: 'Go to Maintenance', group: 'Navigate', icon: Wrench, permission: [Permission.MAINTENANCE_VIEW], action: () => navigate('/maintenance', 'Maintenance') },
+      { id: 'nav-maintenance-overdue', label: 'Go to Overdue Maintenance', group: 'Navigate', icon: Wrench, permission: [Permission.MAINTENANCE_VIEW], action: () => navigate('/maintenance/overdue', 'Overdue Maintenance') },
+      { id: 'nav-maintenance-calendar', label: 'Go to Maintenance Calendar', group: 'Navigate', icon: Wrench, permission: [Permission.MAINTENANCE_VIEW], action: () => navigate('/maintenance/calendar', 'Maintenance Calendar') },
+      { id: 'nav-reports', label: 'Go to Reports', group: 'Navigate', icon: FileBarChart, permission: [Permission.REPORT_VIEW], action: () => navigate('/reports', 'Reports') },
+      { id: 'nav-reports-builder', label: 'Go to Report Builder', group: 'Navigate', icon: FileBarChart, permission: [Permission.REPORT_CREATE], action: () => navigate('/reports/builder', 'Report Builder') },
+      { id: 'nav-analytics', label: 'Go to Analytics', group: 'Navigate', icon: LineChart, permission: [Permission.ANALYTICS_VIEW], action: () => navigate('/organizations/analytics', 'Analytics') },
+      { id: 'nav-org', label: 'Go to Organization Dashboard', group: 'Navigate', icon: Building2, permission: [Permission.ORG_VIEW], action: () => navigate('/organizations/dashboard', 'Organization') },
+      { id: 'nav-org-members', label: 'Go to Members', group: 'Navigate', icon: Users, permission: [Permission.ORG_MEMBERS_MANAGE], action: () => navigate('/organizations/members', 'Members') },
+      { id: 'nav-audit-log', label: 'Go to Audit Log', group: 'Navigate', icon: ShieldCheck, permission: [Permission.AUDIT_LOG_VIEW], action: () => navigate('/organizations/audit-log', 'Audit Log') },
+      { id: 'nav-settings', label: 'Go to Organization Settings', group: 'Navigate', icon: Settings, permission: [Permission.ORG_MANAGE], action: () => navigate('/organizations/settings', 'Settings') },
       { id: 'theme-light', label: 'Switch to Light theme', group: 'Theme', icon: Sun, keywords: ['appearance'], action: () => { setTheme('light'); setOpen(false); } },
       { id: 'theme-dark', label: 'Switch to Dark theme', group: 'Theme', icon: Moon, keywords: ['appearance'], action: () => { setTheme('dark'); setOpen(false); } },
       { id: 'theme-system', label: 'Match System theme', group: 'Theme', icon: Monitor, keywords: ['appearance'], action: () => { setTheme('system'); setOpen(false); } },
       { id: 'sign-out', label: 'Sign out', group: 'Account', icon: LogOut, action: () => { setOpen(false); void signOut({ callbackUrl: '/auth/login' }); } },
     ],
     [navigate, setOpen, setTheme]
+  );
+
+  /**
+   * Permission gate, applied before search. Entries the user cannot use
+   * are not merely hidden from results -- they never enter the list, so
+   * they cannot be reached by typing an exact match either.
+   */
+  const commands = React.useMemo(
+    () =>
+      allCommands.filter(
+        (c) => !c.permission || permissionService.hasAnyPermission(roles, c.permission)
+      ),
+    [allCommands, roles]
   );
 
   const filtered = React.useMemo(() => {

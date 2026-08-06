@@ -49,7 +49,7 @@ export function DriverSelect({
   return (
     <Select
       value={value || (allowUnassigned ? UNASSIGNED : '')}
-      onValueChange={(v) => onChange(v === UNASSIGNED ? '' : v)}
+      onValueChange={(v) => onChange(!v || v === UNASSIGNED ? '' : v)}
       disabled={disabled || isLoading}
     >
       <SelectTrigger id={id} className="w-full">

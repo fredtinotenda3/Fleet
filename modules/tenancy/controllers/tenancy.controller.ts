@@ -43,7 +43,7 @@ export class TenancyController {
         context.userId,
         context.tenantId,
         context.roles,
-        context.isSuperAdmin,
+        context.isPlatformAdmin,
         context.orgUnitId
       );
       return successResponse(tenantContext);

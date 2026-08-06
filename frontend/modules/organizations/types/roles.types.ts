@@ -65,10 +65,23 @@ export interface UserScopeAssignmentCreatePayload {
   isCustomRole?: boolean;
 }
 
-/** The built-in static roles, mirrored from server/permissions/roles.ts (Role enum). */
+/**
+ * The built-in static roles, mirrored from server/permissions/roles.ts
+ * (Role enum). FIX (Phase E, task 7): this had drifted the same way
+ * ORGANIZATION_ROLES in ./index.ts had -- missing every Phase A role.
+ * Kept in sync by hand with that list rather than re-declared
+ * independently, since RoleList.tsx (BuiltInRolesCard) renders
+ * STATIC_ROLES directly and needs to show the same five roles that
+ * were invisible here before this fix.
+ */
 export const STATIC_ROLES = [
   'organization_owner',
+  'organization_admin',
+  'branch_manager',
+  'department_manager',
   'fleet_manager',
+  'workshop_manager',
+  'supervisor',
   'accountant',
   'dispatcher',
   'driver',

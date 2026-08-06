@@ -25,6 +25,7 @@ import { getAuthContext } from '@/server/auth/auth-context';
 import { driverRepository } from '@/modules/drivers/repositories/driver.repository';
 import connectToDatabase from '@/infrastructure/database/mongodb';
 import { tenantContextService } from '@/modules/tenancy/services/tenant-context.service';
+import type { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 import { fuelRepository } from '../repositories/fuel.repository';
 import { exportService, fileDownloadResponse } from '@/shared/export';
@@ -84,6 +85,32 @@ function parseAnalyticsScope(searchParams: URLSearchParams): AnalyticsScope | un
     return vehicleScope(licensePlate);
   }
   return undefined;
+}
+
+/**
+ * FIX (Phase B -- repository/analytics scoping completeness): every
+ * analytics action below used to call `getTenantFromRequest(req)`, which
+ * only ever returns a bare tenantId string -- no roles, no
+ * accessibleOrgUnitIds. That meant charts/KPIs had no way to be
+ * org-unit scoped even after FuelRepository/FuelQueryService gained a
+ * `context` parameter, so a Branch/Fleet/Workshop Manager's dashboard
+ * would still silently show org-wide totals. This mirrors the exact
+ * authContext -> tenantContextService.resolveContext() pattern already
+ * used by getFuelLogs/exportFuelLogs for the (correctly scoped) list
+ * page, so analytics and list views now resolve scope identically.
+ */
+async function resolveTenantContext(req: NextRequest): Promise<TenantContext> {
+  const authContext = await getAuthContext(req);
+  if (!authContext) {
+    throw new UnauthorizedError('Authentication required');
+  }
+  return tenantContextService.resolveContext(
+    authContext.userId,
+    authContext.tenantId,
+    authContext.roles,
+    authContext.isPlatformAdmin,
+    authContext.orgUnitId
+  );
 }
 
 interface DriverLookupEntry {
@@ -213,7 +240,7 @@ export class FuelController {
         authContext.userId,
         authContext.tenantId,
         authContext.roles,
-        authContext.isSuperAdmin,
+        authContext.isPlatformAdmin,
         authContext.orgUnitId
       );
 
@@ -272,7 +299,7 @@ export class FuelController {
         authContext.userId,
         authContext.tenantId,
         authContext.roles,
-        authContext.isSuperAdmin,
+        authContext.isPlatformAdmin,
         authContext.orgUnitId
       );
 
@@ -331,7 +358,7 @@ export class FuelController {
       authContext.userId,
       authContext.tenantId,
       authContext.roles,
-      authContext.isSuperAdmin,
+      authContext.isPlatformAdmin,
       authContext.orgUnitId
     );
 
@@ -547,11 +574,16 @@ export class FuelController {
 
   async getFuelStats(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
       const dateRange = parseDateRange(searchParams);
       const scope = parseAnalyticsScope(searchParams);
-      const stats = await fuelQueryService.getFuelStats(tenantId, dateRange, scope);
+      const stats = await fuelQueryService.getFuelStats(
+        tenantContext.organizationId,
+        dateRange,
+        scope,
+        tenantContext
+      );
       return successResponse(stats);
     } catch (error) {
       return this.handleError(error);
@@ -560,11 +592,16 @@ export class FuelController {
 
   async getMonthlyConsumption(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
       const months = Number(searchParams.get('months') || '12');
       const scope = parseAnalyticsScope(searchParams);
-      const data = await fuelQueryService.getMonthlyFuelConsumption(tenantId, months, scope);
+      const data = await fuelQueryService.getMonthlyFuelConsumption(
+        tenantContext.organizationId,
+        months,
+        scope,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -573,11 +610,16 @@ export class FuelController {
 
   async getTopConsumers(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
       const limit = Number(searchParams.get('limit') || '5');
       const scope = parseAnalyticsScope(searchParams);
-      const data = await fuelQueryService.getTopFuelConsumers(tenantId, limit, scope);
+      const data = await fuelQueryService.getTopFuelConsumers(
+        tenantContext.organizationId,
+        limit,
+        scope,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -586,14 +628,21 @@ export class FuelController {
 
   async getFuelByDriver(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
       const limit = Number(searchParams.get('limit') || '10');
       const sortBy = (searchParams.get('sortBy') as FuelByDriverSort) || 'volume';
       const dateRange = parseDateRange(searchParams);
       const scope = parseAnalyticsScope(searchParams);
 
-      const data = await fuelQueryService.getFuelByDriver(tenantId, dateRange, limit, sortBy, scope);
+      const data = await fuelQueryService.getFuelByDriver(
+        tenantContext.organizationId,
+        dateRange,
+        limit,
+        sortBy,
+        scope,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -602,11 +651,16 @@ export class FuelController {
 
   async getFuelKpis(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
       const dateRange = parseDateRange(searchParams);
       const scope = parseAnalyticsScope(searchParams);
-      const kpis = await fuelQueryService.getFuelKpis(tenantId, dateRange, scope);
+      const kpis = await fuelQueryService.getFuelKpis(
+        tenantContext.organizationId,
+        dateRange,
+        scope,
+        tenantContext
+      );
       return successResponse(kpis);
     } catch (error) {
       return this.handleError(error);
@@ -615,11 +669,16 @@ export class FuelController {
 
   async getAbnormalConsumption(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
       const threshold = Number(searchParams.get('threshold') || '2');
       const scope = parseAnalyticsScope(searchParams);
-      const data = await fuelQueryService.getAbnormalConsumption(tenantId, threshold, scope);
+      const data = await fuelQueryService.getAbnormalConsumption(
+        tenantContext.organizationId,
+        threshold,
+        scope,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -630,16 +689,20 @@ export class FuelController {
 
   async getVehicleFuelTimeline(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
       const dateRange = parseDateRange(searchParams);
       const licensePlate = searchParams.get('license_plate') || undefined;
 
-      const data = await fuelQueryService.getVehicleFuelTimeline(tenantId, {
-        license_plate: licensePlate,
-        startDate: dateRange?.startDate,
-        endDate: dateRange?.endDate,
-      });
+      const data = await fuelQueryService.getVehicleFuelTimeline(
+        tenantContext.organizationId,
+        {
+          license_plate: licensePlate,
+          startDate: dateRange?.startDate,
+          endDate: dateRange?.endDate,
+        },
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -648,13 +711,19 @@ export class FuelController {
 
   async getFuelByStation(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
       const limit = Number(searchParams.get('limit') || '15');
       const dateRange = parseDateRange(searchParams);
       const scope = parseAnalyticsScope(searchParams);
 
-      const data = await fuelQueryService.getFuelByStation(tenantId, dateRange, limit, scope);
+      const data = await fuelQueryService.getFuelByStation(
+        tenantContext.organizationId,
+        dateRange,
+        limit,
+        scope,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -663,7 +732,7 @@ export class FuelController {
 
   async getFuelActivityTrend(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
       const granularityParam = searchParams.get('granularity') as FuelTrendGranularity | null;
       const granularity: FuelTrendGranularity =
@@ -671,7 +740,13 @@ export class FuelController {
       const dateRange = parseDateRange(searchParams);
       const scope = parseAnalyticsScope(searchParams);
 
-      const data = await fuelQueryService.getFuelActivityTrend(tenantId, granularity, dateRange, scope);
+      const data = await fuelQueryService.getFuelActivityTrend(
+        tenantContext.organizationId,
+        granularity,
+        dateRange,
+        scope,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -680,7 +755,7 @@ export class FuelController {
 
   async getAverageFuelPriceTrend(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
       const granularityParam = searchParams.get('granularity') as FuelTrendGranularity | null;
       const granularity: FuelTrendGranularity =
@@ -688,7 +763,13 @@ export class FuelController {
       const dateRange = parseDateRange(searchParams);
       const scope = parseAnalyticsScope(searchParams);
 
-      const data = await fuelQueryService.getAverageFuelPriceTrend(tenantId, dateRange, granularity, scope);
+      const data = await fuelQueryService.getAverageFuelPriceTrend(
+        tenantContext.organizationId,
+        dateRange,
+        granularity,
+        scope,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -697,11 +778,16 @@ export class FuelController {
 
   async getFuelTypeDistribution(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
       const dateRange = parseDateRange(searchParams);
       const scope = parseAnalyticsScope(searchParams);
-      const data = await fuelQueryService.getFuelTypeDistribution(tenantId, dateRange, scope);
+      const data = await fuelQueryService.getFuelTypeDistribution(
+        tenantContext.organizationId,
+        dateRange,
+        scope,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -710,13 +796,19 @@ export class FuelController {
 
   async getFuelingFrequencyByVehicle(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
       const limit = Number(searchParams.get('limit') || '20');
       const dateRange = parseDateRange(searchParams);
       const scope = parseAnalyticsScope(searchParams);
 
-      const data = await fuelQueryService.getFuelingFrequencyByVehicle(tenantId, dateRange, limit, scope);
+      const data = await fuelQueryService.getFuelingFrequencyByVehicle(
+        tenantContext.organizationId,
+        dateRange,
+        limit,
+        scope,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -725,11 +817,16 @@ export class FuelController {
 
   async getFuelCostDistribution(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
       const dateRange = parseDateRange(searchParams);
       const scope = parseAnalyticsScope(searchParams);
-      const data = await fuelQueryService.getFuelCostDistribution(tenantId, dateRange, scope);
+      const data = await fuelQueryService.getFuelCostDistribution(
+        tenantContext.organizationId,
+        dateRange,
+        scope,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);
@@ -738,11 +835,16 @@ export class FuelController {
 
   async getFuelEntryHeatmap(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
       const dateRange = parseDateRange(searchParams);
       const scope = parseAnalyticsScope(searchParams);
-      const data = await fuelQueryService.getFuelEntryHeatmap(tenantId, dateRange, scope);
+      const data = await fuelQueryService.getFuelEntryHeatmap(
+        tenantContext.organizationId,
+        dateRange,
+        scope,
+        tenantContext
+      );
       return successResponse(data);
     } catch (error) {
       return this.handleError(error);

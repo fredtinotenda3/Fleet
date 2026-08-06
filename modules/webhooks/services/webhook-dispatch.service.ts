@@ -50,7 +50,6 @@ export class WebhookDispatchService {
       try {
         await webhookDeliveryRepository.create(
           {
-            tenantId,
             organizationId: tenantId,
             subscriptionId: subscription._id!,
             eventName,
@@ -112,7 +111,6 @@ export class WebhookDispatchService {
 
     await webhookDeliveryRepository.create(
       {
-        tenantId,
         organizationId: tenantId,
         subscriptionId,
         eventName: 'webhook.test',

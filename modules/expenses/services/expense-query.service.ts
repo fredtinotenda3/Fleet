@@ -3,18 +3,6 @@
 import { queryBus } from '@/server/cqrs/query-bus';
 import { GetExpensesQuery } from '../queries/get-expenses.query';
 import { GetExpenseByIdQuery } from '../queries/get-expense-by-id.query';
-import { GetExpenseStatsQuery } from '../queries/get-expense-stats.query';
-import { GetMonthlyTrendsQuery } from '../queries/get-monthly-trends.query';
-import { GetExpenseAnalyticsQuery } from '../queries/get-expense-analytics.query';
-import { GetExpenseCategoryOverTimeQuery } from '../queries/get-expense-category-over-time.query';
-import { GetTopVehiclesByExpenseQuery } from '../queries/get-top-vehicles-by-expense.query';
-import { GetVehicleExpenseBreakdownQuery } from '../queries/get-vehicle-expense-breakdown.query';
-import { GetExpenseAmountDistributionQuery } from '../queries/get-expense-amount-distribution.query';
-import { GetJobTripExpenseQuery } from '../queries/get-job-trip-expense.query';
-import { GetExpenseCategorySummaryQuery } from '../queries/get-expense-category-summary.query';
-import { GetTopExpenseTransactionsQuery } from '../queries/get-top-expense-transactions.query';
-import { GetDailyExpenseTotalsQuery } from '../queries/get-daily-expense-totals.query';
-import { GetExpenseOutliersQuery } from '../queries/get-expense-outliers.query';
 import {
   Expense,
   ExpenseFilters,
@@ -31,7 +19,18 @@ import {
 } from '@/shared/types/expense.types';
 import { PaginatedResponse, PaginationParams, DateRange } from '@/shared/types/common.types';
 import { AnalyticsScope } from '@/shared/types/analytics-scope.types';
+import type { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { expenseRepository } from '../repositories/expense.repository';
 
+// FIX (Phase B -- repository/analytics scoping completeness): same
+// change as FuelQueryService -- the 12 analytics methods below used to
+// route through queryBus -> Query class -> Handler, none of which carried
+// `context`. Threading org-unit scoping through ~24 additional files
+// (12 query classes + 12 handlers, all pure passthroughs with no
+// business logic beyond a repository call) is disproportionate; these
+// now call the (already org-unit-scoped) repository directly. CRUD/list
+// methods (getFilteredExpenses, getExpenseById) are unchanged and still
+// routed through the CQRS bus.
 export class ExpenseQueryService {
   async getFilteredExpenses(
     filters: ExpenseFilters,
@@ -47,106 +46,107 @@ export class ExpenseQueryService {
     return queryBus.execute<Expense>(new GetExpenseByIdQuery(expenseId, tenantId));
   }
 
-  async getExpenseStats(tenantId: string, dateRange?: DateRange, scope?: AnalyticsScope): Promise<ExpenseStats> {
-    return queryBus.execute<ExpenseStats>(new GetExpenseStatsQuery(tenantId, dateRange, scope));
+  async getExpenseStats(
+    tenantId: string,
+    dateRange?: DateRange,
+    scope?: AnalyticsScope,
+    context?: TenantContext
+  ): Promise<ExpenseStats> {
+    return expenseRepository.getExpenseStats(tenantId, dateRange, scope, context);
   }
 
   async getMonthlyTrends(
     tenantId: string,
     months: number = 12,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<Array<{ month: string; total: number }>> {
-    return queryBus.execute<Array<{ month: string; total: number }>>(
-      new GetMonthlyTrendsQuery(tenantId, months, scope)
-    );
+    return expenseRepository.getMonthlyTrends(tenantId, months, scope, context);
   }
 
-  async getExpenseAnalytics(tenantId: string, startDate: Date, endDate: Date): Promise<unknown[]> {
-    return queryBus.execute<unknown[]>(new GetExpenseAnalyticsQuery(tenantId, startDate, endDate));
+  async getExpenseAnalytics(
+    tenantId: string,
+    startDate: Date,
+    endDate: Date,
+    context?: TenantContext
+  ): Promise<unknown[]> {
+    return expenseRepository.getExpenseAnalytics(tenantId, startDate, endDate, context);
   }
 
   async getExpenseCategoryOverTime(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<ExpenseCategoryOverTimePoint[]> {
-    return queryBus.execute<ExpenseCategoryOverTimePoint[]>(
-      new GetExpenseCategoryOverTimeQuery(tenantId, dateRange, scope)
-    );
+    return expenseRepository.getExpenseCategoryOverTime(tenantId, dateRange, scope, context);
   }
 
   async getTopVehiclesByExpense(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 10,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<TopVehicleExpenseRow[]> {
-    return queryBus.execute<TopVehicleExpenseRow[]>(
-      new GetTopVehiclesByExpenseQuery(tenantId, dateRange, limit, scope)
-    );
+    return expenseRepository.getTopVehiclesByExpense(tenantId, dateRange, limit, scope, context);
   }
 
   async getVehicleExpenseBreakdown(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     vehicleLimit: number = 8,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<VehicleExpenseBreakdownRow[]> {
-    return queryBus.execute<VehicleExpenseBreakdownRow[]>(
-      new GetVehicleExpenseBreakdownQuery(tenantId, dateRange, vehicleLimit, scope)
-    );
+    return expenseRepository.getVehicleExpenseBreakdown(tenantId, dateRange, vehicleLimit, scope, context);
   }
 
   async getExpenseAmountDistribution(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<ExpenseAmountDistributionBucket[]> {
-    return queryBus.execute<ExpenseAmountDistributionBucket[]>(
-      new GetExpenseAmountDistributionQuery(tenantId, dateRange, scope)
-    );
+    return expenseRepository.getExpenseAmountDistribution(tenantId, dateRange, scope, context);
   }
 
   async getJobTripExpense(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     jobLimit: number = 10,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<JobTripExpenseRow[]> {
-    return queryBus.execute<JobTripExpenseRow[]>(
-      new GetJobTripExpenseQuery(tenantId, dateRange, jobLimit, scope)
-    );
+    return expenseRepository.getJobTripExpenseAnalysis(tenantId, dateRange, jobLimit, scope, context);
   }
 
   async getExpenseCategorySummary(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<CategorySummary[]> {
-    return queryBus.execute<CategorySummary[]>(
-      new GetExpenseCategorySummaryQuery(tenantId, dateRange, scope)
-    );
+    return expenseRepository.getExpenseCategorySummary(tenantId, dateRange, scope, context);
   }
 
   async getTopExpenseTransactions(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
     limit: number = 10,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<TopExpenseTransactionRow[]> {
-    return queryBus.execute<TopExpenseTransactionRow[]>(
-      new GetTopExpenseTransactionsQuery(tenantId, dateRange, limit, scope)
-    );
+    return expenseRepository.getTopExpenseTransactions(tenantId, dateRange, limit, scope, context);
   }
 
   async getDailyExpenseTotals(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<DailyExpenseTotal[]> {
-    return queryBus.execute<DailyExpenseTotal[]>(
-      new GetDailyExpenseTotalsQuery(tenantId, dateRange, scope)
-    );
+    return expenseRepository.getDailyExpenseTotals(tenantId, dateRange, scope, context);
   }
 
   async getExpenseOutliers(
@@ -154,11 +154,10 @@ export class ExpenseQueryService {
     dateRange?: { startDate?: Date; endDate?: Date },
     zThreshold: number = 2.5,
     limit: number = 25,
-    scope?: AnalyticsScope
+    scope?: AnalyticsScope,
+    context?: TenantContext
   ): Promise<ExpenseOutlierRow[]> {
-    return queryBus.execute<ExpenseOutlierRow[]>(
-      new GetExpenseOutliersQuery(tenantId, dateRange, zThreshold, limit, scope)
-    );
+    return expenseRepository.getExpenseOutliers(tenantId, dateRange, zThreshold, limit, scope, context);
   }
 }
 

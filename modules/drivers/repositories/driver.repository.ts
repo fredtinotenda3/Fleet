@@ -1,9 +1,12 @@
 // modules/drivers/repositories/driver.repository.ts
 
-import { BaseRepository } from '@/server/repositories/base.repository';
+import { BaseRepository, isPlatformSentinelTenant } from '@/server/repositories/base.repository';
 import { Driver, DriverFilters } from '@/shared/types/driver.types';
+import '@/shared/types/driver.tenancy-addendum';
 import { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
 import { Filter, ObjectId } from 'mongodb';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -135,6 +138,78 @@ export class DriverRepository extends BaseRepository<Driver> {
       .toArray();
 
     return matches.length === 1 ? (matches[0] as Driver) : null;
+  }
+
+  /**
+   * Org-unit-scoped variant of getFilteredDrivers. A Branch/Department
+   * Manager only sees drivers whose orgUnitId is one of
+   * context.accessibleOrgUnitIds; Drivers themselves reach their own
+   * profile via a userId ownership check elsewhere (permission-engine),
+   * not through this list method.
+   */
+  async getFilteredDriversInScope(
+    filters: DriverFilters,
+    context: TenantContext,
+    pagination: PaginationParams
+  ): Promise<PaginatedResponse<Driver>> {
+    const collection = await this.getCollection();
+    const conditions: Record<string, unknown>[] = [{ isDeleted: { $ne: true } }];
+
+    if (!isPlatformSentinelTenant(context.organizationId)) {
+      conditions.push({ tenantId: context.organizationId });
+    }
+    if (filters.search) {
+      conditions.push({
+        $or: [
+          { name: { $regex: escapeRegex(filters.search), $options: 'i' } },
+          { email: { $regex: escapeRegex(filters.search), $options: 'i' } },
+          { driver_code: { $regex: escapeRegex(filters.search), $options: 'i' } },
+        ],
+      });
+    }
+    if (filters.status) {
+      conditions.push(buildStatusCondition(filters.status));
+    }
+
+    const scopeFilter = tenantScopeService.buildFilter<Driver>(context, 'orgUnitId');
+    conditions.push(scopeFilter as Record<string, unknown>);
+
+    const query = { $and: conditions };
+
+    const { page, limit } = pagination;
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await Promise.all([
+      collection.find(query as Filter<Driver>).sort({ name: 1 }).skip(skip).limit(limit).toArray(),
+      collection.countDocuments(query as Filter<Driver>),
+    ]);
+
+    return {
+      data: data as Driver[],
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+        hasNext: page * limit < total,
+        hasPrev: page > 1,
+      },
+    };
+  }
+
+  /** Org-unit-scoped variant of findAll, for scope-narrowed pickers (FuelForm/FuelFilters/DriverSelect when opened by a Branch/Department Manager). */
+  async findAllInScope(context: TenantContext): Promise<Driver[]> {
+    const collection = await this.getCollection();
+    const conditions: Record<string, unknown>[] = [{ isDeleted: { $ne: true } }];
+    if (!isPlatformSentinelTenant(context.organizationId)) {
+      conditions.push({ tenantId: context.organizationId });
+    }
+    conditions.push(tenantScopeService.buildFilter<Driver>(context, 'orgUnitId') as Record<string, unknown>);
+
+    return collection
+      .find({ $and: conditions } as Filter<Driver>)
+      .sort({ name: 1 })
+      .toArray() as Promise<Driver[]>;
   }
 }
 

@@ -2,10 +2,39 @@
 import { MongoClient, Db } from 'mongodb';
 import { attachDbMonitoring } from '@/infrastructure/observability/db-monitoring';
 
-const uri = process.env.MONGODB_URI;
-if (!uri) {
-  throw new Error('MONGODB_URI environment variable is not defined');
+/**
+ * FIX (module-scope side effects made the app unbuildable offline and the
+ * data layer untestable).
+ *
+ * This module used to do TWO things at import time:
+ *   1. `const uri = process.env.MONGODB_URI; if (!uri) throw ...`
+ *      -- so merely importing anything that transitively imported this
+ *      file threw when the variable was absent. Every repository, and
+ *      therefore every unit test touching one, was blocked.
+ *   2. `globalThis.__mongoClientPromise = connectWithMonitoring();`
+ *      -- an unconditional CONNECTION, opened as a side effect of import.
+ *      That is why `next build` opened a socket to MongoDB during static
+ *      generation and logged MongoServerSelectionError, and why the build
+ *      required a reachable database.
+ *
+ * Both are now deferred to the first actual query. Import is side-effect
+ * free; the env var is validated when a connection is genuinely needed,
+ * and the error message says which variable is missing.
+ */
+function getMongoUri(): string {
+  const uri = process.env.MONGODB_URI;
+  if (!uri) {
+    throw new Error(
+      'MONGODB_URI environment variable is not defined. It is required before ' +
+        'the first database query (connections are established lazily).'
+    );
+  }
+  return uri;
 }
+
+/** Database name is configurable; the previous hardcoded literal made it
+ *  impossible to point a staging build at a separate database. */
+const DB_NAME = process.env.MONGODB_DB_NAME || 'VehicleExpense';
 
 // FIX: maxPoolSize/minPoolSize tuned down for serverless. On Vercel, every
 // route can run in its own lambda instance; each *instance* gets its own
@@ -30,7 +59,7 @@ const options = {
 };
 
 async function connectWithMonitoring(): Promise<MongoClient> {
-  const client = new MongoClient(uri!, options);
+  const client = new MongoClient(getMongoUri(), options);
   const connected = await client.connect();
   attachDbMonitoring(connected);
   return connected;
@@ -53,17 +82,33 @@ async function connectWithMonitoring(): Promise<MongoClient> {
 // is unavoidable and fine), but it now reuses that same client/pool across
 // every warm invocation of that instance instead of reconnecting every
 // time — exactly what Vercel + MongoDB's official guidance recommends.
-let clientPromise: Promise<MongoClient>;
-
-if (!globalThis.__mongoClientPromise) {
-  globalThis.__mongoClientPromise = connectWithMonitoring();
+/**
+ * Lazily resolves the process-wide client promise, creating it on first
+ * call. Still cached on `globalThis` in ALL environments -- that part of
+ * the previous fix was correct and is preserved: each serverless instance
+ * reuses one client/pool across warm invocations rather than opening a new
+ * pool per cold start.
+ *
+ * The only change is WHEN the connection is established: on first query
+ * instead of on module import.
+ */
+export function getClientPromise(): Promise<MongoClient> {
+  if (!globalThis.__mongoClientPromise) {
+    globalThis.__mongoClientPromise = connectWithMonitoring().catch((error) => {
+      // Don't cache a rejected promise -- otherwise a single transient
+      // failure at startup would poison every subsequent request for the
+      // life of the instance.
+      globalThis.__mongoClientPromise = undefined;
+      throw error;
+    });
+  }
+  return globalThis.__mongoClientPromise;
 }
-clientPromise = globalThis.__mongoClientPromise;
 
 async function connectToDatabase(): Promise<Db> {
-  const client = await clientPromise;
-  return client.db('VehicleExpense');
+  const client = await getClientPromise();
+  return client.db(DB_NAME);
 }
 
 export default connectToDatabase;
-export { clientPromise };
+export { DB_NAME };

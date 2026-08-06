@@ -1,3 +1,4 @@
+import { prefixMatch, containsMatch } from '@/shared/utils/regex.utils';
 // modules/tenancy/services/platform.service.ts
 
 import { organizationRepository } from '@/modules/organizations/repositories/organization.repository';
@@ -7,6 +8,7 @@ import { NotFoundError } from '@/server/errors/app.errors';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { DomainEvent } from '@/server/events/base/DomainEvent';
+import { resolveOrganization } from '@/server/tenancy/organization-resolver';
 
 export interface PlatformOrgFilters {
   status?: Organization['status'];
@@ -34,8 +36,8 @@ export class PlatformService {
     if (filters.tier) filter['subscription.tier'] = filters.tier;
     if (filters.search) {
       filter.$or = [
-        { name: { $regex: filters.search, $options: 'i' } },
-        { slug: { $regex: filters.search, $options: 'i' } },
+        { name: containsMatch(filters.search) },
+        { slug: containsMatch(filters.search) },
       ];
     }
 
@@ -51,7 +53,7 @@ export class PlatformService {
   }
 
   async getOrganization(organizationId: string): Promise<Organization> {
-    const org = await organizationRepository.findById(organizationId, 'default', false, true);
+    const org = await resolveOrganization(organizationId);
     if (!org) throw new NotFoundError('Organization not found');
     return org;
   }

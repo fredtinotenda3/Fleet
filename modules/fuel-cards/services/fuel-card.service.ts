@@ -11,6 +11,8 @@ import { FuelCardCreatedEvent } from '../events/FuelCardCreatedEvent';
 import { FuelCardUpdatedEvent } from '../events/FuelCardUpdatedEvent';
 import { FuelCardDeletedEvent } from '../events/FuelCardDeletedEvent';
 import connectToDatabase from '@/infrastructure/database/mongodb';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import '@/shared/types/fuel-card.tenancy-addendum';
 
 // Define the payload type that the repository expects (without fields it generates)
 type FuelCardCreatePayload = Omit<FuelCard, '_id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'updatedBy' | 'isDeleted' | 'deletedAt'>;
@@ -29,6 +31,34 @@ export class FuelCardService {
   async getById(id: string, tenantId: string): Promise<FuelCard> {
     const card = await this.repo.findById(id, tenantId);
     if (!card) throw new NotFoundError('Fuel card not found');
+    return card;
+  }
+
+  /** Org-unit-scoped variant of list(). */
+  async listInScope(
+    filters: FuelCardFilters,
+    pagination: PaginationParams,
+    context: TenantContext
+  ): Promise<PaginatedResponse<FuelCard>> {
+    return this.repo.getFilteredCardsInScope(filters, context, pagination);
+  }
+
+  /**
+   * Scoped single-card read.
+   *
+   * Returns 404 rather than 403 for a card in another branch. A 403
+   * confirms the card exists, which for a payment instrument is itself a
+   * disclosure -- it tells an attacker their guessed id is real.
+   */
+  async getByIdInScope(id: string, context: TenantContext): Promise<FuelCard> {
+    const card = await this.repo.findById(id, context.organizationId);
+    if (!card) throw new NotFoundError('Fuel card not found');
+    if (
+      context.accessibleOrgUnitIds !== null &&
+      (!card.orgUnitId || !context.accessibleOrgUnitIds.includes(card.orgUnitId))
+    ) {
+      throw new NotFoundError('Fuel card not found');
+    }
     return card;
   }
 
