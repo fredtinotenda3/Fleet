@@ -15,6 +15,7 @@ import {
   AUDIT_CHAIN_INTEGRITY_FAILURE,
 } from '../../event-names';
 import { resolveOrganization } from '@/server/tenancy/organization-resolver';
+import { resolveEventTenantOrWarn } from '../../utils/event-tenant.utils';
 
 /**
  * Bridges the Slice 6c threat-detection events onto the audit ledger
@@ -26,7 +27,15 @@ import { resolveOrganization } from '@/server/tenancy/organization-resolver';
 export class SecurityAuditHandler implements IEventHandler<DomainEvent> {
   async handle(event: DomainEvent): Promise<void> {
     const payload = event.payload;
-    const tenantId = (event.metadata?.tenantId as string) || (payload.tenantId as string) || 'default';
+    // Security events carry the tenant in the payload as a fallback to
+    // event.metadata (some threat-detection signals originate before a
+    // full auth context exists), but a missing/legacy value on both
+    // must still be refused rather than silently persisted -- this is
+    // the audit ledger for security incidents, the last place a
+    // fail-open default belongs. See event-tenant.utils.ts.
+    const fallbackEvent = { ...event, metadata: { ...event.metadata, tenantId: event.metadata?.tenantId ?? payload.tenantId } };
+    const tenantId = resolveEventTenantOrWarn(fallbackEvent, 'SecurityAuditHandler');
+    if (!tenantId) return;
     const userId = (event.metadata?.userId as string) || (payload.email as string) || 'system';
 
     const { severity, entityType } = this.classify(event.eventName);
@@ -67,8 +76,9 @@ export class SecurityAuditHandler implements IEventHandler<DomainEvent> {
   }
 
   private async notifyOwners(event: DomainEvent, tenantId: string): Promise<void> {
-    if (tenantId === 'default' || tenantId === 'system') return;
-
+    // tenantId is already a validated, non-sentinel value by the time
+    // it reaches here -- see the resolveEventTenantOrWarn() call in
+    // handle().
     const organization = await resolveOrganization(tenantId);
     if (!organization) return;
 

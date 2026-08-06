@@ -4,10 +4,12 @@ import { IEventHandler } from '@/server/events/base/IEventHandler';
 import { DomainEvent } from '@/server/events/base/DomainEvent';
 import { predictiveMaintenanceService } from '@/modules/ai/services';
 import { monitoring } from '@/infrastructure/monitoring/logger';
+import { resolveEventTenantOrWarn } from '@/server/events/utils/event-tenant.utils';
 
 export class AIPredictionTriggerHandler implements IEventHandler<DomainEvent> {
   async handle(event: DomainEvent): Promise<void> {
-    const tenantId = (event.metadata?.tenantId as string) || 'default';
+    const tenantId = resolveEventTenantOrWarn(event, 'AIPredictionTriggerHandler');
+    if (!tenantId) return;
     const payload = event.payload;
 
     switch (event.eventName) {

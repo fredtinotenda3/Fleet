@@ -5,6 +5,7 @@ import { DomainEvent } from '@/server/events/base/DomainEvent';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { webSocketManager } from '@/infrastructure/websocket/server';
 import { monitoring } from '@/infrastructure/monitoring/logger';
+import { resolveEventTenantOrWarn } from '@/server/events/utils/event-tenant.utils';
 
 /**
  * AIInsightHandler reacts to generated predictions by producing
@@ -16,7 +17,8 @@ import { monitoring } from '@/infrastructure/monitoring/logger';
  */
 export class AIInsightHandler implements IEventHandler<DomainEvent> {
   async handle(event: DomainEvent): Promise<void> {
-    const tenantId = (event.metadata?.tenantId as string) || 'default';
+    const tenantId = resolveEventTenantOrWarn(event, 'AIInsightHandler');
+    if (!tenantId) return;
     const payload = event.payload;
 
     try {
