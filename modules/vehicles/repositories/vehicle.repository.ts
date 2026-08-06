@@ -289,35 +289,6 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
     return { total, active, inactive, maintenance };
   }
 
-  /**
-   * FIX (dashboard/UI leak): getVehicleStats() below is tenant-only and
-   * is what powers the Fleet status widget on the dashboard as well as
-   * the Vehicles page stat cards -- a branch/fleet-scoped manager saw
-   * the organization's total vehicle counts instead of their own
-   * subtree's. This mirrors buildScopedQuery: same tenant isolation
-   * plus tenantScopeService.buildFilter(context, 'orgUnitId') on top.
-   */
-  async getVehicleStatsInScope(context: TenantContext): Promise<VehicleStats> {
-    const collection = await this.getCollection();
-
-    const baseFilter: Record<string, unknown> = {
-      isDeleted: { $ne: true },
-    };
-    if (!this.isPlatformScopeTenant(context.organizationId)) {
-      baseFilter.tenantId = context.organizationId;
-    }
-    Object.assign(baseFilter, tenantScopeService.buildFilter<Vehicle>(context, 'orgUnitId'));
-
-    const [total, active, inactive, maintenance] = await Promise.all([
-      collection.countDocuments(baseFilter as Filter<Vehicle>),
-      collection.countDocuments({ ...baseFilter, status: 'active' } as Filter<Vehicle>),
-      collection.countDocuments({ ...baseFilter, status: 'inactive' } as Filter<Vehicle>),
-      collection.countDocuments({ ...baseFilter, status: 'maintenance' } as Filter<Vehicle>),
-    ]);
-
-    return { total, active, inactive, maintenance };
-  }
-
   async getVehiclesByStatus(
     status: string,
     tenantId: string
