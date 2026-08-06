@@ -69,6 +69,23 @@ export class MaintenanceQueryService {
     );
   }
 
+  /**
+   * Org-unit-scoped variants used by the UI-facing endpoints (dashboard
+   * widget, Overdue/Upcoming Maintenance pages). Bypasses the CQRS bus
+   * (same rationale as the analytics methods below) and calls the
+   * scoped repository methods directly.
+   */
+  async getOverdueRemindersInScope(context: TenantContext): Promise<Reminder[]> {
+    return maintenanceRepository.getOverdueRemindersInScope(context);
+  }
+
+  async getUpcomingRemindersInScope(
+    context: TenantContext,
+    daysAhead: number = 7
+  ): Promise<Reminder[]> {
+    return maintenanceRepository.getUpcomingRemindersInScope(context, daysAhead);
+  }
+
   // ---- Enterprise analytics ----
 
   /** Vehicle-Level Analytics: pass licensePlate to narrow the trend to a single vehicle. */

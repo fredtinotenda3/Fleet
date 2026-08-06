@@ -248,6 +248,55 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
   }
 
   /**
+   * FIX (dashboard/UI leak): getOverdueReminders/getUpcomingReminders
+   * above are tenant-only and were being called directly from the
+   * user-facing /api/reminders?action=overdue|upcoming endpoints (and
+   * therefore the dashboard's Maintenance widget and the
+   * Overdue/Upcoming Maintenance pages), bypassing org-unit scoping
+   * entirely -- a branch manager saw every branch's overdue reminders.
+   * These InScope variants apply the same org-unit filter as
+   * getFilteredRemindersInScope/getMaintenanceStats and are what those
+   * UI-facing endpoints must call. The unscoped originals remain for
+   * genuinely cross-tenant internal callers (cron jobs / digital-twin /
+   * fleet-analytics aggregate work) that intentionally operate above
+   * org-unit scope.
+   */
+  async getOverdueRemindersInScope(context: TenantContext): Promise<Reminder[]> {
+    const collection = await this.getCollection();
+    const now = new Date();
+    const filter: Record<string, unknown> = {
+      isDeleted: { $ne: true },
+      status: { $nin: ['completed', 'cancelled'] },
+      due_date: { $lt: now },
+    };
+    if (!this.isPlatformScopeTenant(context.organizationId)) {
+      filter.tenantId = context.organizationId;
+    }
+    Object.assign(filter, tenantScopeService.buildFilter<Reminder>(context, 'orgUnitId'));
+    return collection.find(filter as Filter<Reminder>).toArray();
+  }
+
+  async getUpcomingRemindersInScope(
+    context: TenantContext,
+    daysAhead: number = 7
+  ): Promise<Reminder[]> {
+    const collection = await this.getCollection();
+    const now = new Date();
+    const future = new Date();
+    future.setDate(future.getDate() + daysAhead);
+    const filter: Record<string, unknown> = {
+      isDeleted: { $ne: true },
+      status: { $nin: ['completed', 'cancelled'] },
+      due_date: { $gte: now, $lte: future },
+    };
+    if (!this.isPlatformScopeTenant(context.organizationId)) {
+      filter.tenantId = context.organizationId;
+    }
+    Object.assign(filter, tenantScopeService.buildFilter<Reminder>(context, 'orgUnitId'));
+    return collection.find(filter as Filter<Reminder>).toArray();
+  }
+
+  /**
    * FIX: previously counted overdue as `{status:'pending', due_date:$lt:now}`.
    * Once the cron (recalculateOverdueStatuses) flips a record's status to
    * the literal string 'overdue', it stops matching that filter and

@@ -16,6 +16,8 @@ import {
   VehicleStats,
 } from '@/shared/types/vehicle.types';
 import { PaginatedResponse, PaginationParams } from '@/shared/types/common.types';
+import type { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { vehicleRepository } from '../repositories/vehicle.repository';
 
 /**
  * Stable facade over the query bus for the Vehicles read side. Mirrors
@@ -47,6 +49,17 @@ export class VehicleQueryService {
 
   async getVehicleStats(tenantId: string): Promise<VehicleStats> {
     return queryBus.execute<VehicleStats>(new GetVehicleStatsQuery(tenantId));
+  }
+
+  /**
+   * FIX (dashboard/UI leak): org-unit-scoped variant used by the
+   * Fleet status dashboard widget and the Vehicles page stat cards.
+   * Calls the scoped repository method directly rather than through
+   * the CQRS bus, matching the pattern used by the other domains'
+   * *InScope analytics methods.
+   */
+  async getVehicleStatsInScope(context: TenantContext): Promise<VehicleStats> {
+    return vehicleRepository.getVehicleStatsInScope(context);
   }
 
   async searchVehicles(

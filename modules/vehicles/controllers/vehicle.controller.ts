@@ -349,10 +349,29 @@ export class VehicleController {
     }
   }
 
+  /**
+   * FIX (dashboard/UI leak): previously called getVehicleStats(tenantId)
+   * -- tenant-only, no org-unit filter -- so the dashboard's Fleet
+   * status widget and the Vehicles page stat cards showed the whole
+   * organization's counts to every scoped manager, while
+   * getFilteredVehiclesInScope (the list) was already correctly
+   * org-unit scoped. Now resolves the full TenantContext and calls the
+   * scoped variant, matching getVehicles above.
+   */
   async getVehicleStats(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const stats = await vehicleQueryService.getVehicleStats(tenantId);
+      const authContext = await getAuthContext(req);
+      if (!authContext) {
+        throw new UnauthorizedError('Authentication required');
+      }
+      const tenantContext = await tenantContextService.resolveContext(
+        authContext.userId,
+        authContext.tenantId,
+        authContext.roles,
+        authContext.isPlatformAdmin,
+        authContext.orgUnitId
+      );
+      const stats = await vehicleQueryService.getVehicleStatsInScope(tenantContext);
       return successResponse(stats);
     } catch (error) {
       return this.handleError(error);

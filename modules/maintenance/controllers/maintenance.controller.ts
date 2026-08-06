@@ -320,10 +320,17 @@ export class MaintenanceController {
     }
   }
 
+  /**
+   * FIX (dashboard/UI leak): previously called the unscoped
+   * getOverdueReminders(tenantId), so the dashboard's Maintenance
+   * widget and the Overdue Maintenance page showed every branch's
+   * overdue reminders to every scoped user. Now resolves the caller's
+   * TenantContext and calls the org-unit-scoped repository variant.
+   */
   async getOverdueReminders(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const reminders = await maintenanceQueryService.getOverdueReminders(tenantId);
+      const tenantContext = await resolveTenantContext(req);
+      const reminders = await maintenanceQueryService.getOverdueRemindersInScope(tenantContext);
       return successResponse(reminders);
     } catch (error) {
       return this.handleError(error);
@@ -332,9 +339,9 @@ export class MaintenanceController {
 
   async getUpcomingReminders(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const tenantContext = await resolveTenantContext(req);
       const daysAhead = Number(req.nextUrl.searchParams.get('daysAhead') || '7');
-      const reminders = await maintenanceQueryService.getUpcomingReminders(tenantId, daysAhead);
+      const reminders = await maintenanceQueryService.getUpcomingRemindersInScope(tenantContext, daysAhead);
       return successResponse(reminders);
     } catch (error) {
       return this.handleError(error);
