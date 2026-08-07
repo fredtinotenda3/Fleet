@@ -31,7 +31,7 @@ import {
 // NOTE: this controller defines its own local resolveTenantContext (one of
 // three byte-identical private copies in this codebase). Only the creation
 // helper is imported here to avoid shadowing it.
-import { resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
+import { resolveTenantContext, resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
 
 bootstrapCqrs();
 
@@ -57,19 +57,6 @@ export interface ImportResponse {
  * intentionally cross-tenant cron-facing reads (see
  * MaintenanceRepository), not per-request dashboard scoping.
  */
-async function resolveTenantContext(req: NextRequest): Promise<TenantContext> {
-  const authContext = await getAuthContext(req);
-  if (!authContext) {
-    throw new UnauthorizedError('Authentication required');
-  }
-  return tenantContextService.resolveContext(
-    authContext.userId,
-    authContext.tenantId,
-    authContext.roles,
-    authContext.isPlatformAdmin,
-    authContext.orgUnitId
-  );
-}
 
 export class MaintenanceController {
   async getReminders(req: NextRequest) {

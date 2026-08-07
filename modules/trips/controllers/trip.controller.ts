@@ -28,6 +28,7 @@ import {
   TRIP_EXPORT_SHEET_NAME,
   TRIP_EXPORT_BASE_FILENAME,
 } from '../export/trip-export.columns';
+import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
 
 bootstrapCqrs();
 
@@ -69,19 +70,6 @@ function parseLicensePlate(searchParams: URLSearchParams): string | undefined {
  * FIX (Phase B -- repository/analytics scoping completeness): mirrors
  * FuelController.resolveTenantContext / ExpenseController.resolveTenantContext.
  */
-async function resolveTenantContext(req: NextRequest): Promise<TenantContext> {
-  const authContext = await getAuthContext(req);
-  if (!authContext) {
-    throw new UnauthorizedError('Authentication required');
-  }
-  return tenantContextService.resolveContext(
-    authContext.userId,
-    authContext.tenantId,
-    authContext.roles,
-    authContext.isPlatformAdmin,
-    authContext.orgUnitId
-  );
-}
 
 export class TripController {
   async getTrips(req: NextRequest) {

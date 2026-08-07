@@ -23,7 +23,8 @@ export class SearchVehiclesHandler
     return this.vehicleRepo.searchVehicles(
       query.searchTerm,
       query.tenantId,
-      query.pagination
+      query.pagination,
+      query.context
     );
   }
 }

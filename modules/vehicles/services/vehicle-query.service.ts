@@ -56,10 +56,11 @@ export class VehicleQueryService {
   async searchVehicles(
     searchTerm: string,
     pagination: PaginationParams,
-    tenantId: string
+    tenantId: string,
+    context?: TenantContext
   ): Promise<PaginatedResponse<Vehicle>> {
     return queryBus.execute<PaginatedResponse<Vehicle>>(
-      new SearchVehiclesQuery(searchTerm, pagination, tenantId)
+      new SearchVehiclesQuery(searchTerm, pagination, tenantId, context)
     );
   }
 

@@ -372,7 +372,7 @@ export class VehicleController {
 
   async searchVehicles(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const searchContext = await resolveTenantContext(req);
       const searchTerm = req.nextUrl.searchParams.get('q') || '';
       const { page, limit } = validatePaginationParams(
         req.nextUrl.searchParams.get('page'),
@@ -382,7 +382,8 @@ export class VehicleController {
       const result = await vehicleQueryService.searchVehicles(
         searchTerm,
         { page, limit },
-        tenantId
+        searchContext.organizationId,
+        searchContext
       );
       return paginatedResponse(result.data, result.pagination);
     } catch (error) {

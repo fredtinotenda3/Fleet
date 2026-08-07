@@ -1,58 +1,69 @@
-# Fleet — `_id` type/runtime mismatch
+# Fleet — remaining-gaps pass
 
-2 files.
+14 files. **5 of your 9 items done. 4 not done — listed honestly at the bottom.**
 
-| Path | Change |
-|---|---|
-| `server/repositories/base.repository.ts` | Normalizes `_id` to string on every read; adds `toObjectId()` |
-| `tests/security/document-id-normalization.spec.ts` | 9 new tests |
+## Done
 
-## The 20 write sites did not need changing — and here's why
+### 2. Global search was leaking (security — the real find here)
+`vehicleRepository.searchVehicles()` was organization-wide. The Vehicles list was
+correctly scoped, so the data *looked* isolated — but typing a plate into search
+returned any vehicle in the organization. Worse, it was an enumeration oracle: a
+scoped user could probe for plates they cannot otherwise see and confirm they
+exist. Threaded `TenantContext` through controller → service → query → handler →
+repository, with the scope predicate spread **last** so the `$or` search clause
+cannot widen it.
 
-I said 20 earlier. That number was wrong in an important way: **~25 of the 27 are in
-`scripts/`, which use the raw driver (`db.collection(...)`) and never touch
-BaseRepository.** Their `_id` stays an `ObjectId`, so their
-`updateOne({ _id: doc._id })` keeps working untouched. Changing them would have
-*introduced* the breakage I was worried about.
+### 3. Drivers create now stamps `orgUnitId`
+Was the last create path without it. A scoped user's new driver landed with no
+unit and was then hidden by the scoped read filter — add a driver, watch it vanish.
 
-In application code there were exactly three consumers of a read `_id`:
+### 4. Duplicate `resolveTenantContext` consolidated
+There were **four**, not three: trips, fuel, expenses **and maintenance**, all
+byte-identical. Each was a place someone could "fix" a 403 by loosening
+resolution for one module invisibly. All now use `server/utils/tenant-context.utils.ts`.
 
-| Site | Verdict |
-|---|---|
-| `org-unit-hierarchy.service.ts:122` — `updateOne({ _id: descendant._id })` | **Safe.** `descendant` comes from a raw `collection.find()`, not the repository. Unaffected. |
-| `session.service.ts:32` — `_id: s._id!` into a DTO typed `string` | Now actually correct; it was an ObjectId in a string field. |
-| `driver-risk.service.ts:103` — `_id: t._id \|\| ''` | Same; read-only shaping. |
+### 5. Legacy sentinel migration — `npm run db:purge-sentinels`
+Dry-run default. Treats each collection by what the rows actually are:
+- **Revoke** `tblrefreshtokens` / `tblusersessions` (~4,500). These are
+  credentials whose tenant binding was never verified — repairing them would
+  resurrect them with a valid tenant. Users re-authenticate.
+- **Derive** `tblvehicledigitaltwins` from the vehicle (a twin is a rebuildable
+  projection, so its tenant is the vehicle's). Orphans deleted, not guessed.
+- **Leave** `tblauditlog` untouched and report only. It is hash-chained
+  (`prevHash` → `hash`); rewriting any field destroys the tamper-evidence the log
+  exists for. A sentinel on a historical entry is an accurate record of how the
+  system behaved. Falsifying history to tidy a field is worse than an ugly field.
 
-Everything else my grep caught was `$group: { _id: null }` in aggregation
-pipelines — unrelated.
+### 7. Sentry removed
+Nothing imported it — a grep for `monitoring/sentry` matched only the wrapper
+itself. Dependency dropped; wrapper replaced with a dependency-free no-op so a
+future import still resolves. This also fixes `npm install` failing in air-gapped
+CI, where `@sentry/cli`'s postinstall 403s fetching a binary — for a package doing
+nothing.
 
-So the change is: normalize at the read boundary, touch no write site.
+### 9. `SECURITY-CREDENTIALS.md`
+Rotation runbook. The Atlas password is the urgent one: the full connection
+string was pasted into chat twice.
 
-## A live bug this fixes for free
+## NOT done — do not assume these are covered
 
-`OrgUnitHierarchyService.moveUnit()` does:
+**1. AI services.** Five services (`fleet-health`, `driver-risk`,
+`fuel-fraud-detection`, `predictive-maintenance`, `expense-anomaly-detection`)
+still aggregate on `tenantId` only. The controller-level fail-closed gate remains,
+so scoped users see "unavailable" rather than another branch's numbers — safe, but
+not fixed. This is the largest single remaining item.
 
-```ts
-const unit = await this.repo.findById(orgUnitId, tenantId);   // _id was ObjectId
-collection.find({ organizationId: ..., path: unit._id })      // path stores STRINGS
-```
+**6. 83 type errors.** Untouched. Still `ignoreBuildErrors: true`. Note my earlier
+correction: fixing these would not have caught the tenancy bugs — those came from
+types that *lied*, which the `_id` normalization addressed.
 
-An ObjectId never matches a string element, so **descendant paths were never
-rewritten when a unit was moved** — silently, no error. Since a wrong `path` is
-exactly what makes descendant expansion collapse (the bug that made branch
-managers see an empty app), moving a unit could have re-broken scoping at any
-time. Normalizing `unit._id` to a string fixes that query with no further edit.
+**8. MapsWidget.** Still a placeholder. A real map is a feature with a vendor
+choice (Mapbox/Google/Leaflet), an API key, and a billing account — not something
+to slip into a debt-cleanup pass.
 
-## Scope
-
-Converts **only** the top-level `_id`, and only when it is a real ObjectId. No
-deep walk: reference fields (`vehicleId`, `orgUnitId`, `driver_id`) are already
-stored as strings, a traversal on every read would cost, and it would rewrite
-ObjectIds inside caller payloads that may legitimately hold them.
-
-Documents read via `collection.find()`, `collection.aggregate()` or anything in
-`scripts/` still carry an ObjectId. `toObjectId()` is provided for code that mixes
-both sources.
+**Also unaudited:** expense/fuel/maintenance/trip **exports** (CSV/Excel/print)
+for org-unit scope. The report builder is scoped; these separate export paths were
+never checked. Treat as a suspected leak until verified.
 
 ## Verification
-`npm run test:security` **190/190** (9 new) · `npx tsc --noEmit` **83** (baseline 83).
+`npm run test:security` **190/190** · `npx tsc --noEmit` **83** (baseline 83).

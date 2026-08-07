@@ -14,6 +14,7 @@ import { AppError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
 import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
 import { driverRepository } from '@/modules/drivers/repositories/driver.repository';
+import { resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
 
 export class DriverController {
   async list(req: NextRequest) {
@@ -75,10 +76,22 @@ export class DriverController {
 
   async create(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      /**
+       * Drivers were the last create path not stamping orgUnitId. A
+       * driver created by a scoped user landed with no unit and was then
+       * hidden by the scoped read filter -- they add a driver and watch
+       * it disappear, which reads as data loss rather than a scoping
+       * rule.
+       */
+      const createContext = await resolveTenantContext(req);
       const userId = await getUserIdFromRequest(req);
       const body = await req.json();
-      const driver = await driverService.create(body, tenantId, userId);
+      const orgUnitId = resolveCreationOrgUnitId(createContext, (body as any)?.orgUnitId);
+      const driver = await driverService.create(
+        { ...(body as Record<string, unknown>), orgUnitId },
+        createContext.organizationId,
+        userId
+      );
       return createdResponse(driver);
     } catch (error) {
       return this.handleError(error);

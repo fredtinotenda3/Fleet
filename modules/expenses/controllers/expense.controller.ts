@@ -29,7 +29,7 @@ import { AnalyticsScope, vehicleScope } from '@/shared/types/analytics-scope.typ
 // NOTE: this controller defines its own local resolveTenantContext (one of
 // three byte-identical private copies in this codebase). Only the creation
 // helper is imported here to avoid shadowing it.
-import { resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
+import { resolveTenantContext, resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
 
 bootstrapCqrs();
 
@@ -64,19 +64,6 @@ function parseAnalyticsScope(req: NextRequest): AnalyticsScope | undefined {
  * so charts had no way to be org-unit scoped. This resolves the same
  * full TenantContext already used by getExpenses/exportExpenses.
  */
-async function resolveTenantContext(req: NextRequest): Promise<TenantContext> {
-  const authContext = await getAuthContext(req);
-  if (!authContext) {
-    throw new UnauthorizedError('Authentication required');
-  }
-  return tenantContextService.resolveContext(
-    authContext.userId,
-    authContext.tenantId,
-    authContext.roles,
-    authContext.isPlatformAdmin,
-    authContext.orgUnitId
-  );
-}
 
 export class ExpenseController {
   async getExpenses(req: NextRequest) {

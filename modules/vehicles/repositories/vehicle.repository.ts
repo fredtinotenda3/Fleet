@@ -61,10 +61,24 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
     );
   }
 
+  /**
+   * LEAK FIX -- search was organization-wide.
+   *
+   * Search is the easiest scoping gap to miss and one of the worst to
+   * leave: the list page is filtered, so the data "looks" isolated,
+   * but typing a plate into the search box returned any vehicle in the
+   * organization. It also doubles as an enumeration oracle -- a scoped
+   * user could probe for plates they cannot otherwise see and confirm
+   * their existence one character at a time.
+   *
+   * `context` is optional so platform tooling keeps working; every
+   * user-facing caller passes it.
+   */
   async searchVehicles(
     searchTerm: string,
     tenantId: string,
-    pagination: PaginationParams
+    pagination: PaginationParams,
+    context?: TenantContext
   ): Promise<PaginatedResponse<Vehicle>> {
     const filter: Filter<Vehicle> = {
       $or: [
@@ -74,6 +88,18 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
         { vin: containsMatch(searchTerm) },
       ],
     } as Filter<Vehicle>;
+
+    if (context) {
+      // Scope predicate spread LAST so it owns the orgUnitId key and the
+      // $or search clause cannot widen it. Same ordering rule as
+      // BaseRepository.findMany and the report query engine.
+      const scoped = {
+        ...filter,
+        ...tenantScopeService.buildFilter<Vehicle>(context, 'orgUnitId'),
+      } as Filter<Vehicle>;
+      return this.findWithPagination(scoped, pagination, context.organizationId);
+    }
+
     return this.findWithPagination(
       filter,
       pagination,

@@ -37,7 +37,7 @@ import {
 // NOTE: this controller defines its own local resolveTenantContext (one of
 // three byte-identical private copies in this codebase). Only the creation
 // helper is imported here to avoid shadowing it.
-import { resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
+import { resolveTenantContext, resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
 
 bootstrapCqrs();
 
@@ -103,19 +103,6 @@ function parseAnalyticsScope(searchParams: URLSearchParams): AnalyticsScope | un
  * used by getFuelLogs/exportFuelLogs for the (correctly scoped) list
  * page, so analytics and list views now resolve scope identically.
  */
-async function resolveTenantContext(req: NextRequest): Promise<TenantContext> {
-  const authContext = await getAuthContext(req);
-  if (!authContext) {
-    throw new UnauthorizedError('Authentication required');
-  }
-  return tenantContextService.resolveContext(
-    authContext.userId,
-    authContext.tenantId,
-    authContext.roles,
-    authContext.isPlatformAdmin,
-    authContext.orgUnitId
-  );
-}
 
 interface DriverLookupEntry {
   id: string;
