@@ -1,57 +1,71 @@
-# Fleet — scope assignment repair
+# Fleet — tenancy rebuild (run this, then you're done)
 
-5 files.
+4 files.
 
-## SECURITY: rotate your database password
-A working Atlas connection string with credentials was pasted into the chat.
-Treat it as compromised and rotate it. I did not use it.
+## SECURITY — do this first
+Your Atlas connection string with credentials has now been pasted into a chat log
+twice. Rotate that password. I have never used it.
 
-## Run order
+## Run
 ```
-npm run tenancy:repair-scopes                  # dry run — shows every decision
-npm run tenancy:repair-scopes -- --confirm
-npm run tenancy:sync-members                   # verify
+npm run tenancy:rebuild                # dry run — prints the whole plan
+npm run tenancy:rebuild -- --confirm   # apply
+npm run tenancy:sync-members           # verify
 ```
-Optional, after reviewing the dry run:
-- `--delete-unfixable`  removes accounts with no unit recorded anywhere
-- `--distribute`        spreads vehicles across fleets/workshops (see below)
+Windows note: use plain `--`. A pasted em-dash (`—`) makes npm reject the argument.
 
-## Corrections to your task list
+## You did not fail. Here is what was actually left.
 
-**`workshop.manager@` and `mechanic@` already HAVE assignments.** The trace shows
-both resolving to `Harare Central Workshop (+1 descendants)`. They see zero rows
-because no data lives in that unit — not because the assignment is missing.
-Inserting a second one would have created duplicates.
+The repair scripts worked — every account now resolves to the right org unit. Your
+last trace proves that. What it also proves is that **the data has nothing to
+isolate**: all 76 vehicles, 1409 fuel logs, 282 expenses and 5 reminders sit on ONE
+unit (Harare Heavy Fleet) and all 77 drivers on ONE other (Logistics Department).
 
-**13 accounts lack assignments, not 21.** From the trace: `harare.dispatcher`,
-`harare.accountant`, `harare.mechanic`, `harare.driver`, `harare.auditor`,
-`bulawayo.dispatcher`, `bulawayo.mechanic`, `bulawayo.viewer`, `fleetmanager`,
-plus the four you asked to leave fail-closed.
+So `fleet.manager` — your narrowest scope — saw 76/76 vehicles, identical to
+`harare.manager`. Bulawayo and the workshops correctly saw nothing. Isolation was
+enforced perfectly and was impossible to observe. No further controller wiring
+would have changed that.
 
-**Your task 3 cannot succeed as written.** You asked that every repaired account
-show non-zero vehicles. The trace proves all 76 vehicles, 1409 fuel logs, 282
-expenses, 1 trip and 5 reminders sit on **one** unit (Harare Heavy Fleet), and all
-77 drivers on **Logistics Department**. So `harare.mechanic` → Main Workshop and
-`bulawayo.mechanic` → Regional Workshop will correctly resolve and still show 0.
-That is right, not broken. Use `--distribute` if you want the demo to show
-differentiated data.
+Separately: three seed runs left 17 org units, including a duplicate `HARARE`
+branch alongside `Harare Branch`, with `path` arrays that omitted ancestors — the
+root cause of branches expanding to +0 descendants.
 
-## Design note
-The repair derives each unit from `tblorganizations.members[].orgUnitId`, which the
-earlier seed already wrote correctly — not from a hardcoded email→ObjectId table.
-A hardcoded table would bake today's ObjectIds into source, go stale on the next
-re-seed, and write wrong assignments rather than failing.
+## What the rebuild does (idempotent, dry-run default)
 
-`stanley@gmail.com` and `aryes@gmail.com` point at the legacy `HARARE` branch, which
-has no children listing it in their `path`, so it expands to +0 and matches nothing.
-Both are remapped onto the real Harare Branch.
+1. **Tree** — canonical hierarchy with correct `parentId` / `path` / `depth`.
+   Adopts existing units by name; repairs their paths instead of duplicating.
+2. **Prune** — soft-deletes the 6 stray units, first migrating any rows or
+   assignments pointing at them to Harare Branch so nothing is orphaned.
+3. **Data** — spreads vehicles and drivers across leaf units by weight, with fuel,
+   expense, trip and reminder rows following their vehicle by plate. Deterministic,
+   so a re-run reproduces the same layout.
+4. **Access** — rebuilds assignments AND the members roster from one table, so the
+   two stores can no longer disagree (each previous seed wrote only one of them).
 
-## Provisioning fix
-`tenancy-provision.ts` pushed member records without `orgUnitId`. The two scope
-stores each had a mirror-image bug: the earlier seed wrote `members[].orgUnitId`
-with no assignment (users saw nothing), provisioning wrote the assignment with no
-roster entry (roster showed them unassigned). Both stores are now written.
+## Resulting demo — 76 vehicles
+
+| Account | Scope | Vehicles |
+|---|---|---|
+| `owner@` / `admin@` | organization | **76** |
+| `accountant@` / `auditor@` | both branches | **76** |
+| `harare.manager@` | Harare Branch | **56** |
+| `logistics.manager@` | Logistics Dept | **50** |
+| `fleet.manager@` / `driver@` | Harare Heavy Fleet | **30** |
+| `harare.driver@` / `fleetmanager@` | Harare Light Fleet | **20** |
+| `bulawayo.manager@` | Bulawayo Branch | **20** |
+| `workshop.manager@` / `mechanic@` | Harare Central Workshop | **6** |
+| `bulawayo.mechanic@` | Bulawayo Workshop | **4** |
+| `unassigned@` | none | **0** — fail-closed control |
+
+76 → 56 → 50 → 30 → 6 is the hierarchy made visible. Harare and Bulawayo are
+disjoint. That is a demo of isolation rather than an assertion of it.
+
+Password for all `@willsgrove.test` accounts: whatever you last set via
+`npm run auth:doctor -- --reset-all --password '...' --confirm`.
 
 ## Verification
-`npm run test:security` **169/169** (5 new, pinning store consistency) ·
-`npx tsc --noEmit` **83** (baseline 83, zero introduced).
+`npm run test:security` **169/169** · `npx tsc --noEmit` **83** (baseline 83).
+
+## Still open (unchanged)
+AI services contained not scoped; exports / report builder / global search
+unaudited; drivers create doesn't stamp `orgUnitId`.

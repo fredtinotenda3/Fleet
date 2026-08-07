@@ -36,6 +36,7 @@
     "tenancy:backfill": "tsx scripts/backfill-org-units.ts",
     "tenancy:provision": "tsx scripts/tenancy-provision.ts",
     "tenancy:purge": "tsx scripts/tenancy-purge.ts",
+    "tenancy:rebuild": "tsx scripts/tenancy-rebuild.ts",
     "tenancy:repair-scopes": "tsx scripts/repair-scope-assignments.ts",
     "tenancy:report": "tsx scripts/tenancy-report.ts",
     "tenancy:sync-members": "tsx scripts/sync-member-org-units.ts",
