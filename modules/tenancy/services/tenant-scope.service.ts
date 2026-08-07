@@ -28,7 +28,18 @@ export class TenantScopeService {
       return { [orgUnitField]: { $in: [] } } as unknown as Filter<T>;
     }
 
-    return { [orgUnitField]: { $in: context.accessibleOrgUnitIds } } as unknown as Filter<T>;
+    // DEFENSE IN DEPTH: normalize to strings here too, not just at the
+    // one call site (TenantContextService.expandWithDescendants) known
+    // to have leaked raw ObjectIds into this array. orgUnitId is stored
+    // as a string on every domain document; a stray ObjectId in this
+    // $in never matches, which is precisely how scoped users ended up
+    // seeing zero rows despite correct assignments. This filter is the
+    // last place that runs before the query goes out, so it's the
+    // right place to guarantee the invariant rather than trust every
+    // caller to have upheld it.
+    const accessibleIds = context.accessibleOrgUnitIds.map((id) => String(id));
+
+    return { [orgUnitField]: { $in: accessibleIds } } as unknown as Filter<T>;
   }
 
   canAccessOrgUnit(context: TenantContext, orgUnitId: string): boolean {

@@ -12,6 +12,7 @@ import { tokenLoginSchema, tokenRefreshSchema, tokenRevokeSchema } from '@/share
 import { successResponse, errorResponse } from '@/server/utils/response.utils';
 import { AppError, UnauthorizedError, ValidationError } from '@/server/errors/app.errors';
 import { rateLimiter } from '@/infrastructure/security/rate-limit';
+import { Role } from '@/server/permissions/roles';
 
 function getClientIp(req: NextRequest): string | undefined {
   return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || undefined;
@@ -166,7 +167,19 @@ export class TokenController {
         success: true,
       });
 
-      const roles: string[] = admin.roles || ['super_admin', 'organization_owner'];
+      /**
+       * FIX (critical -- fail-open privilege escalation). This used to
+       * default a missing/empty `roles` field to
+       * `['super_admin', 'organization_owner']` -- the two most
+       * powerful roles in the system. Any provisioning gap that left
+       * `tbladmin.roles` unset (confirmed in production for at least
+       * one account) silently handed that account full platform admin
+       * and full org-owner privileges instead of restricting it.
+       * Failures in auth must fail CLOSED: an account with no roles on
+       * record gets the least-privileged role, not the most.
+       */
+      const roles: string[] =
+        admin.roles && admin.roles.length > 0 ? admin.roles : [Role.VIEWER];
 
       const pair = await refreshTokenService.issueTokenPair({
         userId,

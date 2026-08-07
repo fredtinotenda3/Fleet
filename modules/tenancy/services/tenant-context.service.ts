@@ -209,12 +209,52 @@ export class TenantContextService {
     const roots = new Set(rootIds);
     const result = new Set(rootIds);
 
+    /**
+     * FIX (critical -- "scoped user sees zero" in production). Every
+     * scoped user (branch/department/workshop/fleet managers) saw an
+     * empty app after the rebuild, even though assignments, the trace
+     * script, and this exact algorithm all looked correct.
+     *
+     * The bug wasn't the expansion logic -- it was the data type it
+     * operates on. `orgUnitRepository.findByOrganization()` goes
+     * through `BaseRepository.findMany()`, which returns raw MongoDB
+     * documents via `cursor.toArray()`. Only `create()` ever calls
+     * `.toString()` on `_id`; every read path (`findMany`, `findOne`,
+     * `findById`'s `collection.findOne`) hands back the driver's native
+     * `ObjectId`, regardless of what the `OrgUnit` TypeScript type
+     * claims. `unit.path`, by contrast, IS an array of strings, because
+     * it was written by `create()`/`update()` off of already-stringified
+     * ids.
+     *
+     * So the old loop did `result.add(unit._id)` -- adding a live
+     * ObjectId instance for every descendant -- while `rootIds` (the
+     * direct UserScopeAssignment ids) stayed plain strings. The merged
+     * array that came out of this function was a mix of types. Passed
+     * into tenantScopeService.buildFilter()'s `{ orgUnitId: { $in:
+     * [...] } }`, the ObjectId entries never matched the string
+     * `orgUnitId` values stored on vehicles/fuel logs/expenses --
+     * MongoDB does not coerce between the two in `$in`. A branch
+     * manager's own branch id (a string, untouched by this loop) could
+     * still match directly-tagged rows, but every vehicle living on a
+     * child department/workshop/fleet -- i.e. the entire point of
+     * descendant expansion -- silently vanished. That is exactly the
+     * "assignments are right, the trace script is right, the app shows
+     * zero" shape: the trace script queries plain JS objects and never
+     * touches a real ObjectId, so it never reproduced this.
+     *
+     * Fix: normalize every id this function touches -- roots, each
+     * unit's own id, and each ancestor in `path` -- to a string before
+     * comparing or inserting. Do this here rather than trusting the
+     * repository layer to have done it, since the same
+     * ObjectId-vs-string gap exists in every other `findMany()` caller.
+     */
     for (const unit of units) {
-      const id = unit._id;
+      const id = unit._id ? String(unit._id) : undefined;
       if (!id) continue;
       // `path` is the materialized ancestor chain, so a unit is a
       // descendant of any root that appears in it.
-      if (unit.path?.some((ancestorId) => roots.has(ancestorId))) {
+      const path = (unit.path ?? []).map((ancestorId) => String(ancestorId));
+      if (path.some((ancestorId) => roots.has(ancestorId))) {
         result.add(id);
       }
     }
