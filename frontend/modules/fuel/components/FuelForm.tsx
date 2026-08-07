@@ -245,7 +245,37 @@ export function FuelForm({
             render={({ field }) => (
               <Select
                 value={normalizeId(field.value)}
-                onValueChange={(v) => field.onChange(normalizeId(v))}
+                onValueChange={(v) => {
+                  const plate = normalizeId(v);
+                  field.onChange(plate);
+
+                  /**
+                   * Auto-fill fuel type from the selected vehicle.
+                   *
+                   * The vehicle already knows whether it takes Diesel or
+                   * Petrol (tblvehicles.fuel_type); making the operator
+                   * re-state it on every refuel is both friction and a
+                   * data-quality risk -- a mistyped fuel type silently
+                   * corrupts the efficiency and anomaly analytics that
+                   * read this field.
+                   *
+                   * `shouldDirty: false` so merely picking a vehicle does
+                   * not mark a pristine form as edited, and the value is
+                   * only written when the vehicle actually declares one --
+                   * an unset vehicle fuel_type must not blank a value the
+                   * user typed deliberately. The field stays editable for
+                   * the genuine exception (a dual-fuel conversion, a
+                   * jerrycan of something else).
+                   */
+                  const vehicle = vehicles?.data?.find((x) => x.license_plate === plate);
+                  const vehicleFuelType = vehicle?.fuel_type;
+                  if (vehicleFuelType) {
+                    setValue('fuel_type', vehicleFuelType, {
+                      shouldValidate: true,
+                      shouldDirty: false,
+                    });
+                  }
+                }}
                 disabled={readOnly}
               >
                 <SelectTrigger id="license_plate" className="w-full">

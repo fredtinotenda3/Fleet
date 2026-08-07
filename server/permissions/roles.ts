@@ -317,6 +317,14 @@ export const rolePermissions: Record<Role, Permission[]> = {
     Permission.ORG_UNIT_VIEW,
     Permission.SCOPE_ASSIGNMENT_VIEW,
     Permission.NOTIFICATION_BROADCAST,
+    // DELETE FOLLOWS CREATE+EDIT WITHIN SCOPE (policy change -- see note
+    // at ROLE_PERMISSIONS). A role that can create and edit a record
+    // must be able to remove one entered in error; otherwise every typo
+    // escalates to an organization admin.
+    Permission.EXPENSE_DELETE,
+    Permission.FUEL_DELETE,
+    Permission.TRIP_DELETE,
+    Permission.MAINTENANCE_DELETE,
   ],
 
   /**
@@ -346,6 +354,12 @@ export const rolePermissions: Record<Role, Permission[]> = {
     Permission.BOOKING_VIEW,
     Permission.BOOKING_APPROVE,
     Permission.ORG_UNIT_VIEW,
+    // DELETE FOLLOWS CREATE+EDIT WITHIN SCOPE (policy change -- see note
+    // at ROLE_PERMISSIONS). A role that can create and edit a record
+    // must be able to remove one entered in error; otherwise every typo
+    // escalates to an organization admin.
+    Permission.EXPENSE_DELETE,
+    Permission.TRIP_DELETE,
   ],
 
   [Role.FLEET_MANAGER]: [
@@ -414,6 +428,16 @@ export const rolePermissions: Record<Role, Permission[]> = {
     Permission.OAUTH_CLIENT_VIEW,
     Permission.EXTERNAL_PROVIDER_VIEW,
     Permission.NOTIFICATION_BROADCAST,
+    // DELETE FOLLOWS CREATE+EDIT WITHIN SCOPE (policy change -- see note
+    // at ROLE_PERMISSIONS). A role that can create and edit a record
+    // must be able to remove one entered in error; otherwise every typo
+    // escalates to an organization admin.
+    Permission.FUEL_CREATE,
+    Permission.FUEL_EDIT,
+    Permission.FUEL_DELETE,
+    Permission.EXPENSE_CREATE,
+    Permission.EXPENSE_EDIT,
+    Permission.MAINTENANCE_DELETE,
   ],
 
   /**
@@ -449,6 +473,11 @@ export const rolePermissions: Record<Role, Permission[]> = {
     Permission.REPORT_VIEW,
     Permission.ORG_UNIT_VIEW,
     Permission.NOTIFICATION_BROADCAST,
+    // DELETE FOLLOWS CREATE+EDIT WITHIN SCOPE (policy change -- see note
+    // at ROLE_PERMISSIONS). A role that can create and edit a record
+    // must be able to remove one entered in error; otherwise every typo
+    // escalates to an organization admin.
+    Permission.MAINTENANCE_DELETE,
   ],
 
   /**
@@ -494,6 +523,12 @@ export const rolePermissions: Record<Role, Permission[]> = {
     Permission.PROCUREMENT_APPROVE,
     // FleetOps Ã¢â‚¬â€œ Vendor
     Permission.VENDOR_VIEW,
+    // DELETE FOLLOWS CREATE+EDIT WITHIN SCOPE (policy change -- see note
+    // at ROLE_PERMISSIONS). A role that can create and edit a record
+    // must be able to remove one entered in error; otherwise every typo
+    // escalates to an organization admin.
+    Permission.EXPENSE_DELETE,
+    Permission.FUEL_DELETE,
   ],
 
   [Role.DISPATCHER]: [
