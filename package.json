@@ -32,6 +32,8 @@
     "db:seed-expense-types": "tsx scripts/seed-expense-types.ts",
     "db:seed-maintenance-expenses": "tsx scripts/seed-maintenance-expenses.ts",
     "db:versioning": "tsx scripts/add-versioning-indexes.ts",
+    "db:explore": "tsx scripts/explore-data.ts",
+    "db:set-super-admin": "tsx scripts/set-super-admin.ts",
     "dev": "next dev --turbopack",
     "lint": "next lint",
     "start": "next start",

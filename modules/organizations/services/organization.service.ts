@@ -28,6 +28,7 @@ import { orgUnitRepository } from '@/modules/security/repositories/org-unit.repo
 import { Role, ORGANIZATION_ROLES, ASSIGNABLE_ORGANIZATION_ROLES } from '@/server/permissions/roles';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
+import { resolveOrganization } from '@/server/tenancy/organization-resolver';
 
 export interface AddMemberDirectInput {
   name: string;
@@ -171,9 +172,34 @@ export class OrganizationService {
   }
 
   async getOrganization(organizationId: string, tenantId: string): Promise<Organization> {
-    const organization = await this.repo.findById(organizationId, tenantId, false, true);
+    /**
+     * THE VEHICLE-CREATE 500.
+     *
+     * This is the slug-vs-ObjectId bug again, in the one place it
+     * survived. `organizationId` here is the tenant slug
+     * ("willsgrove-farm-enterprises-9e80ed"), because for org-scoped
+     * resources organizationId === tenantId. BaseRepository.findById()
+     * opens with `if (!ObjectId.isValid(id)) return null;` -- a slug is
+     * not 24 hex characters, so this returned null without querying and
+     * threw NotFoundError('Organization not found').
+     *
+     * Reads never hit it, which is why only creation broke. The call
+     * chain is:
+     *
+     *   POST /api/vehicles
+     *     -> CreateVehicleHandler
+     *       -> organizationService.checkVehicleLimit()   (plan enforcement)
+     *         -> getOrganization()                       <-- threw here
+     *
+     * and the Vercel log "Unexpected error: i: Organiza…" is that
+     * message, minified and truncated.
+     *
+     * resolveOrganization() accepts the slug or an ObjectId and is the
+     * canonical resolver -- see server/tenancy/organization-resolver.ts.
+     */
+    const organization = await resolveOrganization(organizationId);
     if (!organization) {
-      throw new NotFoundError('Organization not found');
+      throw new NotFoundError(`Organization not found: "${organizationId}"`);
     }
     return organization;
   }
@@ -804,9 +830,21 @@ export class OrganizationService {
 
   async checkVehicleLimit(organizationId: string, currentCount: number, tenantId: string): Promise<void> {
     const organization = await this.getOrganization(organizationId, tenantId);
-    if (currentCount >= organization.features.maxVehicles) {
+    const max = organization.features?.maxVehicles;
+
+    /**
+     * A non-positive or missing limit means "unmetered", not "zero". The
+     * previous `currentCount >= max` blocked every create when the field
+     * was absent or 0, which is the opposite of what an unset limit
+     * should mean.
+     */
+    if (typeof max !== 'number' || max <= 0) return;
+
+    if (currentCount >= max) {
       throw new AppError(
-        `Vehicle limit reached (${organization.features.maxVehicles}). Upgrade your plan to add more vehicles.`,
+        `Vehicle limit reached: this organization's plan allows ${max} vehicles ` +
+          `and ${currentCount} already exist. Raise features.maxVehicles on the ` +
+          'organization, or upgrade the plan.',
         'VEHICLE_LIMIT_REACHED',
         400
       );

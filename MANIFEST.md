@@ -1,71 +1,66 @@
-# Fleet — tenancy rebuild (run this, then you're done)
+# Fleet — vehicle-create 500 + expense categories
 
-4 files.
+2 files.
 
-## SECURITY — do this first
-Your Atlas connection string with credentials has now been pasted into a chat log
-twice. Rotate that password. I have never used it.
+| Path | Fix |
+|---|---|
+| `modules/organizations/services/organization.service.ts` | vehicle-create 500; vehicle-limit check |
+| `modules/expenses/repositories/expense-type.repository.ts` | "Uncategorised" |
 
-## Run
+## 1. Vehicle creation 500 — root cause
+
+The slug-vs-ObjectId bug, in the one place it survived. Chain:
+
 ```
-npm run tenancy:rebuild                # dry run — prints the whole plan
-npm run tenancy:rebuild -- --confirm   # apply
-npm run tenancy:sync-members           # verify
+POST /api/vehicles
+  -> CreateVehicleHandler
+    -> organizationService.checkVehicleLimit()
+      -> getOrganization(organizationId, tenantId)
+         -> repo.findById(<slug>)   // ObjectId.isValid(slug) === false
+         -> null -> throw NotFoundError('Organization not found')
 ```
-Windows note: use plain `--`. A pasted em-dash (`—`) makes npm reject the argument.
 
-## You did not fail. Here is what was actually left.
+`organizationId` is the tenant **slug** here (for org-scoped resources
+organizationId === tenantId). `BaseRepository.findById()` returns null before
+querying when the id isn't 24 hex chars. Reads never call this, which is why only
+creation broke. Your Vercel line `Unexpected error: i: Organiza…` is that message,
+minified and truncated. Now routed through `resolveOrganization()`.
 
-The repair scripts worked — every account now resolves to the right org unit. Your
-last trace proves that. What it also proves is that **the data has nothing to
-isolate**: all 76 vehicles, 1409 fuel logs, 282 expenses and 5 reminders sit on ONE
-unit (Harare Heavy Fleet) and all 77 drivers on ONE other (Logistics Department).
+**You will still hit a second wall.** Your organization has
+`features.maxVehicles: 10` and 76 vehicles exist, so the limit check now fires
+correctly with a clear 400. Raise it before demoing:
 
-So `fleet.manager` — your narrowest scope — saw 76/76 vehicles, identical to
-`harare.manager`. Bulawayo and the workshops correctly saw nothing. Isolation was
-enforced perfectly and was impossible to observe. No further controller wiring
-would have changed that.
+```js
+db.tblorganizations.updateOne(
+  { slug: "willsgrove-farm-enterprises-9e80ed" },
+  { $set: { "features.maxVehicles": 500 } }
+)
+```
 
-Separately: three seed runs left 17 org units, including a duplicate `HARARE`
-branch alongside `Harare Branch`, with `path` arrays that omitted ancestors — the
-root cause of branches expanding to +0 descendants.
+I also made a missing/zero `maxVehicles` mean *unmetered* rather than *zero* — the
+old `count >= max` blocked every create when the field was absent.
 
-## What the rebuild does (idempotent, dry-run default)
+## 2. "Uncategorised" — root cause
 
-1. **Tree** — canonical hierarchy with correct `parentId` / `path` / `depth`.
-   Adopts existing units by name; repairs their paths instead of duplicating.
-2. **Prune** — soft-deletes the 6 stray units, first migrating any rows or
-   assignments pointing at them to Harare Branch so nothing is orphaned.
-3. **Data** — spreads vehicles and drivers across leaf units by weight, with fuel,
-   expense, trip and reminder rows following their vehicle by plate. Deterministic,
-   so a re-run reproduces the same layout.
-4. **Access** — rebuilds assignments AND the members roster from one table, so the
-   two stores can no longer disagree (each previous seed wrote only one of them).
+`tblexpense_types` is a **global reference catalogue**; its documents carry no
+`tenantId` (verify in your dump — same shape as `tblunits`). But the repository
+extends `BaseRepository`, so every query appended `{ tenantId: <slug> }` and
+matched **zero** documents. Empty dropdown, and every existing expense rendered
+"Uncategorised" because its type couldn't resolve.
 
-## Resulting demo — 76 vehicles
-
-| Account | Scope | Vehicles |
-|---|---|---|
-| `owner@` / `admin@` | organization | **76** |
-| `accountant@` / `auditor@` | both branches | **76** |
-| `harare.manager@` | Harare Branch | **56** |
-| `logistics.manager@` | Logistics Dept | **50** |
-| `fleet.manager@` / `driver@` | Harare Heavy Fleet | **30** |
-| `harare.driver@` / `fleetmanager@` | Harare Light Fleet | **20** |
-| `bulawayo.manager@` | Bulawayo Branch | **20** |
-| `workshop.manager@` / `mechanic@` | Harare Central Workshop | **6** |
-| `bulawayo.mechanic@` | Bulawayo Workshop | **4** |
-| `unassigned@` | none | **0** — fail-closed control |
-
-76 → 56 → 50 → 30 → 6 is the hierarchy made visible. Harare and Bulawayo are
-disjoint. That is a demo of isolation rather than an assertion of it.
-
-Password for all `@willsgrove.test` accounts: whatever you last set via
-`npm run auth:doctor -- --reset-all --password '...' --confirm`.
+Fixed with an explicit *mine-or-global* predicate rather than by dropping the
+tenant filter: tenants can add their own types (the bulk-import handler does), and
+those stay private. Not org-unit scoped — a branch manager must categorise from
+the same catalogue as everyone else.
 
 ## Verification
-`npm run test:security` **169/169** · `npx tsc --noEmit` **83** (baseline 83).
+`npm run test:security` **171/171** · `npx tsc --noEmit` **83** (baseline 83).
 
-## Still open (unchanged)
-AI services contained not scoped; exports / report builder / global search
-unaudited; drivers create doesn't stamp `orgUnitId`.
+## NOT done
+- **Per-row delete** on expense/fuel/maintenance. Permission gating is already
+  correct (all six modules delegate to `permissionService`), and **bulk delete
+  works today** — tick a row, the Delete button appears. Only the per-row icon is
+  missing; it's a table-column change in three list pages.
+- **Fuel-type autofill** from the selected vehicle — not done.
+- **AI services** — still the safe "unavailable for your scope" placeholder.
+- Organisation dashboard scoping was already fixed in the previous round (verified).
