@@ -21,6 +21,7 @@ import {
 } from '../events/report-definition.events';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
 import { PaginationParams } from '@/shared/types/common.types';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 
 bootstrapDataSources();
 
@@ -124,9 +125,9 @@ export class ReportBuilderService {
    * than rendering every matching row at once). `pagination` defaults
    * to the engine's own preview page size when omitted.
    */
-  async preview(id: string, tenantId: string, pagination?: PaginationParams): Promise<ReportResult> {
+  async preview(id: string, tenantId: string, pagination?: PaginationParams, context?: TenantContext): Promise<ReportResult> {
     const definition = await this.get(id, tenantId);
-    return reportQueryEngine.run(definition, tenantId, { pagination });
+    return reportQueryEngine.run(definition, tenantId, { pagination, context });
   }
 
   /**
@@ -136,13 +137,13 @@ export class ReportBuilderService {
    * bucket correctly -- pivoting only the first page would silently
    * under-count every cell.
    */
-  async previewPivot(id: string, tenantId: string): Promise<PivotResult> {
+  async previewPivot(id: string, tenantId: string, context?: TenantContext): Promise<PivotResult> {
     const definition = await this.get(id, tenantId);
     if (!definition.pivot) {
       throw new ValidationError('This report has no pivot configuration');
     }
     const rawDefinition: ReportDefinition = { ...definition, groupBy: [], aggregations: [] };
-    const flat = await reportQueryEngine.runFull(rawDefinition, tenantId);
+    const flat = await reportQueryEngine.runFull(rawDefinition, tenantId, [], context);
     return pivotEngine.pivot(flat, definition.pivot);
   }
 }

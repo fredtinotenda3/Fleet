@@ -32,6 +32,8 @@ import { buildGroupStage, flattenGroupedDoc } from './mongo-aggregation-builder'
 import { AppError } from '@/server/errors/app.errors';
 import { EXPORT_ROW_CAP } from '@/shared/export/export.constants';
 import { PaginationParams } from '@/shared/types/common.types';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { orgUnitScopedCollections } from '@/server/tenancy/module-scope.registry';
 
 bootstrapDataSources();
 
@@ -49,6 +51,16 @@ const MAX_PREVIEW_LIMIT = 1000;
 const FULL_RESULT_CAP = EXPORT_ROW_CAP;
 
 export interface RunOptions {
+  /**
+   * The caller's tenant context. When supplied AND the data source's
+   * collection is org-unit scoped, an `orgUnitId` predicate is merged
+   * into the $match so the report can only read the caller's own units.
+   *
+   * Optional so background jobs and platform tooling can still run a
+   * definition organization-wide, but every user-facing caller MUST
+   * pass it -- see the comment on `run()`.
+   */
+  context?: TenantContext;
   extraFilters?: ReportFilterCondition[];
   pagination?: PaginationParams;
   /** Raises the row cap for this call (e.g. FULL_RESULT_CAP for exports/pivots). Ignored for grouped definitions -- grouped results are bounded by group cardinality, not a row cap. */
@@ -77,12 +89,34 @@ export class ReportQueryEngine {
     const db = await connectToDatabase();
     const collection = db.collection(source.collectionName);
 
+    /**
+     * TENANT-ISOLATION FIX -- the report builder was the last read path
+     * in the product that ignored org-unit scope.
+     *
+     * `baseFilter(tenantId)` constrains the ORGANIZATION only. Nothing
+     * constrained the org unit, so any scoped user could author a
+     * definition over `vehicles`, `expenses` or `fuel`, run it, and get
+     * every row in the organization -- then export it to CSV, Excel or
+     * PDF. Bulawayo could read Harare's entire cost base through the
+     * report builder while every list page correctly showed them
+     * nothing. Reports are precisely where that matters most: the output
+     * is designed to be downloaded and kept.
+     *
+     * ORDER IS LOAD-BEARING. The scope predicate is spread LAST, after
+     * the user's own filters. `orgUnitId` is exposed as a filterable
+     * field on these data sources (bootstrap-data-sources.ts), so a
+     * definition may legitimately contain `orgUnitId = X`. Spreading
+     * scope first would let that user-supplied condition overwrite the
+     * scope key and widen the query -- the same key-collision bypass
+     * that BaseRepository.findMany was fixed for.
+     */
     const matchStage: Filter<Document> = {
       ...source.baseFilter(tenantId),
       ...buildMongoFilter(
         [...definition.filters, ...(normalizedOptions.extraFilters ?? [])],
         source.fields
       ),
+      ...this.orgUnitPredicate(source.collectionName, normalizedOptions.context),
     };
 
     const prePipeline = source.prePipeline?.(tenantId) ?? [];
@@ -91,6 +125,36 @@ export class ReportQueryEngine {
     return isGrouped
       ? this.runGrouped(collection, matchStage, prePipeline, definition, source.fields)
       : this.runFlat(collection, matchStage, prePipeline, definition, source.fields, normalizedOptions);
+  }
+
+  /**
+   * The `orgUnitId` predicate for this data source and caller.
+   *
+   * Returns `{}` (no restriction) when:
+   *   - no context was supplied (background job / platform tooling), or
+   *   - the caller holds an organization-wide role
+   *     (accessibleOrgUnitIds === null), or
+   *   - the underlying collection is not org-unit scoped at all --
+   *     fuel stations, vendors and SLA policies are shared reference
+   *     data, and filtering them by org unit would hide rows every
+   *     branch is meant to see.
+   *
+   * The scoped-collection list is read from
+   * server/tenancy/module-scope.registry.ts rather than restated here,
+   * so a module whose scope decision changes does not silently keep the
+   * old behaviour in reports.
+   */
+  private orgUnitPredicate(
+    collectionName: string,
+    context?: TenantContext
+  ): Record<string, unknown> {
+    if (!context) return {};
+    if (context.accessibleOrgUnitIds === null) return {};
+    if (!orgUnitScopedCollections().includes(collectionName)) return {};
+
+    // Fails closed: a scoped caller with no accessible units matches
+    // nothing, rather than falling through to organization-wide.
+    return { orgUnitId: { $in: context.accessibleOrgUnitIds } };
   }
 
   /**
@@ -105,9 +169,11 @@ export class ReportQueryEngine {
   async runFull(
     definition: ReportDefinition,
     tenantId: string,
-    extraFilters: ReportFilterCondition[] = []
+    extraFilters: ReportFilterCondition[] = [],
+    context?: TenantContext
   ): Promise<ReportResult> {
     return this.run(definition, tenantId, {
+      context,
       extraFilters,
       pagination: { page: 1, limit: FULL_RESULT_CAP },
       capOverride: FULL_RESULT_CAP,

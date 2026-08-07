@@ -17,6 +17,7 @@ import { NotFoundError, ValidationError } from '@/server/errors/app.errors';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { DashboardCreatedEvent, DashboardUpdatedEvent, DashboardDeletedEvent } from '../events/dashboard.events';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 
 export class DashboardService {
   constructor(private readonly repo: DashboardRepository = dashboardRepository) {}
@@ -88,7 +89,7 @@ export class DashboardService {
    * broken widget (e.g. a deleted underlying report/KPI) never blanks
    * the whole dashboard.
    */
-  async render(id: string, tenantId: string): Promise<DashboardData> {
+  async render(id: string, tenantId: string, context?: TenantContext): Promise<DashboardData> {
     const dashboard = await this.get(id, tenantId);
 
     const widgets: DashboardWidgetResult[] = await Promise.all(
@@ -111,12 +112,12 @@ export class DashboardService {
           if (widget.type === 'pivot') {
             if (!definition.pivot) throw new ValidationError('Report has no pivot configuration');
             const rawDefinition = { ...definition, groupBy: [], aggregations: [] };
-            const flat = await reportQueryEngine.run(rawDefinition, tenantId);
+            const flat = await reportQueryEngine.run(rawDefinition, tenantId, { context });
             const data = pivotEngine.pivot(flat, definition.pivot);
             return { widgetId: widget.id, type: widget.type, title: widget.title, data };
           }
 
-          const data = await reportQueryEngine.run(definition, tenantId);
+          const data = await reportQueryEngine.run(definition, tenantId, { context });
           return { widgetId: widget.id, type: widget.type, title: widget.title, data };
         } catch (error) {
           return {

@@ -30,6 +30,7 @@ import {
   ReportExecutionFailedEvent,
 } from '../events/report-execution.events';
 import { PaginationParams } from '@/shared/types/common.types';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 
 const EXTENSION_MAP: Record<ExecutionFormat, string> = {
   pdf: 'pdf',
@@ -51,7 +52,7 @@ export class ReportExecutionService {
   constructor(private readonly repo: ReportExecutionRepository = reportExecutionRepository) {}
 
   /** Ad-hoc, user-initiated export/download. Creates a pending record then hands off to the worker. */
-  async generate(input: GenerateExecutionInput, tenantId: string, userId: string): Promise<ReportExecution> {
+  async generate(input: GenerateExecutionInput, tenantId: string, userId: string, context?: TenantContext): Promise<ReportExecution> {
     if (!input.reportDefinitionId && !input.dashboardId) {
       throw new ValidationError('Either reportDefinitionId or dashboardId is required');
     }
@@ -104,14 +105,14 @@ export class ReportExecutionService {
   }
 
   /** Called by the worker for ad-hoc executions (kind: 'execution'). */
-  async executeGeneration(executionId: string, tenantId: string, userId: string): Promise<ReportExecution> {
+  async executeGeneration(executionId: string, tenantId: string, userId: string, context?: TenantContext): Promise<ReportExecution> {
     const execution = await this.repo.findById(executionId, tenantId, false, true);
     if (!execution) throw new NotFoundError('Report execution not found');
 
     await this.repo.updateStatus(executionId, tenantId, 'processing');
 
     try {
-      const buffer = await this.buildBuffer(execution, tenantId);
+      const buffer = await this.buildBuffer(execution, tenantId, context);
 
       const stored = await storageService.uploadFile({
         tenantId,
@@ -197,7 +198,7 @@ export class ReportExecutionService {
     return this.executeGeneration(created._id!, tenantId, 'system');
   }
 
-  private async buildBuffer(execution: ReportExecution, tenantId: string): Promise<Buffer> {
+  private async buildBuffer(execution: ReportExecution, tenantId: string, context?: TenantContext): Promise<Buffer> {
     let result: ReportResult;
     let pivotResult: PivotResult | undefined;
 
@@ -210,11 +211,11 @@ export class ReportExecutionService {
       // runFull() pushes the drilldown filters + definition filters
       // into Mongo and returns everything that matches, flagged
       // `truncated` if the match count exceeds the cap.
-      result = await reportQueryEngine.runFull(def, tenantId, execution.drilldownFilters ?? []);
+      result = await reportQueryEngine.runFull(def, tenantId, execution.drilldownFilters ?? [], context);
 
       if (def.pivot) {
         const rawDefinition = { ...def, groupBy: [], aggregations: [] };
-        const flat = await reportQueryEngine.runFull(rawDefinition, tenantId);
+        const flat = await reportQueryEngine.runFull(rawDefinition, tenantId, [], context);
         pivotResult = pivotEngine.pivot(flat, def.pivot);
       }
     } else {

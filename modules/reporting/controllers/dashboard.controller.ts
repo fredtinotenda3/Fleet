@@ -7,6 +7,7 @@ import { successResponse, createdResponse, errorResponse } from '@/server/utils/
 import { AppError } from '@/server/errors/app.errors';
 import { validateWithZod } from '@/shared/utils/validation.utils';
 import { dashboardCreateSchema, dashboardUpdateSchema } from '@/shared/validations/dashboard.schema';
+import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
 
 export class DashboardController {
   async list(req: NextRequest, context: AuthContext) {
@@ -32,7 +33,12 @@ export class DashboardController {
   /** No route wired yet -- see the render/download/evaluate note above. */
   async render(req: NextRequest, context: AuthContext, id: string) {
     try {
-      return successResponse(await dashboardService.render(id, context.tenantId));
+      // Org-unit scope for the report engine. Without this the engine
+      // falls back to organization-wide, which is exactly the leak this
+      // change closes -- so it is resolved here, at the request edge,
+      // rather than left to each service.
+      const tenantContext = await resolveTenantContext(req);
+      return successResponse(await dashboardService.render(id, context.tenantId, tenantContext));
     } catch (error) {
       return this.handleError(error);
     }

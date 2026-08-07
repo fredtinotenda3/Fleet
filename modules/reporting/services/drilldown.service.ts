@@ -10,6 +10,7 @@
 
 import { reportQueryEngine } from './report-query.engine';
 import { ReportDefinition, ReportFilterCondition, ReportResult } from '../types/report-definition.types';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 
 /**
  * Drill-down works by taking the SAME data source and base filters as
@@ -22,7 +23,8 @@ export class DrilldownService {
   async drillInto(
     definition: ReportDefinition,
     tenantId: string,
-    groupValues: Record<string, unknown>
+    groupValues: Record<string, unknown>,
+    context?: TenantContext
   ): Promise<ReportResult> {
     const extraFilters: ReportFilterCondition[] = Object.entries(groupValues).map(([field, value]) => ({
       field,
@@ -37,7 +39,7 @@ export class DrilldownService {
       fields: definition.fields.length ? definition.fields : Object.keys(groupValues),
     };
 
-    return reportQueryEngine.runFull(detailDefinition, tenantId, extraFilters);
+    return reportQueryEngine.runFull(detailDefinition, tenantId, extraFilters, context);
   }
 }
 

@@ -8,6 +8,7 @@ import { AppError } from '@/server/errors/app.errors';
 import { validateWithZod } from '@/shared/utils/validation.utils';
 import { generateExecutionSchema } from '@/shared/validations/report-execution.schema';
 import { validatePaginationParams } from '@/shared/utils/pagination.utils';
+import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
 
 export class ReportExecutionController {
   async list(req: NextRequest, context: AuthContext) {
@@ -38,7 +39,12 @@ export class ReportExecutionController {
       if (!result.success || !result.data) {
         return errorResponse('Validation failed', 'VALIDATION_ERROR', 400, result.errors);
       }
-      const execution = await reportExecutionService.generate(result.data, context.tenantId, context.userId);
+      // Org-unit scope for the report engine. Without this the engine
+      // falls back to organization-wide, which is exactly the leak this
+      // change closes -- so it is resolved here, at the request edge,
+      // rather than left to each service.
+      const tenantContext = await resolveTenantContext(req);
+      const execution = await reportExecutionService.generate(result.data, context.tenantId, context.userId, tenantContext);
       return successResponse(execution);
     } catch (error) {
       return this.handleError(error);

@@ -26,6 +26,7 @@ import {
   reportDefinitionUpdateSchema,
 } from '@/shared/validations/report-definition.schema';
 import { z } from 'zod';
+import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
 
 const drilldownRequestSchema = z.object({
   groupValues: z.record(z.string(), z.unknown()),
@@ -51,7 +52,12 @@ export class ReportDefinitionController {
   /** Runs the definition and returns the flat/grouped tabular preview for the builder UI. */
   async preview(req: NextRequest, context: AuthContext, id: string) {
     try {
-      return successResponse(await reportBuilderService.preview(id, context.tenantId));
+      // Org-unit scope for the report engine. Without this the engine
+      // falls back to organization-wide, which is exactly the leak this
+      // change closes -- so it is resolved here, at the request edge,
+      // rather than left to each service.
+      const tenantContext = await resolveTenantContext(req);
+      return successResponse(await reportBuilderService.preview(id, context.tenantId, undefined, tenantContext));
     } catch (error) {
       return this.handleError(error);
     }
@@ -60,7 +66,12 @@ export class ReportDefinitionController {
   /** Pivot-shaped preview, only valid when the definition has a saved pivot config. */
   async previewPivot(req: NextRequest, context: AuthContext, id: string) {
     try {
-      return successResponse(await reportBuilderService.previewPivot(id, context.tenantId));
+      // Org-unit scope for the report engine. Without this the engine
+      // falls back to organization-wide, which is exactly the leak this
+      // change closes -- so it is resolved here, at the request edge,
+      // rather than left to each service.
+      const tenantContext = await resolveTenantContext(req);
+      return successResponse(await reportBuilderService.previewPivot(id, context.tenantId, tenantContext));
     } catch (error) {
       return this.handleError(error);
     }
@@ -81,7 +92,12 @@ export class ReportDefinitionController {
       }
 
       const definition = await reportBuilderService.get(id, context.tenantId);
-      const detail = await drilldownService.drillInto(definition, context.tenantId, result.data.groupValues);
+      // Org-unit scope for the report engine. Without this the engine
+      // falls back to organization-wide, which is exactly the leak this
+      // change closes -- so it is resolved here, at the request edge,
+      // rather than left to each service.
+      const tenantContext = await resolveTenantContext(req);
+      const detail = await drilldownService.drillInto(definition, context.tenantId, result.data.groupValues, tenantContext);
       return successResponse(detail);
     } catch (error) {
       return this.handleError(error);

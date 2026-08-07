@@ -1,73 +1,48 @@
-# Fleet — row actions, fuel autofill, permission matrix
+# Fleet — report builder org-unit scoping
 
-4 files.
+9 files. The last read path that ignored org-unit scope.
 
-| Path | Change |
-|---|---|
-| `server/permissions/roles.ts` | **Policy change** — grants delete + missing fuel/expense permissions |
-| `frontend/modules/fuel/components/FuelForm.tsx` | Fuel type auto-fills from selected vehicle |
-| `modules/organizations/services/organization.service.ts` | (from previous round) vehicle-create 500 + limit check |
-| `modules/expenses/repositories/expense-type.repository.ts` | (from previous round) "Uncategorised" |
+## The hole
 
-## 1. Per-row delete was never missing
+`ReportQueryEngine.run()` built its `$match` as:
 
-`ExpensesTable`, `FuelTable` and `MaintenanceTable` already render a per-row
-`⋯` menu containing View / Edit / **Delete**, gated on `canDelete`. Nothing was
-missing from the UI. The buttons were hidden because **no role below
-`organization_admin` held a single delete permission**:
-
-```
-ROLE                 EXPENSE_DEL  FUEL_DEL  MAINT_DEL  VEHICLE_DEL
-BRANCH_MANAGER            -          -          -           -
-DEPARTMENT_MANAGER        -          -          -           -
-FLEET_MANAGER             -          -          -           -
-WORKSHOP_MANAGER          -          -          -           -
-ACCOUNTANT                -          -          -           -
+```ts
+{ ...source.baseFilter(tenantId), ...userFilters }
 ```
 
-Bulk delete uses the *same* `canDelete` flag, so it was hidden too — you saw it
-work because you were signed in as owner.
+`baseFilter` constrains the **organization** only. Nothing constrained the org
+unit. So a scoped user could author a definition over `vehicles`, `expenses`,
+`fuel`, `maintenance` or `trips`, run it, and get **every row in the
+organization** — then export to CSV, Excel or PDF.
 
-**This is a policy change, and it needs your sign-off.** Principle applied:
-*delete follows create+edit within scope* — a role that can create and edit a
-record should be able to remove one entered in error, or every typo escalates to
-an org admin.
+`bulawayo.manager@` sees 20 vehicles on every page and could have downloaded all
+76, with Harare's full cost base. Reports are the worst place for this: the output
+is designed to be kept and shared.
 
-| Role | Granted |
-|---|---|
-| `BRANCH_MANAGER` | EXPENSE_DELETE, FUEL_DELETE, TRIP_DELETE, MAINTENANCE_DELETE |
-| `DEPARTMENT_MANAGER` | EXPENSE_DELETE, TRIP_DELETE |
-| `FLEET_MANAGER` | FUEL_CREATE, FUEL_EDIT, FUEL_DELETE, EXPENSE_CREATE, EXPENSE_EDIT, MAINTENANCE_DELETE |
-| `WORKSHOP_MANAGER` | MAINTENANCE_DELETE |
-| `ACCOUNTANT` | EXPENSE_DELETE, FUEL_DELETE |
+This was documented in `module-scope.registry.ts` ("enforcement belongs in the
+execution engine") and never implemented.
 
-`VEHICLE_DELETE` deliberately **not** granted — removing a vehicle cascades to its
-fuel, expense, trip and maintenance history. That stays with org admins.
+## The fix
 
-Separately: `FLEET_MANAGER` had only `FUEL_VIEW` / `EXPENSE_VIEW`, so a fleet
-manager could not record a refuel for their own vehicles. That was a functional
-gap, not a delete gap, and is fixed above. It also explains why "Record Fuel" was
-missing for that role.
+`orgUnitPredicate()` merged into the `$match`, **spread last**. Ordering is
+load-bearing: `orgUnitId` is an exposed filterable field on these data sources, so
+a definition may legitimately contain `orgUnitId = X`. Spreading scope first would
+let that user-supplied condition overwrite the scope key — the same key-collision
+bypass `BaseRepository.findMany` was fixed for. There's a test for it.
 
-Scope is unaffected — deletes still run through the scoped repositories.
+Scoped collections are read from `module-scope.registry.ts`, not restated, so
+flipping a module's scope decision propagates to reports automatically. Shared
+reference data (fuel stations, vendors, SLA) is deliberately **not** filtered —
+hiding those would be the opposite failure.
 
-## 2. Fuel type auto-fill
-Selecting a vehicle now writes `fuel_type` from `tblvehicles.fuel_type`. Uses
-`shouldDirty: false` so picking a vehicle doesn't mark a pristine form edited, and
-only writes when the vehicle declares a type — an unset vehicle must not blank a
-value the user typed. Field stays editable for dual-fuel conversions.
+Fails closed: a scoped caller with no units gets `{ $in: [] }`, never org-wide.
 
-## 3. Organisation dashboard
-Already scoped in the previous round (`getStatistics` takes `TenantContext`;
-verified present). Fleet size and expense totals respect org units. Member counts
-stay organization-level by design — the roster is organization data.
-
-## 4. AI insights
-Unchanged: safe "unavailable for your scope" placeholder for scoped users. Never
-shows another branch's numbers.
+Threaded through: engine → execution / builder / dashboard / drilldown services →
+3 controllers, which resolve `TenantContext` at the request edge. `context` is
+optional so background jobs and platform tooling still run org-wide.
 
 ## Verification
-`npm run test:security` **171/171** · `npx tsc --noEmit` **83** (baseline 83).
+`npm run test:security` **181/181** (10 new) · `npx tsc --noEmit` **83** (baseline 83).
 
-After deploying, sign in as `harare.manager@` — the `⋯` menu on an expense row
-should now show Delete.
+Verify: sign in as `bulawayo.manager@`, build a report over Vehicles, run it —
+20 rows, not 76.
