@@ -1,48 +1,58 @@
-# Fleet — report builder org-unit scoping
+# Fleet — `_id` type/runtime mismatch
 
-9 files. The last read path that ignored org-unit scope.
+2 files.
 
-## The hole
+| Path | Change |
+|---|---|
+| `server/repositories/base.repository.ts` | Normalizes `_id` to string on every read; adds `toObjectId()` |
+| `tests/security/document-id-normalization.spec.ts` | 9 new tests |
 
-`ReportQueryEngine.run()` built its `$match` as:
+## The 20 write sites did not need changing — and here's why
+
+I said 20 earlier. That number was wrong in an important way: **~25 of the 27 are in
+`scripts/`, which use the raw driver (`db.collection(...)`) and never touch
+BaseRepository.** Their `_id` stays an `ObjectId`, so their
+`updateOne({ _id: doc._id })` keeps working untouched. Changing them would have
+*introduced* the breakage I was worried about.
+
+In application code there were exactly three consumers of a read `_id`:
+
+| Site | Verdict |
+|---|---|
+| `org-unit-hierarchy.service.ts:122` — `updateOne({ _id: descendant._id })` | **Safe.** `descendant` comes from a raw `collection.find()`, not the repository. Unaffected. |
+| `session.service.ts:32` — `_id: s._id!` into a DTO typed `string` | Now actually correct; it was an ObjectId in a string field. |
+| `driver-risk.service.ts:103` — `_id: t._id \|\| ''` | Same; read-only shaping. |
+
+Everything else my grep caught was `$group: { _id: null }` in aggregation
+pipelines — unrelated.
+
+So the change is: normalize at the read boundary, touch no write site.
+
+## A live bug this fixes for free
+
+`OrgUnitHierarchyService.moveUnit()` does:
 
 ```ts
-{ ...source.baseFilter(tenantId), ...userFilters }
+const unit = await this.repo.findById(orgUnitId, tenantId);   // _id was ObjectId
+collection.find({ organizationId: ..., path: unit._id })      // path stores STRINGS
 ```
 
-`baseFilter` constrains the **organization** only. Nothing constrained the org
-unit. So a scoped user could author a definition over `vehicles`, `expenses`,
-`fuel`, `maintenance` or `trips`, run it, and get **every row in the
-organization** — then export to CSV, Excel or PDF.
+An ObjectId never matches a string element, so **descendant paths were never
+rewritten when a unit was moved** — silently, no error. Since a wrong `path` is
+exactly what makes descendant expansion collapse (the bug that made branch
+managers see an empty app), moving a unit could have re-broken scoping at any
+time. Normalizing `unit._id` to a string fixes that query with no further edit.
 
-`bulawayo.manager@` sees 20 vehicles on every page and could have downloaded all
-76, with Harare's full cost base. Reports are the worst place for this: the output
-is designed to be kept and shared.
+## Scope
 
-This was documented in `module-scope.registry.ts` ("enforcement belongs in the
-execution engine") and never implemented.
+Converts **only** the top-level `_id`, and only when it is a real ObjectId. No
+deep walk: reference fields (`vehicleId`, `orgUnitId`, `driver_id`) are already
+stored as strings, a traversal on every read would cost, and it would rewrite
+ObjectIds inside caller payloads that may legitimately hold them.
 
-## The fix
-
-`orgUnitPredicate()` merged into the `$match`, **spread last**. Ordering is
-load-bearing: `orgUnitId` is an exposed filterable field on these data sources, so
-a definition may legitimately contain `orgUnitId = X`. Spreading scope first would
-let that user-supplied condition overwrite the scope key — the same key-collision
-bypass `BaseRepository.findMany` was fixed for. There's a test for it.
-
-Scoped collections are read from `module-scope.registry.ts`, not restated, so
-flipping a module's scope decision propagates to reports automatically. Shared
-reference data (fuel stations, vendors, SLA) is deliberately **not** filtered —
-hiding those would be the opposite failure.
-
-Fails closed: a scoped caller with no units gets `{ $in: [] }`, never org-wide.
-
-Threaded through: engine → execution / builder / dashboard / drilldown services →
-3 controllers, which resolve `TenantContext` at the request edge. `context` is
-optional so background jobs and platform tooling still run org-wide.
+Documents read via `collection.find()`, `collection.aggregate()` or anything in
+`scripts/` still carry an ObjectId. `toObjectId()` is provided for code that mixes
+both sources.
 
 ## Verification
-`npm run test:security` **181/181** (10 new) · `npx tsc --noEmit` **83** (baseline 83).
-
-Verify: sign in as `bulawayo.manager@`, build a report over Vehicles, run it —
-20 rows, not 76.
+`npm run test:security` **190/190** (9 new) · `npx tsc --noEmit` **83** (baseline 83).

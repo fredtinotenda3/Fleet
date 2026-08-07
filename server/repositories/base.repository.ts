@@ -141,6 +141,77 @@ export abstract class BaseRepository<T extends BaseEntity> {
     throw error;
   }
 
+
+  /**
+   * Normalizes a raw Mongo document so its runtime shape matches the
+   * declared TypeScript type.
+   *
+   * THE PROBLEM THIS CLOSES
+   * `BaseEntity._id` is declared `ID` (= string), but the driver returns
+   * an `ObjectId`. Every read method papered over that with
+   * `as unknown as Promise<T[]>` -- a cast that converts nothing, it
+   * only silences the compiler. The type LIES: consumers write
+   * `doc._id` believing it is a string, and it behaves like one right
+   * up until it is compared or used in a query.
+   *
+   * Two real bugs came from exactly this:
+   *
+   *   1. TenantContextService.expandWithDescendants() collected
+   *      `unit._id` into accessibleOrgUnitIds. Assignment roots were
+   *      strings, descendants were ObjectIds, so
+   *      `{ orgUnitId: { $in: [...] } }` matched only the root -- Mongo
+   *      does not coerce ObjectId to string inside `$in`. Branch
+   *      managers saw an empty application while every filter read as
+   *      correct.
+   *
+   *   2. OrgUnitHierarchyService.moveUnit() queries `{ path: unit._id }`
+   *      where `path` stores STRINGS. An ObjectId matches nothing, so
+   *      descendant paths are never rewritten on a move -- silently.
+   *
+   * Neither is visible to `tsc`: the cast tells it the field is already
+   * a string, so stricter compiler options would not have caught them.
+   * The fix has to be where the lie is told.
+   *
+   * SCOPE AND SAFETY
+   * Converts ONLY the top-level `_id`, and only when it is a real
+   * ObjectId. It does not walk nested objects or arrays: reference
+   * fields (vehicleId, orgUnitId, driver_id) are already stored as
+   * strings here so there is nothing to fix, a deep walk would cost a
+   * traversal on every read, and it would rewrite ObjectIds inside
+   * caller payloads that may legitimately hold them.
+   *
+   * Documents obtained WITHOUT this repository -- `collection.find()`,
+   * `collection.aggregate()`, and everything under `scripts/`, which
+   * all use the raw driver -- still carry an ObjectId `_id`. That is
+   * precisely why the ~25 `updateOne({ _id: doc._id })` write sites in
+   * scripts/ keep working untouched: they never pass through here.
+   * Code that mixes both sources must convert explicitly, which is what
+   * `toObjectId()` is for.
+   */
+  protected normalizeDoc<R>(doc: unknown): R {
+    if (!doc || typeof doc !== 'object') return doc as R;
+    const raw = doc as Record<string, unknown>;
+    const id = raw._id;
+    if (id instanceof ObjectId) {
+      return { ...raw, _id: id.toHexString() } as R;
+    }
+    return doc as R;
+  }
+
+  protected normalizeDocs<R>(docs: unknown[]): R[] {
+    return docs.map((d) => this.normalizeDoc<R>(d));
+  }
+
+  /**
+   * Converts a normalized (string) id back into an ObjectId for a query
+   * filter. Use whenever a document that came out of THIS repository is
+   * fed into a raw `collection.updateOne({ _id })` -- a bare string
+   * matches nothing there and the write silently no-ops.
+   */
+  protected toObjectId(id: string | ObjectId): ObjectId {
+    return id instanceof ObjectId ? id : new ObjectId(id);
+  }
+
   async findById(
     id: string,
     tenantId: string,
@@ -156,7 +227,7 @@ export abstract class BaseRepository<T extends BaseEntity> {
     // `collection.findOne` returns `WithId<T> | null` (Mongo's own `_id:
     // ObjectId` clashes with our `_id?: string`); this repository's
     // public contract has always been `T`, so cast at the boundary.
-    return collection.findOne(filter) as unknown as Promise<T | null>;
+    return this.normalizeDoc<T | null>(await collection.findOne(filter));
   }
 
   async findOne(
@@ -175,7 +246,7 @@ export abstract class BaseRepository<T extends BaseEntity> {
       // method silently bypassable by key collision.
       ...this.getActiveFilter(tenantId, includeDeleted, isPlatformAdmin),
     } as Filter<T>;
-    return collection.findOne(finalFilter) as unknown as Promise<T | null>;
+    return this.normalizeDoc<T | null>(await collection.findOne(finalFilter));
   }
 
   async findMany(
@@ -208,7 +279,7 @@ export abstract class BaseRepository<T extends BaseEntity> {
 
     let cursor = collection.find(finalFilter, findOptions).sort(sort);
     if (limit) cursor = cursor.limit(limit);
-    return cursor.toArray() as unknown as Promise<T[]>;
+    return this.normalizeDocs<T>(await cursor.toArray());
   }
 
   async findWithPagination(
@@ -250,7 +321,7 @@ export abstract class BaseRepository<T extends BaseEntity> {
       collection.countDocuments(finalFilter),
     ]);
 
-    return createPaginatedResponse(data as unknown as T[], total, { page, limit });
+    return createPaginatedResponse(this.normalizeDocs<T>(data), total, { page, limit });
   }
 
   async create(
@@ -329,7 +400,7 @@ export abstract class BaseRepository<T extends BaseEntity> {
       const result = await collection.findOneAndUpdate(filter, update, {
         returnDocument: 'after',
       });
-      return (result ?? null) as unknown as T | null;
+      return this.normalizeDoc<T | null>(result ?? null);
     } catch (error) {
       // Same rationale as create(): updating a record's unique field
       // (e.g. re-assigning a license_plate) to a value already in active
