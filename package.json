@@ -22,6 +22,8 @@
     "db:indexes": "tsx scripts/create-indexes.ts",
     "db:make-admin": "node scripts/make-me-admin.js",
     "db:migrate-reminders": "tsx scripts/migrate-reminders-categories.ts",
+    "db:move-data-to-harare": "tsx scripts/move-data-to-harare.ts",
+    "db:move-data-to-harare:apply": "tsx scripts/move-data-to-harare.ts --confirm",
     "db:repair": "tsx scripts/tenant-data-repair.ts",
     "db:repair:apply": "tsx scripts/tenant-data-repair.ts --apply",
     "db:reset-vehicles": "npm run db:delete-all-vehicles && npm run db:seed-vehicles",
