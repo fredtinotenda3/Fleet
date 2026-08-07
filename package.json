@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "auth:doctor": "tsx scripts/auth-doctor.ts",
     "build": "next build",
     "db:add-maintenance-indexes": "tsx scripts/add-maintenance-indexes.ts",
     "db:assign": "tsx scripts/assign-tenant.ts",
@@ -13,6 +14,7 @@
     "db:clear-expenses": "tsx scripts/clear-expenses.ts",
     "db:delete-all-vehicles": "tsx scripts/cascade-delete-vehicle.ts --all",
     "db:delete-vehicle": "tsx scripts/cascade-delete-vehicle.ts",
+    "db:diagnose-login": "tsx diagnose-login.ts",
     "db:fix-expense-tenants": "node scripts/update-expenses-tenant.js",
     "db:fix-new-expenses": "node scripts/fix-new-expenses.js",
     "db:forensics": "tsx scripts/tenant-forensics.ts",
@@ -28,7 +30,6 @@
     "db:seed-expense-types": "tsx scripts/seed-expense-types.ts",
     "db:seed-maintenance-expenses": "tsx scripts/seed-maintenance-expenses.ts",
     "db:versioning": "tsx scripts/add-versioning-indexes.ts",
-    "db:diagnose-login": "tsx diagnose-login.ts",
     "dev": "next dev --turbopack",
     "lint": "next lint",
     "start": "next start",

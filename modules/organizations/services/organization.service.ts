@@ -26,6 +26,8 @@ import { MemberJoinedEvent } from '@/modules/organizations/events/MemberJoinedEv
 import { userScopeService } from '@/modules/security/services/user-scope.service';
 import { orgUnitRepository } from '@/modules/security/repositories/org-unit.repository';
 import { Role, ORGANIZATION_ROLES, ASSIGNABLE_ORGANIZATION_ROLES } from '@/server/permissions/roles';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 
 export interface AddMemberDirectInput {
   name: string;
@@ -811,11 +813,26 @@ export class OrganizationService {
     }
   }
 
+  /**
+   * LEAK FIX (Organisation page). Fleet size and expense totals counted
+   * the whole organization for every caller.
+   *
+   * Member counts are deliberately NOT filtered: the membership roster
+   * is organization-level data (see the `organizations` entry in
+   * module-scope.registry.ts), and a branch manager seeing how many
+   * colleagues exist is not a data leak. Vehicle and expense figures are
+   * operational data and ARE scoped.
+   */
   async getStatistics(
     organizationId: string,
-    tenantId: string
+    tenantId: string,
+    context?: TenantContext
   ): Promise<import('@/frontend/modules/organizations/types').OrganizationStatistics> {
     const organization = await this.getOrganization(organizationId, tenantId);
+
+    const scopeFilter = context
+      ? (tenantScopeService.buildFilter(context, 'orgUnitId') as Record<string, unknown>)
+      : {};
 
     const activeUsers = organization.members.filter((m) => m.status === 'active').length;
     const totalUsers = organization.members.length;
@@ -828,8 +845,11 @@ export class OrganizationService {
 
     try {
       const { vehicleRepository } = await import('@/modules/vehicles/repositories/vehicle.repository');
-      vehicleCount = await vehicleRepository.count({}, tenantId);
-      activeVehicles = await vehicleRepository.count({ status: 'active' } as any, tenantId);
+      vehicleCount = await vehicleRepository.count({ ...scopeFilter } as any, tenantId);
+      activeVehicles = await vehicleRepository.count(
+        { status: 'active', ...scopeFilter } as any,
+        tenantId
+      );
     } catch {
       // vehicles module unavailable in this context; leave at 0
     }
@@ -841,11 +861,11 @@ export class OrganizationService {
       const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
 
       const thisMonthExpenses = await expenseRepository.findMany(
-        { date: { $gte: startOfThisMonth } } as any,
+        { date: { $gte: startOfThisMonth }, ...scopeFilter } as any,
         tenantId
       );
       const lastMonthExpenses = await expenseRepository.findMany(
-        { date: { $gte: startOfLastMonth, $lt: startOfThisMonth } } as any,
+        { date: { $gte: startOfLastMonth, $lt: startOfThisMonth }, ...scopeFilter } as any,
         tenantId
       );
       totalExpensesThisMonth = thisMonthExpenses.reduce((sum: number, e: any) => sum + (e.amount || 0), 0);

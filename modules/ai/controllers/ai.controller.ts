@@ -12,6 +12,39 @@ import {
 import { successResponse, errorResponse } from '@/server/utils/response.utils';
 import { AppError } from '@/server/errors/app.errors';
 import { getTenantFromRequest } from '@/server/utils/context.utils';
+import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
+
+/**
+ * INTERIM CONTAINMENT -- read this before removing it.
+ *
+ * The five AI services (fleet health, predictive maintenance, driver
+ * risk, fuel fraud, expense anomalies) each run their own multi-stage
+ * aggregations directly against vehicles/fuel/expenses/reminders. They
+ * accept only a tenantId, so they compute organization-wide figures --
+ * "Based on 76 vehicles", "fleet health 73/100", "27 fuel anomalies",
+ * "242 expense flags" -- and those were being shown verbatim to branch
+ * managers who can see none of the underlying rows. A derived metric
+ * leaks its inputs: "27 fuel anomalies" tells a Bulawayo manager how
+ * much fuel activity exists in Harare.
+ *
+ * Properly scoping them means threading TenantContext into every stage
+ * of five separate analytical pipelines. Until that lands, these
+ * endpoints FAIL CLOSED for scope-narrowed callers: they return an
+ * explicit "unavailable for your scope" payload rather than org-wide
+ * numbers. Org-wide roles (owner/admin/platform) are unaffected.
+ *
+ * Showing nothing is recoverable. Showing another branch's figures is
+ * not.
+ */
+function scopedAiUnavailable() {
+  return {
+    available: false,
+    reason: 'SCOPE_NOT_SUPPORTED',
+    message:
+      'AI insights are currently available only to organization-wide roles. ' +
+      'Branch, department, workshop and fleet scoped views are being added.',
+  };
+}
 
 export class AIController {
   // ─── Predictive Maintenance ───────────────────────────────────────────────
@@ -19,6 +52,10 @@ export class AIController {
   async getPredictiveMaintenance(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
+      const aiContext = await resolveTenantContext(req);
+      if (aiContext.accessibleOrgUnitIds !== null) {
+        return successResponse(scopedAiUnavailable());
+      }
       const vehicleId = req.nextUrl.searchParams.get('vehicleId');
 
       if (vehicleId) {
@@ -40,6 +77,10 @@ export class AIController {
   async getFleetHealth(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
+      const aiContext = await resolveTenantContext(req);
+      if (aiContext.accessibleOrgUnitIds !== null) {
+        return successResponse(scopedAiUnavailable());
+      }
 
       const result = await fleetHealthService.calculateHealthScore(tenantId);
 
@@ -58,6 +99,10 @@ export class AIController {
   async getDriverRisk(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
+      const aiContext = await resolveTenantContext(req);
+      if (aiContext.accessibleOrgUnitIds !== null) {
+        return successResponse(scopedAiUnavailable());
+      }
       const driverId = req.nextUrl.searchParams.get('driverId');
 
       const result = await driverRiskService.calculateDriverRisk(tenantId);
@@ -98,6 +143,10 @@ export class AIController {
   async getFuelFraud(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
+      const aiContext = await resolveTenantContext(req);
+      if (aiContext.accessibleOrgUnitIds !== null) {
+        return successResponse(scopedAiUnavailable());
+      }
       const vehicleId = req.nextUrl.searchParams.get('vehicleId');
 
       const result = await fuelFraudDetectionService.detectFraud(tenantId);
@@ -142,6 +191,10 @@ export class AIController {
   async getExpenseAnomalies(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
+      const aiContext = await resolveTenantContext(req);
+      if (aiContext.accessibleOrgUnitIds !== null) {
+        return successResponse(scopedAiUnavailable());
+      }
 
       const result = await expenseAnomalyDetectionService.detectAnomalies(tenantId);
 
@@ -160,6 +213,10 @@ export class AIController {
   async getAIDashboard(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
+      const aiContext = await resolveTenantContext(req);
+      if (aiContext.accessibleOrgUnitIds !== null) {
+        return successResponse(scopedAiUnavailable());
+      }
 
       const [health, maintenance, driverRisk, fuelFraud, expenseAnomalies] =
         await Promise.all([

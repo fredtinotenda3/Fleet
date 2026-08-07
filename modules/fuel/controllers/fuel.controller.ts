@@ -34,6 +34,10 @@ import {
   FUEL_EXPORT_SHEET_NAME,
   FUEL_EXPORT_BASE_FILENAME,
 } from '../export/fuel-export.columns';
+// NOTE: this controller defines its own local resolveTenantContext (one of
+// three byte-identical private copies in this codebase). Only the creation
+// helper is imported here to avoid shadowing it.
+import { resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
 
 bootstrapCqrs();
 
@@ -384,11 +388,16 @@ export class FuelController {
 
   async createFuelLog(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const context = await resolveTenantContext(req);
       const userId = await getUserIdFromRequest(req);
       const body = await req.json();
+      const orgUnitId = resolveCreationOrgUnitId(context, (body as any)?.orgUnitId);
 
-      const log = await fuelCommandService.createFuelLog(body, tenantId, userId);
+      const log = await fuelCommandService.createFuelLog(
+        { ...(body as Record<string, unknown>), orgUnitId },
+        context.organizationId,
+        userId
+      );
       return createdResponse(log);
     } catch (error) {
       return this.handleError(error);

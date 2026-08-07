@@ -259,7 +259,26 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
     };
   }
 
-  async getVehicleStats(tenantId: string): Promise<VehicleStats> {
+  /**
+   * Fleet counts (total / active / inactive / maintenance).
+   *
+   * LEAK FIX: this drove the dashboard "Fleet size 76", the Vehicles page
+   * summary cards, the Live-fleet-map count and the Organization page
+   * fleet size -- and it took only a tenantId, so EVERY scoped user saw
+   * the whole organization's counts. A Bulawayo branch manager with zero
+   * vehicles was shown "76". The list endpoint beneath it was correctly
+   * scoped, which is what produced the contradictory screen: summary
+   * cards reading 76 above a table reading "No vehicles found".
+   *
+   * `context` is optional so existing org-wide callers (platform admin
+   * screens, background jobs) keep working unchanged; when supplied, the
+   * org-unit predicate is merged into the base filter, so it applies to
+   * all four counts rather than only the total.
+   */
+  async getVehicleStats(
+    tenantId: string,
+    context?: TenantContext
+  ): Promise<VehicleStats> {
     const collection = await this.getCollection();
     const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
 
@@ -268,6 +287,9 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
     };
     if (!isSuperAdmin) {
       baseFilter.tenantId = tenantId;
+    }
+    if (context) {
+      Object.assign(baseFilter, tenantScopeService.buildFilter<Vehicle>(context, 'orgUnitId'));
     }
 
     const [total, active, inactive, maintenance] = await Promise.all([

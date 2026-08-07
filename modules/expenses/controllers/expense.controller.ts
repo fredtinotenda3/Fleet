@@ -26,6 +26,10 @@ import {
   EXPENSE_EXPORT_BASE_FILENAME,
 } from '../export/expense-export.columns';
 import { AnalyticsScope, vehicleScope } from '@/shared/types/analytics-scope.types';
+// NOTE: this controller defines its own local resolveTenantContext (one of
+// three byte-identical private copies in this codebase). Only the creation
+// helper is imported here to avoid shadowing it.
+import { resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
 
 bootstrapCqrs();
 
@@ -207,10 +211,15 @@ export class ExpenseController {
 
   async createExpense(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const context = await resolveTenantContext(req);
       const userId = await getUserIdFromRequest(req);
       const body = await req.json();
-      const expense = await expenseCommandService.createExpense(body, tenantId, userId);
+      const orgUnitId = resolveCreationOrgUnitId(context, (body as any)?.orgUnitId);
+      const expense = await expenseCommandService.createExpense(
+        { ...(body as Record<string, unknown>), orgUnitId },
+        context.organizationId,
+        userId
+      );
       return createdResponse(expense);
     } catch (error) {
       return this.handleError(error);

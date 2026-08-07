@@ -27,6 +27,7 @@ import {
   VEHICLE_EXPORT_SHEET_NAME,
   VEHICLE_EXPORT_BASE_FILENAME,
 } from '../export/vehicle-export.columns';
+import { resolveTenantContext, resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
 
 bootstrapCqrs();
 
@@ -231,13 +232,20 @@ export class VehicleController {
 
   async createVehicle(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      /**
+       * Creation is scope-aware: a scoped user's new vehicle is filed
+       * into their own org unit, so it is visible to them immediately.
+       * Without this the row lands with no orgUnitId and the scoped read
+       * filter hides it -- the user adds a vehicle and watches it vanish.
+       */
+      const context = await resolveTenantContext(req);
       const userId = await getUserIdFromRequest(req);
       const body = await req.json();
+      const orgUnitId = resolveCreationOrgUnitId(context, (body as any)?.orgUnitId);
 
       const vehicle = await vehicleCommandService.createVehicle(
-        body,
-        tenantId,
+        { ...(body as Record<string, unknown>), orgUnitId },
+        context.organizationId,
         userId
       );
       return createdResponse(vehicle);
@@ -351,8 +359,11 @@ export class VehicleController {
 
   async getVehicleStats(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const stats = await vehicleQueryService.getVehicleStats(tenantId);
+      const context = await resolveTenantContext(req);
+      const stats = await vehicleQueryService.getVehicleStats(
+        context.organizationId,
+        context
+      );
       return successResponse(stats);
     } catch (error) {
       return this.handleError(error);

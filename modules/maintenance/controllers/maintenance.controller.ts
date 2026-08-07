@@ -28,6 +28,10 @@ import {
   MAINTENANCE_EXPORT_SHEET_NAME,
   MAINTENANCE_EXPORT_BASE_FILENAME,
 } from '../export/maintenance-export.columns';
+// NOTE: this controller defines its own local resolveTenantContext (one of
+// three byte-identical private copies in this codebase). Only the creation
+// helper is imported here to avoid shadowing it.
+import { resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
 
 bootstrapCqrs();
 
@@ -246,11 +250,16 @@ export class MaintenanceController {
 
   async createReminder(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const context = await resolveTenantContext(req);
       const userId = await getUserIdFromRequest(req);
       const body = await req.json();
+      const orgUnitId = resolveCreationOrgUnitId(context, (body as any)?.orgUnitId);
 
-      const reminder = await maintenanceCommandService.createReminder(body, tenantId, userId);
+      const reminder = await maintenanceCommandService.createReminder(
+        { ...(body as Record<string, unknown>), orgUnitId },
+        context.organizationId,
+        userId
+      );
       return createdResponse(reminder);
     } catch (error) {
       return this.handleError(error);

@@ -16,6 +16,7 @@ import {
   VehicleStats,
 } from '@/shared/types/vehicle.types';
 import { PaginatedResponse, PaginationParams } from '@/shared/types/common.types';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 
 /**
  * Stable facade over the query bus for the Vehicles read side. Mirrors
@@ -45,8 +46,11 @@ export class VehicleQueryService {
     );
   }
 
-  async getVehicleStats(tenantId: string): Promise<VehicleStats> {
-    return queryBus.execute<VehicleStats>(new GetVehicleStatsQuery(tenantId));
+  async getVehicleStats(
+    tenantId: string,
+    context?: TenantContext
+  ): Promise<VehicleStats> {
+    return queryBus.execute<VehicleStats>(new GetVehicleStatsQuery(tenantId, context));
   }
 
   async searchVehicles(

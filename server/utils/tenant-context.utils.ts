@@ -24,7 +24,7 @@
 
 import { NextRequest } from 'next/server';
 import { getAuthContext } from '@/server/auth/auth-context';
-import { UnauthorizedError } from '@/server/errors/app.errors';
+import { UnauthorizedError, ForbiddenError } from '@/server/errors/app.errors';
 import {
   tenantContextService,
   TenantContext,
@@ -77,4 +77,67 @@ export async function resolveTenantContextWithUser(
     authContext.orgUnitId
   );
   return { context, userId: authContext.userId };
+}
+
+/**
+ * Decides which org unit a NEWLY CREATED record belongs to.
+ *
+ * ---------------------------------------------------------------------
+ * Why creation needs its own rule
+ * ---------------------------------------------------------------------
+ * Scoped READS were fixed first, and that alone produces a trap: a
+ * branch manager who creates a vehicle gets a row with NO orgUnitId,
+ * which the scoped read filter then hides from them. They add a vehicle
+ * and watch it vanish. That is worse than the original leak, because it
+ * looks like data loss.
+ *
+ * Rules, in order:
+ *   - org-wide caller (accessibleOrgUnitIds === null): honour whatever
+ *     they chose, including nothing. They can legitimately file a record
+ *     under any unit, which is what makes "owner adds a vehicle to
+ *     Bulawayo Branch" work.
+ *   - scoped caller who named a unit: allowed only if that unit is
+ *     inside their accessible set. Otherwise this is a write-side
+ *     escalation -- creating a record in another branch -- and it is
+ *     refused rather than silently rewritten.
+ *   - scoped caller who named nothing: default to their primary assigned
+ *     unit. `assignedOrgUnitIds` is used rather than
+ *     `accessibleOrgUnitIds` deliberately: the accessible set includes
+ *     inherited descendants, and filing a new record into an arbitrary
+ *     descendant (say a fleet nested three levels down) rather than the
+ *     unit the user actually belongs to would be a guess.
+ *   - scoped caller with no assignment at all: refused. There is no
+ *     correct unit, and an unassigned record is invisible to everyone
+ *     except org-wide roles.
+ */
+export function resolveCreationOrgUnitId(
+  context: TenantContext,
+  requestedOrgUnitId?: unknown
+): string | undefined {
+  const requested =
+    typeof requestedOrgUnitId === 'string' && requestedOrgUnitId.trim()
+      ? requestedOrgUnitId.trim()
+      : undefined;
+
+  if (context.accessibleOrgUnitIds === null) {
+    return requested;
+  }
+
+  if (requested) {
+    if (!context.accessibleOrgUnitIds.includes(requested)) {
+      throw new ForbiddenError(
+        'You cannot create records in an org unit outside your assigned scope.'
+      );
+    }
+    return requested;
+  }
+
+  const primary = context.assignedOrgUnitIds[0] ?? context.accessibleOrgUnitIds[0];
+  if (!primary) {
+    throw new ForbiddenError(
+      'You have no org unit assignment, so records cannot be created. ' +
+        'Ask an administrator to assign you to a branch, department, workshop or fleet.'
+    );
+  }
+  return primary;
 }

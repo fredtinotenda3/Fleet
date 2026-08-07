@@ -11,6 +11,6 @@ export class GetVehicleStatsHandler
   constructor(private readonly vehicleRepo: VehicleRepository) {}
 
   async execute(query: GetVehicleStatsQuery): Promise<VehicleStats> {
-    return this.vehicleRepo.getVehicleStats(query.tenantId);
+    return this.vehicleRepo.getVehicleStats(query.tenantId, query.context);
   }
 }

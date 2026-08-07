@@ -1,5 +1,6 @@
 // modules/analytics/services/fleet-analytics.service.ts
 
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { vehicleRepository } from '@/modules/vehicles/repositories/vehicle.repository';
 import { expenseRepository } from '@/modules/expenses/repositories/expense.repository';
 import { fuelRepository } from '@/modules/fuel/repositories/fuel.repository';
@@ -48,17 +49,30 @@ export interface MaintenanceForecast {
 }
 
 export class FleetAnalyticsService {
+  /**
+   * LEAK FIX (dashboard). Every method on this service delegates to
+   * repository *Stats methods that ALREADY accept an optional
+   * TenantContext -- four of the five have accepted one since Phase B.
+   * The service simply never passed it, so the whole dashboard aggregate
+   * surface (KPIs, cost breakdown, fuel-efficiency trend, maintenance
+   * forecast) ran organization-wide for every scoped user while the list
+   * endpoints beneath were correctly filtered.
+   *
+   * `context` is threaded through as an optional trailing parameter so
+   * org-wide callers are unaffected.
+   */
   async getFleetKPIs(
     tenantId: string,
-    dateRange?: DateRange
+    dateRange?: DateRange,
+    context?: TenantContext
   ): Promise<FleetKPIs> {
     const [vehicleStats, expenseStats, fuelStats, maintenanceStats, tripStats] =
       await Promise.all([
-        vehicleRepository.getVehicleStats(tenantId),
-        expenseRepository.getExpenseStats(tenantId, dateRange),
-        fuelRepository.getFuelStats(tenantId, dateRange),
-        maintenanceRepository.getMaintenanceStats(tenantId),
-        tripRepository.getTripStats(tenantId, dateRange),
+        vehicleRepository.getVehicleStats(tenantId, context),
+        expenseRepository.getExpenseStats(tenantId, dateRange, undefined, context),
+        fuelRepository.getFuelStats(tenantId, dateRange, undefined, context),
+        maintenanceRepository.getMaintenanceStats(tenantId, undefined, context),
+        tripRepository.getTripStats(tenantId, dateRange, context),
       ]);
 
     const totalFuelVolume = fuelStats.totalFuel;
@@ -90,7 +104,8 @@ export class FleetAnalyticsService {
 
   async getOperationalMetrics(
     tenantId: string,
-    dateRange: DateRange
+    dateRange: DateRange,
+    context?: TenantContext
   ): Promise<OperationalMetrics> {
     const daysDiff = Math.max(
       1,
@@ -102,10 +117,10 @@ export class FleetAnalyticsService {
 
     const [expenseStats, tripStats, maintenanceStats, vehicleStats] =
       await Promise.all([
-        expenseRepository.getExpenseStats(tenantId, dateRange),
-        tripRepository.getTripStats(tenantId, dateRange),
-        maintenanceRepository.getMaintenanceStats(tenantId),
-        vehicleRepository.getVehicleStats(tenantId),
+        expenseRepository.getExpenseStats(tenantId, dateRange, undefined, context),
+        tripRepository.getTripStats(tenantId, dateRange, context),
+        maintenanceRepository.getMaintenanceStats(tenantId, undefined, context),
+        vehicleRepository.getVehicleStats(tenantId, context),
       ]);
 
     return {
@@ -125,7 +140,8 @@ export class FleetAnalyticsService {
 
   async getCostBreakdown(
     tenantId: string,
-    dateRange: DateRange
+    dateRange: DateRange,
+    context?: TenantContext
   ): Promise<CostBreakdown> {
     const durationMs =
       dateRange.endDate.getTime() - dateRange.startDate.getTime();
@@ -135,8 +151,8 @@ export class FleetAnalyticsService {
     };
 
     const [expenseStats, previousPeriodStats] = await Promise.all([
-      expenseRepository.getExpenseStats(tenantId, dateRange),
-      expenseRepository.getExpenseStats(tenantId, previousRange),
+      expenseRepository.getExpenseStats(tenantId, dateRange, undefined, context),
+      expenseRepository.getExpenseStats(tenantId, previousRange, undefined, context),
     ]);
 
     const byVehicle = await vehicleRepository.getVehicleAnalytics(
@@ -169,11 +185,12 @@ export class FleetAnalyticsService {
 
   async getFuelEfficiencyTrend(
     tenantId: string,
+    context: TenantContext | undefined,
     months: number = 6
   ): Promise<FuelEfficiencyTrend[]> {
     const [monthlyFuel, dailyTrips] = await Promise.all([
-      fuelRepository.getMonthlyFuelConsumption(tenantId, months),
-      tripRepository.getDailyDistance(tenantId, months * 30),
+      fuelRepository.getMonthlyFuelConsumption(tenantId, months, undefined, context),
+      tripRepository.getDailyDistance(tenantId, months * 30, context),
     ]);
 
     const tripsByMonth: Record<string, number> = {};
@@ -190,10 +207,11 @@ export class FleetAnalyticsService {
   }
 
   async getMaintenanceForecast(
-    tenantId: string
+    tenantId: string,
+    context?: TenantContext
   ): Promise<MaintenanceForecast[]> {
     const upcomingReminders =
-      await maintenanceRepository.getUpcomingReminders(tenantId, 30);
+      await maintenanceRepository.getUpcomingReminders(tenantId, 30, context);
     const averageCost = 500;
 
     return upcomingReminders.map((reminder) => {

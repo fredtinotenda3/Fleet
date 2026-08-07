@@ -230,18 +230,33 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
    * 'pending', but should not silently disappear from this list for any
    * other unresolved status value that might exist).
    */
+  /**
+   * LEAK FIX: drove the dashboard "N overdue maintenance tasks" tile and
+   * the maintenance forecast, unscoped -- so a branch manager was shown
+   * a count covering the whole organization's vehicles, including ones
+   * whose maintenance records they cannot open.
+   *
+   * `context` optional to keep org-wide callers (reminder cron, digest
+   * emails) working unchanged.
+   */
   async getUpcomingReminders(
     tenantId: string,
-    daysAhead: number = 7
+    daysAhead: number = 7,
+    context?: TenantContext
   ): Promise<Reminder[]> {
     const now = new Date();
     const future = new Date();
     future.setDate(future.getDate() + daysAhead);
 
+    const scopeFilter = context
+      ? tenantScopeService.buildFilter<Reminder>(context, 'orgUnitId')
+      : {};
+
     return this.findMany(
       {
         status: { $nin: ['completed', 'cancelled'] },
         due_date: { $gte: now, $lte: future },
+        ...scopeFilter,
       } as Filter<Reminder>,
       tenantId
     );

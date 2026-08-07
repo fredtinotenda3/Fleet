@@ -303,6 +303,25 @@ export class ExpenseRepository extends BaseRepository<Expense> {
     }
     filter = analyticsScopeService.applyScope(filter, scope);
 
+    /**
+     * LEAK FIX -- DEAD PARAMETER.
+     *
+     * `context` was already in this signature, the query service already
+     * forwarded it, and the controller already resolved it. The body
+     * simply never read it, so the parameter was inert and every caller
+     * looked correctly wired while the aggregation stayed org-wide. This
+     * is the worst shape of scoping bug: the call chain reads as scoped
+     * end-to-end, and TypeScript is silent because an unused parameter
+     * is legal. It drove the Expenses page Total / Average / Categories
+     * used / Top category cards.
+     *
+     * Merged into the $match below, so it constrains every $facet branch
+     * rather than being applied after grouping.
+     */
+    if (context) {
+      Object.assign(filter, tenantScopeService.buildFilter<Expense>(context, 'orgUnitId'));
+    }
+
     const pipeline = [
       { $match: filter },
       ...this.expenseTypeLookupStages(),

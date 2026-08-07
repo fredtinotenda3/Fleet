@@ -7,6 +7,7 @@ import type { ExportFormat } from '@/shared/export/export.types';
 import { triggerExport, type ExportDownloadResult } from '@/shared/utils/export-download.utils';
 import { tripsApi } from '../services/trips.api';
 import type { Trip, TripTableFilters } from '../types';
+import { Permission, permissionService } from '@/server/permissions/roles';
 
 export function tripModeLabel(mode: Trip['mode']): string {
   return mode === 'distance' ? 'Direct distance' : 'Odometer reading';
@@ -23,15 +24,36 @@ export function tripSummaryLabel(trip: Trip): string {
   return trip.start_location || trip.end_location || 'No route recorded';
 }
 
-const MANAGE_ROLES = ['organization_owner', 'fleet_manager', 'dispatcher', 'super_admin'];
-const DELETE_ROLES = ['organization_owner', 'fleet_manager', 'super_admin'];
+/**
+ * BUTTON-VISIBILITY FIX.
+ *
+ * These used to be hardcoded role allowlists. Every one of them omitted
+ * BRANCH_MANAGER, DEPARTMENT_MANAGER, WORKSHOP_MANAGER and
+ * ORGANIZATION_ADMIN -- so harare.manager@ and bulawayo.manager@ saw no
+ * "Add"/"Edit"/"Delete" controls anywhere, despite roles.ts granting them
+ * VEHICLE_CREATE, VEHICLE_EDIT, FUEL_CREATE, EXPENSE_CREATE and the rest.
+ *
+ * A duplicated allowlist in the frontend cannot help but drift from
+ * server/permissions/roles.ts, and when it drifts in this direction the
+ * user simply cannot do their job; when it drifts the other way they get
+ * a button that 403s. Delegating to permissionService means the button
+ * and the endpoint that backs it read the SAME permission table.
+ *
+ * Scope is enforced separately and server-side: a user with no scope
+ * assignment sees no rows, and unassigned@ (viewer) holds none of these
+ * permissions, so no buttons render for them either.
+ */
+
 
 export function canManageTrips(roles: string[] = []): boolean {
-  return roles.some((r) => MANAGE_ROLES.includes(r));
+  return permissionService.hasAnyPermission(roles, [
+    Permission.TRIP_CREATE,
+    Permission.TRIP_EDIT,
+  ]);
 }
 
 export function canDeleteTrips(roles: string[] = []): boolean {
-  return roles.some((r) => DELETE_ROLES.includes(r));
+  return permissionService.hasPermission(roles, Permission.TRIP_DELETE);
 }
 
 /**

@@ -4,13 +4,20 @@ import { NextRequest } from 'next/server';
 import { fleetAnalyticsService } from '../services/fleet-analytics.service';
 import { successResponse, errorResponse } from '@/server/utils/response.utils';
 import { AppError } from '@/server/errors/app.errors';
-import { getTenantFromRequest } from '@/server/utils/context.utils';
+import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
 import { DateRange } from '@/shared/types/common.types';
 
 export class AnalyticsController {
   async handle(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      /**
+       * LEAK FIX. This controller drove every dashboard KPI, the expense
+       * breakdown chart, the fuel-efficiency trend and the maintenance
+       * forecast, and it resolved only a tenantId -- so a branch manager
+       * saw organization-wide totals on every widget.
+       */
+      const context = await resolveTenantContext(req);
+      const tenantId = context.organizationId;
       const action = req.nextUrl.searchParams.get('action') || 'kpis';
       const startDate = req.nextUrl.searchParams.get('startDate');
       const endDate = req.nextUrl.searchParams.get('endDate');
@@ -23,7 +30,7 @@ export class AnalyticsController {
       switch (action) {
         case 'kpis':
           return successResponse(
-            await fleetAnalyticsService.getFleetKPIs(tenantId, dateRange)
+            await fleetAnalyticsService.getFleetKPIs(tenantId, dateRange, context)
           );
 
         case 'metrics':
@@ -35,7 +42,7 @@ export class AnalyticsController {
             );
           }
           return successResponse(
-            await fleetAnalyticsService.getOperationalMetrics(tenantId, dateRange)
+            await fleetAnalyticsService.getOperationalMetrics(tenantId, dateRange, context)
           );
 
         case 'cost-breakdown':
@@ -47,17 +54,17 @@ export class AnalyticsController {
             );
           }
           return successResponse(
-            await fleetAnalyticsService.getCostBreakdown(tenantId, dateRange)
+            await fleetAnalyticsService.getCostBreakdown(tenantId, dateRange, context)
           );
 
         case 'fuel-efficiency':
           return successResponse(
-            await fleetAnalyticsService.getFuelEfficiencyTrend(tenantId, months)
+            await fleetAnalyticsService.getFuelEfficiencyTrend(tenantId, context, months)
           );
 
         case 'maintenance-forecast':
           return successResponse(
-            await fleetAnalyticsService.getMaintenanceForecast(tenantId)
+            await fleetAnalyticsService.getMaintenanceForecast(tenantId, context)
           );
 
         default:

@@ -5,6 +5,7 @@ import type { ExportFormat } from '@/shared/export/export.types';
 import { triggerExport, type ExportDownloadResult } from '@/shared/utils/export-download.utils';
 import { expensesApi } from '../services/expenses.api';
 import type { Expense, ExpenseTableFilters } from '../types';
+import { Permission, permissionService } from '@/server/permissions/roles';
 
 /**
  * Mirrors server/permissions/roles.ts's rolePermissions table for
@@ -14,20 +15,40 @@ import type { Expense, ExpenseTableFilters } from '../types';
  * keeping this in sync with the backend avoids showing actions the API
  * will 403 on.
  */
-const MANAGE_ROLES = ['super_admin', 'organization_owner', 'accountant'];
-const DELETE_ROLES = ['super_admin', 'organization_owner'];
-const APPROVE_ROLES = ['super_admin', 'organization_owner', 'accountant'];
+/**
+ * BUTTON-VISIBILITY FIX.
+ *
+ * These used to be hardcoded role allowlists. Every one of them omitted
+ * BRANCH_MANAGER, DEPARTMENT_MANAGER, WORKSHOP_MANAGER and
+ * ORGANIZATION_ADMIN -- so harare.manager@ and bulawayo.manager@ saw no
+ * "Add"/"Edit"/"Delete" controls anywhere, despite roles.ts granting them
+ * VEHICLE_CREATE, VEHICLE_EDIT, FUEL_CREATE, EXPENSE_CREATE and the rest.
+ *
+ * A duplicated allowlist in the frontend cannot help but drift from
+ * server/permissions/roles.ts, and when it drifts in this direction the
+ * user simply cannot do their job; when it drifts the other way they get
+ * a button that 403s. Delegating to permissionService means the button
+ * and the endpoint that backs it read the SAME permission table.
+ *
+ * Scope is enforced separately and server-side: a user with no scope
+ * assignment sees no rows, and unassigned@ (viewer) holds none of these
+ * permissions, so no buttons render for them either.
+ */
+
 
 export function canManageExpenses(roles: string[]): boolean {
-  return roles.some((role) => MANAGE_ROLES.includes(role));
+  return permissionService.hasAnyPermission(roles, [
+    Permission.EXPENSE_CREATE,
+    Permission.EXPENSE_EDIT,
+  ]);
 }
 
 export function canDeleteExpenses(roles: string[]): boolean {
-  return roles.some((role) => DELETE_ROLES.includes(role));
+  return permissionService.hasPermission(roles, Permission.EXPENSE_DELETE);
 }
 
 export function canApproveExpenses(roles: string[]): boolean {
-  return roles.some((role) => APPROVE_ROLES.includes(role));
+  return permissionService.hasPermission(roles, Permission.EXPENSE_APPROVE);
 }
 
 /**

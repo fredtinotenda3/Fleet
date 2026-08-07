@@ -12,6 +12,7 @@ import {
   getTenantFromRequest,
   getUserIdFromRequest,
 } from '@/server/utils/context.utils';
+import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
 
 export class OrganizationController {
   async createOrganization(req: NextRequest) {
@@ -203,7 +204,14 @@ export class OrganizationController {
   async getStatistics(req: NextRequest, id: string) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const stats = await organizationService.getStatistics(id, tenantId);
+      // Scoped: fleet size and expense totals reflect the caller's org
+      // units. Member counts stay organization-level by design.
+      const orgStatsContext = await resolveTenantContext(req);
+      const stats = await organizationService.getStatistics(
+        id,
+        tenantId,
+        orgStatsContext
+      );
       return successResponse(stats);
     } catch (error) {
       return this.handleError(error);
