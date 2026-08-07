@@ -557,15 +557,36 @@ async function main(): Promise<void> {
           .collection('tblorganizations')
           .updateOne(orgFilter as never, { $pull: { members: { userId } } } as never);
 
+        /**
+         * FIX: the member record was pushed WITHOUT `orgUnitId`, so the
+         * organization roster and tbluser_scope_assignments disagreed
+         * about where each user sits. resolveContext() reads the
+         * assignment collection, so scope still worked for accounts this
+         * script created -- but the members UI showed them as unassigned,
+         * and any future repair driven off the roster (which is the
+         * natural place to look) would infer the wrong unit or none.
+         *
+         * The earlier seed script had the mirror-image bug: it wrote
+         * members[].orgUnitId and never created the assignment, which is
+         * why 9 accounts resolved to nothing at all. Writing both here
+         * keeps the two stores consistent in either direction.
+         */
+        const memberOrgUnitId = (spec.scopeUnits ?? [])
+          .map((k) => unitIds.get(k))
+          .find((id): id is string => Boolean(id));
+
         await db.collection('tblorganizations').updateOne(
           orgFilter as never,
           {
             $push: {
               members: {
                 userId,
+                email,
+                name: spec.firstName,
                 role: spec.role,
                 status: 'active',
                 joinedAt: new Date(),
+                ...(memberOrgUnitId ? { orgUnitId: memberOrgUnitId } : {}),
               },
             },
           } as never

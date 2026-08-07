@@ -11,6 +11,6 @@ export class GetUpcomingRemindersHandler
   constructor(private readonly maintenanceRepo: MaintenanceRepository) {}
 
   async execute(query: GetUpcomingRemindersQuery): Promise<Reminder[]> {
-    return this.maintenanceRepo.getUpcomingReminders(query.tenantId, query.daysAhead);
+    return this.maintenanceRepo.getUpcomingReminders(query.tenantId, query.daysAhead, query.context);
   }
 }

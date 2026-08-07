@@ -331,8 +331,11 @@ export class MaintenanceController {
 
   async getOverdueReminders(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const reminders = await maintenanceQueryService.getOverdueReminders(tenantId);
+      const ctx = await resolveTenantContext(req);
+      const reminders = await maintenanceQueryService.getOverdueReminders(
+        ctx.organizationId,
+        ctx
+      );
       return successResponse(reminders);
     } catch (error) {
       return this.handleError(error);
@@ -341,9 +344,10 @@ export class MaintenanceController {
 
   async getUpcomingReminders(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const ctxUp = await resolveTenantContext(req);
+      const tenantId = ctxUp.organizationId;
       const daysAhead = Number(req.nextUrl.searchParams.get('daysAhead') || '7');
-      const reminders = await maintenanceQueryService.getUpcomingReminders(tenantId, daysAhead);
+      const reminders = await maintenanceQueryService.getUpcomingReminders(tenantId, daysAhead, ctxUp);
       return successResponse(reminders);
     } catch (error) {
       return this.handleError(error);

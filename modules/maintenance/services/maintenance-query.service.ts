@@ -54,18 +54,19 @@ export class MaintenanceQueryService {
     return maintenanceRepository.getMaintenanceStats(tenantId, licensePlate, context);
   }
 
-  async getOverdueReminders(tenantId: string): Promise<Reminder[]> {
+  async getOverdueReminders(tenantId: string, context?: TenantContext): Promise<Reminder[]> {
     return queryBus.execute<Reminder[]>(
-      new GetOverdueRemindersQuery(tenantId)
+      new GetOverdueRemindersQuery(tenantId, context)
     );
   }
 
   async getUpcomingReminders(
     tenantId: string,
-    daysAhead: number = 7
+    daysAhead: number = 7,
+    context?: TenantContext
   ): Promise<Reminder[]> {
     return queryBus.execute<Reminder[]>(
-      new GetUpcomingRemindersQuery(tenantId, daysAhead)
+      new GetUpcomingRemindersQuery(tenantId, daysAhead, context)
     );
   }
 

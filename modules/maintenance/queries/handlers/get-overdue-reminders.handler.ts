@@ -11,6 +11,6 @@ export class GetOverdueRemindersHandler
   constructor(private readonly maintenanceRepo: MaintenanceRepository) {}
 
   async execute(query: GetOverdueRemindersQuery): Promise<Reminder[]> {
-    return this.maintenanceRepo.getOverdueReminders(query.tenantId);
+    return this.maintenanceRepo.getOverdueReminders(query.tenantId, query.context);
   }
 }

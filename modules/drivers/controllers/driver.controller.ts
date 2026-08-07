@@ -12,11 +12,25 @@ import {
 } from '@/server/utils/response.utils';
 import { AppError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
+import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
+import { driverRepository } from '@/modules/drivers/repositories/driver.repository';
 
 export class DriverController {
   async list(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      /**
+       * LEAK FIX. This was the most visible remaining leak: the Drivers
+       * page listed all 77 drivers to every scoped user, including
+       * bulawayo.manager and unassigned. The repository has had
+       * getFilteredDriversInScope since Phase B -- the controller simply
+       * never called it.
+       *
+       * Note the picker branch below (no `page` param) is scoped too. A
+       * picker that offers out-of-scope drivers leaks the same roster as
+       * the table, and is easier to overlook because it renders inside a
+       * dropdown rather than on a page.
+       */
+      const context = await resolveTenantContext(req);
       const searchParams = req.nextUrl.searchParams;
 
       const filters: DriverFilters = {
@@ -29,12 +43,20 @@ export class DriverController {
         // Matches FuelStationController/FuelCardController: no `page`
         // param -> return a bare array for pickers (DriverSelect,
         // FuelForm, FuelFilters) that just want the full roster.
-        const result = await driverService.list(filters, { page: 1, limit: 1000 }, tenantId);
+        const result = await driverRepository.getFilteredDriversInScope(
+          filters,
+          context,
+          { page: 1, limit: 1000 }
+        );
         return successResponse(result.data);
       }
 
       const { page, limit } = validatePaginationParams(pageParam, searchParams.get('limit'));
-      const result = await driverService.list(filters, { page, limit }, tenantId);
+      const result = await driverRepository.getFilteredDriversInScope(
+        filters,
+        context,
+        { page, limit }
+      );
       return paginatedResponse(result.data, result.pagination);
     } catch (error) {
       return this.handleError(error);

@@ -211,12 +211,27 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
    * rule to getMaintenanceStats, so this method, the stats cards, and the
    * dashboard widget can never contradict each other again.
    */
-  async getOverdueReminders(tenantId: string): Promise<Reminder[]> {
+  /**
+   * LEAK FIX: drove the dashboard "Open maintenance 2" tile, the
+   * "Upcoming maintenance" list and the Maintenance page "Overdue (2)"
+   * panel. Unscoped, so bulawayo.manager and unassigned -- who own zero
+   * vehicles -- were still shown AU3887 and AFK8486, two Harare vehicles,
+   * by registration plate. A count would have been bad enough; this
+   * leaked identifying data.
+   */
+  async getOverdueReminders(
+    tenantId: string,
+    context?: TenantContext
+  ): Promise<Reminder[]> {
     const now = new Date();
+    const scopeFilter = context
+      ? tenantScopeService.buildFilter<Reminder>(context, 'orgUnitId')
+      : {};
     return this.findMany(
       {
         status: { $nin: ['completed', 'cancelled'] },
         due_date: { $lt: now },
+        ...scopeFilter,
       } as Filter<Reminder>,
       tenantId
     );
