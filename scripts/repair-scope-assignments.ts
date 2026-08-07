@@ -198,19 +198,29 @@ async function main(): Promise<void> {
           `  ${GREEN}create${RESET}  ${email.padEnd(38)} ${unitById.get(desired)!.name}`
         );
         if (APPLY) {
-          await db.collection('tbluser_scope_assignments').insertOne({
-            tenantId,
-            organizationId: tenantId,
-            userId,
-            orgUnitId: desired,
-            role,
-            isCustomRole: false,
-            assignedBy: 'scripts/repair-scope-assignments',
-            createdAt: new Date(),
-            updatedAt: new Date(),
-            isDeleted: false,
-            deletedAt: null,
-          } as never);
+          // Use upsert so we never crash on a pre‑existing (possibly soft‑deleted) row.
+          await db.collection('tbluser_scope_assignments').updateOne(
+            {
+              organizationId: tenantId,
+              userId,
+              orgUnitId: desired,
+            },
+            {
+              $set: {
+                tenantId,
+                role,
+                isCustomRole: false,
+                assignedBy: 'scripts/repair-scope-assignments',
+                updatedAt: new Date(),
+                isDeleted: false,
+                deletedAt: null,
+              },
+              $setOnInsert: {
+                createdAt: new Date(),
+              },
+            },
+            { upsert: true }
+          );
         }
         created += 1;
       }
