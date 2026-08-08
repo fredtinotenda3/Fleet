@@ -3,7 +3,7 @@
 import { NextRequest } from 'next/server';
 import { organizationAdvancedService } from '../services/organization-advanced.service';
 import { successResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError } from '@/server/errors/app.errors';
+import { AppError, isAppError, describeError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
 import {
   featureFlagsUpdateSchema,
@@ -77,10 +77,10 @@ export class OrganizationAdvancedController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[OrganizationAdvancedController] Unexpected error:', error);
+    console.error('[OrganizationAdvancedController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

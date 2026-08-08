@@ -12,7 +12,7 @@ import {
   createdResponse,
   errorResponse,
 } from '@/server/utils/response.utils';
-import { AppError, ValidationError } from '@/server/errors/app.errors';
+import { AppError, ValidationError, isAppError, describeError } from '@/server/errors/app.errors';
 import {
   getTenantFromRequest,
   getUserIdFromRequest,
@@ -169,13 +169,13 @@ export class TelematicsController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
     if (error instanceof Error) {
       return errorResponse(error.message, 'VALIDATION_ERROR', 400);
     }
-    console.error('[TelematicsController] Unexpected error:', error);
+    console.error('[TelematicsController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

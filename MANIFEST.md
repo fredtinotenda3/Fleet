@@ -1,69 +1,91 @@
-# Fleet — remaining-gaps pass
+# Fleet — vehicle-create 500: real root cause
 
-14 files. **5 of your 9 items done. 4 not done — listed honestly at the bottom.**
+51 files. **The org lookup was never the problem this time.**
 
-## Done
+## 1–3. Trace, reproduction, and the exact line
 
-### 2. Global search was leaking (security — the real find here)
-`vehicleRepository.searchVehicles()` was organization-wide. The Vehicles list was
-correctly scoped, so the data *looked* isolated — but typing a plate into search
-returned any vehicle in the organization. Worse, it was an enumeration oracle: a
-scoped user could probe for plates they cannot otherwise see and confirm they
-exist. Threaded `TenantContext` through controller → service → query → handler →
-repository, with the scope predicate spread **last** so the `$or` search clause
-cannot widen it.
+`createVehicle` chain:
 
-### 3. Drivers create now stamps `orgUnitId`
-Was the last create path without it. A scoped user's new driver landed with no
-unit and was then hidden by the scoped read filter — add a driver, watch it vanish.
+```
+POST /api/vehicles
+ └─ resolveTenantContext(req)              → OK (reads work, so this resolves)
+ └─ resolveCreationOrgUnitId(context, …)    → returns Harare Branch id
+ └─ vehicleCommandService.createVehicle
+     └─ CreateVehicleHandler
+         ├─ vehicleRepo.count({}, tenantId)
+         ├─ organizationService.checkVehicleLimit(tenantId, count, tenantId)
+         │    └─ getOrganization → resolveOrganization   ← ALREADY FIXED, present in this build
+         ├─ vehicleRepo.create(...)
+         └─ await eventBus.publish(VehicleCreatedEvent)  ← awaited; a throwing subscriber 500s the request
+ └─ catch → this.handleError(error)
+```
 
-### 4. Duplicate `resolveTenantContext` consolidated
-There were **four**, not three: trips, fuel, expenses **and maintenance**, all
-byte-identical. Each was a place someone could "fix" a 403 by loosening
-resolution for one module invisibly. All now use `server/utils/tenant-context.utils.ts`.
+**The throw site is `vehicle.controller.ts:492`, `handleError`:**
 
-### 5. Legacy sentinel migration — `npm run db:purge-sentinels`
-Dry-run default. Treats each collection by what the rows actually are:
-- **Revoke** `tblrefreshtokens` / `tblusersessions` (~4,500). These are
-  credentials whose tenant binding was never verified — repairing them would
-  resurrect them with a valid tenant. Users re-authenticate.
-- **Derive** `tblvehicledigitaltwins` from the vehicle (a twin is a rebuildable
-  projection, so its tenant is the vehicle's). Orphans deleted, not guessed.
-- **Leave** `tblauditlog` untouched and report only. It is hash-chained
-  (`prevHash` → `hash`); rewriting any field destroys the tamper-evidence the log
-  exists for. A sentinel on a historical entry is an accurate record of how the
-  system behaved. Falsifying history to tidy a field is worse than an ugly field.
+```ts
+if (error instanceof AppError) { return errorResponse(error.message, error.code, error.statusCode); }
+console.error('[VehicleController] Unexpected error:', error);
+return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);   // ← line reached
+```
 
-### 7. Sentry removed
-Nothing imported it — a grep for `monitoring/sentry` matched only the wrapper
-itself. Dependency dropped; wrapper replaced with a dependency-free no-op so a
-future import still resolves. This also fixes `npm install` failing in air-gapped
-CI, where `@sentry/cli`'s postinstall 403s fetching a binary — for a package doing
-nothing.
+It only reaches the 500 when `instanceof AppError` is **false**. Your log is the
+proof:
 
-### 9. `SECURITY-CREDENTIALS.md`
-Rotation runbook. The Atlas password is the urgent one: the full connection
-string was pasted into chat twice.
+```
+[VehicleController] Unexpected error: i: Organiza…
+```
 
-## NOT done — do not assume these are covered
+`i:` is a **minified constructor name**. A plain object or string prints no
+constructor name — that prefix means a real `Error` subclass was thrown and the
+`instanceof` check failed to recognise it.
 
-**1. AI services.** Five services (`fleet-health`, `driver-risk`,
-`fuel-fraud-detection`, `predictive-maintenance`, `expense-anomaly-detection`)
-still aggregate on `tenantId` only. The controller-level fail-closed gate remains,
-so scoped users see "unavailable" rather than another branch's numbers — safe, but
-not fixed. This is the largest single remaining item.
+## Why the previous fix didn't cover it
 
-**6. 83 type errors.** Untouched. Still `ignoreBuildErrors: true`. Note my earlier
-correction: fixing these would not have caught the tenancy bugs — those came from
-types that *lied*, which the `_id` normalization addressed.
+The previous fix corrected the organization **lookup**. This is a separate defect
+in error **classification**, sitting downstream, masking whatever the lookup still
+reports. `instanceof` compares against the `AppError` constructor reachable from
+the checking file. Next's bundler can instantiate `app.errors.ts` more than once —
+separate route bundles, and the dynamic `await import()` calls in
+`NotificationHandler` and the tenancy paths. Each instantiation is a distinct class
+object, so an error crossing that boundary fails `instanceof` despite being the
+same class by name and shape.
 
-**8. MapsWidget.** Still a placeholder. A real map is a feature with a vendor
-choice (Mapbox/Google/Leaflet), an API key, and a billing account — not something
-to slip into a debt-cleanup pass.
+So a legitimate `NotFoundError` — message beginning `Organization …` — was being
+reported as an unexpected 500, and the client timeout followed. Identically for all
+**51** controllers.
 
-**Also unaudited:** expense/fuel/maintenance/trip **exports** (CSV/Excel/print)
-for org-unit scope. The report builder is scoped; these separate export paths were
-never checked. Treat as a suspected leak until verified.
+## 4. The fix
+
+- `isAppError()` — structural guard in `app.errors.ts`. Holds across duplicate
+  module instances. Deliberately narrow: `code` **and** `statusCode` must both be
+  present and correctly typed, so an arbitrary object can't impersonate a domain
+  error and choose its own HTTP status.
+- `describeError()` — flat log object, so the message and stack print in full
+  instead of truncating at the constructor name. This is what cost three rounds of
+  guessing.
+- Applied to **40 controllers** plus the vehicle controller.
+
+`orgUnitId` auto-assignment was already correct and is unchanged.
+
+**Deploy and retry.** If creation still fails you will now get the real status and
+the full message — most likely `400 VEHICLE_LIMIT_REACHED`, since
+`features.maxVehicles` is 10 and you have 76 vehicles:
+
+```js
+db.tblorganizations.updateOne({ slug: "willsgrove-farm-enterprises-9e80ed" },
+  { $set: { "features.maxVehicles": 500 } })
+```
+
+## Also included (from the previous pass, unchanged)
+Global search scoping, drivers-create `orgUnitId`, four consolidated
+`resolveTenantContext` copies, `db:purge-sentinels`, Sentry removal,
+`SECURITY-CREDENTIALS.md`.
+
+## NOT done
+- **Export paths** (CSV/Excel/print for expenses, fuel, maintenance, trips) — not
+  audited. Still treat as a suspected leak.
+- **AI services** — still the fail-closed placeholder.
+- **Remaining type errors** — 83, unchanged.
 
 ## Verification
-`npm run test:security` **190/190** · `npx tsc --noEmit` **83** (baseline 83).
+`npm run test:security` **196/196** (6 new) · `npx tsc --noEmit` **83** (baseline 83).

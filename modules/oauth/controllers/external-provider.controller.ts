@@ -8,7 +8,7 @@ import {
   externalProviderUpdateSchema,
 } from '@/shared/validations/oauth.schema';
 import { successResponse, createdResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError, ValidationError } from '@/server/errors/app.errors';
+import { AppError, ValidationError, isAppError, describeError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
 import { Permission } from '@/server/permissions/roles';
 import { withAuth } from '@/server/middleware/with-auth';
@@ -102,10 +102,10 @@ export class ExternalProviderController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[ExternalProviderController] Unexpected error:', error);
+    console.error('[ExternalProviderController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

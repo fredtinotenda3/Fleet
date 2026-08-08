@@ -5,7 +5,7 @@ import { auditLogRepository } from '../repositories/audit-log.repository';
 import { auditChainService } from '../services/audit-chain.service';
 import { auditLogQuerySchema } from '@/shared/validations/audit-log.schema';
 import { successResponse, paginatedResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError, NotFoundError, ValidationError } from '@/server/errors/app.errors';
+import { AppError, NotFoundError, ValidationError, isAppError, describeError } from '@/server/errors/app.errors';
 import { AuthContext } from '@/server/auth/auth-context';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { AuditChainIntegrityFailureEvent } from '../events/security-audit.events';
@@ -91,10 +91,10 @@ export class AuditLogController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[AuditLogController] Unexpected error:', error);
+    console.error('[AuditLogController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

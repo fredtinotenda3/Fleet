@@ -4,7 +4,7 @@ import { NextRequest } from 'next/server';
 import { sessionService } from '../services/session.service';
 import { sessionRevokeSchema } from '@/shared/validations/session.schema';
 import { successResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError } from '@/server/errors/app.errors';
+import { AppError, isAppError, describeError } from '@/server/errors/app.errors';
 import { AuthContext, hasPermission } from '@/server/auth/auth-context';
 import { Permission } from '@/server/permissions/roles';
 
@@ -65,10 +65,10 @@ export class SessionController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[SessionController] Unexpected error:', error);
+    console.error('[SessionController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

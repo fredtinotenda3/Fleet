@@ -5,7 +5,7 @@ import { fuelStationService } from '../services/fuel-station.service';
 import { FuelStationFilters } from '@/shared/types/fuel-station.types';
 import { validatePaginationParams } from '@/shared/utils/pagination.utils';
 import { successResponse, paginatedResponse, errorResponse, createdResponse } from '@/server/utils/response.utils';
-import { AppError } from '@/server/errors/app.errors';
+import { AppError, isAppError, describeError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
 
 export class FuelStationController {
@@ -80,10 +80,10 @@ export class FuelStationController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[FuelStationController] Unexpected error:', error);
+    console.error('[FuelStationController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

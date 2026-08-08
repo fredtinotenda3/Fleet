@@ -12,7 +12,7 @@ import {
   errorResponse,
   createdResponse,
 } from '@/server/utils/response.utils';
-import { AppError, ValidationError, UnauthorizedError, ForbiddenError, NotFoundError } from '@/server/errors/app.errors';
+import { AppError, isAppError, describeError, ValidationError, UnauthorizedError, ForbiddenError, NotFoundError } from '@/server/errors/app.errors';
 import {
   getTenantFromRequest,
   getUserIdFromRequest,
@@ -490,7 +490,9 @@ export class VehicleController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    // Structural guard, not `instanceof` -- see isAppError() for why the
+    // identity check silently converted domain errors into 500s.
+    if (isAppError(error)) {
       return errorResponse(
         error.message,
         error.code,
@@ -498,7 +500,9 @@ export class VehicleController {
         error.details
       );
     }
-    console.error('[VehicleController] Unexpected error:', error);
+    // Flat object so the platform log prints the whole message and
+    // stack rather than truncating at the constructor name.
+    console.error('[VehicleController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

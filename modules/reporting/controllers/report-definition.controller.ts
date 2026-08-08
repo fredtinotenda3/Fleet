@@ -19,7 +19,7 @@ import { reportBuilderService } from '../services/report-builder.service';
 import { reportSchedulerService } from '../services/report-scheduler.service';
 import { drilldownService } from '../services/drilldown.service';
 import { successResponse, createdResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError, ValidationError } from '@/server/errors/app.errors';
+import { AppError, ValidationError, isAppError, describeError } from '@/server/errors/app.errors';
 import { validateWithZod } from '@/shared/utils/validation.utils';
 import {
   reportDefinitionCreateSchema,
@@ -161,10 +161,10 @@ export class ReportDefinitionController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[ReportDefinitionController] Unexpected error:', error);
+    console.error('[ReportDefinitionController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

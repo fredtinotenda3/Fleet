@@ -7,7 +7,7 @@ import {
   createdResponse,
   errorResponse,
 } from '@/server/utils/response.utils';
-import { AppError } from '@/server/errors/app.errors';
+import { AppError, isAppError, describeError } from '@/server/errors/app.errors';
 import {
   getTenantFromRequest,
   getUserIdFromRequest,
@@ -290,10 +290,10 @@ export class OrganizationController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[OrganizationController] Unexpected error:', error);
+    console.error('[OrganizationController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

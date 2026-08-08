@@ -5,7 +5,7 @@ import { fuelCardService } from '../services/fuel-card.service';
 import { FuelCardFilters, FuelCardStatus } from '@/shared/types/fuel-card.types';
 import { validatePaginationParams } from '@/shared/utils/pagination.utils';
 import { successResponse, paginatedResponse, errorResponse, createdResponse } from '@/server/utils/response.utils';
-import { AppError } from '@/server/errors/app.errors';
+import { AppError, isAppError, describeError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
 import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
 
@@ -89,10 +89,10 @@ export class FuelCardController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[FuelCardController] Unexpected error:', error);
+    console.error('[FuelCardController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

@@ -16,7 +16,7 @@ import { orgUnitService } from '../services/org-unit.service';
 import { orgUnitHierarchyService } from '@/modules/tenancy/services/org-unit-hierarchy.service';
 import { orgUnitCreateSchema, orgUnitUpdateSchema } from '@/shared/validations/security.schema';
 import { successResponse, createdResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError, ValidationError } from '@/server/errors/app.errors';
+import { AppError, ValidationError, isAppError, describeError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
 import { OrgUnitType } from '../types/org-unit.types';
 
@@ -100,10 +100,10 @@ export class OrgUnitController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[OrgUnitController] Unexpected error:', error);
+    console.error('[OrgUnitController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

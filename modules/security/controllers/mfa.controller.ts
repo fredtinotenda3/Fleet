@@ -5,7 +5,7 @@ import { getToken } from 'next-auth/jwt';
 import { mfaService } from '../services/mfa.service';
 import { mfaEnrollVerifySchema, mfaCodeSchema } from '@/shared/validations/mfa.schema';
 import { successResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError, ValidationError } from '@/server/errors/app.errors';
+import { AppError, ValidationError, isAppError, describeError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
 
 async function getUserEmail(req: NextRequest): Promise<string> {
@@ -98,10 +98,10 @@ export class MfaController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[MfaController] Unexpected error:', error);
+    console.error('[MfaController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

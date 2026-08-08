@@ -5,7 +5,7 @@ import { NextRequest } from 'next/server';
 import { ssoService } from '../services/sso.service';
 import { ssoConnectionCreateSchema, ssoConnectionUpdateSchema } from '@/shared/validations/sso.schema';
 import { successResponse, createdResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError, ValidationError } from '@/server/errors/app.errors';
+import { AppError, ValidationError, isAppError, describeError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
 
 export class SsoController {
@@ -79,10 +79,10 @@ export class SsoController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[SsoController] Unexpected error:', error);
+    console.error('[SsoController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

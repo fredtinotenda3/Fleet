@@ -3,7 +3,7 @@
 import { NextRequest } from 'next/server';
 import { fleetAnalyticsService } from '../services/fleet-analytics.service';
 import { successResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError } from '@/server/errors/app.errors';
+import { AppError, isAppError, describeError } from '@/server/errors/app.errors';
 import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
 import { DateRange } from '@/shared/types/common.types';
 
@@ -80,10 +80,10 @@ export class AnalyticsController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode);
     }
-    console.error('[AnalyticsController] Unexpected error:', error);
+    console.error('[AnalyticsController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

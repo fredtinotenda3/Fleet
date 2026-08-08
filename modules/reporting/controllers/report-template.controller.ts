@@ -4,7 +4,7 @@ import { NextRequest } from 'next/server';
 import { AuthContext } from '@/server/auth/auth-context';
 import { reportTemplateService } from '../services/report-template.service';
 import { successResponse, createdResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError } from '@/server/errors/app.errors';
+import { AppError, isAppError, describeError } from '@/server/errors/app.errors';
 import { validateWithZod } from '@/shared/utils/validation.utils';
 import {
   reportTemplateCreateSchema,
@@ -72,10 +72,10 @@ export class ReportTemplateController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[ReportTemplateController] Unexpected error:', error);
+    console.error('[ReportTemplateController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

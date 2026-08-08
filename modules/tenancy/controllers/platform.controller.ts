@@ -4,7 +4,7 @@ import { NextRequest } from 'next/server';
 import { platformService } from '../services/platform.service';
 import { platformOrgStatusSchema } from '@/shared/validations/tenancy.schema';
 import { successResponse, paginatedResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError, ForbiddenError, ValidationError } from '@/server/errors/app.errors';
+import { AppError, ForbiddenError, ValidationError, isAppError, describeError } from '@/server/errors/app.errors';
 import { getAuthContext } from '@/server/auth/auth-context';
 import { Role } from '@/server/permissions/roles';
 import { validatePaginationParams } from '@/shared/utils/pagination.utils';
@@ -98,10 +98,10 @@ export class PlatformController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[PlatformController] Unexpected error:', error);
+    console.error('[PlatformController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

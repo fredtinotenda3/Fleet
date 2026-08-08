@@ -4,7 +4,7 @@ import { NextRequest } from 'next/server';
 import { permissionEngineService } from '../services/permission-engine.service';
 import { permissionCheckRequestSchema } from '@/shared/validations/security.schema';
 import { successResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError, ValidationError } from '@/server/errors/app.errors';
+import { AppError, ValidationError, isAppError, describeError } from '@/server/errors/app.errors';
 import { AuthContext } from '@/server/auth/auth-context';
 
 export class PermissionCheckController {
@@ -33,10 +33,10 @@ export class PermissionCheckController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[PermissionCheckController] Unexpected error:', error);
+    console.error('[PermissionCheckController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

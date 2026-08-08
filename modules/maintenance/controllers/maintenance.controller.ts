@@ -12,7 +12,7 @@ import {
   errorResponse,
   createdResponse,
 } from '@/server/utils/response.utils';
-import { AppError, NotFoundError, UnauthorizedError } from '@/server/errors/app.errors';
+import { AppError, NotFoundError, UnauthorizedError, isAppError, describeError } from '@/server/errors/app.errors';
 import {
   getTenantFromRequest,
   getUserIdFromRequest,
@@ -490,10 +490,10 @@ export class MaintenanceController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[MaintenanceController] Unexpected error:', error);
+    console.error('[MaintenanceController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

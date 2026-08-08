@@ -12,7 +12,7 @@ import {
   errorResponse,
   createdResponse,
 } from '@/server/utils/response.utils';
-import { AppError, ValidationError, UnauthorizedError, ForbiddenError, NotFoundError } from '@/server/errors/app.errors';
+import { AppError, ValidationError, UnauthorizedError, ForbiddenError, NotFoundError, isAppError, describeError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
 import { getAuthContext } from '@/server/auth/auth-context';
 import { tenantContextService } from '@/modules/tenancy/services/tenant-context.service';
@@ -480,10 +480,10 @@ export class ExpenseController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[ExpenseController] Unexpected error:', error);
+    console.error('[ExpenseController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

@@ -11,7 +11,7 @@ import {
 } from '@/shared/validations/rule.schema';
 import { RuleConditionGroup, RuleStatus } from '../types/rule.types';
 import { successResponse, createdResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError, NotFoundError, ValidationError } from '@/server/errors/app.errors';
+import { AppError, NotFoundError, ValidationError, isAppError, describeError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { RuleCreatedEvent } from '../events/RuleCreatedEvent';
@@ -194,10 +194,10 @@ export class RuleController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[RuleController] Unexpected error:', error);
+    console.error('[RuleController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

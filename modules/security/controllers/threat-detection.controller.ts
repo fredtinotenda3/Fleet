@@ -5,7 +5,7 @@ import { threatDetectionService } from '../services/threat-detection.service';
 import { auditLogRepository } from '../repositories/audit-log.repository';
 import { accountUnlockSchema } from '@/shared/validations/audit-log.schema';
 import { successResponse, paginatedResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError, ValidationError } from '@/server/errors/app.errors';
+import { AppError, ValidationError, isAppError, describeError } from '@/server/errors/app.errors';
 import { AuthContext } from '@/server/auth/auth-context';
 import { validatePaginationParams } from '@/shared/utils/pagination.utils';
 
@@ -63,10 +63,10 @@ export class ThreatDetectionController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[ThreatDetectionController] Unexpected error:', error);
+    console.error('[ThreatDetectionController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

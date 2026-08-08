@@ -10,7 +10,7 @@ import {
 } from '../services';
 
 import { successResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError } from '@/server/errors/app.errors';
+import { AppError, isAppError, describeError } from '@/server/errors/app.errors';
 import { getTenantFromRequest } from '@/server/utils/context.utils';
 import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
 
@@ -243,7 +243,7 @@ export class AIController {
   // ─── Error Handler ─────────────────────────────────────────────────────────
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(
         error.message,
         error.code,
@@ -252,7 +252,7 @@ export class AIController {
       );
     }
 
-    console.error('[AIController] Unexpected error:', error);
+    console.error('[AIController] Unexpected error:', describeError(error));
 
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }

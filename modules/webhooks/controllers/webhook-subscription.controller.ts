@@ -10,7 +10,7 @@ import {
 } from '@/shared/validations/webhook.schema';
 import { validatePaginationParams } from '@/shared/utils/pagination.utils';
 import { successResponse, createdResponse, paginatedResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError, ValidationError, NotFoundError } from '@/server/errors/app.errors';
+import { AppError, ValidationError, NotFoundError, isAppError, describeError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
 
 export class WebhookSubscriptionController {
@@ -134,10 +134,10 @@ export class WebhookSubscriptionController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[WebhookSubscriptionController] Unexpected error:', error);
+    console.error('[WebhookSubscriptionController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

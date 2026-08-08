@@ -4,7 +4,7 @@ import { NextRequest } from 'next/server';
 import { AuthContext } from '@/server/auth/auth-context';
 import { dashboardService } from '../services/dashboard.service';
 import { successResponse, createdResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError } from '@/server/errors/app.errors';
+import { AppError, isAppError, describeError } from '@/server/errors/app.errors';
 import { validateWithZod } from '@/shared/utils/validation.utils';
 import { dashboardCreateSchema, dashboardUpdateSchema } from '@/shared/validations/dashboard.schema';
 import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
@@ -82,10 +82,10 @@ export class DashboardController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[DashboardController] Unexpected error:', error);
+    console.error('[DashboardController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

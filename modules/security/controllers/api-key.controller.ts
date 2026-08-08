@@ -4,7 +4,7 @@ import { NextRequest } from 'next/server';
 import { apiKeyService } from '../services/api-key.service';
 import { apiKeyCreateSchema } from '@/shared/validations/api-key.schema';
 import { successResponse, createdResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError, ValidationError } from '@/server/errors/app.errors';
+import { AppError, ValidationError, isAppError, describeError } from '@/server/errors/app.errors';
 import { AuthContext } from '@/server/auth/auth-context';
 
 export class ApiKeyController {
@@ -53,10 +53,10 @@ export class ApiKeyController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[ApiKeyController] Unexpected error:', error);
+    console.error('[ApiKeyController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

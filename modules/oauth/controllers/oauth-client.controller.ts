@@ -8,7 +8,7 @@ import {
   oauthTokenRequestSchema,
 } from '@/shared/validations/oauth.schema';
 import { successResponse, createdResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError, ValidationError, UnauthorizedError } from '@/server/errors/app.errors';
+import { AppError, ValidationError, UnauthorizedError, isAppError, describeError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
 import { withAuth } from '@/server/middleware/with-auth';
 import { Permission } from '@/server/permissions/roles';
@@ -176,10 +176,10 @@ export class OAuthClientController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[OAuthClientController] Unexpected error:', error);
+    console.error('[OAuthClientController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }

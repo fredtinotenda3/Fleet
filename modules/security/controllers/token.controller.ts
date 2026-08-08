@@ -10,7 +10,7 @@ import { tokenService } from '@/infrastructure/security/token.service';
 import { ACCESS_TOKEN_COOKIE_NAME } from '@/infrastructure/security/edge-token-verify';
 import { tokenLoginSchema, tokenRefreshSchema, tokenRevokeSchema } from '@/shared/validations/auth-token.schema';
 import { successResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError, UnauthorizedError, ValidationError } from '@/server/errors/app.errors';
+import { AppError, UnauthorizedError, ValidationError, isAppError, describeError } from '@/server/errors/app.errors';
 import { rateLimiter } from '@/infrastructure/security/rate-limit';
 import { Role } from '@/server/permissions/roles';
 
@@ -239,10 +239,10 @@ export class TokenController {
   }
 
   private handleError(error: unknown) {
-    if (error instanceof AppError) {
+    if (isAppError(error)) {
       return errorResponse(error.message, error.code, error.statusCode, error.details);
     }
-    console.error('[TokenController] Unexpected error:', error);
+    console.error('[TokenController] Unexpected error:', describeError(error));
     return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
   }
 }
