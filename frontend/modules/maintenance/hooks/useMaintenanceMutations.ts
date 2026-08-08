@@ -68,7 +68,7 @@ export function useCompleteMaintenanceRecord() {
     mutationFn: ({ id, completionDate }: { id: string; completionDate?: Date }) =>
       maintenanceApi.complete(id, completionDate),
     onSuccess: (record) => {
-      queryClient.setQueryData(maintenanceKeys.detail(record._id), record);
+      queryClient.setQueryData(maintenanceKeys.detail(record._id!), record);
       queryClient.invalidateQueries({ queryKey: maintenanceKeys.all });
       toast.success('Marked as completed');
     },

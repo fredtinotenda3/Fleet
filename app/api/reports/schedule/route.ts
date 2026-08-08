@@ -23,10 +23,32 @@ const scheduleRequestSchema = z.object({
     dayOfWeek: z.number().int().min(0).max(6).optional(),
     dayOfMonth: z.number().int().min(1).max(28).optional(),
     hourOfDay: z.number().int().min(0).max(23),
-    format: z.enum(['pdf', 'excel', 'csv', 'word', 'json']),
+    format: z.enum(['pdf', 'excel', 'csv', 'word']),
     recipients: z.array(z.string().email()).min(1),
   }),
 });
+
+/**
+ * ReportScheduleConfig only persists a cron string (see
+ * report-scheduler.service.ts) — the frequency/hourOfDay/dayOfWeek/
+ * dayOfMonth fields here are this legacy route's friendlier input shape,
+ * mirroring frontend/modules/reports/utils/scheduleParser.ts#buildCronExpression.
+ */
+function buildCronFromFrequency(schedule: {
+  frequency: 'daily' | 'weekly' | 'monthly';
+  hourOfDay: number;
+  dayOfWeek?: number;
+  dayOfMonth?: number;
+}): string {
+  switch (schedule.frequency) {
+    case 'daily':
+      return `0 ${schedule.hourOfDay} * * *`;
+    case 'weekly':
+      return `0 ${schedule.hourOfDay} * * ${schedule.dayOfWeek ?? 1}`;
+    case 'monthly':
+      return `0 ${schedule.hourOfDay} ${schedule.dayOfMonth ?? 1} * *`;
+  }
+}
 
 export const POST = withAuth(
   async (req: NextRequest, context) => {
@@ -40,7 +62,14 @@ export const POST = withAuth(
       const { reportDefinitionId, schedule } = result.data;
       const updated = await reportBuilderService.update(
         reportDefinitionId,
-        { schedule },
+        {
+          schedule: {
+            enabled: schedule.enabled,
+            cron: buildCronFromFrequency(schedule),
+            format: schedule.format,
+            recipients: schedule.recipients,
+          },
+        },
         context.tenantId,
         context.userId
       );

@@ -1,17 +1,25 @@
 // scripts/station-coverage.ts
 import { MongoClient } from 'mongodb';
+import * as dotenv from 'dotenv';
+import path from 'path';
+
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 async function main() {
-  const uri = 'mongodb://Stanley:1011@ac-gbuzgwb-shard-00-00.ikpkkxe.mongodb.net:27017,ac-gbuzgwb-shard-00-01.ikpkkxe.mongodb.net:27017,ac-gbuzgwb-shard-00-02.ikpkkxe.mongodb.net:27017/?ssl=true&replicaSet=atlas-tgzz8t-shard-0&authSource=admin&appName=Cluster0';
+  const uri = process.env.MONGODB_URI;
+  if (!uri) {
+    console.error('MONGODB_URI environment variable is not defined');
+    process.exit(1);
+  }
   const client = new MongoClient(uri);
   await client.connect();
   const col = client.db('VehicleExpense').collection('tblfuellogs');
 
   const [total, withStation, withoutStation, withDriver] = await Promise.all([
     col.countDocuments(),
-    col.countDocuments({ fuel_station_id: { $exists: true, $ne: null, $ne: '' } }),
+    col.countDocuments({ fuel_station_id: { $exists: true, $nin: [null, ''] } }),
     col.countDocuments({ $or: [{ fuel_station_id: { $exists: false } }, { fuel_station_id: null }, { fuel_station_id: '' }] }),
-    col.countDocuments({ driver_id: { $exists: true, $ne: null, $ne: '' } }),
+    col.countDocuments({ driver_id: { $exists: true, $nin: [null, ''] } }),
   ]);
 
   console.log(`Total rows:              ${total}`);

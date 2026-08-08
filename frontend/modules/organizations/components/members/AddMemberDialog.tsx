@@ -51,7 +51,7 @@ function BranchSelect({ value, onChange }: { value: string | undefined; onChange
   labelByValue.set('none', 'No branch (organization-wide)');
 
   return (
-    <Select value={selectValue} onValueChange={(v) => onChange(v === 'none' ? undefined : v)}>
+    <Select value={selectValue} onValueChange={(v) => onChange(v === 'none' || v === null ? undefined : v)}>
       <SelectTrigger id="member-branch" className="input-base">
         <SelectValue placeholder="No branch (organization-wide)">
           {(v: string) => labelByValue.get(v) ?? v}

@@ -170,8 +170,8 @@ export function mapDefinitionToForm(
         operator: f.operator as ReportDefinitionForm['filters']['conditions'][number]['operator'],
         value:
           f.operator === 'between' && f.value2 !== undefined
-            ? [f.value, f.value2]
-            : f.value,
+            ? ([f.value, f.value2] as ReportDefinitionForm['filters']['conditions'][number]['value'])
+            : (f.value as ReportDefinitionForm['filters']['conditions'][number]['value']),
       })),
     },
     groupBy: (raw.groupBy ?? []).map((g) => g.field).filter((field) => columns.some((c) => c.field === field)),

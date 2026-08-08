@@ -1,3 +1,5 @@
+//frontend/shared/ui/forms/Autocomplete.tsx
+
 'use client';
 
 import * as React from 'react';
@@ -19,12 +21,14 @@ export function Autocomplete({ options, value, onChange, placeholder = 'Select..
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button variant="outline" role="combobox" className="w-full justify-between">
-          {value ? options.find((o) => o.value === value)?.label : placeholder}
-          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-        </Button>
-      </PopoverTrigger>
+      <PopoverTrigger
+        render={
+          <Button variant="outline" role="combobox" className="w-full justify-between">
+            {value ? options.find((o) => o.value === value)?.label : placeholder}
+            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          </Button>
+        }
+      />
       <PopoverContent className="w-full p-0">
         <Command>
           <CommandGroup>

@@ -48,12 +48,7 @@ function normalizeDedupNumber(value: unknown): string {
   return (Math.round(n * 100) / 100).toFixed(2);
 }
 
-function buildKey(doc: {
-  license_plate?: unknown;
-  date?: unknown;
-  fuel_volume?: unknown;
-  cost?: unknown;
-}): string | null {
+function buildKey(doc: Record<string, unknown>): string | null {
   const plate = typeof doc.license_plate === 'string' ? doc.license_plate.trim().toUpperCase() : '';
   if (!plate) return null;
   return [

@@ -48,7 +48,7 @@ export class RuleRepository extends BaseRepository<Rule> {
     tenantId: string,
     userId: string
   ): Promise<Rule> {
-    return this.create({ ...rule, tenantId }, tenantId, userId);
+    return this.create(rule, tenantId, userId);
   }
 
   /**

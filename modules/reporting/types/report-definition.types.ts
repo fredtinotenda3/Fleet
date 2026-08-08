@@ -42,7 +42,7 @@ export interface ReportSortField {
 }
 
 export interface ReportChartConfig {
-  type: 'bar' | 'line' | 'pie' | 'area';
+  type: 'bar' | 'line' | 'pie' | 'table';
   xField?: string;
   yField?: string;
 }

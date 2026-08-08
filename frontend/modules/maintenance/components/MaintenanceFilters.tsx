@@ -47,7 +47,7 @@ export function MaintenanceFilters({ filters, onChange }: MaintenanceFiltersProp
 
   return (
     <div className="flex flex-wrap items-end gap-3">
-      <div className="min-w-[200px] flex-1 space-y-1.5">
+      <div className="min-w-50 flex-1 space-y-1.5">
         <Label htmlFor="maintenance-plate-search">License plate</Label>
         <div className="relative">
           <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
@@ -99,7 +99,7 @@ export function MaintenanceFilters({ filters, onChange }: MaintenanceFiltersProp
         <Label>Category</Label>
         <Select
           value={filters.category ?? 'all'}
-          onValueChange={(value) => onChange({ ...filters, category: value === 'all' ? undefined : value })}
+          onValueChange={(value) => onChange({ ...filters, category: value === 'all' || value === null ? undefined : value })}
         >
           <SelectTrigger><SelectValue placeholder="All categories" /></SelectTrigger>
           <SelectContent>

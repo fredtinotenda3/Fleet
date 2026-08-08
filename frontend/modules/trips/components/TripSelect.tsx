@@ -42,7 +42,7 @@ export function TripSelect({ licensePlate, value, onChange, disabled }: TripSele
   return (
     <Select
       value={value ?? NONE}
-      onValueChange={(v) => onChange(v === NONE ? undefined : v)}
+      onValueChange={(v) => onChange(v === NONE || v === null ? undefined : v)}
       disabled={disabled || !licensePlate}
     >
       <SelectTrigger className="w-full">

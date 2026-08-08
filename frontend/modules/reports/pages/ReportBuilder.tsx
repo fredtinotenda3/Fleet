@@ -28,6 +28,7 @@ const DATA_SOURCE_LABELS: Record<(typeof REPORT_DATA_SOURCES)[number], string> =
   maintenance: 'Maintenance',
   expenses: 'Expenses',
   organizations: 'Organizations',
+  drivers: 'Drivers',
 };
 
 interface ReportBuilderPageProps {

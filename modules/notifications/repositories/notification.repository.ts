@@ -202,7 +202,7 @@ export class NotificationRepository extends TenantScopedRepository<Notification>
     const base = this.getActiveFilter(context.organizationId);
 
     const directResult = await collection.updateOne(
-      { ...base, _id, userId } as Filter<Notification>,
+      { ...base, _id, userId } as unknown as Filter<Notification>,
       { $set: { read: true, readAt: new Date() } }
     );
     if (directResult.modifiedCount > 0) return true;
@@ -215,7 +215,7 @@ export class NotificationRepository extends TenantScopedRepository<Notification>
         userId: { $exists: false },
         orgUnitId: { $exists: true },
         ...broadcastScope,
-      } as Filter<Notification>,
+      } as unknown as Filter<Notification>,
       { $addToSet: { readBy: userId } } as unknown as UpdateFilter<Notification>
     );
     return broadcastResult.modifiedCount > 0;

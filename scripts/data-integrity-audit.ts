@@ -196,10 +196,9 @@ async function recalculateMaintenanceStatuses(
 ) {
   const collection = db.collection('tblreminders');
   const now = new Date();
-  const UNRESOLVED = { $nin: ['completed', 'cancelled'] };
 
   const toOverdue = await collection
-    .find({ ...tenantFilter(), isDeleted: { $ne: true }, status: UNRESOLVED, due_date: { $lt: now }, status: { $ne: 'overdue' } })
+    .find({ ...tenantFilter(), isDeleted: { $ne: true }, status: { $nin: ['completed', 'cancelled', 'overdue'] }, due_date: { $lt: now } })
     .toArray();
 
   const toPending = await collection

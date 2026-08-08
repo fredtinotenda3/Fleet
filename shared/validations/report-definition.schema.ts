@@ -1,4 +1,3 @@
-
 // shared/validations/report-definition.schema.ts
 
 import { z } from 'zod';
@@ -35,11 +34,8 @@ const chartConfigSchema = z.object({
 
 const scheduleConfigSchema = z.object({
   enabled: z.boolean(),
-  frequency: z.enum(['daily', 'weekly', 'monthly']),
-  dayOfWeek: z.number().int().min(0).max(6).optional(),
-  dayOfMonth: z.number().int().min(1).max(28).optional(),
-  hourOfDay: z.number().int().min(0).max(23),
-  format: z.enum(['pdf', 'excel', 'csv', 'word', 'json']),
+  cron: z.string().min(1),
+  format: z.enum(['pdf', 'excel', 'csv', 'word']).default('pdf'),
   recipients: z.array(z.string().email()).min(1),
 });
 

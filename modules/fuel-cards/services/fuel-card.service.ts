@@ -86,8 +86,8 @@ export class FuelCardService {
       currency: result.data.currency ?? 'USD',
       license_plate: result.data.license_plate ? result.data.license_plate.toUpperCase() : undefined,
       status: result.data.status ?? 'active',
-      monthly_limit: result.data.monthly_limit,
-      notes: result.data.notes,
+      monthly_limit: result.data.monthly_limit ?? undefined,
+      notes: result.data.notes ?? undefined,
       expiry_date: result.data.expiry_date ? new Date(result.data.expiry_date as string) : undefined,
     };
 

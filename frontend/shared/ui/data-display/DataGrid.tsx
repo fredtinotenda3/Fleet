@@ -1,5 +1,7 @@
-﻿'use client';
+﻿//frontend/shared/ui/data-display/DataGrid.tsx
 
-import { DataTable } from '@/frontend/shared/tables/DataTable';
+'use client';
 
-export { DataTable as DataGrid };
+import { DataGrid } from '@/frontend/shared/tables/DataTable';
+
+export { DataGrid };

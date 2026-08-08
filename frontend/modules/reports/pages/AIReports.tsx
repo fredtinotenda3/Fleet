@@ -120,8 +120,8 @@ export default function AIReports() {
     const alerts = results.filter((r: any) => r.success && r.data);
     const severityCount = { critical: 0, high: 0, medium: 0, low: 0 };
     alerts.forEach((a: any) => {
-      const sev = a.data?.severity;
-      if (severityCount.hasOwnProperty(sev)) severityCount[sev]++;
+      const sev = a.data?.severity as keyof typeof severityCount | undefined;
+      if (sev && severityCount.hasOwnProperty(sev)) severityCount[sev]++;
     });
 
     const pieData = Object.entries(severityCount).map(([name, value]) => ({ name, value }));

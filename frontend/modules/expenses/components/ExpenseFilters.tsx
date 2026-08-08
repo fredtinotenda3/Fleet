@@ -106,7 +106,7 @@ export function ExpenseFilters({ filters, onChange }: ExpenseFiltersProps) {
           <Label htmlFor="expense-type-filter" className="form-label">Category</Label>
           <Select
             value={filters.type ?? ALL}
-            onValueChange={(value) => handleChange('type', value === ALL ? undefined : value)}
+            onValueChange={(value) => handleChange('type', value === ALL || value === null ? undefined : value)}
           >
             <SelectTrigger id="expense-type-filter" className="w-full">
               <SelectValue>{(value: string) => getCategoryFilterLabel(value)}</SelectValue>

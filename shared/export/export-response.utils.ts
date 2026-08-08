@@ -18,7 +18,7 @@ import type { ExportFile, ExportMeta } from './export.types';
  * this function's contract.
  */
 export function fileDownloadResponse(file: ExportFile, meta: ExportMeta): NextResponse {
-  const response = new NextResponse(file.buffer, {
+  const response = new NextResponse(new Uint8Array(file.buffer), {
     status: 200,
     headers: {
       'Content-Type': file.contentType,

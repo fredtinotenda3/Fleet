@@ -1,25 +1,13 @@
-
 // modules/reporting/services/report-scheduler.service.ts
 
 import { cronEngineService } from '@/server/scheduler/cron-engine.service';
 import { scheduledJobRepository } from '@/server/scheduler/scheduled-job.repository';
 import { JobType } from '@/infrastructure/queue/queue.service';
-import { ReportDefinition, ReportScheduleConfig } from '../types/report-definition.types';
+import { ReportDefinition } from '../types/report-definition.types';
 import { monitoring } from '@/infrastructure/monitoring/logger';
 
 function scheduleJobName(reportDefinitionId: string): string {
   return `report-schedule:${reportDefinitionId}`;
-}
-
-function buildCron(schedule: ReportScheduleConfig): string {
-  switch (schedule.frequency) {
-    case 'daily':
-      return `0 ${schedule.hourOfDay} * * *`;
-    case 'weekly':
-      return `0 ${schedule.hourOfDay} * * ${schedule.dayOfWeek ?? 1}`;
-    case 'monthly':
-      return `0 ${schedule.hourOfDay} ${schedule.dayOfMonth ?? 1} * *`;
-  }
 }
 
 /**
@@ -46,7 +34,7 @@ export class ReportSchedulerService {
       return;
     }
 
-    const cron = buildCron(definition.schedule);
+    const cron = definition.schedule.cron;
     const payload = {
       kind: 'scheduled' as const,
       tenantId,

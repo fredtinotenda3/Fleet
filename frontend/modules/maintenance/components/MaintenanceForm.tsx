@@ -16,13 +16,13 @@ import {
   SelectValue,
 } from '@/frontend/shared/ui/forms/select';
 import { useVehiclesList } from '@/frontend/modules/vehicles';
-import { maintenanceFormSchema, type MaintenanceFormValues } from '../schemas';
+import { maintenanceFormSchema, type MaintenanceFormValues, type MaintenanceFormOutput } from '../schemas';
 import { MAINTENANCE_CATEGORIES, MAINTENANCE_CATEGORY_LABELS, RECURRENCE_PRESETS } from '../types';
 import type { Reminder } from '../types';
 
 interface MaintenanceFormProps {
   record?: Reminder | null;
-  onSubmit: (values: MaintenanceFormValues) => Promise<void>;
+  onSubmit: (values: MaintenanceFormOutput) => Promise<void>;
   onCancel: () => void;
   isSubmitting?: boolean;
 }
@@ -36,7 +36,7 @@ export function MaintenanceForm({ record, onSubmit, onCancel, isSubmitting }: Ma
     control,
     handleSubmit,
     formState: { errors },
-  } = useForm<MaintenanceFormValues>({
+  } = useForm<MaintenanceFormValues, unknown, MaintenanceFormOutput>({
     resolver: zodResolver(maintenanceFormSchema),
     defaultValues: record
       ? {

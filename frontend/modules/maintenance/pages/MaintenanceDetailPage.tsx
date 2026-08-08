@@ -28,7 +28,7 @@ import {
 } from '../utils';
 import { formatDate } from '@/shared/utils/date.utils';
 import { MAINTENANCE_ROUTES } from '../routes';
-import type { MaintenanceFormValues } from '../schemas';
+import type { MaintenanceFormOutput } from '../schemas';
 
 interface MaintenanceDetailPageProps {
   id: string;
@@ -61,18 +61,18 @@ export function MaintenanceDetailPage({ id }: MaintenanceDetailPageProps) {
 
   const overdue = isRecordOverdue(record);
 
-  async function handleSubmit(values: MaintenanceFormValues) {
+  async function handleSubmit(values: MaintenanceFormOutput) {
     await updateRecord.mutateAsync(values);
   }
 
   async function handleDelete() {
-    if (!window.confirm(`Delete the maintenance record "${record.title}"?`)) return;
-    await deleteRecord.mutateAsync(record._id);
+    if (!window.confirm(`Delete the maintenance record "${record!.title}"?`)) return;
+    await deleteRecord.mutateAsync(record!._id!);
     router.push(MAINTENANCE_ROUTES.list);
   }
 
   async function handleComplete() {
-    await completeRecord.mutateAsync({ id: record._id });
+    await completeRecord.mutateAsync({ id: record!._id! });
   }
 
   return (

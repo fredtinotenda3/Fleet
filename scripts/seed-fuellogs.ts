@@ -25,7 +25,7 @@
 import 'dotenv/config';
 import * as path from 'path';
 import * as XLSX from 'xlsx';
-import { MongoClient } from 'mongodb';
+import { MongoClient, Db } from 'mongodb';
 
 const MONGO_URI = process.env.MONGODB_URI;
 const DB_NAME = 'VehicleExpense';
@@ -56,12 +56,7 @@ function normalizeDedupNumber(value: unknown): string {
   return (Math.round(n * 100) / 100).toFixed(2);
 }
 
-function buildDedupKey(row: {
-  license_plate?: unknown;
-  date?: unknown;
-  fuel_volume?: unknown;
-  cost?: unknown;
-}): string | null {
+function buildDedupKey(row: Record<string, unknown>): string | null {
   const plate = typeof row.license_plate === 'string' ? row.license_plate.trim().toUpperCase() : '';
   if (!plate) return null;
   return [
@@ -75,7 +70,7 @@ function buildDedupKey(row: {
 // ------------------------------------------------------------------
 // Driver & Station resolvers (same as import controller)
 // ------------------------------------------------------------------
-async function buildDriverLookup(db: ReturnType<typeof getDb>) {
+async function buildDriverLookup(db: Db) {
   const drivers = await db
     .collection('tbldrivers')
     .find({ tenantId: TENANT_ID, isDeleted: { $ne: true } })
@@ -102,7 +97,7 @@ async function buildDriverLookup(db: ReturnType<typeof getDb>) {
   return { byKey, ambiguous };
 }
 
-async function buildStationLookup(db: ReturnType<typeof getDb>) {
+async function buildStationLookup(db: Db) {
   const stations = await db
     .collection('tblfuelstations')
     .find({ tenantId: TENANT_ID, isDeleted: { $ne: true } })
@@ -134,7 +129,7 @@ async function run() {
   console.log(`Rows read from sheet: ${rows.length}`);
 
   // Connect to DB
-  const client = new MongoClient(MONGO_URI);
+  const client = new MongoClient(MONGO_URI!);
   await client.connect();
   const db = client.db(DB_NAME);
   const fuelLogs = db.collection('tblfuellogs');

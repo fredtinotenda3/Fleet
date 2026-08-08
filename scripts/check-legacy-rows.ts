@@ -1,13 +1,19 @@
 // scripts/check-legacy-rows.ts
 import { MongoClient } from 'mongodb';
+import * as dotenv from 'dotenv';
+import path from 'path';
 
-// ===== TEMPORARY HARDCODED URI – DELETE AFTER USE =====
-const MONGO_URI = 'mongodb://Stanley:1011@ac-gbuzgwb-shard-00-00.ikpkkxe.mongodb.net:27017,ac-gbuzgwb-shard-00-01.ikpkkxe.mongodb.net:27017,ac-gbuzgwb-shard-00-02.ikpkkxe.mongodb.net:27017/?ssl=true&replicaSet=atlas-tgzz8t-shard-0&authSource=admin&appName=Cluster0';
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
+
 const DB_NAME = 'VehicleExpense';
-// =====================================================
 
 async function checkLegacyRows(): Promise<void> {
-  const client = new MongoClient(MONGO_URI);
+  const uri = process.env.MONGODB_URI;
+  if (!uri) {
+    console.error('MONGODB_URI environment variable is not defined');
+    process.exit(1);
+  }
+  const client = new MongoClient(uri);
   try {
     await client.connect();
     const db = client.db(DB_NAME);

@@ -279,7 +279,7 @@ export function ExpenseForm({ defaultValues, onSubmit, onCancel, submitLabel = '
             </div>
             <div>
               <Label htmlFor="new-category-group" className="form-label">Group</Label>
-              <Select value={newCategoryGroup} onValueChange={setNewCategoryGroup}>
+              <Select value={newCategoryGroup} onValueChange={(v) => setNewCategoryGroup(v ?? '')}>
                 <SelectTrigger id="new-category-group" className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {DEFAULT_EXPENSE_CATEGORIES.map((c) => (

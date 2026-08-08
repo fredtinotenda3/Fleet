@@ -10,7 +10,7 @@ import {
   DialogDescription,
 } from '@/frontend/shared/ui/feedback/dialog';
 import { MaintenanceForm } from './MaintenanceForm';
-import type { MaintenanceFormValues } from '../schemas';
+import type { MaintenanceFormOutput } from '../schemas';
 import type { Reminder } from '../types';
 
 export type MaintenanceModalMode = 'create' | 'edit';
@@ -20,7 +20,7 @@ interface MaintenanceModalProps {
   mode: MaintenanceModalMode;
   record?: Reminder | null;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (values: MaintenanceFormValues) => Promise<void>;
+  onSubmit: (values: MaintenanceFormOutput) => Promise<void>;
   isSubmitting?: boolean;
 }
 
@@ -32,7 +32,7 @@ export function MaintenanceModal({
   onSubmit,
   isSubmitting,
 }: MaintenanceModalProps) {
-  async function handleSubmit(values: MaintenanceFormValues) {
+  async function handleSubmit(values: MaintenanceFormOutput) {
     await onSubmit(values);
     onOpenChange(false);
   }

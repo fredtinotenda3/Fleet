@@ -76,7 +76,7 @@ export function MaintenanceTable({
     );
   }
 
-  const ids = records.map((r) => r._id);
+  const ids = records.map((r) => r._id!);
   const allSelected = ids.length > 0 && ids.every((id) => selectedIds.has(id));
 
   return (
@@ -108,13 +108,13 @@ export function MaintenanceTable({
                   {canDelete && (
                     <TableCell>
                       <Checkbox
-                        checked={selectedIds.has(record._id)}
-                        onCheckedChange={() => onToggleSelect(record._id)}
+                        checked={selectedIds.has(record._id!)}
+                        onCheckedChange={() => onToggleSelect(record._id!)}
                       />
                     </TableCell>
                   )}
                   <TableCell className="font-medium">{record.license_plate}</TableCell>
-                  <TableCell className="max-w-[220px] truncate">{record.title}</TableCell>
+                  <TableCell className="max-w-55 truncate">{record.title}</TableCell>
                   <TableCell>
                     {record.category
                       ? MAINTENANCE_CATEGORY_LABELS[record.category as MaintenanceCategory] ?? record.category

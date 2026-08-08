@@ -3,6 +3,7 @@
 import { Filter } from 'mongodb';
 import { BaseRepository } from '@/server/repositories/base.repository';
 import { RegisteredPlugin } from '../types/plugin.types';
+import { PLATFORM_OWNER_TENANT_ID } from '@/server/tenancy/tenant-scope';
 
 /**
  * Catalogue of plugins available to install, analogous to an "app store"

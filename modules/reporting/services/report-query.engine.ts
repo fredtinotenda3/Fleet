@@ -198,7 +198,7 @@ export class ReportQueryEngine {
     );
     const skip = (page - 1) * limit;
 
-    const projection: Record<string, 1> = { _id: 0 };
+    const projection: Record<string, 0 | 1> = { _id: 0 };
     for (const key of fieldKeys) projection[key] = 1;
 
     const aggregatableKeys = fieldKeys.filter(

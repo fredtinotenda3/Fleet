@@ -423,6 +423,10 @@ export const INDEXES = {
   ...TELEMATICS_INDEXES,
   ...WORKFLOWS_INDEXES,
   ...ANOMALY_INDEXES, 
+  tbltrips: [
+    ...BASE_INDEXES.tbltrips,
+    ...TRIP_ANALYTICS_INDEXES.tbltrips,             // Phase 3
+  ],
   tblorgunits: [
     ...BASE_INDEXES.tblorgunits,
     ...SECURITY_INDEXES.tblorgunits,
@@ -431,11 +435,9 @@ export const INDEXES = {
     ...BASE_INDEXES.tblfuellogs,
     ...FUEL_DRIVER_INDEXES.tblfuellogs,
     ...FUEL_ANALYTICS_INDEXES.tblfuellogs,
-    ...TRIP_ANALYTICS_INDEXES.tblfuellogs,          // Phase 3
   ],
   tblexpenses: [
     ...BASE_INDEXES.tblexpenses,
-    ...TRIP_ANALYTICS_INDEXES.tblexpenses,          // Phase 3
   ],
 } as const;
 
@@ -444,7 +446,7 @@ export async function ensureIndexes(): Promise<void> {
 
   for (const [collectionName, indexes] of Object.entries(INDEXES)) {
     const collection = db.collection(collectionName);
-    for (const indexDef of indexes as any[]) {
+    for (const indexDef of indexes as unknown as any[]) {
       try {
         const options: any = {
           name: indexDef.name,

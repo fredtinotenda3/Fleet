@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { AuthContext } from '@/server/auth/auth-context';
 import { reportExecutionService } from '../services/report-execution.service';
 import { successResponse, paginatedResponse, errorResponse } from '@/server/utils/response.utils';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { AppError, isAppError, describeError } from '@/server/errors/app.errors';
 import { validateWithZod } from '@/shared/utils/validation.utils';
 import { generateExecutionSchema } from '@/shared/validations/report-execution.schema';
@@ -61,7 +62,7 @@ export class ReportExecutionController {
   async download(req: NextRequest, context: AuthContext, id: string) {
     try {
       const { buffer, execution } = await reportExecutionService.download(id, context.tenantId, context.userId);
-      return new NextResponse(buffer, {
+      return new NextResponse(new Uint8Array(buffer), {
         status: 200,
         headers: {
           'Content-Type': execution.fileKey ? 'application/octet-stream' : 'application/json',
