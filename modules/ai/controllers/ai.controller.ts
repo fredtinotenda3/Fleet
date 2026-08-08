@@ -15,26 +15,23 @@ import { getTenantFromRequest } from '@/server/utils/context.utils';
 import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
 
 /**
- * INTERIM CONTAINMENT -- read this before removing it.
+ * RESOLVED -- kept for the next AI endpoint that lands unscoped.
  *
- * The five AI services (fleet health, predictive maintenance, driver
- * risk, fuel fraud, expense anomalies) each run their own multi-stage
- * aggregations directly against vehicles/fuel/expenses/reminders. They
- * accept only a tenantId, so they compute organization-wide figures --
- * "Based on 76 vehicles", "fleet health 73/100", "27 fuel anomalies",
- * "242 expense flags" -- and those were being shown verbatim to branch
- * managers who can see none of the underlying rows. A derived metric
- * leaks its inputs: "27 fuel anomalies" tells a Bulawayo manager how
- * much fuel activity exists in Harare.
+ * All five AI services (fleet health, driver risk, predictive
+ * maintenance, fuel fraud, expense anomalies) now accept an optional
+ * TenantContext and narrow every read to context.accessibleOrgUnitIds,
+ * the same pattern used across the rest of this codebase
+ * (tenantScopeService.buildFilter). None of the five gate on scope
+ * anymore -- see each service file for the specific fields it scopes
+ * on and, for driver-risk, an open question about driver_id's actual
+ * join shape that scoping alone doesn't resolve.
  *
- * Properly scoping them means threading TenantContext into every stage
- * of five separate analytical pipelines. Until that lands, these
- * endpoints FAIL CLOSED for scope-narrowed callers: they return an
- * explicit "unavailable for your scope" payload rather than org-wide
- * numbers. Org-wide roles (owner/admin/platform) are unaffected.
- *
- * Showing nothing is recoverable. Showing another branch's figures is
- * not.
+ * This helper and the "fail closed until scoped" pattern it embodies
+ * are left in place as the template for whatever AI feature ships
+ * next: land it gated behind this, exactly like these five originally
+ * were, rather than shipping an unscoped aggregation to every branch
+ * manager on day one. Showing nothing is recoverable. Showing another
+ * branch's figures is not.
  */
 function scopedAiUnavailable() {
   return {
@@ -53,19 +50,16 @@ export class AIController {
     try {
       const tenantId = await getTenantFromRequest(req);
       const aiContext = await resolveTenantContext(req);
-      if (aiContext.accessibleOrgUnitIds !== null) {
-        return successResponse(scopedAiUnavailable());
-      }
       const vehicleId = req.nextUrl.searchParams.get('vehicleId');
 
       if (vehicleId) {
-        const result = await predictiveMaintenanceService.predictVehicle(vehicleId, tenantId);
+        const result = await predictiveMaintenanceService.predictVehicle(vehicleId, tenantId, aiContext);
         if (result.success) return successResponse(result.data);
 
         return errorResponse('Prediction failed', 'AI_ERROR', 500);
       }
 
-      const result = await predictiveMaintenanceService.predictAll(tenantId);
+      const result = await predictiveMaintenanceService.predictAll(tenantId, aiContext);
       return successResponse(result);
     } catch (error) {
       return this.handleError(error);
@@ -151,12 +145,9 @@ export class AIController {
     try {
       const tenantId = await getTenantFromRequest(req);
       const aiContext = await resolveTenantContext(req);
-      if (aiContext.accessibleOrgUnitIds !== null) {
-        return successResponse(scopedAiUnavailable());
-      }
       const vehicleId = req.nextUrl.searchParams.get('vehicleId');
 
-      const result = await fuelFraudDetectionService.detectFraud(tenantId);
+      const result = await fuelFraudDetectionService.detectFraud(tenantId, aiContext);
 
       if (!result.success) {
         return errorResponse('Fraud detection failed', 'AI_ERROR', 500);
@@ -199,11 +190,8 @@ export class AIController {
     try {
       const tenantId = await getTenantFromRequest(req);
       const aiContext = await resolveTenantContext(req);
-      if (aiContext.accessibleOrgUnitIds !== null) {
-        return successResponse(scopedAiUnavailable());
-      }
 
-      const result = await expenseAnomalyDetectionService.detectAnomalies(tenantId);
+      const result = await expenseAnomalyDetectionService.detectAnomalies(tenantId, aiContext);
 
       if (!result.success) {
         return errorResponse('Expense anomaly detection failed', 'AI_ERROR', 500);
@@ -221,44 +209,31 @@ export class AIController {
     try {
       const tenantId = await getTenantFromRequest(req);
       const aiContext = await resolveTenantContext(req);
-      const isScoped = aiContext.accessibleOrgUnitIds !== null;
 
       /**
-       * fleet-health and driver-risk are properly org-unit scoped now,
-       * so a scope-narrowed caller (branch/department/workshop/fleet
-       * manager) gets real numbers for those two instead of nothing.
-       * predictive-maintenance, fuel-fraud and expense-anomaly remain
-       * behind the fail-closed placeholder until each is scoped the
-       * same way -- see scopedAiUnavailable() above for why a
-       * partially-scoped panel is worse than a blocked one.
+       * All five AI services are org-unit scoped now (fleet-health,
+       * driver-risk, predictive-maintenance, fuel-fraud-detection,
+       * expense-anomaly-detection), so every panel here gets real,
+       * correctly-narrowed data for a scope-narrowed caller instead of
+       * the placeholder. scopedAiUnavailable() is kept as a helper in
+       * case a future AI service lands here before its own scoping is
+       * done -- see the note where it's defined.
        */
       const [health, maintenance, driverRisk, fuelFraud, expenseAnomalies] =
         await Promise.all([
           fleetHealthService.calculateHealthScore(aiContext.organizationId, aiContext),
-          isScoped
-            ? Promise.resolve(null)
-            : predictiveMaintenanceService.predictAll(tenantId),
+          predictiveMaintenanceService.predictAll(tenantId, aiContext),
           driverRiskService.calculateDriverRisk(tenantId, aiContext),
-          isScoped
-            ? Promise.resolve(null)
-            : fuelFraudDetectionService.detectFraud(tenantId),
-          isScoped
-            ? Promise.resolve(null)
-            : expenseAnomalyDetectionService.detectAnomalies(tenantId),
+          fuelFraudDetectionService.detectFraud(tenantId, aiContext),
+          expenseAnomalyDetectionService.detectAnomalies(tenantId, aiContext),
         ]);
 
       return successResponse({
         fleetHealth: health.success ? health.data : null,
-        predictiveMaintenance:
-          maintenance && maintenance.success ? maintenance : isScoped ? scopedAiUnavailable() : null,
+        predictiveMaintenance: maintenance.success ? maintenance : null,
         driverRisk: driverRisk.success ? driverRisk : null,
-        fuelFraud: fuelFraud && fuelFraud.success ? fuelFraud : isScoped ? scopedAiUnavailable() : null,
-        expenseAnomalies:
-          expenseAnomalies && expenseAnomalies.success
-            ? expenseAnomalies
-            : isScoped
-              ? scopedAiUnavailable()
-              : null,
+        fuelFraud: fuelFraud.success ? fuelFraud : null,
+        expenseAnomalies: expenseAnomalies.success ? expenseAnomalies : null,
         timestamp: new Date(),
       });
     } catch (error) {

@@ -10,6 +10,8 @@ import {
 } from '../types/ai.types';
 import { expenseRepository } from '@/modules/expenses/repositories/expense.repository';
 import { expenseTypeRepository } from '@/modules/expenses/repositories/expense-type.repository';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 
 interface ExpenseBaseline {
   averageAmount: number;
@@ -31,10 +33,32 @@ export class ExpenseAnomalyDetectionService extends BaseAIService {
   protected readonly serviceName = 'ExpenseAnomalyDetection';
   protected readonly predictionType = 'expense_anomaly';
 
-  async detectAnomalies(tenantId: string): Promise<AIBatchResult<ExpenseAnomalyAlert>> {
+  /**
+   * Scoped the same way the other three services now are: expenses
+   * carry their own orgUnitId (confirmed against a real tblexpenses
+   * document), so a scope-narrowed caller only sees anomalies for
+   * expenses within their accessible org units, and the baseline
+   * (average amount, category/vendor distribution) is computed only
+   * from that same narrowed set -- otherwise a branch manager's
+   * "unusual amount" threshold would be silently calibrated against
+   * other branches' spending they can't see.
+   *
+   * expenseTypeRepository.findActive() is deliberately left unscoped:
+   * expense TYPES are a shared organization-wide taxonomy (categories
+   * like "Fuel"/"Toll"/"Repair"), not branch-owned data -- there's
+   * nothing here that leaks between branches by including all of them.
+   */
+  async detectAnomalies(
+    tenantId: string,
+    context?: TenantContext
+  ): Promise<AIBatchResult<ExpenseAnomalyAlert>> {
     try {
+      const scope = context
+        ? (tenantScopeService.buildFilter(context, 'orgUnitId') as Record<string, unknown>)
+        : {};
+
       const [expenses, expenseTypes] = await Promise.all([
-        expenseRepository.findMany({ isDeleted: { $ne: true } }, tenantId),
+        expenseRepository.findMany({ isDeleted: { $ne: true }, ...scope } as never, tenantId),
         expenseTypeRepository.findActive(tenantId),
       ]);
 

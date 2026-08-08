@@ -12,6 +12,8 @@ import {
 } from '../types/ai.types';
 import { fuelRepository } from '@/modules/fuel/repositories/fuel.repository';
 import { vehicleRepository } from '@/modules/vehicles/repositories/vehicle.repository';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 
 interface FuelBaseline {
   averageVolume: number;
@@ -41,9 +43,19 @@ export class FuelFraudDetectionService extends BaseAIService {
    * the (pure, in-memory) analysis per vehicle with no further DB calls.
    * This collapses 75 queries into 1.
    */
-  async detectFraud(tenantId: string): Promise<AIBatchResult<FuelFraudAlert>> {
+  async detectFraud(
+    tenantId: string,
+    context?: TenantContext
+  ): Promise<AIBatchResult<FuelFraudAlert>> {
     try {
-      const vehicles = await vehicleRepository.findMany({ isDeleted: { $ne: true } }, tenantId);
+      const scope = context
+        ? (tenantScopeService.buildFilter(context, 'orgUnitId') as Record<string, unknown>)
+        : {};
+
+      const vehicles = await vehicleRepository.findMany(
+        { isDeleted: { $ne: true }, ...scope } as never,
+        tenantId
+      );
 
       const results: AIBatchResult<FuelFraudAlert> = {
         success: true,
@@ -61,8 +73,12 @@ export class FuelFraudDetectionService extends BaseAIService {
       const plates = vehicles.map((v) => v.license_plate).filter(Boolean);
 
       // Single batched query instead of one findMany() per vehicle.
+      // Scoped: tblfuellogs carries its own orgUnitId (confirmed against
+      // a real document), so this narrows the same way the vehicle read
+      // above does -- defense in depth against a reused/retired plate
+      // matching a row from outside the caller's accessible units.
       const allFuelLogs = await fuelRepository.findMany(
-        { license_plate: { $in: plates } },
+        { license_plate: { $in: plates }, ...scope } as never,
         tenantId
       );
 
@@ -130,7 +146,8 @@ export class FuelFraudDetectionService extends BaseAIService {
   // per event.
   async detectVehicleFraud(
     vehicleId: string,
-    tenantId: string
+    tenantId: string,
+    context?: TenantContext
   ): Promise<AIResult<FuelFraudAlert>> {
     try {
       const vehicle = await vehicleRepository.findById(vehicleId, tenantId);
@@ -142,8 +159,24 @@ export class FuelFraudDetectionService extends BaseAIService {
         };
       }
 
+      if (
+        context &&
+        context.accessibleOrgUnitIds !== null &&
+        !tenantScopeService.canAccessOrgUnit(context, (vehicle as { orgUnitId?: string }).orgUnitId ?? '')
+      ) {
+        return {
+          success: false,
+          error: 'Vehicle not found',
+          timestamp: new Date(),
+        };
+      }
+
+      const scope = context
+        ? (tenantScopeService.buildFilter(context, 'orgUnitId') as Record<string, unknown>)
+        : {};
+
       const fuelLogs = await fuelRepository.findMany(
-        { license_plate: vehicle.license_plate },
+        { license_plate: vehicle.license_plate, ...scope } as never,
         tenantId,
         { limit: 100 }
       );

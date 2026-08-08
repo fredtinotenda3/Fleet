@@ -15,6 +15,8 @@ import { fuelRepository } from '@/modules/fuel/repositories/fuel.repository';
 import { telematicsRepository } from '@/modules/telematics/repositories/telematics.repository';
 import { monitoring } from '@/infrastructure/monitoring/logger';
 import { randomUUID } from 'crypto';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 
 interface ComponentHealth {
   component: string;
@@ -68,10 +70,35 @@ export class PredictiveMaintenanceService extends BaseAIService {
    * Promise.all so all 75 lookups run concurrently instead of one after
    * another -- this alone turns "75 x up to 2.2s sequential" into
    * "~1 x up to 2.2s total".
+   *
+   * Scoping (added alongside fleet-health/driver-risk): every read here
+   * -- vehicles themselves, plus their maintenance/trips/fuel -- is
+   * narrowed by `context.accessibleOrgUnitIds` when a context is given.
+   * `tblvehicles`, `tbltrips`, `tblfuellogs` and maintenance reminders
+   * all carry their own `orgUnitId` (confirmed against real documents),
+   * so the same `tenantScopeService.buildFilter(context, 'orgUnitId')`
+   * predicate used by fleet-health applies directly here -- no join
+   * mismatch like the driver_id/tbldrivers question in driver-risk.
+   * Vehicles are scoped once up front; the maintenance/trip/fuel reads
+   * scope again on their own `orgUnitId` as defense in depth, the same
+   * reasoning fleet-health documents: a license_plate collision (e.g.
+   * a reused/retired plate reassigned in a different branch) should
+   * never pull another branch's records in just because it matched on
+   * plate string.
    */
-  async predictAll(tenantId: string): Promise<AIBatchResult<PredictiveMaintenancePrediction>> {
+  async predictAll(
+    tenantId: string,
+    context?: TenantContext
+  ): Promise<AIBatchResult<PredictiveMaintenancePrediction>> {
     try {
-      const vehicles = await vehicleRepository.findMany({ isDeleted: { $ne: true } }, tenantId);
+      const scope = context
+        ? (tenantScopeService.buildFilter(context, 'orgUnitId') as Record<string, unknown>)
+        : {};
+
+      const vehicles = await vehicleRepository.findMany(
+        { isDeleted: { $ne: true }, ...scope } as never,
+        tenantId
+      );
 
       const results: AIBatchResult<PredictiveMaintenancePrediction> = {
         success: true,
@@ -90,13 +117,16 @@ export class PredictiveMaintenanceService extends BaseAIService {
 
       const [allMaintenance, allTrips, allFuel, telematicsList] = await Promise.all([
         maintenanceRepository.findMany(
-          { license_plate: { $in: plates }, status: { $ne: 'pending' } },
+          { license_plate: { $in: plates }, status: { $ne: 'pending' }, ...scope } as never,
           tenantId
         ),
-        tripRepository.findMany({ license_plate: { $in: plates } }, tenantId),
-        fuelRepository.findMany({ license_plate: { $in: plates } }, tenantId),
+        tripRepository.findMany({ license_plate: { $in: plates }, ...scope } as never, tenantId),
+        fuelRepository.findMany({ license_plate: { $in: plates }, ...scope } as never, tenantId),
         // Concurrent, not sequential -- was the single biggest source of
-        // latency (tbltelematics queries up to 2.2s each).
+        // latency (tbltelematics queries up to 2.2s each). No separate
+        // scope needed here: vehicles is already the scoped set, so
+        // every vehicleId this fetches telematics for is one the caller
+        // may see.
         Promise.all(
           vehicles.map((v) =>
             telematicsRepository
@@ -174,9 +204,17 @@ export class PredictiveMaintenanceService extends BaseAIService {
   // Single-vehicle path -- unchanged behavior, still used by
   // GET /api/ai/predictive-maintenance?vehicleId=... and any real-time
   // per-vehicle trigger. Not the bottleneck; only called once per request.
+  //
+  // Scoping: a scoped caller supplying a vehicleId outside their
+  // accessible org units is refused rather than silently served --
+  // same "narrow only" rule tenant-context.service.ts documents for the
+  // x-org-unit-id header. Without this, ?vehicleId= would have been a
+  // way to read any vehicle's prediction by guessing/enumerating ids,
+  // regardless of the batch path's scoping.
   async predictVehicle(
     vehicleId: string,
-    tenantId: string
+    tenantId: string,
+    context?: TenantContext
   ): Promise<AIResult<PredictiveMaintenancePrediction>> {
     try {
       const vehicle = await vehicleRepository.findById(vehicleId, tenantId);
@@ -188,13 +226,29 @@ export class PredictiveMaintenanceService extends BaseAIService {
         };
       }
 
+      if (
+        context &&
+        context.accessibleOrgUnitIds !== null &&
+        !tenantScopeService.canAccessOrgUnit(context, (vehicle as { orgUnitId?: string }).orgUnitId ?? '')
+      ) {
+        return {
+          success: false,
+          error: 'Vehicle not found',
+          timestamp: new Date(),
+        };
+      }
+
+      const scope = context
+        ? (tenantScopeService.buildFilter(context, 'orgUnitId') as Record<string, unknown>)
+        : {};
+
       const [maintenance, trips, fuel, telematics] = await Promise.all([
         maintenanceRepository.findMany(
-          { license_plate: vehicle.license_plate, status: { $ne: 'pending' } },
+          { license_plate: vehicle.license_plate, status: { $ne: 'pending' }, ...scope } as never,
           tenantId
         ),
-        tripRepository.findMany({ license_plate: vehicle.license_plate }, tenantId),
-        fuelRepository.findMany({ license_plate: vehicle.license_plate }, tenantId),
+        tripRepository.findMany({ license_plate: vehicle.license_plate, ...scope } as never, tenantId),
+        fuelRepository.findMany({ license_plate: vehicle.license_plate, ...scope } as never, tenantId),
         telematicsRepository.getLatestTelematicsData(vehicleId, tenantId),
       ]);
 
