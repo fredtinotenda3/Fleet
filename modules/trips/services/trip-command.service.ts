@@ -4,7 +4,10 @@ import { commandBus } from '@/server/cqrs/command-bus';
 import { CreateTripCommand } from '../commands/create-trip.command';
 import { UpdateTripCommand } from '../commands/update-trip.command';
 import { DeleteTripCommand } from '../commands/delete-trip.command';
+import { ImportTripsCommand, ImportTripRow } from '../commands/import-trips.command';
+import type { ImportTripsResult } from '../commands/handlers/import-trips.handler';
 import { Trip } from '@/shared/types/trip.types';
+import type { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 
 export class TripCommandService {
   async createTrip(
@@ -36,6 +39,17 @@ export class TripCommandService {
   ): Promise<void> {
     return commandBus.execute<void>(
       new DeleteTripCommand(tripId, tenantId, userId, soft)
+    );
+  }
+
+  async importTrips(
+    rows: ImportTripRow[],
+    tenantId: string,
+    userId?: string,
+    context?: TenantContext
+  ): Promise<ImportTripsResult> {
+    return commandBus.execute<ImportTripsResult>(
+      new ImportTripsCommand(rows, tenantId, userId, context)
     );
   }
 }

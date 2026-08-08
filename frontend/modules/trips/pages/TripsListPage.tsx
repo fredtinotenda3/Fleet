@@ -6,7 +6,8 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, Download, FileSpreadsheet, Trash2, Printer, BarChart3 } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { Plus, Download, FileSpreadsheet, Trash2, Printer, BarChart3, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { Button } from '@/frontend/shared/ui/primitives/button';
@@ -17,21 +18,44 @@ import {
   DropdownMenuItem,
 } from '@/frontend/shared/ui/navigation/NestedMenu';
 import { useSessionStore } from '@/frontend/shared/store/session.store';
+import { ImportModal, type ImportColumnDef, type ImportResponse } from '@/frontend/shared/import/ImportModal';
 import { TripStatsCards } from '../components/TripStatsCards';
 import { TripFilters } from '../components/TripFilters';
 import { TripsTable } from '../components/TripsTable';
 import { TripModal, type TripModalMode } from '../components/TripModal';
-import { useTripsList } from '../hooks/useTrips';
+import { useTripsList, tripKeys } from '../hooks/useTrips';
 import { useCreateTrip, useUpdateTrip, useDeleteTrip, useBulkDeleteTrips } from '../hooks/useTripMutations';
 import { exportTrips, printTrips, canManageTrips, canDeleteTrips } from '../utils';
+import { tripsApi } from '../services/trips.api';
 import { TRIP_ROUTES } from '../routes';
 import type { Trip, TripTableFilters } from '../types';
 import type { TripFormValues } from '../schemas';
 
 const PAGE_SIZE = 10;
 
+// Column mapping for the standard trip importer. `key` is matched
+// case-insensitively against the uploaded file's header row by
+// <ImportModal>, so "License Plate", "license_plate" and "Plate" all
+// need to line up with the header the person actually used -- the
+// downloadable template below is the source of truth for the exact
+// expected header text.
+const TRIP_IMPORT_COLUMNS: ImportColumnDef[] = [
+  { key: 'date', label: 'Date', required: true, type: 'date', example: '2026-07-22' },
+  { key: 'license_plate', label: 'Vehicle', required: true, type: 'string', example: 'AHA2127' },
+  { key: 'mode', label: 'Mode', required: false, type: 'string', example: 'distance' },
+  { key: 'trip_distance', label: 'Trip distance', required: false, type: 'number', example: '120' },
+  { key: 'start_odometer', label: 'Start odometer', required: false, type: 'number', example: '10500' },
+  { key: 'end_odometer', label: 'End odometer', required: false, type: 'number', example: '10620' },
+  { key: 'unit_id', label: 'Distance unit', required: false, type: 'string', example: 'km' },
+  { key: 'driver', label: 'Driver', required: false, type: 'string', example: 'Aga7718-Steelforce' },
+  { key: 'start_location', label: 'Start location', required: false, type: 'string', example: 'Bulawayo' },
+  { key: 'end_location', label: 'End location', required: false, type: 'string', example: 'Harare' },
+  { key: 'notes', label: 'Notes', required: false, type: 'string', example: '' },
+];
+
 export function TripsListPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const user = useSessionStore((s) => s.user);
   const roles = user?.roles ?? [];
   const canManage = canManageTrips(roles);
@@ -43,6 +67,7 @@ export function TripsListPage() {
   const [modalMode, setModalMode] = useState<TripModalMode>('create');
   const [modalOpen, setModalOpen] = useState(false);
   const [activeTrip, setActiveTrip] = useState<Trip | null>(null);
+  const [importModalOpen, setImportModalOpen] = useState(false);
 
   const listParams = useMemo(() => ({ ...filters, page, limit: PAGE_SIZE }), [filters, page]);
   const { data: result, isLoading } = useTripsList(listParams);
@@ -116,6 +141,23 @@ export function TripsListPage() {
     setSelectedIds(new Set());
   }
 
+  async function handleStandardImport(records: Array<Record<string, unknown>>): Promise<ImportResponse> {
+    return tripsApi.importStandard(records);
+  }
+
+  function handleImportComplete(response: ImportResponse) {
+    if (response.summary.succeeded > 0) {
+      queryClient.invalidateQueries({ queryKey: tripKeys.lists() });
+      queryClient.invalidateQueries({ queryKey: tripKeys.stats() });
+      toast.success(
+        `Imported ${response.summary.succeeded} trip${response.summary.succeeded === 1 ? '' : 's'}` +
+          (response.summary.failed > 0 ? ` (${response.summary.failed} row(s) failed)` : '')
+      );
+    } else {
+      toast.error('No trips were imported. Check the failed rows below.');
+    }
+  }
+
   async function handleExport(format: 'csv' | 'xlsx') {
     try {
       const { truncated, totalMatched, rowsExported } = await exportTrips(filters, format);
@@ -169,6 +211,12 @@ export function TripsListPage() {
               </DropdownMenuContent>
             </DropdownMenu>
             {canManage && (
+              <Button variant="outline" size="sm" onClick={() => setImportModalOpen(true)}>
+                <Upload className="h-3.5 w-3.5" />
+                Import
+              </Button>
+            )}
+            {canManage && (
               <Button size="sm" onClick={openCreate}>
                 <Plus className="h-3.5 w-3.5" />
                 Log trip
@@ -199,6 +247,16 @@ export function TripsListPage() {
       </div>
 
       <TripModal open={modalOpen} mode={modalMode} trip={activeTrip} onOpenChange={setModalOpen} onSubmit={handleSubmit} />
+
+      <ImportModal
+        open={importModalOpen}
+        onOpenChange={setImportModalOpen}
+        title="Import trips"
+        description="Upload a CSV or Excel file with your trip records. Download the template below to see the expected columns."
+        columns={TRIP_IMPORT_COLUMNS}
+        onImport={handleStandardImport}
+        onImportComplete={handleImportComplete}
+      />
     </div>
   );
 }

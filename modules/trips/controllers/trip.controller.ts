@@ -32,6 +32,11 @@ import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
 
 bootstrapCqrs();
 
+// Mirrors MAX_IMPORT_ROWS in fuel.controller.ts / the ImportModal
+// client-side `maxRows` default -- fails fast server-side too, since a
+// hand-built request could skip the client cap.
+const MAX_TRIP_IMPORT_ROWS = 2000;
+
 /**
  * PHASE 1: shared filter parsing, extended with status/trip_type/routeId.
  * Previously duplicated between getTrips and exportTrips; pulled into
@@ -224,6 +229,40 @@ export class TripController {
 
       const trip = await tripCommandService.createTrip(body, tenantId, userId);
       return createdResponse(trip);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /**
+   * Bulk trip import. Body shape mirrors ExpenseController.bulkImport /
+   * FuelController.importFuelLogs: `{ rows: ImportTripRow[] }`, each row
+   * carrying a client-assigned `rowNumber` for the error report.
+   *
+   * Uses resolveTenantContext() (not just getTenantFromRequest) so the
+   * command has the caller's TenantContext -- ImportTripsHandler needs
+   * it to reject rows for vehicles outside the caller's accessible org
+   * units, same fail-closed rule as the read side.
+   */
+  async importTrips(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const userId = await getUserIdFromRequest(req);
+      const context = await resolveTenantContext(req);
+
+      const body = await req.json();
+      const rows = Array.isArray(body?.rows) ? body.rows : null;
+      if (!rows || rows.length === 0) {
+        throw new ValidationError('No rows to import');
+      }
+      if (rows.length > MAX_TRIP_IMPORT_ROWS) {
+        throw new ValidationError(
+          `Import exceeds the maximum of ${MAX_TRIP_IMPORT_ROWS} rows per batch`
+        );
+      }
+
+      const result = await tripCommandService.importTrips(rows, tenantId, userId, context);
+      return successResponse(result);
     } catch (error) {
       return this.handleError(error);
     }

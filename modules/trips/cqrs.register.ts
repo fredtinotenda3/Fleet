@@ -7,10 +7,12 @@ import { tripRepository } from './repositories/trip.repository';
 import { CreateTripCommand } from './commands/create-trip.command';
 import { UpdateTripCommand } from './commands/update-trip.command';
 import { DeleteTripCommand } from './commands/delete-trip.command';
+import { ImportTripsCommand } from './commands/import-trips.command';
 
 import { CreateTripHandler } from './commands/handlers/create-trip.handler';
 import { UpdateTripHandler } from './commands/handlers/update-trip.handler';
 import { DeleteTripHandler } from './commands/handlers/delete-trip.handler';
+import { ImportTripsHandler } from './commands/handlers/import-trips.handler';
 
 import { GetTripsQuery } from './queries/get-trips.query';
 import { GetTripByIdQuery } from './queries/get-trip-by-id.query';
@@ -52,6 +54,7 @@ export function registerTripCqrsHandlers(
   commandBus.register(CreateTripCommand, new CreateTripHandler(tripRepository));
   commandBus.register(UpdateTripCommand, new UpdateTripHandler(tripRepository));
   commandBus.register(DeleteTripCommand, new DeleteTripHandler(tripRepository));
+  commandBus.register(ImportTripsCommand, new ImportTripsHandler(tripRepository));
 
   // Queries
   queryBus.register(GetTripsQuery, new GetTripsHandler(tripRepository));

@@ -8,6 +8,7 @@ import {
   fuelFraudDetectionService,
   expenseAnomalyDetectionService,
 } from '../services';
+import { needsAttentionService } from '../services/needs-attention.service';
 
 import { successResponse, errorResponse } from '@/server/utils/response.utils';
 import { AppError, isAppError, describeError } from '@/server/errors/app.errors';

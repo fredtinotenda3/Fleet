@@ -18,6 +18,7 @@ import type {
   TripUtilizationSort,
 } from '../types';
 import type { TripFormOutput } from '../schemas';
+import type { ImportResponse } from '@/frontend/shared/import/ImportModal';
 
 const BASE = '/api/trips';
 
@@ -165,6 +166,17 @@ export const tripsApi = {
 
   async remove(id: string): Promise<{ message: string }> {
     return apiClient.delete<{ message: string }>(`${BASE}/${id}`);
+  },
+
+  /**
+   * Standard bulk import. Talks to POST /api/trips/import
+   * (TripController.importTrips -> tripCommandService.importTrips).
+   * Same request/response shape as expensesApi.importStandard --
+   * `{ rows }` in, `{ summary, results }` out -- so it plugs directly
+   * into the shared <ImportModal>.
+   */
+  async importStandard(rows: Array<Record<string, unknown>>): Promise<ImportResponse> {
+    return apiClient.post<ImportResponse>(`${BASE}/import`, { rows });
   },
 
   /**
