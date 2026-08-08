@@ -18,7 +18,7 @@ export function ServiceCalendarPage() {
         breadcrumbs={[{ label: 'Maintenance', href: MAINTENANCE_ROUTES.dashboard }, { label: 'Calendar' }]}
       />
       <div className="p-4 surface-card">
-        <ServiceCalendar onSelectRecord={(record) => router.push(MAINTENANCE_ROUTES.detail(record._id))} />
+        <ServiceCalendar onSelectRecord={(record) => router.push(MAINTENANCE_ROUTES.detail(record._id!))} />
       </div>
     </div>
   );

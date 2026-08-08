@@ -35,7 +35,7 @@ import {
 } from '../utils';
 import { MAINTENANCE_ROUTES } from '../routes';
 import type { Reminder, MaintenanceTableFilters } from '../types';
-import type { MaintenanceFormValues } from '../schemas';
+import type { MaintenanceFormOutput } from '../schemas';
 
 const PAGE_SIZE = 10;
 
@@ -80,11 +80,11 @@ export function MaintenanceListPage() {
     setModalOpen(true);
   }
 
-  async function handleSubmit(values: MaintenanceFormValues) {
+  async function handleSubmit(values: MaintenanceFormOutput) {
     if (modalMode === 'edit' && activeRecord?._id) {
       await updateRecord.mutateAsync(values);
     } else {
-      await createRecord.mutateAsync(values as Required<MaintenanceFormValues>);
+      await createRecord.mutateAsync(values as Required<MaintenanceFormOutput>);
     }
   }
 
@@ -111,10 +111,13 @@ export function MaintenanceListPage() {
 
   async function handleDelete(record: Reminder) {
     if (!window.confirm(`Delete the maintenance record "${record.title}" for ${record.license_plate}?`)) return;
-    await deleteRecord.mutateAsync(record._id);
+    // record._id is optional on the Reminder type (BaseEntity allows not-yet-persisted
+    // entities), but anything rendered in this list came from the API and is guaranteed
+    // to have an _id.
+    await deleteRecord.mutateAsync(record._id!);
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      next.delete(record._id);
+      next.delete(record._id!);
       return next;
     });
   }
@@ -127,7 +130,7 @@ export function MaintenanceListPage() {
   }
 
   async function handleComplete(record: Reminder) {
-    await completeRecord.mutateAsync({ id: record._id });
+    await completeRecord.mutateAsync({ id: record._id! });
   }
 
   async function handleExport(format: 'csv' | 'xlsx') {
@@ -200,7 +203,7 @@ export function MaintenanceListPage() {
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
           onToggleSelectAll={toggleSelectAll}
-          onView={(record) => router.push(MAINTENANCE_ROUTES.detail(record._id))}
+          onView={(record) => router.push(MAINTENANCE_ROUTES.detail(record._id!))}
           onEdit={openEdit}
           onDelete={handleDelete}
           onComplete={handleComplete}

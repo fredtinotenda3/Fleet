@@ -62,7 +62,7 @@ export function FuelFilters({ filters, onChange }: FuelFiltersProps) {
         <Label htmlFor="unit_id" className="text-sm">Vehicle</Label>
         <Select
           value={filters.unit_id ?? ALL}
-          onValueChange={(value) => handleChange('unit_id', value === ALL ? undefined : value)}
+          onValueChange={(value) => handleChange('unit_id', value === ALL || value == null ? undefined : value)}
         >
           <SelectTrigger id="unit_id"><SelectValue placeholder="All vehicles" /></SelectTrigger>
           <SelectContent>
@@ -79,7 +79,7 @@ export function FuelFilters({ filters, onChange }: FuelFiltersProps) {
         <Label htmlFor="driver_id" className="text-sm">Driver</Label>
         <Select
           value={filters.driver_id ?? ALL}
-          onValueChange={(value) => handleChange('driver_id', value === ALL ? undefined : value)}
+          onValueChange={(value) => handleChange('driver_id', value === ALL || value == null ? undefined : value)}
         >
           <SelectTrigger id="driver_id"><SelectValue placeholder="All drivers" /></SelectTrigger>
           <SelectContent>

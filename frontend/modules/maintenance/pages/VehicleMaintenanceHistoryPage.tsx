@@ -46,11 +46,11 @@ export function VehicleMaintenanceHistoryPage({ licensePlate }: VehicleMaintenan
 
   async function handleDelete(record: Reminder) {
     if (!window.confirm(`Delete the maintenance record "${record.title}"?`)) return;
-    await deleteRecord.mutateAsync(record._id);
+    await deleteRecord.mutateAsync(record._id!);
   }
 
   async function handleComplete(record: Reminder) {
-    await completeRecord.mutateAsync({ id: record._id });
+    await completeRecord.mutateAsync({ id: record._id! });
   }
 
   return (
@@ -90,8 +90,8 @@ export function VehicleMaintenanceHistoryPage({ licensePlate }: VehicleMaintenan
             })
           }
           onToggleSelectAll={(ids) => setSelectedIds(new Set(ids))}
-          onView={(record) => router.push(MAINTENANCE_ROUTES.detail(record._id))}
-          onEdit={(record) => router.push(MAINTENANCE_ROUTES.edit(record._id))}
+          onView={(record) => router.push(MAINTENANCE_ROUTES.detail(record._id!))}
+          onEdit={(record) => router.push(MAINTENANCE_ROUTES.edit(record._id!))}
           onDelete={handleDelete}
           onComplete={handleComplete}
           canManage={canManage}

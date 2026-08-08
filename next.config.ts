@@ -3,9 +3,11 @@ import webpack from "webpack";
 
 const nextConfig: NextConfig = {
   typescript: {
-    // ⚠️ Dangerously allow production builds to successfully complete even if
-    // your project has type errors.
-    ignoreBuildErrors: true,
+    // `tsc --noEmit` is clean as of this change (all 18 real errors fixed).
+    // Builds now fail on type errors instead of silently shipping them —
+    // this is what let the trip-import 501 and the reporting param bug
+    // reach production undetected before.
+    ignoreBuildErrors: false,
   },
   eslint: {
     // ⚠️ Warn instead of error for ESLint errors during builds

@@ -3,3 +3,5 @@
 // the barrel could not typecheck. Nothing in the application imported any
 // of them. Dead exports removed rather than filling in speculative
 // implementations for components no caller has specified.
+
+export {};

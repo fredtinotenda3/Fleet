@@ -57,7 +57,7 @@ export function UpcomingMaintenancePage() {
           {records.map((r) => (
             <button
               key={r._id}
-              onClick={() => router.push(MAINTENANCE_ROUTES.detail(r._id))}
+              onClick={() => router.push(MAINTENANCE_ROUTES.detail(r._id!))}
               className="flex items-center justify-between w-full p-4 text-left border rounded-md hover:bg-muted surface-card"
             >
               <div>
