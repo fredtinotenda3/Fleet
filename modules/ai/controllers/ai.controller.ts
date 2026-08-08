@@ -77,12 +77,16 @@ export class AIController {
   async getFleetHealth(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
+      /**
+       * Fleet health IS scoped now, so scoped users get real numbers
+       * here rather than the placeholder. The gate stays on the other
+       * four endpoints until their pipelines are narrowed too.
+       */
       const aiContext = await resolveTenantContext(req);
-      if (aiContext.accessibleOrgUnitIds !== null) {
-        return successResponse(scopedAiUnavailable());
-      }
-
-      const result = await fleetHealthService.calculateHealthScore(tenantId);
+      const result = await fleetHealthService.calculateHealthScore(
+        aiContext.organizationId,
+        aiContext
+      );
 
       if (!result.success) {
         return errorResponse('Health score calculation failed', 'AI_ERROR', 500);

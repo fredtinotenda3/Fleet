@@ -16,19 +16,52 @@ import { maintenanceRepository } from '@/modules/maintenance/repositories/mainte
 import { expenseRepository } from '@/modules/expenses/repositories/expense.repository';
 import { tripRepository } from '@/modules/trips/repositories/trip.repository';
 import { fuelRepository } from '@/modules/fuel/repositories/fuel.repository';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 
 export class FleetHealthService extends BaseAIService {
   protected readonly serviceName = 'FleetHealth';
   protected readonly predictionType = 'health_score';
 
-  async calculateHealthScore(tenantId: string): Promise<AIResult<FleetHealthScore>> {
+  /**
+   * Fleet health, now genuinely org-unit scoped.
+   *
+   * This is the one AI metric whose inputs are five plain collection
+   * reads, so scoping it is a matter of narrowing those reads -- no
+   * multi-stage pipeline to rework. The other four services
+   * (driver-risk, fuel-fraud, predictive-maintenance, expense-anomaly)
+   * build their own aggregations and remain behind the fail-closed gate
+   * in ai.controller.ts until each is done properly.
+   *
+   * A partially-scoped AI panel would be worse than a blocked one: the
+   * numbers would look authoritative while silently mixing one branch's
+   * vehicles with another's expenses. So scoping is per-service and each
+   * is unblocked only when its whole input set is narrowed.
+   *
+   * `context` optional: the nightly digest and platform tooling still
+   * compute organization-wide health.
+   */
+  async calculateHealthScore(
+    tenantId: string,
+    context?: TenantContext
+  ): Promise<AIResult<FleetHealthScore>> {
     try {
+      // One predicate, applied to every input. If the five reads were
+      // scoped inconsistently the score would blend branches -- the
+      // failure mode that makes a wrong number look like a real one.
+      const scope = context
+        ? (tenantScopeService.buildFilter(context, 'orgUnitId') as Record<string, unknown>)
+        : {};
+
       const [vehicles, maintenance, expenses, trips, fuel] = await Promise.all([
-        vehicleRepository.findMany({ isDeleted: { $ne: true } }, tenantId) as Promise<VehicleEntity[]>,
-        maintenanceRepository.findMany({}, tenantId) as Promise<MaintenanceEntity[]>,
-        expenseRepository.findMany({}, tenantId) as Promise<ExpenseEntity[]>,
-        tripRepository.findMany({}, tenantId) as Promise<TripEntity[]>,
-        fuelRepository.findMany({}, tenantId) as Promise<FuelEntity[]>,
+        vehicleRepository.findMany(
+          { isDeleted: { $ne: true }, ...scope } as never,
+          tenantId
+        ) as Promise<VehicleEntity[]>,
+        maintenanceRepository.findMany({ ...scope } as never, tenantId) as Promise<MaintenanceEntity[]>,
+        expenseRepository.findMany({ ...scope } as never, tenantId) as Promise<ExpenseEntity[]>,
+        tripRepository.findMany({ ...scope } as never, tenantId) as Promise<TripEntity[]>,
+        fuelRepository.findMany({ ...scope } as never, tenantId) as Promise<FuelEntity[]>,
       ]);
 
       // Calculate vehicle scores

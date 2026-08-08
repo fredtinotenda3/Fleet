@@ -1,91 +1,69 @@
-# Fleet — vehicle-create 500: real root cause
+# Fleet — export audit, AI scoping, high-risk type errors
 
-51 files. **The org lookup was never the problem this time.**
+7 files.
 
-## 1–3. Trace, reproduction, and the exact line
+## 1. Export audit — NO LEAK FOUND
 
-`createVehicle` chain:
+I flagged these as a suspected leak in two previous rounds. Audited all five
+export endpoints end to end (controller → repository → Mongo query):
 
-```
-POST /api/vehicles
- └─ resolveTenantContext(req)              → OK (reads work, so this resolves)
- └─ resolveCreationOrgUnitId(context, …)    → returns Harare Branch id
- └─ vehicleCommandService.createVehicle
-     └─ CreateVehicleHandler
-         ├─ vehicleRepo.count({}, tenantId)
-         ├─ organizationService.checkVehicleLimit(tenantId, count, tenantId)
-         │    └─ getOrganization → resolveOrganization   ← ALREADY FIXED, present in this build
-         ├─ vehicleRepo.create(...)
-         └─ await eventBus.publish(VehicleCreatedEvent)  ← awaited; a throwing subscriber 500s the request
- └─ catch → this.handleError(error)
-```
+| Export | Controller resolves context | Repository applies org-unit filter |
+|---|---|---|
+| expenses | yes | `buildScopedMatch` |
+| fuel | yes | `buildScopedQuery` |
+| maintenance | yes | `buildScopedQuery` |
+| trips | yes | `buildScopedQuery` |
+| vehicles | yes | `buildScopedQuery` |
 
-**The throw site is `vehicle.controller.ts:492`, `handleError`:**
+Every one takes `TenantContext` (not `tenantId`) and applies
+`tenantScopeService.buildFilter(context, 'orgUnitId')` — in the vehicles case via
+`Object.assign(query, scopeFilter)` **last**, so filters can't widen it. My earlier
+suspicion was wrong; nothing to fix.
 
-```ts
-if (error instanceof AppError) { return errorResponse(error.message, error.code, error.statusCode); }
-console.error('[VehicleController] Unexpected error:', error);
-return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);   // ← line reached
-```
+Added `tests/security/export-scope-conformance.spec.ts` (11 tests) so this stays
+true: it fails if any export repository method takes a bare `tenantId`, if a
+controller stops resolving a context, or if an export loses its row cap. An audit
+is a snapshot; this is the invariant.
 
-It only reaches the 500 when `instanceof AppError` is **false**. Your log is the
-proof:
+## 2. AI services — fleet health genuinely scoped, four still gated
 
-```
-[VehicleController] Unexpected error: i: Organiza…
-```
+**`fleetHealthService.calculateHealthScore`** now takes `TenantContext` and applies
+one org-unit predicate across all five of its input reads (vehicles, maintenance,
+expenses, trips, fuel). Scoped users get **real numbers** — the placeholder is gone
+for this endpoint.
 
-`i:` is a **minified constructor name**. A plain object or string prints no
-constructor name — that prefix means a real `Error` subclass was thrown and the
-`instanceof` check failed to recognise it.
+The other four (driver-risk, fuel-fraud, predictive-maintenance, expense-anomaly)
+build their own multi-stage aggregations and **remain behind the fail-closed gate**.
 
-## Why the previous fix didn't cover it
+Deliberate: fleet health was scopeable because its inputs are five plain collection
+reads. A partially-scoped AI panel is worse than a blocked one — the numbers look
+authoritative while silently mixing one branch's vehicles with another's expenses.
+So each service is unblocked only when its *whole* input set is narrowed. The
+single shared `scope` predicate in fleet-health exists for the same reason: five
+independently-scoped reads could disagree.
 
-The previous fix corrected the organization **lookup**. This is a separate defect
-in error **classification**, sitting downstream, masking whatever the lookup still
-reports. `instanceof` compares against the `AppError` constructor reachable from
-the checking file. Next's bundler can instantiate `app.errors.ts` more than once —
-separate route bundles, and the dynamic `await import()` calls in
-`NotificationHandler` and the tenancy paths. Each instantiation is a distinct class
-object, so an error crossing that boundary fails `instanceof` despite being the
-same class by name and shape.
+## 3. Type errors — 83 → 79, all four were broken endpoints
 
-So a legitimate `NotFoundError` — message beginning `Organization …` — was being
-reported as an unexpected 500, and the client timeout followed. Identically for all
-**51** controllers.
+Triaged by runtime risk rather than count. The four fixed were not cosmetic:
 
-## 4. The fix
+- **`POST /api/trips/import`** called `tripController.importTrips`, which **does not
+  exist anywhere**. Every call threw `TypeError: ... is not a function` → opaque 500.
+  TS2551 said *"Did you mean 'exportTrips'?"*. Now returns an explicit **501** —
+  trip import needs a column mapping, duplicate policy and partial-failure
+  behaviour; guessing those would create bad data, which is worse than an honest
+  "not built".
+- **3 reporting routes** (execution download, KPI evaluate, template instantiate)
+  passed the awaited `params` **object** where the controller takes `id: string`, so
+  `id` arrived as `{ id: "..." }` and every call 404'd or queried for
+  `"[object Object]"`. TS2345 flagged all three.
 
-- `isAppError()` — structural guard in `app.errors.ts`. Holds across duplicate
-  module instances. Deliberately narrow: `code` **and** `statusCode` must both be
-  present and correctly typed, so an arbitrary object can't impersonate a domain
-  error and choose its own HTTP status.
-- `describeError()` — flat log object, so the message and stack print in full
-  instead of truncating at the constructor name. This is what cost three rounds of
-  guessing.
-- Applied to **40 controllers** plus the vehicle controller.
+That's **four endpoints broken in production**, each flagged by tsc and shipped by
+`ignoreBuildErrors: true`. The remaining 79 are overwhelmingly frontend (42)
+`null`-vs-`undefined` mismatches with no runtime consequence.
 
-`orgUnitId` auto-assignment was already correct and is unchanged.
-
-**Deploy and retry.** If creation still fails you will now get the real status and
-the full message — most likely `400 VEHICLE_LIMIT_REACHED`, since
-`features.maxVehicles` is 10 and you have 76 vehicles:
-
-```js
-db.tblorganizations.updateOne({ slug: "willsgrove-farm-enterprises-9e80ed" },
-  { $set: { "features.maxVehicles": 500 } })
-```
-
-## Also included (from the previous pass, unchanged)
-Global search scoping, drivers-create `orgUnitId`, four consolidated
-`resolveTenantContext` copies, `db:purge-sentinels`, Sentry removal,
-`SECURITY-CREDENTIALS.md`.
-
-## NOT done
-- **Export paths** (CSV/Excel/print for expenses, fuel, maintenance, trips) — not
-  audited. Still treat as a suspected leak.
-- **AI services** — still the fail-closed placeholder.
-- **Remaining type errors** — 83, unchanged.
+**The real lesson is the config, not the count.** These four cost nothing to find —
+the compiler had already found them. Turning off `ignoreBuildErrors` is now within
+reach and is the highest-value follow-up.
 
 ## Verification
-`npm run test:security` **196/196** (6 new) · `npx tsc --noEmit` **83** (baseline 83).
+`npm run test:security` **211/211** (15 new) · `npx tsc --noEmit` **79** (was 83).
