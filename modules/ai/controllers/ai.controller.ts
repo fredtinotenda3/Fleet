@@ -103,13 +103,16 @@ export class AIController {
   async getDriverRisk(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
+      /**
+       * Driver risk IS scoped now (see the KNOWN OPEN QUESTION note in
+       * driver-risk.service.ts about driver_id's actual shape in your
+       * data -- scoping is in place, but verify against real trip
+       * records before trusting the numbers for scope-narrowed users).
+       */
       const aiContext = await resolveTenantContext(req);
-      if (aiContext.accessibleOrgUnitIds !== null) {
-        return successResponse(scopedAiUnavailable());
-      }
       const driverId = req.nextUrl.searchParams.get('driverId');
 
-      const result = await driverRiskService.calculateDriverRisk(tenantId);
+      const result = await driverRiskService.calculateDriverRisk(tenantId, aiContext);
 
       if (!result.success) {
         return errorResponse('Risk calculation failed', 'AI_ERROR', 500);
@@ -218,25 +221,44 @@ export class AIController {
     try {
       const tenantId = await getTenantFromRequest(req);
       const aiContext = await resolveTenantContext(req);
-      if (aiContext.accessibleOrgUnitIds !== null) {
-        return successResponse(scopedAiUnavailable());
-      }
+      const isScoped = aiContext.accessibleOrgUnitIds !== null;
 
+      /**
+       * fleet-health and driver-risk are properly org-unit scoped now,
+       * so a scope-narrowed caller (branch/department/workshop/fleet
+       * manager) gets real numbers for those two instead of nothing.
+       * predictive-maintenance, fuel-fraud and expense-anomaly remain
+       * behind the fail-closed placeholder until each is scoped the
+       * same way -- see scopedAiUnavailable() above for why a
+       * partially-scoped panel is worse than a blocked one.
+       */
       const [health, maintenance, driverRisk, fuelFraud, expenseAnomalies] =
         await Promise.all([
-          fleetHealthService.calculateHealthScore(tenantId),
-          predictiveMaintenanceService.predictAll(tenantId),
-          driverRiskService.calculateDriverRisk(tenantId),
-          fuelFraudDetectionService.detectFraud(tenantId),
-          expenseAnomalyDetectionService.detectAnomalies(tenantId),
+          fleetHealthService.calculateHealthScore(aiContext.organizationId, aiContext),
+          isScoped
+            ? Promise.resolve(null)
+            : predictiveMaintenanceService.predictAll(tenantId),
+          driverRiskService.calculateDriverRisk(tenantId, aiContext),
+          isScoped
+            ? Promise.resolve(null)
+            : fuelFraudDetectionService.detectFraud(tenantId),
+          isScoped
+            ? Promise.resolve(null)
+            : expenseAnomalyDetectionService.detectAnomalies(tenantId),
         ]);
 
       return successResponse({
         fleetHealth: health.success ? health.data : null,
-        predictiveMaintenance: maintenance.success ? maintenance : null,
+        predictiveMaintenance:
+          maintenance && maintenance.success ? maintenance : isScoped ? scopedAiUnavailable() : null,
         driverRisk: driverRisk.success ? driverRisk : null,
-        fuelFraud: fuelFraud.success ? fuelFraud : null,
-        expenseAnomalies: expenseAnomalies.success ? expenseAnomalies : null,
+        fuelFraud: fuelFraud && fuelFraud.success ? fuelFraud : isScoped ? scopedAiUnavailable() : null,
+        expenseAnomalies:
+          expenseAnomalies && expenseAnomalies.success
+            ? expenseAnomalies
+            : isScoped
+              ? scopedAiUnavailable()
+              : null,
         timestamp: new Date(),
       });
     } catch (error) {

@@ -15,12 +15,43 @@ import { organizationRepository } from '@/modules/organizations/repositories/org
 import { tripRepository } from '@/modules/trips/repositories/trip.repository';
 import { telematicsRepository } from '@/modules/telematics/repositories/telematics.repository';
 import { resolveOrganization } from '@/server/tenancy/organization-resolver';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 
 export class DriverRiskService extends BaseAIService {
   protected readonly serviceName = 'DriverRisk';
   protected readonly predictionType = 'driver_risk';
 
-  async calculateDriverRisk(tenantId: string): Promise<AIBatchResult<DriverRiskScore>> {
+  /**
+   * Driver risk, now org-unit scoped the same way fleet-health is:
+   * every read this service makes -- the driver roster itself, plus
+   * each driver's trips and telematics -- is narrowed by the caller's
+   * accessibleOrgUnitIds rather than computed org-wide and handed to
+   * whoever asked.
+   *
+   * `context` optional: platform tooling and any nightly digest job
+   * still want organization-wide risk scores with no context.
+   *
+   * KNOWN OPEN QUESTION (not fixed here, flagging rather than guessing):
+   * this reads drivers from OrganizationMember (organization.members),
+   * matching trips by member.userId === trip.driver_id. Elsewhere in
+   * this codebase there's a dedicated tbldrivers collection
+   * (modules/drivers) with its own scoped roster
+   * (driverRepository.findAllInScope), and DriverSelect pickers in the
+   * fuel module bind driver_id to THAT collection's _id, not a user's
+   * userId. TripForm's own driver_id field, meanwhile, is a free-text
+   * input, not bound to either. Depending on which shape driver_id
+   * actually holds in your data, member.userId may never match a real
+   * trip's driver_id, which would silently return zero trips (and a
+   * default-safe score) for every driver regardless of scoping. I
+   * don't have production data to check which case you're in, and
+   * switching the source entity is a real behavior change, not a
+   * mechanical scoping fix -- flagging this rather than guessing.
+   */
+  async calculateDriverRisk(
+    tenantId: string,
+    context?: TenantContext
+  ): Promise<AIBatchResult<DriverRiskScore>> {
     try {
       const organization = await resolveOrganization(tenantId);
       if (!organization) {
@@ -34,7 +65,22 @@ export class DriverRiskService extends BaseAIService {
         };
       }
 
-      const drivers: OrganizationMember[] = organization.members || [];
+      const allMembers: OrganizationMember[] = organization.members || [];
+
+      // Same fail-closed pattern as driver.tenancy-addendum.ts: a
+      // member with no orgUnitId is invisible to a scope-narrowed
+      // caller until assigned to an org unit, rather than defaulting
+      // to visible.
+      const drivers: OrganizationMember[] =
+        context && context.accessibleOrgUnitIds !== null
+          ? allMembers.filter(
+              (m) =>
+                (m as OrganizationMember & { orgUnitId?: string }).orgUnitId != null &&
+                context.accessibleOrgUnitIds!.includes(
+                  (m as OrganizationMember & { orgUnitId?: string }).orgUnitId!
+                )
+            )
+          : allMembers;
       const results: AIBatchResult<DriverRiskScore> = {
         success: true,
         results: [],
@@ -46,7 +92,7 @@ export class DriverRiskService extends BaseAIService {
 
       for (const member of drivers) {
         try {
-          const score = await this.calculateSingleRisk(member, tenantId);
+          const score = await this.calculateSingleRisk(member, tenantId, context);
           if (score.success && score.data) {
             results.results.push({
               entityId: member.userId,
@@ -88,11 +134,16 @@ export class DriverRiskService extends BaseAIService {
 
   private async calculateSingleRisk(
     driver: OrganizationMember,
-    tenantId: string
+    tenantId: string,
+    context?: TenantContext
   ): Promise<AIResult<DriverRiskScore>> {
     try {
+      const scope = context
+        ? (tenantScopeService.buildFilter(context, 'orgUnitId') as Record<string, unknown>)
+        : {};
+
       const rawTrips = await tripRepository.findMany(
-        { driver_id: driver.userId },
+        { driver_id: driver.userId, ...scope } as never,
         tenantId
       );
 
@@ -111,7 +162,7 @@ export class DriverRiskService extends BaseAIService {
         };
       });
 
-      const telematicsData = await this.getDriverTelematics(driver.userId, tenantId);
+      const telematicsData = await this.getDriverTelematics(driver.userId, tenantId, context);
 
       const metrics = this.calculateRiskMetrics(driver, trips, telematicsData);
 
@@ -161,10 +212,18 @@ export class DriverRiskService extends BaseAIService {
 
   private async getDriverTelematics(
     driverId: string,
-    tenantId: string
+    tenantId: string,
+    context?: TenantContext
   ): Promise<TelematicsEntity[]> {
     try {
-      const rawTrips = await tripRepository.findMany({ driver_id: driverId }, tenantId);
+      const scope = context
+        ? (tenantScopeService.buildFilter(context, 'orgUnitId') as Record<string, unknown>)
+        : {};
+
+      const rawTrips = await tripRepository.findMany(
+        { driver_id: driverId, ...scope } as never,
+        tenantId
+      );
       const vehicleIds = [...new Set(rawTrips.map((t) => t.license_plate).filter(Boolean))];
 
       if (vehicleIds.length === 0) return [];
@@ -177,8 +236,15 @@ export class DriverRiskService extends BaseAIService {
       // The overall cap approximates the previous per-vehicle limit:100
       // so total telematics volume pulled per driver doesn't change
       // materially, it's just fetched in one call instead of N.
+      //
+      // Also scoped: telematics rows carry their own orgUnitId (see
+      // telematics.tenancy-addendum.ts), and a driver's vehicle-plate
+      // set could in principle include a plate outside the caller's
+      // accessible units if trips were scoped inconsistently -- the
+      // scope predicate here is defense in depth on top of the
+      // trip-level scoping above, not a substitute for it.
       const telematics = await telematicsRepository.findMany(
-        { license_plate: { $in: vehicleIds } } as any,
+        { license_plate: { $in: vehicleIds }, ...scope } as never,
         tenantId,
         { limit: 100 * vehicleIds.length }
       );
