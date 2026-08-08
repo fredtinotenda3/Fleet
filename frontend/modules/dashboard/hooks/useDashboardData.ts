@@ -8,6 +8,7 @@ import type { ExpenseStats } from '@/shared/types/expense.types';
 const dashboardKeys = {
   vehicleStats: ['dashboard', 'vehicle-stats'] as const,
   aiSummary: ['dashboard', 'ai-summary'] as const,
+  needsAttention: ['dashboard', 'needs-attention'] as const,
   reminders: ['dashboard', 'reminders'] as const,
   remindersOverdue: ['dashboard', 'reminders', 'overdue'] as const,
   remindersUpcoming: ['dashboard', 'reminders', 'upcoming'] as const,
@@ -33,6 +34,22 @@ export function useAIDashboardWidget() {
     queryFn: dashboardApi.getAISummary,
     staleTime: 5 * 60_000,
     retry: 0,
+  });
+}
+
+/**
+ * Powers the "Needs Attention" widget: fleet health, driver risk, fuel
+ * fraud, expense anomalies, predictive maintenance, compliance, and
+ * maintenance reminders combined into one priority-ranked list by
+ * needsAttentionService.getFeed(). `limit` caps the rendered list --
+ * the API also returns `total`/`bySeverity` for a full-page view.
+ */
+export function useNeedsAttentionWidget(limit = 20) {
+  return useQuery({
+    queryKey: [...dashboardKeys.needsAttention, limit],
+    queryFn: () => dashboardApi.getNeedsAttention(limit),
+    staleTime: 2 * 60_000,
+    retry: 1,
   });
 }
 

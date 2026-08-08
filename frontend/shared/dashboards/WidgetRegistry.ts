@@ -10,11 +10,13 @@ import { ExpensesWidget } from './widgets/ExpensesWidget';
 import { TripsWidget } from './widgets/TripsWidget';
 import { AlertsWidget } from './widgets/AlertsWidget';
 import { AIRecommendationsWidget } from './widgets/AIRecommendationsWidget';
+import { NeedsAttentionWidget } from './widgets/NeedsAttentionWidget';
 import { MapsWidget } from './widgets/MapsWidget';
 
 export type WidgetKey =
   | 'kpis'
   | 'fleetStatus'
+  | 'needsAttention'
   | 'maintenance'
   | 'fuel'
   | 'expenses'
@@ -76,6 +78,14 @@ export const WIDGET_REGISTRY: Record<WidgetKey, WidgetDefinition> = {
     component: AIRecommendationsWidget,
     permission: [Permission.ANALYTICS_VIEW],
   },
+  needsAttention: {
+    key: 'needsAttention',
+    title: 'Needs attention',
+    description: 'Unified, priority-ranked queue across AI insights, compliance, and maintenance.',
+    size: 'lg',
+    component: NeedsAttentionWidget,
+    permission: [Permission.ANALYTICS_VIEW],
+  },
   maintenance: {
     key: 'maintenance',
     title: 'Upcoming maintenance',
@@ -130,6 +140,7 @@ export const WIDGET_REGISTRY: Record<WidgetKey, WidgetDefinition> = {
 export const WIDGET_ORDER: WidgetKey[] = [
   'kpis',
   'fleetStatus',
+  'needsAttention',
   'aiRecommendations',
   'maintenance',
   'fuel',

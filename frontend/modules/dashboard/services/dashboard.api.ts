@@ -11,6 +11,7 @@ import type {
   Trip,
   AIDashboardSummary,
   NotificationFeedItem,
+  NeedsAttentionFeed,
 } from '../types';
 import type { ExpenseStats } from '@/shared/types/expense.types';
 import type { FuelStats } from '@/shared/types/fuel.types';
@@ -27,6 +28,16 @@ export const dashboardApi = {
 
   async getAISummary(): Promise<AIDashboardSummary> {
     return apiClient.get<AIDashboardSummary>('/api/ai/dashboard');
+  },
+
+  /**
+   * Powers the "Needs Attention" widget and its dedicated page. Backed
+   * by needsAttentionService.getFeed(), which combines all five AI
+   * services plus compliance and maintenance into one priority-ranked
+   * list -- see modules/ai/services/needs-attention.service.ts.
+   */
+  async getNeedsAttention(limit = 20): Promise<NeedsAttentionFeed> {
+    return apiClient.get<NeedsAttentionFeed>('/api/ai/needs-attention', { params: { limit } });
   },
 
   async getReminders(): Promise<Reminder[]> {

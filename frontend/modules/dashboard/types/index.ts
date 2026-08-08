@@ -13,8 +13,10 @@ import type {
   ExpenseAnomalyAlert,
   AIBatchResult,
 } from '@/modules/ai/types/ai.types';
+import type { NeedsAttentionFeed, NeedsAttentionItem } from '@/modules/ai/types/needs-attention.types';
 
 export type { VehicleStats, Reminder, FuelLog, Expense, Trip };
+export type { NeedsAttentionFeed, NeedsAttentionItem };
 
 export interface AIDashboardSummary {
   fleetHealth: FleetHealthScore | null;

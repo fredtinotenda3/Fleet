@@ -242,6 +242,29 @@ export class AIController {
     }
   }
 
+  // ─── Needs Attention Feed ──────────────────────────────────────────────────
+
+  /**
+   * Unified, priority-ranked feed combining all five AI services plus
+   * compliance and maintenance. See needs-attention.service.ts for the
+   * scoring formula and per-source scoping notes -- every source it
+   * reads is already org-unit scoped, so this endpoint inherits that
+   * rather than adding a new unscoped read.
+   */
+  async getNeedsAttention(req: NextRequest) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const aiContext = await resolveTenantContext(req);
+      const limitParam = req.nextUrl.searchParams.get('limit');
+      const limit = limitParam ? Math.min(200, Math.max(1, parseInt(limitParam, 10) || 50)) : 50;
+
+      const feed = await needsAttentionService.getFeed(tenantId, aiContext, limit);
+      return successResponse(feed);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
   // ─── Error Handler ─────────────────────────────────────────────────────────
 
   private handleError(error: unknown) {
