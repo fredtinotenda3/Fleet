@@ -422,6 +422,29 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
       'PLATFORM_OWNER_TENANT_ID. Per-organization installations are organization-level.',
     confirmed: true,
   },
+  // ── Newly scoped in the cost-per-km engine pass. ───────────────────
+  {
+    module: 'finance',
+    collections: ['tblallocationledger', 'tbldepreciationprofiles', 'tblglsubmissions'],
+    level: 'org-unit',
+    orgUnitSource: 'vehicle',
+    rationale:
+      'SCOPED, WITH ONE OPEN PRODUCT QUESTION. Allocation postings and depreciation profiles ' +
+      'inherit the orgUnitId of the vehicle they charge -- the same rule fuel/expenses/trips/' +
+      'maintenance already follow, and the reason orgUnitId is derived from a scoped vehicle ' +
+      'lookup on every write rather than accepted from the request body (otherwise a branch ' +
+      "manager could post fabricated costs against another branch's vehicle and stamp their own " +
+      'scope on them, corrupting that branch\'s cost-per-km with a cost they cannot even see). ' +
+      'OPEN QUESTION: tblglsubmissions has no vehicle to inherit from, so its orgUnitId comes ' +
+      "from resolveCreationOrgUnitId (the submitter's own assignment). That assumes each branch " +
+      'closes its own books. If the customer instead submits ONE consolidated GL figure per ' +
+      'account for the whole organization, GL submissions should be organization-level -- a ' +
+      'branch-scoped reconciliation report would otherwise compare a branch platform total ' +
+      'against a consolidated GL total and show a guaranteed variance that is an artefact of ' +
+      'scoping, not a real reconciliation gap. Left confirmed:false until product answers ' +
+      'branch-vs-consolidated; surfaced by `npm run tenancy:report`.',
+    confirmed: false,
+  },
 ];
 
 const BY_MODULE = new Map(MODULE_SCOPE_REGISTRY.map((e) => [e.module, e]));

@@ -23,7 +23,34 @@ function nextId(): string {
   return idCounter.toString(16).padStart(24, '0');
 }
 
-const SUPPORTED_OPERATORS = new Set(['$ne', '$in', '$nin', '$exists']);
+const SUPPORTED_OPERATORS = new Set(['$ne', '$in', '$nin', '$exists', '$gte', '$lte', '$gt', '$lt']);
+
+/**
+ * Comparable ordering for $gte/$lte/$gt/$lt.
+ *
+ * Dates are compared by epoch millis, not by identity or by string
+ * form -- the finance repositories filter on periodStart/periodEnd, and
+ * two Date objects for the same instant are never `===`. Anything
+ * non-comparable (undefined, an object) returns null so the operator
+ * evaluates to false rather than to an accidental truth via JS's
+ * coercion rules.
+ */
+function comparable(value: unknown): number | string | null {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') return value;
+  return null;
+}
+
+function compareValues(value: unknown, operand: unknown): number | null {
+  const left = comparable(value);
+  const right = comparable(operand);
+  if (left === null || right === null) return null;
+  if (typeof left !== typeof right) return null;
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
 
 function matchOperator(value: unknown, operator: string, operand: unknown): boolean {
   switch (operator) {
@@ -35,6 +62,22 @@ function matchOperator(value: unknown, operator: string, operand: unknown): bool
       return Array.isArray(operand) && !operand.includes(value as never);
     case '$exists':
       return (value !== undefined) === Boolean(operand);
+    case '$gte': {
+      const c = compareValues(value, operand);
+      return c !== null && c >= 0;
+    }
+    case '$lte': {
+      const c = compareValues(value, operand);
+      return c !== null && c <= 0;
+    }
+    case '$gt': {
+      const c = compareValues(value, operand);
+      return c !== null && c > 0;
+    }
+    case '$lt': {
+      const c = compareValues(value, operand);
+      return c !== null && c < 0;
+    }
     default:
       throw new Error(
         `fake-collection: unsupported operator "${operator}". Extend the fake ` +
@@ -205,6 +248,106 @@ export class FakeCollection {
     }
 
     return { upsertedCount, modifiedCount, matchedCount };
+  }
+
+  /**
+   * Minimal aggregate supporting exactly the shape the finance
+   * repositories emit: a `$match` stage followed by a `$group` stage
+   * whose accumulators are `$sum` (either of a field path or of the
+   * literal 1). Group `_id` may be a field path string or an object of
+   * field paths, matching AllocationLedgerRepository.
+   * getNetTotalsByCategory (composite _id) and getNetTotalsByGlAccount
+   * (single field path).
+   *
+   * Added because the allocation ledger's netting behaviour -- a
+   * reversing posting carrying the equal-and-opposite reportingAmount so
+   * that summing nets it to zero -- IS the property the cost engine
+   * depends on, and it lives in an aggregation. Without this, that
+   * property could only be asserted by mocking the repository, which
+   * would test the mock instead of the pipeline. Per this file's own
+   * header policy, unsupported stages and accumulators throw loudly
+   * rather than silently returning the wrong rows.
+   */
+  aggregate(pipeline: Array<Record<string, unknown>>) {
+    const stages = pipeline ?? [];
+    for (const stage of stages) {
+      const names = Object.keys(stage);
+      if (names.length !== 1 || !['$match', '$group'].includes(names[0])) {
+        throw new Error(
+          `fake-collection: unsupported aggregation stage "${names.join(',')}". ` +
+            'Extend the fake rather than letting a test pass without evaluating it.'
+        );
+      }
+    }
+
+    const matchStage = stages.find((s) => '$match' in s)?.$match as
+      | Record<string, unknown>
+      | undefined;
+    let rows: FakeDoc[] = matchStage ? this.select(matchStage) : this.docs.slice();
+
+    const groupStage = stages.find((s) => '$group' in s)?.$group as
+      | Record<string, unknown>
+      | undefined;
+
+    let output: Array<Record<string, unknown>> = rows as Array<Record<string, unknown>>;
+
+    if (groupStage) {
+      const { _id: idSpec, ...accumulators } = groupStage;
+
+      const keyOf = (doc: FakeDoc): { key: string; id: unknown } => {
+        if (typeof idSpec === 'string') {
+          const id = doc[idSpec.replace(/^\$/, '')];
+          return { key: JSON.stringify(id ?? null), id: id ?? null };
+        }
+        if (idSpec && typeof idSpec === 'object') {
+          const id: Record<string, unknown> = {};
+          for (const [field, pathSpec] of Object.entries(idSpec as Record<string, string>)) {
+            id[field] = doc[String(pathSpec).replace(/^\$/, '')] ?? null;
+          }
+          return { key: JSON.stringify(id), id };
+        }
+        return { key: 'null', id: null };
+      };
+
+      const groups = new Map<string, { id: unknown; docs: FakeDoc[] }>();
+      for (const doc of rows) {
+        const { key, id } = keyOf(doc);
+        const bucket = groups.get(key);
+        if (bucket) bucket.docs.push(doc);
+        else groups.set(key, { id, docs: [doc] });
+      }
+
+      output = Array.from(groups.values()).map(({ id, docs }) => {
+        const result: Record<string, unknown> = { _id: id };
+        for (const [outField, accumulator] of Object.entries(accumulators)) {
+          const spec = accumulator as Record<string, unknown>;
+          const accNames = Object.keys(spec);
+          if (accNames.length !== 1 || accNames[0] !== '$sum') {
+            throw new Error(
+              `fake-collection: unsupported accumulator "${accNames.join(',')}" in $group. ` +
+                'Only $sum is implemented.'
+            );
+          }
+          const operand = spec.$sum;
+          if (typeof operand === 'number') {
+            result[outField] = docs.length * operand;
+          } else if (typeof operand === 'string') {
+            const field = operand.replace(/^\$/, '');
+            result[outField] = docs.reduce((sum, d) => {
+              const v = d[field];
+              return sum + (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+            }, 0);
+          } else {
+            throw new Error('fake-collection: $sum operand must be a field path or a number.');
+          }
+        }
+        return result;
+      });
+    }
+
+    return {
+      toArray: async () => output,
+    };
   }
 
   /** The tenant predicate actually applied by the most recent query. */

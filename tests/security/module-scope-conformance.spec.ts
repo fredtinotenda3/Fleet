@@ -204,6 +204,11 @@ describe('open decisions stay visible', () => {
     expect(open.map((e) => e.module).sort()).toEqual([
       'attention',
       'compliance',
+      // finance: allocation postings/depreciation profiles inherit vehicle
+      // scope (settled), but whether GL submissions are per-branch or one
+      // consolidated organization figure is an open product question --
+      // see the module's rationale in the registry.
+      'finance',
       'fuel-cards',
       'fuel-stations',
       'intelligence',

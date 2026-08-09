@@ -203,6 +203,34 @@ export enum Permission {
   EXTERNAL_PROVIDER_VIEW = 'external:provider:view',
   EXTERNAL_PROVIDER_MANAGE = 'external:provider:manage',
 
+  // -- Finance (cost-per-km engine: allocation ledger, depreciation, GL reconciliation) --
+  /**
+   * Read access to the allocation ledger, cost-per-km, depreciation
+   * profiles and the GL reconciliation report. Granted to ACCOUNTANT and
+   * BRANCH_MANAGER (a branch manager is accountable for their branch's
+   * running costs, so read is operationally necessary), and to
+   * SUPER_ADMIN/ORGANIZATION_OWNER/ORGANIZATION_ADMIN automatically via
+   * the Object.values(Permission) grant below.
+   *
+   * A role gate only. WHICH postings a holder sees is decided separately
+   * by TenantContext.accessibleOrgUnitIds -- every finance read path goes
+   * through TenantScopedRepository.findManyInScope or an explicitly
+   * scoped aggregation.
+   */
+  FINANCE_VIEW = 'finance:view',
+  /**
+   * Write access: posting and reversing allocations, editing depreciation
+   * profiles, posting depreciation charges, submitting GL figures, and
+   * changing organization finance settings.
+   *
+   * Deliberately NOT granted to BRANCH_MANAGER. Posting depreciation and
+   * submitting general-ledger figures is an accounting function, not a
+   * branch-operations one, and finance settings (reporting currency, FX
+   * policy) are organization-level -- a branch changing them would
+   * silently restate every other branch's reported costs.
+   */
+  FINANCE_MANAGE = 'finance:manage',
+
   // -- Notifications (Phase C -- hierarchy filtering) --
   /**
    * Governs creating an org-unit broadcast notification (not reading/
@@ -325,6 +353,13 @@ export const rolePermissions: Record<Role, Permission[]> = {
     Permission.FUEL_DELETE,
     Permission.TRIP_DELETE,
     Permission.MAINTENANCE_DELETE,
+    // Finance -- READ ONLY, deliberately. A branch manager is
+    // accountable for their branch's cost per km and must be able to see
+    // it, but posting depreciation, submitting GL figures and changing
+    // the organization's reporting currency or FX policy are accounting
+    // functions with organization-wide effect. FINANCE_MANAGE stays with
+    // ACCOUNTANT (and org owner/admin).
+    Permission.FINANCE_VIEW,
   ],
 
   /**
@@ -529,6 +564,11 @@ export const rolePermissions: Record<Role, Permission[]> = {
     // escalates to an organization admin.
     Permission.EXPENSE_DELETE,
     Permission.FUEL_DELETE,
+    // Finance -- the cost-per-km engine's owning role. Both read and
+    // write: posting allocations, depreciation runs, GL submissions and
+    // finance settings are all accounting functions.
+    Permission.FINANCE_VIEW,
+    Permission.FINANCE_MANAGE,
   ],
 
   [Role.DISPATCHER]: [
