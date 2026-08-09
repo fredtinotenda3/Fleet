@@ -28,6 +28,7 @@ import { expenseAnomalyDetectionService } from './expense-anomaly-detection.serv
 import { complianceService } from '@/modules/compliance/services/compliance.service';
 import { maintenanceQueryService } from '@/modules/maintenance/services/maintenance-query.service';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { attentionItemRepository } from '@/modules/attention/repositories/attention-item.repository';
 import { monitoring } from '@/infrastructure/monitoring/logger';
 import type { AISeverity } from '../types/ai.types';
 import type {
@@ -171,6 +172,16 @@ export class NeedsAttentionService {
       bySeverity[item.severity] += 1;
     }
 
+    // Persist a snapshot of the full (pre-`limit`) list into
+    // attention_items so the queue survives past this single
+    // request/response -- see modules/attention/repositories/
+    // attention-item.repository.ts. This is a side effect layered on
+    // top of the existing live computation: it never changes what this
+    // method returns, and a persistence failure is swallowed (logged,
+    // not thrown) for the same reason each source read is -- a storage
+    // blip shouldn't blank out an otherwise-successful feed response.
+    await this.persistFeed(tenantId, items, context);
+
     return {
       items: items.slice(0, limit),
       total: items.length,
@@ -179,6 +190,34 @@ export class NeedsAttentionService {
       unavailableSources,
       generatedAt: new Date(),
     };
+  }
+
+  /**
+   * Upserts this refresh's items into attention_items, keyed so repeat
+   * calls update the same rows instead of duplicating them.
+   *
+   * orgUnitId tagging: see the 'attention' entry in
+   * server/tenancy/module-scope.registry.ts for the full rationale.
+   * Short version -- this tags every row from a refresh with the
+   * caller's `activeOrgUnitId` (the org unit currently selected for
+   * this request), not each item's individually-resolved owning
+   * entity. That is a known simplification, not an oversight: every
+   * item still passed through an org-unit-scoped read to get here, so
+   * nothing leaks; it just means a caller with several org units
+   * active but none individually selected will persist rows without an
+   * orgUnitId, which is fail-closed (invisible to scope-narrowed reads)
+   * rather than fail-open.
+   */
+  private async persistFeed(
+    tenantId: string,
+    items: NeedsAttentionItem[],
+    context?: TenantContext
+  ): Promise<void> {
+    try {
+      await attentionItemRepository.upsertFeedItems(tenantId, items, context?.activeOrgUnitId);
+    } catch (error) {
+      monitoring.logError('[needsAttentionService] failed to persist attention_items', error as Error);
+    }
   }
 
   // ─── Per-source readers ────────────────────────────────────────────────

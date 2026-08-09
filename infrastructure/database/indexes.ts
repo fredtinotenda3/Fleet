@@ -38,6 +38,7 @@ import { RULES_INDEXES } from './indexes.rules-addendum';
 import { TELEMATICS_INDEXES } from './indexes.telematics-addendum';
 import { WORKFLOWS_INDEXES } from './indexes.workflows-addendum';
 import { ANOMALY_INDEXES } from './indexes.anomaly-addendum'
+import { ATTENTION_INDEXES } from './indexes.attention-addendum'
 // Phase 3 tripId join indexes
 import { TRIP_ANALYTICS_INDEXES } from './indexes.trip-analytics-addendum';
 
@@ -422,7 +423,8 @@ export const INDEXES = {
   ...RULES_INDEXES,
   ...TELEMATICS_INDEXES,
   ...WORKFLOWS_INDEXES,
-  ...ANOMALY_INDEXES, 
+  ...ANOMALY_INDEXES,
+  ...ATTENTION_INDEXES,
   tbltrips: [
     ...BASE_INDEXES.tbltrips,
     ...TRIP_ANALYTICS_INDEXES.tbltrips,             // Phase 3

@@ -202,6 +202,7 @@ describe('open decisions stay visible', () => {
     // surface so the count cannot quietly drift upward unnoticed. If you
     // are confirming a decision, flip `confirmed` and update this number.
     expect(open.map((e) => e.module).sort()).toEqual([
+      'attention',
       'compliance',
       'fuel-cards',
       'fuel-stations',

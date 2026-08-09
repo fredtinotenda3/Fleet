@@ -330,6 +330,26 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
     confirmed: false,
   },
 
+  // ── Newly scoped in the attention-queue persistence pass. ─────────
+  {
+    module: 'attention',
+    collections: ['tblattentionitems'],
+    level: 'org-unit',
+    orgUnitSource: 'parent-record',
+    rationale:
+      'SCOPED, WITH A KNOWN GAP. Each attention_items row is a persisted snapshot of a ' +
+      'NeedsAttentionItem produced by needsAttentionService, which already reads every ' +
+      "upstream source (vehicles, drivers, fuel, expenses, compliance) through the caller's " +
+      'org-unit-scoped TenantContext, so a row cannot exist that the caller who generated it ' +
+      "was not allowed to see. What is NOT yet done is resolving each item's own true owning " +
+      "entity (its source vehicle or driver) into orgUnitId -- this pass tags every row in a " +
+      "refresh with the request's activeOrgUnitId instead, which is correct only when the " +
+      'caller has one org unit active and leaves orgUnitId unset (fail-closed, invisible to ' +
+      'narrowed reads) otherwise. Left confirmed:false until a follow-up joins each item back ' +
+      'to its source entity the way tblanomalies does.',
+    confirmed: false,
+  },
+
   // ── Organization- and platform-level by nature. Do not scope. ─────
   {
     module: 'organizations',

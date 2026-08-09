@@ -160,6 +160,53 @@ export class FakeCollection {
     return { deletedCount: 0 };
   }
 
+  /**
+   * Minimal bulkWrite supporting exactly the shape
+   * AttentionItemRepository.upsertFeedItems() emits: updateOne with
+   * $set / $setOnInsert and upsert:true. Not a general Mongo bulkWrite
+   * emulation -- extend this (per the file header's own policy) if a
+   * future caller needs a shape this doesn't cover, rather than letting
+   * it silently no-op.
+   */
+  async bulkWrite(
+    ops: Array<{
+      updateOne: {
+        filter: Record<string, unknown>;
+        update: { $set?: Record<string, unknown>; $setOnInsert?: Record<string, unknown> };
+        upsert?: boolean;
+      };
+    }>
+  ): Promise<{ upsertedCount: number; modifiedCount: number; matchedCount: number }> {
+    let upsertedCount = 0;
+    let modifiedCount = 0;
+    let matchedCount = 0;
+
+    for (const op of ops) {
+      if (!op.updateOne) {
+        throw new Error('fake-collection: bulkWrite only supports updateOne operations');
+      }
+      const { filter, update, upsert } = op.updateOne;
+      const target = this.select(filter)[0];
+
+      if (target) {
+        matchedCount += 1;
+        Object.assign(target, update.$set ?? {});
+        modifiedCount += 1;
+      } else if (upsert) {
+        const newDoc = {
+          _id: nextId(),
+          ...filter,
+          ...(update.$set ?? {}),
+          ...(update.$setOnInsert ?? {}),
+        } as FakeDoc;
+        this.docs.push(newDoc);
+        upsertedCount += 1;
+      }
+    }
+
+    return { upsertedCount, modifiedCount, matchedCount };
+  }
+
   /** The tenant predicate actually applied by the most recent query. */
   lastFilter(): Record<string, unknown> {
     return this.seenFilters[this.seenFilters.length - 1] ?? {};
