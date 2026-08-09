@@ -17,6 +17,7 @@ import { useVehicle, useVehicleActivity } from '../hooks/useVehicles';
 import { useDeleteVehicle, useUpdateVehicle } from '../hooks/useVehicleMutations';
 import { VehicleModal, type VehicleModalMode } from '../components/VehicleModal';
 import { VehicleAnalyticsPanel } from '../components/analytics';
+import { VehicleCostsPanel } from '@/frontend/modules/finance/components/VehicleCostsPanel';
 import {
   getVehicleStatusMeta,
   getVehicleStatusBadgeClass,
@@ -150,6 +151,7 @@ export function VehicleDetailPage({ vehicleId }: VehicleDetailPageProps) {
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="specifications">Specifications</TabsTrigger>
           <TabsTrigger value="analytics">Analytics</TabsTrigger>
+          <TabsTrigger value="costs">Costs</TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
 
@@ -215,6 +217,14 @@ export function VehicleDetailPage({ vehicleId }: VehicleDetailPageProps) {
 
         <TabsContent value="analytics" className="mt-4">
           <VehicleAnalyticsPanel licensePlate={vehicle.license_plate} />
+        </TabsContent>
+
+        <TabsContent value="costs" className="mt-4">
+          {vehicle._id ? (
+            <VehicleCostsPanel vehicleId={vehicle._id} />
+          ) : (
+            <p className="text-body-sm text-muted-foreground">Costs are unavailable for this vehicle.</p>
+          )}
         </TabsContent>
 
         <TabsContent value="activity" className="mt-4">

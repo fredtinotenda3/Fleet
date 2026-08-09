@@ -3,10 +3,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { dashboardApi } from '@/frontend/modules/dashboard/services/dashboard.api';
 import { attentionApi } from '../services/attention.api';
+import { financeApi, startOfMonth as financeStartOfMonth } from '@/frontend/modules/finance/services/finance.api';
 
 const attentionKeys = {
   queue: (limit: number) => ['attention', 'needs-attention', limit] as const,
   monthToDateLedger: ['attention', 'ledger', 'month-to-date'] as const,
+  monthToDateAllocationTotal: ['attention', 'allocation-ledger', 'month-to-date'] as const,
 };
 
 /**
@@ -36,6 +38,35 @@ export function useMonthToDateSavings() {
   return useQuery({
     queryKey: attentionKeys.monthToDateLedger,
     queryFn: () => attentionApi.getMonthToDateLedgerExport(),
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+}
+
+/**
+ * Month-to-date allocation-ledger total (the finance module's actual
+ * posted cost, org-wide) for the SavingsStrip's second figure.
+ *
+ * Backed by GET /api/finance/gl/reconciliation, which is the one finance
+ * endpoint that returns an org-wide total without a vehicleId -- every
+ * other allocation read (getAllocations, getCostPerKm) requires one by
+ * design (see allocation.controller.ts's DoS-surface comment), and
+ * getReconciliationReport's totalPlatform figure is already a
+ * server-computed aggregate rather than a per-row read, so it doesn't
+ * reopen that concern.
+ *
+ * Gated on FINANCE_VIEW server-side, a different permission than the
+ * value-ledger export this sits next to -- a caller who can see resolved
+ * savings but lacks finance access simply gets isError here, which the
+ * strip treats as "omit this figure", not a hard failure of the whole
+ * component.
+ */
+export function useMonthToDateAllocationTotal() {
+  const now = new Date();
+  const from = financeStartOfMonth(now);
+  return useQuery({
+    queryKey: attentionKeys.monthToDateAllocationTotal,
+    queryFn: () => financeApi.getReconciliationReport(from, now),
     staleTime: 5 * 60_000,
     retry: 1,
   });

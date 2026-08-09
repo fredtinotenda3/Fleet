@@ -210,6 +210,12 @@ const NAV_SECTIONS: NavSection[] = [
           { key: 'reports-builder', label: 'Report Builder', href: '/reports/builder', permissions: [Permission.REPORT_CREATE] },
           { key: 'reports-scheduled', label: 'Scheduled', href: '/reports/scheduled', permissions: [Permission.REPORT_VIEW] },
           { key: 'reports-exports', label: 'Exports', href: '/reports/exports', permissions: [Permission.REPORT_VIEW] },
+          {
+            key: 'reports-gl-reconciliation',
+            label: 'GL Reconciliation',
+            href: '/reports/gl-reconciliation',
+            permissions: [Permission.FINANCE_VIEW],
+          },
         ],
       },
       {

@@ -1,57 +1,93 @@
-# Cartrack Live Map — Missing Files & Barrel Export Fix
+# Cost-per-km engine frontend — wiring fixes
 
-## Root cause
+Verification confirmed the backend claim (0 TS errors, 379/379 security tests) is
+correct, and confirmed the frontend claim (components exist but aren't wired) was
+also correct — every listed component/type/hook already existed in the codebase.
+Nothing needed to be built from scratch; six integration points needed wiring.
+Re-ran `npx tsc --noEmit` (0 errors) and `npm run test:security` (29 suites,
+379/379 passing) after all changes below.
 
-`LiveMapPage.tsx`, `DemoModeToggle.tsx`, and `MapsWidget.tsx` already imported real
-named exports (`useLiveMap`, `useVehicleRouteHistory`, `useDemoStatus`,
-`useSetDemoMode`, `canViewLiveMap`, `canToggleDemoMode`, `TELEMATICS_ROUTES`), but
-the frontend telematics module's `hooks/`, `services/`, `utils/`, and `routes/`
-directories only contained empty stub barrels (`export {}`) — the implementation
-files themselves didn't exist yet. That's what produced the "has no exported
-member" errors, plus the missing route page.
+## 1. Vehicle Detail Page — Costs tab
+`VehicleCostsPanel` existed, unused. `frontend/modules/vehicles/pages/VehicleDetailPage.tsx`:
+imported it, added a "Costs" tab between Analytics and Activity, passed
+`vehicle._id`. Note: `Vehicle._id` is typed optional (`BaseEntity._id?: ID`) even
+though it's always populated for a persisted vehicle in practice — added a guard
+so this can't become a `tsc` failure.
 
-The sidebar (`frontend/shared/ui/navigation/Sidebar.tsx`) already had a correct
-"Live Map" entry pointing at `/telematics/map`, gated on `Permission.VEHICLE_VIEW`
-— no change needed there. `types/index.ts`, `store/index.ts`, and `schemas/index.ts`
-were also already correct/unused for this feature and were left untouched.
+## 2. Dashboard — Cost-per-km KPI card
+`CostPerKmWidget` existed, unregistered. `frontend/shared/dashboards/WidgetRegistry.ts`:
+added a `costPerKm` entry gated on `Permission.FINANCE_VIEW` (matches the
+widget's own backend calls), added to `WIDGET_ORDER`. New widget keys already
+flow through to existing per-user layouts via `DashboardPersistence.ts`'s
+"add anything in WIDGET_ORDER missing from a saved layout" logic — no other
+file needed to change.
 
-## New files
+## 3. Command Centre — Savings strip
+`SavingsStrip` *was* already wired into `CommandCentrePage`, but it only
+reflected the **value ledger** (resolved fuel-fraud/expense-anomaly savings),
+not the finance module's **allocation ledger** the brief asked for — a real
+gap, not a false alarm.
 
-- **`app/(protected)/telematics/map/page.tsx`** — the missing route entry;
-  renders `LiveMapPage` from `@/frontend/modules/telematics/pages/LiveMapPage`.
-- **`frontend/modules/telematics/services/telematics.api.ts`** — `telematicsApi`
-  wrapping `GET /api/telematics/live-map`, `GET /api/telematics/live-map/history/[vehicleId]`,
-  `GET /api/telematics/demo`, `POST /api/telematics/demo`, following the same
-  `apiClient` pattern used in `frontend/modules/vehicles/services/vehicles.api.ts`.
-- **`frontend/modules/telematics/hooks/useLiveMap.ts`** — `useLiveMap` (10s
-  polling, matching the behavior documented in `LiveMapPage.tsx`'s header
-  comment), `useVehicleRouteHistory`, and the `telematicsKeys` query-key factory.
-- **`frontend/modules/telematics/hooks/useDemoMode.ts`** — `useDemoStatus`
-  (read) and `useSetDemoMode` (mutate + toast + cache invalidation), mirroring
-  `frontend/modules/vehicles/hooks/useVehicleMutations.ts`'s conventions.
-- **`frontend/modules/telematics/utils/telematics-permissions.utils.ts`** —
-  `canViewLiveMap` / `canToggleDemoMode`, resolved through the same
-  `permissionService` + `Permission` enum the API routes use (`VEHICLE_VIEW` /
-  `VEHICLE_EDIT`), matching `frontend/modules/drivers/utils/index.ts`'s pattern.
-- **`frontend/modules/telematics/routes/telematics.routes.ts`** —
-  `TELEMATICS_ROUTES.liveMap = '/telematics/map'`.
+Every allocation-read endpoint except one requires a `vehicleId` by design
+(`allocation.controller.ts` documents this as a deliberate anti-DoS
+constraint — no fleet-wide unscoped ledger read). The one exception is
+`GET /api/finance/gl/reconciliation`, which returns a pre-aggregated
+`totalPlatform` figure for the whole org and period, gated on `FINANCE_VIEW`.
+Used that:
+- `frontend/modules/attention/hooks/useAttentionQueue.ts`: added
+  `useMonthToDateAllocationTotal()`.
+- `frontend/modules/attention/components/SavingsStrip.tsx`: added optional
+  `allocationReport`/`isAllocationLoading`/`isAllocationError` props, rendered
+  as a fourth figure ("Allocated ... from the GL ledger"). A caller without
+  `FINANCE_VIEW` just doesn't see this figure — the rest of the strip is
+  unaffected, matching the codebase's existing degrade-gracefully pattern
+  (e.g. `CostPerKmWidget`'s own doc comment).
+- `frontend/modules/attention/pages/CommandCentrePage.tsx`: wired the new
+  hook's data into `SavingsStrip`.
 
-## Changed files (barrel exports only)
+## 4. GL Reconciliation page
+Route was missing entirely — `GLReconciliationPage` component existed with no
+`app/(protected)/reports/gl-reconciliation/page.tsx` to mount it.
+- Added `app/(protected)/reports/gl-reconciliation/page.tsx` (thin entry
+  point, same pattern as `reports/exports/page.tsx`).
+- Added a "GL Reconciliation" sidebar entry under Reports in
+  `frontend/shared/ui/navigation/Sidebar.tsx`, gated on `Permission.FINANCE_VIEW`
+  (the same permission the route itself requires server-side).
+- CSV export (`exportReconciliationCsv`) was already correctly wired in the
+  page component — verified, no change needed.
 
-- `frontend/modules/telematics/hooks/index.ts` — now exports `useLiveMap`,
-  `useVehicleRouteHistory`, `telematicsKeys`, `useDemoStatus`, `useSetDemoMode`.
-- `frontend/modules/telematics/services/index.ts` — now re-exports `telematics.api`.
-- `frontend/modules/telematics/utils/index.ts` — now exports `canViewLiveMap`,
-  `canToggleDemoMode`.
-- `frontend/modules/telematics/routes/index.ts` — now exports `TELEMATICS_ROUTES`.
-- `frontend/modules/telematics/components/index.ts` — now exports `LiveMapSvg`,
-  `LiveMapLegend`, `LiveMapVehicleList`, `DemoModeToggle` (all pre-existing
-  components; only the barrel was a stub).
-- `frontend/modules/telematics/pages/index.ts` — now exports `LiveMapPage`.
+## 5. Organisation Settings — Finance tab
+`FinanceSection`, `financeSettingsSchema`, and `FinanceSettingsFormValues`
+all already existed and were correctly exported from
+`frontend/modules/organizations/schemas/index.ts` — but `FinanceSection` was
+never imported into `OrganizationSettingsPage.tsx`, and no "Finance" tab
+existed. Finance settings live on their own endpoint
+(`GET/PUT /api/finance/settings`, gated on `FINANCE_MANAGE`, tenant-resolved
+server-side) rather than on the organization document, so they needed their
+own hook rather than reusing `useOrganizationSettings`'s mutations — used the
+already-existing `useFinanceSettings()` from
+`frontend/modules/finance/hooks/useFinance.ts`.
+
+## 6. Shared finance frontend module
+`frontend/modules/finance/{types,api,hooks,utils}` all present and correctly
+structured. `formatMoney` already omits the `currency` key entirely when
+undefined/empty rather than passing `currency: undefined` through to
+`Intl.NumberFormat` (which throws) — verified this is already correct, no
+change needed. `SavingsStrip`'s new allocation figure uses `formatMoney`
+rather than the raw `formatCurrency`, for the same defensive reason.
+
+## Files changed
+- `frontend/modules/vehicles/pages/VehicleDetailPage.tsx`
+- `frontend/shared/dashboards/WidgetRegistry.ts`
+- `frontend/modules/attention/hooks/useAttentionQueue.ts`
+- `frontend/modules/attention/components/SavingsStrip.tsx`
+- `frontend/modules/attention/pages/CommandCentrePage.tsx`
+- `app/(protected)/reports/gl-reconciliation/page.tsx` (new)
+- `frontend/shared/ui/navigation/Sidebar.tsx`
+- `frontend/modules/organizations/pages/OrganizationSettingsPage.tsx`
 
 ## Verification
-
-- `npx tsc --noEmit` → **0 errors**.
-- `npm run test:security` → **311/311 passed** (25 suites), unchanged count.
-- `npm run lint` → same pre-existing warnings/errors elsewhere in the repo;
-  no new issues in any changed/new file.
+```
+npx tsc --noEmit        → 0 errors
+npm run test:security   → 29 suites, 379/379 tests passing
+```

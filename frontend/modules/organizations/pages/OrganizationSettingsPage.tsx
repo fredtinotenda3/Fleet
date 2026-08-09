@@ -12,6 +12,8 @@ import { ContactSection } from '../components/settings/ContactSection';
 import { RegionalSection } from '../components/settings/RegionalSection';
 import { BusinessHoursSection } from '../components/settings/BusinessHoursSection';
 import { TaxSection } from '../components/settings/TaxSection';
+import { FinanceSection } from '../components/settings/FinanceSection';
+import { useFinanceSettings } from '@/frontend/modules/finance/hooks/useFinance';
 import { PageLoader } from '@/frontend/shared/loading/PageLoader';
 
 const TABS = [
@@ -21,6 +23,7 @@ const TABS = [
   { value: 'regional', label: 'Regional' },
   { value: 'hours', label: 'Business Hours' },
   { value: 'tax', label: 'Tax' },
+  { value: 'finance', label: 'Finance' },
 ] as const;
 
 export function OrganizationSettingsPage() {
@@ -30,6 +33,11 @@ export function OrganizationSettingsPage() {
 
   // ✅ Hook called before any conditional returns
   const mutations = useOrganizationSettings(organization?._id ?? '');
+  // Finance settings live on their own endpoint (GET/PUT /api/finance/settings,
+  // gated on FINANCE_MANAGE, resolved from tenant context server-side) --
+  // not on the organization document, so this is a separate hook rather
+  // than part of `mutations`. See FinanceSection's own doc comment.
+  const { data: financeSettings, mutation: financeMutation } = useFinanceSettings();
 
   if (isLoading || !organization) {
     return <PageLoader label="Loading organization settings" />;
@@ -74,6 +82,9 @@ export function OrganizationSettingsPage() {
         </TabsContent>
         <TabsContent value="tax">
           <TaxSection organization={organization} mutation={mutations.updateTaxSettings} />
+        </TabsContent>
+        <TabsContent value="finance">
+          <FinanceSection settings={financeSettings} mutation={financeMutation} />
         </TabsContent>
       </Tabs>
     </div>

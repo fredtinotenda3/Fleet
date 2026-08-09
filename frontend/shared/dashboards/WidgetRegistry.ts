@@ -12,6 +12,7 @@ import { AlertsWidget } from './widgets/AlertsWidget';
 import { AIRecommendationsWidget } from './widgets/AIRecommendationsWidget';
 import { NeedsAttentionWidget } from './widgets/NeedsAttentionWidget';
 import { MapsWidget } from './widgets/MapsWidget';
+import { CostPerKmWidget } from './widgets/CostPerKmWidget';
 
 export type WidgetKey =
   | 'kpis'
@@ -23,6 +24,7 @@ export type WidgetKey =
   | 'trips'
   | 'alerts'
   | 'aiRecommendations'
+  | 'costPerKm'
   | 'map';
 
 export type WidgetSize = 'sm' | 'md' | 'lg' | 'full';
@@ -127,6 +129,14 @@ export const WIDGET_REGISTRY: Record<WidgetKey, WidgetDefinition> = {
     // No permission: personal/self-service notification feed, same as
     // the rest of the notification read path (unchanged from Phase C).
   },
+  costPerKm: {
+    key: 'costPerKm',
+    title: 'Cost per km',
+    description: 'Sampled fleet-wide cost-per-km with month-over-month trend.',
+    size: 'md',
+    component: CostPerKmWidget,
+    permission: [Permission.FINANCE_VIEW],
+  },
   map: {
     key: 'map',
     title: 'Live fleet map',
@@ -142,6 +152,7 @@ export const WIDGET_ORDER: WidgetKey[] = [
   'fleetStatus',
   'needsAttention',
   'aiRecommendations',
+  'costPerKm',
   'maintenance',
   'fuel',
   'expenses',

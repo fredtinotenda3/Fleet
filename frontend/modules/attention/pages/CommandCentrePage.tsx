@@ -19,7 +19,7 @@ import { LoadingState } from '@/shared/ui/feedback/LoadingState';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { cn } from '@/lib/utils';
-import { useAttentionQueue, useMonthToDateSavings } from '../hooks/useAttentionQueue';
+import { useAttentionQueue, useMonthToDateSavings, useMonthToDateAllocationTotal } from '../hooks/useAttentionQueue';
 import { SeverityFilterBar } from '../components/SeverityFilterBar';
 import { AttentionQueueList } from '../components/AttentionQueueList';
 import { SavingsStrip } from '../components/SavingsStrip';
@@ -37,6 +37,11 @@ export function CommandCentrePage({ embedded = false }: CommandCentrePageProps) 
   const { data: feed, isLoading, isError, refetch } = useAttentionQueue(200);
   const { data: savings, isLoading: isSavingsLoading, isError: isSavingsError, refetch: refetchSavings } =
     useMonthToDateSavings();
+  const {
+    data: allocationReport,
+    isLoading: isAllocationLoading,
+    isError: isAllocationError,
+  } = useMonthToDateAllocationTotal();
 
   const filteredItems = useMemo(() => {
     const items = feed?.items ?? [];
@@ -99,6 +104,9 @@ export function CommandCentrePage({ embedded = false }: CommandCentrePageProps) 
         isLoading={isSavingsLoading}
         isError={isSavingsError}
         onRefresh={() => refetchSavings()}
+        allocationReport={allocationReport}
+        isAllocationLoading={isAllocationLoading}
+        isAllocationError={isAllocationError}
       />
     </div>
   );
