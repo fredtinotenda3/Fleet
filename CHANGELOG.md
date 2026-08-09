@@ -1,37 +1,57 @@
-# Step 4 — Command Centre UI: Changelog
+# Cartrack Live Map — Missing Files & Barrel Export Fix
 
-Frontend-only. No backend service, controller, repository, or test file was touched.
-`npx tsc --noEmit` → 0 errors. `npx jest tests/security` → 291/291 passing.
+## Root cause
+
+`LiveMapPage.tsx`, `DemoModeToggle.tsx`, and `MapsWidget.tsx` already imported real
+named exports (`useLiveMap`, `useVehicleRouteHistory`, `useDemoStatus`,
+`useSetDemoMode`, `canViewLiveMap`, `canToggleDemoMode`, `TELEMATICS_ROUTES`), but
+the frontend telematics module's `hooks/`, `services/`, `utils/`, and `routes/`
+directories only contained empty stub barrels (`export {}`) — the implementation
+files themselves didn't exist yet. That's what produced the "has no exported
+member" errors, plus the missing route page.
+
+The sidebar (`frontend/shared/ui/navigation/Sidebar.tsx`) already had a correct
+"Live Map" entry pointing at `/telematics/map`, gated on `Permission.VEHICLE_VIEW`
+— no change needed there. `types/index.ts`, `store/index.ts`, and `schemas/index.ts`
+were also already correct/unused for this feature and were left untouched.
 
 ## New files
 
-- **`frontend/modules/attention/`** — new frontend module for the Command Centre:
-  - `types/index.ts` — re-exports `NeedsAttentionFeed`/`Item` (already in the dashboard module) and `LedgerExportData`; adds local `SeverityFilterValue`/`SourceFilterValue` view-state types.
-  - `services/attention.api.ts` — calls `GET /api/attention/ledger/export?format=json`, scoped to month-to-date. The queue itself is fetched by reusing the existing `dashboardApi.getNeedsAttention`, not duplicated.
-  - `hooks/useAttentionQueue.ts` — `useAttentionQueue(limit)` (wraps the existing `GET /api/ai/needs-attention` call at a page-sized limit) and `useMonthToDateSavings()`.
-  - `components/SeverityFilterBar.tsx` — severity + source toggle filters, counts sourced from the feed's own `bySeverity`/`bySource`.
-  - `components/AttentionQueueList.tsx` — ranked queue rows; reuses the same source icons/severity→token mapping as the existing `NeedsAttentionWidget`, adds urgency and rank.
-  - `components/SavingsStrip.tsx` — month-to-date modelled vs. realised savings strip, reads the ledger export's own `summary` (never recomputes totals from `entries`, which can be capped/truncated).
-  - `pages/CommandCentrePage.tsx` — assembles the above into the full-screen queue + bottom strip. Takes an `embedded` prop so the same component powers both the standalone page and the Dashboard's primary tab.
-  - `index.ts` — module barrel export.
-- **`app/(protected)/needs-attention/page.tsx`** — renders `CommandCentrePage`. This route didn't exist before; the existing `NeedsAttentionWidget`'s "View full queue" link already pointed at `/needs-attention`, so this fixes what was a dead link.
+- **`app/(protected)/telematics/map/page.tsx`** — the missing route entry;
+  renders `LiveMapPage` from `@/frontend/modules/telematics/pages/LiveMapPage`.
+- **`frontend/modules/telematics/services/telematics.api.ts`** — `telematicsApi`
+  wrapping `GET /api/telematics/live-map`, `GET /api/telematics/live-map/history/[vehicleId]`,
+  `GET /api/telematics/demo`, `POST /api/telematics/demo`, following the same
+  `apiClient` pattern used in `frontend/modules/vehicles/services/vehicles.api.ts`.
+- **`frontend/modules/telematics/hooks/useLiveMap.ts`** — `useLiveMap` (10s
+  polling, matching the behavior documented in `LiveMapPage.tsx`'s header
+  comment), `useVehicleRouteHistory`, and the `telematicsKeys` query-key factory.
+- **`frontend/modules/telematics/hooks/useDemoMode.ts`** — `useDemoStatus`
+  (read) and `useSetDemoMode` (mutate + toast + cache invalidation), mirroring
+  `frontend/modules/vehicles/hooks/useVehicleMutations.ts`'s conventions.
+- **`frontend/modules/telematics/utils/telematics-permissions.utils.ts`** —
+  `canViewLiveMap` / `canToggleDemoMode`, resolved through the same
+  `permissionService` + `Permission` enum the API routes use (`VEHICLE_VIEW` /
+  `VEHICLE_EDIT`), matching `frontend/modules/drivers/utils/index.ts`'s pattern.
+- **`frontend/modules/telematics/routes/telematics.routes.ts`** —
+  `TELEMATICS_ROUTES.liveMap = '/telematics/map'`.
 
-## Modified files
+## Changed files (barrel exports only)
 
-- **`frontend/modules/dashboard/pages/FleetDashboardPage.tsx`** — added a `Tabs` header: **"Command Centre"** (the new full queue + savings strip, embedded) is now the default/primary tab; **"Widgets"** holds the original `DashboardBuilder` + `DashboardGrid` KPI wall, unchanged. No widget, permission gate, or layout-persistence logic was modified — the existing grid moved behind a second tab, it wasn't rebuilt.
-- **`frontend/shared/ui/navigation/Sidebar.tsx`** — added a "Command Centre" nav entry under **Overview**, linking to `/needs-attention`, gated on `Permission.ANALYTICS_VIEW` (the same permission that already gates the `needsAttention` widget and the `GET /api/ai/needs-attention` route). Only a new `AlertOctagon` import and one new `NavItem` entry were added; nothing else in the file changed.
+- `frontend/modules/telematics/hooks/index.ts` — now exports `useLiveMap`,
+  `useVehicleRouteHistory`, `telematicsKeys`, `useDemoStatus`, `useSetDemoMode`.
+- `frontend/modules/telematics/services/index.ts` — now re-exports `telematics.api`.
+- `frontend/modules/telematics/utils/index.ts` — now exports `canViewLiveMap`,
+  `canToggleDemoMode`.
+- `frontend/modules/telematics/routes/index.ts` — now exports `TELEMATICS_ROUTES`.
+- `frontend/modules/telematics/components/index.ts` — now exports `LiveMapSvg`,
+  `LiveMapLegend`, `LiveMapVehicleList`, `DemoModeToggle` (all pre-existing
+  components; only the barrel was a stub).
+- `frontend/modules/telematics/pages/index.ts` — now exports `LiveMapPage`.
 
-## Design tokens / patterns reused (no new tokens introduced)
+## Verification
 
-- Severity → color: `text-danger`/`bg-danger-bg`/`border-danger-border` (critical), `text-warning`/`bg-warning-bg`/`border-warning-border` (high/medium), `text-muted-foreground` (low) — same mapping as `NeedsAttentionWidget`.
-- Variance → color: `text-success` (ahead of model), `text-danger` (behind model).
-- `surface-card`, `PageHeader`, `DashboardWidget`-style refresh button, `Badge`, `Button`, `EmptyState`, `LoadingState`, `Tabs`/`TabsList`/`TabsTrigger`/`TabsContent`, `formatCurrency`, `formatDate`/`formatRelativeDate`, `apiClient` — all pre-existing shared components/utilities, none modified.
-
-## Multi-tenancy scoping
-
-No new scoping logic was added on the frontend. Both endpoints already resolve a full tenant context server-side (`resolveTenantContext` for the ledger export; the equivalent context resolution already backing `GET /api/ai/needs-attention`) and return only the caller's org-unit-scoped data — the same guarantee the existing `NeedsAttentionWidget` already relies on. `SavingsStrip` degrades gracefully (its own error state, doesn't block the queue) for roles that hold `ANALYTICS_VIEW` but not `ANALYTICS_EXPORT`, since the ledger export route requires the latter.
-
-## Explicitly out of scope (per Step 4 rules)
-
-- No resolve/annotate workflow for attention items (the `POST /api/ai/needs-attention/:id/resolve` and ledger-resolution schema exist but aren't wired into this UI).
-- No backend, controller, repository, or test changes.
+- `npx tsc --noEmit` → **0 errors**.
+- `npm run test:security` → **311/311 passed** (25 suites), unchanged count.
+- `npm run lint` → same pre-existing warnings/errors elsewhere in the repo;
+  no new issues in any changed/new file.
