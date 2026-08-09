@@ -25,6 +25,27 @@ export class LiveMapController {
       return handleTelematicsError('LiveMapController', error);
     }
   }
+
+  /**
+   * GET /api/telematics/live-map/history/[vehicleId]
+   *
+   * Org-unit-scoped route trail for one vehicle (see
+   * LiveMapService.getVehicleRouteHistory for the scoping argument).
+   * Accepts an optional `?minutes=` lookback, defaulting/clamping inside
+   * the service so this controller doesn't have to duplicate the limits.
+   */
+  async getRouteHistory(req: NextRequest, vehicleId: string) {
+    try {
+      const context = await resolveTenantContext(req);
+      const minutesParam = req.nextUrl.searchParams.get('minutes');
+      const parsedMinutes = minutesParam ? Number(minutesParam) : NaN;
+      const minutes = Number.isFinite(parsedMinutes) ? parsedMinutes : undefined;
+      const history = await liveMapService.getVehicleRouteHistory(vehicleId, context, minutes);
+      return successResponse(history);
+    } catch (error) {
+      return handleTelematicsError('LiveMapController', error);
+    }
+  }
 }
 
 export const liveMapController = new LiveMapController();

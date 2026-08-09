@@ -26,7 +26,12 @@ import { telematicsRepository } from '../repositories/telematics.repository';
 import { telematicsService } from './telematics.service';
 import { demoStateRepository } from '../repositories/demo-state.repository';
 import { simulateVehicleState, SimulatedVehicleState } from '../demo/demo-simulator.service';
-import { LiveMapPayload, LiveMapVehicle, LiveMapGeofence } from '../types/live-map.types';
+import {
+  LiveMapPayload,
+  LiveMapVehicle,
+  LiveMapGeofence,
+  LiveMapRouteHistory,
+} from '../types/live-map.types';
 import { Geofence, TelematicsData } from '../types/telematics.types';
 
 /** Below this speed (km/h) a vehicle with a recent fix is considered idle rather than moving. */
@@ -37,6 +42,12 @@ const STALE_FIX_MINUTES = 15;
 const DEMO_SAMPLE_THROTTLE_MS = 20_000;
 /** How many vehicles the live map will render at once -- generous for a fleet dashboard without being unbounded. */
 const MAX_LIVE_MAP_VEHICLES = 500;
+/** Default lookback window for a vehicle's route-trail breadcrumb. */
+const DEFAULT_ROUTE_HISTORY_MINUTES = 60;
+/** Hard ceiling on the lookback window, so a caller can't force a full-collection scan via a huge `minutes` value. */
+const MAX_ROUTE_HISTORY_MINUTES = 24 * 60;
+/** Points are for a lightweight breadcrumb trail, not a full replay -- capped well below getTelematicsHistoryInScope's own 1000 default. */
+const MAX_ROUTE_HISTORY_POINTS = 200;
 
 export class LiveMapService {
   async getLiveMapData(context: TenantContext): Promise<LiveMapPayload> {
@@ -66,6 +77,53 @@ export class LiveMapService {
       vehicles,
       geofences: geofences.map(this.toLiveMapGeofence),
     };
+  }
+
+  /**
+   * Recent GPS trail for one vehicle, for drawing the breadcrumb line on
+   * the live map. Goes through the SAME org-unit-scoped query
+   * (getTelematicsHistoryInScope) as everything else that reads GPS
+   * history -- a caller outside the vehicle's org unit gets an empty
+   * trail, never another org unit's route, because the vehicleId alone
+   * carries no authorization and the scope predicate is applied
+   * server-side regardless of what the caller asked for.
+   *
+   * Works for both real (Cartrack) and demo vehicles unchanged: demo
+   * positions are persisted through the same tbltelematics pipeline
+   * (see resolveDemoVehicle/maybePersistDemoSample below), inheriting
+   * the same orgUnitId the vehicle has, so this query doesn't need to
+   * know or care which source produced the points it returns.
+   */
+  async getVehicleRouteHistory(
+    vehicleId: string,
+    context: TenantContext,
+    minutes: number = DEFAULT_ROUTE_HISTORY_MINUTES
+  ): Promise<LiveMapRouteHistory> {
+    const clampedMinutes = Math.min(Math.max(1, minutes), MAX_ROUTE_HISTORY_MINUTES);
+    const endDate = new Date();
+    const startDate = new Date(endDate.getTime() - clampedMinutes * 60_000);
+
+    const history = await telematicsRepository.getTelematicsHistoryInScope(
+      vehicleId,
+      startDate,
+      endDate,
+      context,
+      MAX_ROUTE_HISTORY_POINTS
+    );
+
+    // Repository returns newest-first (sortOrder: 'desc'); the map wants
+    // a chronological trail to draw a line in the direction of travel.
+    const points = history
+      .filter((entry) => Boolean(entry.location))
+      .map((entry) => ({
+        lat: entry.location!.lat,
+        lng: entry.location!.lng,
+        speed: entry.location!.speed,
+        timestamp: new Date(entry.timestamp).toISOString(),
+      }))
+      .reverse();
+
+    return { vehicleId, points };
   }
 
   private async resolveRealVehicle(vehicle: Vehicle, context: TenantContext): Promise<LiveMapVehicle> {

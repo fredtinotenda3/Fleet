@@ -46,3 +46,16 @@ export interface DemoModeStatus {
   enabled: boolean;
   startedAt?: string;
 }
+
+/** One point in a vehicle's recent route trail, used to draw the breadcrumb line on the live map. */
+export interface LiveMapRoutePoint {
+  lat: number;
+  lng: number;
+  speed: number;
+  timestamp: string;
+}
+
+export interface LiveMapRouteHistory {
+  vehicleId: string;
+  points: LiveMapRoutePoint[];
+}

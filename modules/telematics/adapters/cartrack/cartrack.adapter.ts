@@ -165,6 +165,7 @@ export class CartrackAdapter {
       {
         deviceId,
         vehicleId,
+        tenantId,
         type: 'gps',
         manufacturer: 'Cartrack',
         model: 'Fleet API',

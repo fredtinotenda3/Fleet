@@ -30,6 +30,7 @@ import {
   ChevronsRight,
   Monitor,
   AlertOctagon,
+  MapPin,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUiStore } from '@/frontend/shared/store/ui.store';
@@ -117,6 +118,13 @@ const NAV_SECTIONS: NavSection[] = [
     title: 'Fleet',
     items: [
       { key: 'vehicles', label: 'Vehicles', href: '/vehicles', icon: Truck, permissions: [Permission.VEHICLE_VIEW] },
+      {
+        key: 'live-map',
+        label: 'Live Map',
+        href: '/telematics/map',
+        icon: MapPin,
+        permissions: [Permission.VEHICLE_VIEW],
+      },
       // FIX: /drivers existed as a backend module and two API routes but
       // had no page and no nav entry, so drivers were unreachable in the UI.
       { key: 'drivers', label: 'Drivers', href: '/drivers', icon: Users, permissions: [Permission.VEHICLE_VIEW] },
