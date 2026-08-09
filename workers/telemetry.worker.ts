@@ -4,6 +4,9 @@ import { BaseWorker } from '@/infrastructure/queue/worker-base.service';
 import { telematicsService } from '@/modules/telematics/services/telematics.service';
 import { notificationService } from '@/modules/notifications/services/notification.service';
 import { backgroundJobScopeService } from '@/server/scheduler/background-job-scope.service';
+import { cartrackAdapter } from '@/modules/telematics/adapters/cartrack/cartrack.adapter';
+import { cartrackConfigRepository } from '@/modules/telematics/repositories/cartrack-config.repository';
+import { monitoring } from '@/infrastructure/monitoring/logger';
 import type { TelematicsDevice } from '@/modules/telematics/types/telematics.types';
 
 interface IngestBatchPayload {
@@ -59,6 +62,38 @@ export class TelemetryWorker extends BaseWorker<IngestBatchPayload | Record<stri
 
         await this.notifyOfflineDevices(scope.organizationId, offline);
       });
+      return;
+    }
+
+    if (jobName === 'cartrack-sync') {
+      /**
+       * Periodic pull of every tenant that has Cartrack enabled. Only
+       * enumerates tenants with a saved, enabled config (via
+       * cartrackConfigRepository.listEnabledTenantIds) rather than every
+       * organization on the platform -- most tenants won't have Cartrack
+       * configured at all, and cartrackAdapter.syncOrganization() already
+       * no-ops safely for those that don't, but there's no reason to pay
+       * for the no-op on every org on every run.
+       *
+       * A manual trigger also exists (POST /api/telematics/cartrack/sync)
+       * for right after saving credentials, without waiting for the next
+       * scheduled run.
+       */
+      const tenantIds = await cartrackConfigRepository.listEnabledTenantIds();
+      for (const tenantId of tenantIds) {
+        try {
+          const result = await cartrackAdapter.syncOrganization(tenantId);
+          if (result.errors.length > 0) {
+            monitoring.logError(
+              '[TelemetryWorker] Cartrack sync completed with errors',
+              new Error(result.errors.join('; ')),
+              { tenantId, matched: result.matched, unmatched: result.unmatchedRegistrations.length }
+            );
+          }
+        } catch (error) {
+          monitoring.logError('[TelemetryWorker] Cartrack sync failed', error as Error, { tenantId });
+        }
+      }
     }
   }
 

@@ -24,6 +24,7 @@ const DEFAULT_SCHEDULES: Array<{ name: string; description: string; jobType: Job
   { name: 'billing-expire-invoices', description: 'Expire stale pending invoices', jobType: JobType.EXPIRE_INVOICES, cron: '0 * * * *' },
   { name: 'security-expire-grants', description: 'Soft-delete expired ResourcePermission grants', jobType: JobType.EXPIRE_RESOURCE_GRANTS, cron: '*/15 * * * *' },
   { name: 'telemetry-offline-devices', description: 'Detect and alert on offline telematics devices', jobType: JobType.DETECT_OFFLINE_DEVICES, cron: '*/10 * * * *' },
+  { name: 'telemetry-cartrack-sync', description: 'Pull current fleet status from Cartrack for every tenant with the integration enabled', jobType: JobType.CARTRACK_SYNC, cron: '*/2 * * * *' },
   { name: 'cleanup-sessions', description: 'Expire stale sessions, refresh tokens, and API keys', jobType: JobType.CLEANUP_SESSIONS, cron: '0 3 * * *' },
   { name: 'cleanup-notifications', description: 'Purge old/expired notifications', jobType: JobType.CLEANUP_NOTIFICATIONS, cron: '0 4 * * *' },
   { name: 'cleanup-outbox', description: 'Purge processed outbox events', jobType: JobType.CLEANUP_OUTBOX, cron: '0 5 * * *' },
