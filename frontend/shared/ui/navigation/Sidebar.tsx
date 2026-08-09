@@ -29,6 +29,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Monitor,
+  AlertOctagon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUiStore } from '@/frontend/shared/store/ui.store';
@@ -99,7 +100,18 @@ function isItemVisible(item: NavItem, roles: string[]): boolean {
 const NAV_SECTIONS: NavSection[] = [
   {
     title: 'Overview',
-    items: [{ key: 'dashboard', label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard }],
+    items: [
+      { key: 'dashboard', label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+      {
+        key: 'command-centre',
+        label: 'Command Centre',
+        href: '/needs-attention',
+        icon: AlertOctagon,
+        // Same gate as the needsAttention widget (WidgetRegistry.ts) and
+        // the GET /api/ai/needs-attention route itself.
+        permissions: [Permission.ANALYTICS_VIEW],
+      },
+    ],
   },
   {
     title: 'Fleet',
