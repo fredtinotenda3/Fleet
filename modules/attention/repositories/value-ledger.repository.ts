@@ -1,8 +1,13 @@
 // modules/attention/repositories/value-ledger.repository.ts
 
+import { Filter } from 'mongodb';
 import { TenantScopedRepository } from '@/server/repositories/tenant-scoped.repository';
 import { ValueLedgerEntry } from '../types/value-ledger.types';
+import type { LedgerExportFilters } from '../types/ledger-export.types';
 import { ConflictError } from '@/server/errors/app.errors';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
+import { EXPORT_ROW_CAP, ExportDataset } from '@/shared/export';
 
 /**
  * APPEND-ONLY, BY CONSTRUCTION NOT JUST BY CONVENTION.
@@ -42,6 +47,63 @@ export class ValueLedgerRepository extends TenantScopedRepository<ValueLedgerEnt
       tenantId,
       { sortBy: 'resolvedAt', sortOrder: 'desc' }
     );
+  }
+
+  /**
+   * Scoped, capped, row-level read for the value-ledger export (Step 3
+   * -- see modules/attention/services/ledger-export.service.ts). Not
+   * an override of anything from Step 2: append-only immutability is
+   * about WRITE paths, this is a read, and the export needs more than
+   * findByAttentionItemKeyInScope() gives it -- every posting across
+   * every item the caller can see, optionally filtered by date range
+   * and source.
+   *
+   * Composes the same two scope layers every other export in this
+   * codebase does (see ExpenseRepository.buildScopedMatch): tenant
+   * scope via getActiveFilter(), then org-unit scope via
+   * tenantScopeService.buildFilter(). Capped via EXPORT_ROW_CAP for
+   * the same reason documented there -- an unbounded query from a
+   * synchronous HTTP request is a DoS risk independent of tenancy.
+   * `totalMatched` lets the caller tell a truncated export from a
+   * complete one without a second round trip.
+   */
+  async getFilteredEntriesForExport(
+    filters: LedgerExportFilters,
+    context: TenantContext,
+    cap: number = EXPORT_ROW_CAP
+  ): Promise<ExportDataset<ValueLedgerEntry>> {
+    const collection = await this.getCollection();
+
+    const match: Record<string, unknown> = {
+      ...this.getActiveFilter(context.organizationId),
+      ...tenantScopeService.buildFilter<ValueLedgerEntry>(context, 'orgUnitId'),
+    };
+
+    if (filters.source) {
+      match.source = filters.source;
+    }
+    if (filters.from || filters.to) {
+      const resolvedAtFilter: Record<string, Date> = {};
+      if (filters.from) resolvedAtFilter.$gte = filters.from;
+      if (filters.to) resolvedAtFilter.$lte = filters.to;
+      match.resolvedAt = resolvedAtFilter;
+    }
+
+    const finalFilter = match as Filter<ValueLedgerEntry>;
+
+    const [rows, totalMatched] = await Promise.all([
+      collection.find(finalFilter).sort({ resolvedAt: -1 }).limit(cap).toArray(),
+      collection.countDocuments(finalFilter),
+    ]);
+
+    const normalizedRows = this.normalizeDocs<ValueLedgerEntry>(rows);
+
+    return {
+      rows: normalizedRows,
+      totalMatched,
+      truncated: totalMatched > normalizedRows.length,
+      exportCap: cap,
+    };
   }
 
   async update(): Promise<ValueLedgerEntry | null> {
