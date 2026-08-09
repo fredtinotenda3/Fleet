@@ -32,7 +32,7 @@ export function BackupCodesPage() {
         <div className="space-y-3">
           <Label htmlFor="code">Confirm with your authenticator code</Label>
           <Input id="code" inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value)} />
-          {error && <p className="text-sm text-red-500">{error}</p>}
+          {error && <p className="text-sm text-danger">{error}</p>}
           <Button type="button" onClick={handleRegenerate} disabled={isLoading}>
             {isLoading ? 'Generating...' : 'Regenerate backup codes'}
           </Button>

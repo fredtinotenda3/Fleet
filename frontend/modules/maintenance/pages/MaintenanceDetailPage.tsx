@@ -89,7 +89,7 @@ export function MaintenanceDetailPage({ id }: MaintenanceDetailPageProps) {
           <div className="flex items-center gap-2">
             {canComplete && record.status !== 'completed' && (
               <Button variant="outline" size="sm" onClick={handleComplete}>
-                <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+                <CheckCircle2 className="h-3.5 w-3.5 text-success" />
                 Mark complete
               </Button>
             )}

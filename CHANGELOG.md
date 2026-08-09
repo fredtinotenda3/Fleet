@@ -1,73 +1,112 @@
-# AI service scoping — pass 1 of 4: driver-risk
+# Changelog — Fleet Platform (this session)
 
-Scopes `driverRiskService` the same way `fleetHealthService` already is,
-and unblocks it in `ai.controller.ts` for scope-narrowed callers.
+Verification at the end of every step: `npx tsc --noEmit` → **0 errors**,
+full suite → **237/237 passing** (233 pre-existing + 4 new ESG scope tests).
 
-## Files changed (3)
+## 0. Recovered missing files (blocking everything else)
 
-1. **`modules/ai/services/driver-risk.service.ts`**
-   - `calculateDriverRisk(tenantId, context?)` now accepts an optional
-     `TenantContext`.
-   - The driver roster (`organization.members`) is filtered to only
-     members whose `orgUnitId` is in `context.accessibleOrgUnitIds` when
-     scoped — same fail-closed pattern documented in
-     `driver.tenancy-addendum.ts`: an unassigned member is invisible to a
-     scoped caller until assigned to an org unit.
-   - `tripRepository.findMany` and `telematicsRepository.findMany` calls
-     now merge `tenantScopeService.buildFilter(context, 'orgUnitId')`,
-     identically to how `fleet-health.service.ts` does it.
-   - **Flagged, not fixed:** this service matches trips to drivers via
-     `member.userId === trip.driver_id`. There's a separate, dedicated
-     `tbldrivers` collection (`modules/drivers`) with its own
-     `orgUnitId`-scoped roster (`driverRepository.findAllInScope`), and
-     the fuel module's `DriverSelect` picker binds `driver_id` to *that*
-     collection's `_id`, not a user's `userId`. `TripForm`'s own
-     `driver_id` field is a free-text input bound to neither. I don't
-     have production data to tell which shape your real `driver_id`
-     values are in, and swapping the source entity is a behavior change,
-     not a mechanical scoping fix — left a code comment flagging this
-     rather than guessing. Worth a quick check against a real
-     `tbltrips` document before trusting this panel's numbers in
-     production.
+Two files referenced elsewhere in the codebase were reported done in a prior
+session but were absent from the zip. A third missing file (`import-trips.command.ts`)
+was found while running `tsc --noEmit` and fixed as well, since it blocked compilation.
 
-2. **`modules/ai/controllers/ai.controller.ts`**
-   - `getDriverRisk`: removed the fail-closed gate, now passes
-     `aiContext` through to the service (mirrors `getFleetHealth`).
-   - `getAIDashboard`: previously blocked the *entire* combined dashboard
-     for any scope-narrowed caller. Now returns real `fleetHealth` and
-     `driverRisk` data for scoped callers, while `predictiveMaintenance`,
-     `fuelFraud`, and `expenseAnomalies` still return the explicit
-     "unavailable for your scope" placeholder until each is scoped in
-     turn.
+- **`modules/ai/types/needs-attention.types.ts`** (new) — `NeedsAttentionSource`,
+  `NeedsAttentionUrgency`, `NeedsAttentionItem` (severity/urgency/cost/priorityScore/
+  dueDate/entity refs), `NeedsAttentionFeed` (items/total/bySource/bySeverity/
+  unavailableSources/generatedAt).
+- **`modules/ai/services/needs-attention.service.ts`** (new) — aggregates all 5 AI
+  services + compliance + maintenance reminders into one priority-ranked feed.
+  Threads the caller's `TenantContext` into every source unchanged (adds no new
+  reads of its own). Each source is read behind its own try/catch so one failing
+  source doesn't blank the feed — it's recorded in `unavailableSources` instead.
+  Priority score = severity weight + urgency weight + a diminishing (sqrt) cost
+  factor, so a critical item always outranks a low one regardless of cost.
+- **`app/api/ai/needs-attention/route.ts`** (new) — wires `GET /api/ai/needs-attention`
+  through `withAuth`/`Permission.ANALYTICS_VIEW`. (The controller method already
+  existed from the prior session; only the route file was missing.)
+- **`modules/trips/commands/import-trips.command.ts`** (new) — `ImportTripsCommand`
+  + `ImportTripRow`, matching what `import-trips.handler.ts`, `trip-command.service.ts`,
+  and `cqrs.register.ts` already expected. Mirrors the shape of the existing
+  `import-expenses.command.ts`.
+- Covered by the pre-existing `tests/security/needs-attention-scope.spec.ts` (5 tests,
+  now passing) — context threading, org-wide vs. scoped compliance reads, failure
+  isolation, priority ranking, and `limit` behavior.
 
-3. **`tests/security/driver-risk-scope.spec.ts`** (new)
-   - 5 tests, mocking at the same repository boundary as the existing
-     `org-unit-descendants-objectid.spec.ts`: org-wide caller sees every
-     driver; a branch-scoped caller sees only that branch's driver and
-     the trip query carries the `orgUnitId` filter; an empty
-     `accessibleOrgUnitIds` fails closed; an unassigned member is
-     invisible to a scoped caller.
+## 1. Design-token pass — finished
 
-## Verification performed
+Converted every remaining hardcoded status-color Tailwind class (`text-red-500`,
+`bg-green-50`, `text-amber-600`, `text-blue-600`, etc.) to the semantic tokens in
+`tailwind.config.js` (`success` / `warning` / `danger` / `info`, each with
+`DEFAULT` / `foreground` / `bg` / `border` variants), across 21 files:
 
-- `npx tsc --noEmit` — 0 errors.
-- `npx jest tests/security` — **216/216 passing** (211 pre-existing +
-  5 new), including the new `driver-risk-scope.spec.ts`.
+- **Auth** — `SessionsList`, `ForgotPasswordForm`, `ChangePasswordForm`,
+  `MfaEnrollment`, `ResetPasswordForm`, `MfaVerificationForm`, `ResetPasswordPage`,
+  `BackupCodesPage`, `AccountSecurityPage`.
+- **Fuel** — `FuelImportModal`'s succeeded/duplicates/failed stat tiles; dropped
+  manual `dark:` overrides since the CSS vars already handle theming.
+- **Maintenance** — `STATUS_BADGE_CLASSES` / `PRIORITY_BADGE_CLASSES` (the central
+  badge-color maps consumed by `MaintenanceTable`, `ServiceCalendar`,
+  `MaintenanceDetailPage`, `OverdueMaintenancePage`, `UpcomingMaintenancePage`) now
+  map to `info`/`success`/`danger`/`muted`/`warning`; `high` priority is
+  distinguished from `medium` via a `border-warning/50` accent rather than a new
+  hue. Plus icon-color fixes in `MaintenanceStatsCards`,
+  `VehicleMaintenanceInsightsCards`, `MaintenanceDashboardPage`.
+- **Reports** — `exportFormatters.ts` status-color map, `AnalyticsOverview`
+  priority pills, `FleetHealthGauge` score coloring, `AIReports` score coloring,
+  `ExportCenter` confirmation message.
+- **Shared UI** — `NotificationCenter` (unread badge → `bg-danger`/
+  `text-danger-foreground`, unread dot → `bg-info`), `StatisticCards` trend
+  indicator.
+- **`app/layout.tsx`** — `bg-gray-100 dark:bg-gray-950` → `bg-background`.
 
-## What's still gated (per `ai.controller.ts`'s own containment note)
+**Deliberately left unconverted** (decorative, not status, per "don't repurpose
+semantic color for decorative use"): `ReportList.tsx`'s favorite-star yellow fill,
+`Search.tsx`'s neutral `hover:border-slate-300`.
 
-`predictive-maintenance`, `fuel-fraud-detection`, and
-`expense-anomaly-detection` are unchanged — still fail-closed for
-scope-narrowed callers. Same treatment planned for each, one at a time.
-Suggest `predictive-maintenance` next since it's the one your enhancement
-doc calls out as differentiator.
+A repo-wide scan after the pass shows zero remaining hardcoded status colors
+outside those two intentional exceptions.
 
-## How to apply
+## 2. Insurance/ESG data-sharing module — new
 
-Unzip over your working copy (this only touches the 3 files above),
-then:
+Standardised export (JSON or PDF) of fleet health, driver risk, and compliance
+data for insurers and ESG reporting, at `GET /api/esg/export?format=json|pdf`.
 
-```bash
-npx tsc --noEmit     # should report 0 errors
-npx jest tests/security
-```
+- **`modules/esg/types/esg-export.types.ts`** (new) — `EsgExportData` (organization,
+  scope, `fleetHealth`, `driverRisk`, `compliance`, `compositeScore` sections) and
+  `EsgExportOptions`.
+- **`modules/esg/services/esg-export.service.ts`** (new) — builds the export by
+  reading `fleetHealthService`, `driverRiskService`, and `complianceService`, all
+  already org-unit-scoped; the caller's `TenantContext` is forwarded unchanged,
+  the service performs no reads of its own. Computes a disclosed 0–100 composite
+  score (40% fleet health + 30% compliance rate + 30% driver safety) with its
+  methodology string included in every export.
+  - **Data minimization**: named per-driver risk rows (`driverRisk.highRiskDrivers`)
+    are omitted by default and only included when the caller explicitly passes
+    `includeDriverNames=true` — an aggregate risk distribution is always present,
+    but personal data requires an explicit opt-in.
+- **`modules/esg/generators/esg-pdf.generator.ts`** (new) — renders the export as a
+  multi-section PDF via `pdfkit` (already a project dependency).
+- **`modules/esg/controllers/esg.controller.ts`** (new) — resolves a full
+  `TenantContext` via the shared `resolveTenantContext(req)` helper (the same one
+  every other export controller uses), validates `format`, and returns either a
+  JSON body or a downloaded PDF file.
+- **`app/api/esg/export/route.ts`** (new) — wires the route through `withAuth`/
+  `Permission.ANALYTICS_EXPORT`.
+- **`tests/security/esg-export-scope.spec.ts`** (new, 4 tests) — behavioural:
+  `TenantContext` is threaded into every source and a scoped caller never falls
+  back to the unscoped `complianceService.list()`; the driver-name opt-in default;
+  the composite score's presence/bounds. Structural: the controller calls
+  `resolveTenantContext(req)`, mirroring `export-scope-conformance.spec.ts`'s
+  check on the five original export paths.
+- **`tests/security/module-scope-conformance.spec.ts`** (modified) — added `esg`
+  to the list of cross-cutting modules that own no MongoDB collection of their
+  own (same treatment as the existing `ai`/`analytics`/`tenancy` exclusions),
+  since the ESG module is a pure read-aggregator over already-scoped services.
+
+## Verification log
+
+- `npx tsc --noEmit` → 0 errors (after every step above)
+- `npm run test:security` (`jest tests/security`) → 17/17 suites, 237/237 tests
+- `npx jest --ci --runInBand` (full suite) → 17/17 suites, 237/237 tests
+- Multi-tenancy scoping preserved throughout — no repository/service in this
+  session accepts a bare `tenantId` where the rest of the codebase requires a
+  `TenantContext`.

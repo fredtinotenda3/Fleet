@@ -29,7 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
             <SessionWrapper>
               <div className="flex w-screen h-screen overflow-hidden">
-                <main className="flex-1 overflow-auto bg-gray-100 dark:bg-gray-950">
+                <main className="flex-1 overflow-auto bg-background">
                   {children}
                 </main>
               </div>

@@ -417,17 +417,17 @@ export function FuelImportModal({ open, onOpenChange }: FuelImportModalProps) {
                   <div className="text-xl font-semibold">{result.summary.total}</div>
                   <div className="text-xs text-muted-foreground">Total rows</div>
                 </div>
-                <div className="p-3 text-center rounded-md bg-green-50 dark:bg-green-900/30">
-                  <div className="text-xl font-semibold text-green-700 dark:text-green-400">{result.summary.succeeded}</div>
-                  <div className="text-xs text-green-600 dark:text-green-500">Succeeded</div>
+                <div className="p-3 text-center rounded-md bg-success-bg">
+                  <div className="text-xl font-semibold text-success">{result.summary.succeeded}</div>
+                  <div className="text-xs text-success">Succeeded</div>
                 </div>
-                <div className="p-3 text-center rounded-md bg-amber-50 dark:bg-amber-900/30">
-                  <div className="text-xl font-semibold text-amber-700 dark:text-amber-400">{result.summary.duplicates}</div>
-                  <div className="text-xs text-amber-600 dark:text-amber-500">Duplicates skipped</div>
+                <div className="p-3 text-center rounded-md bg-warning-bg">
+                  <div className="text-xl font-semibold text-warning">{result.summary.duplicates}</div>
+                  <div className="text-xs text-warning">Duplicates skipped</div>
                 </div>
-                <div className="p-3 text-center rounded-md bg-red-50 dark:bg-red-900/30">
-                  <div className="text-xl font-semibold text-red-700 dark:text-red-400">{result.summary.failed}</div>
-                  <div className="text-xs text-red-600 dark:text-red-500">Failed</div>
+                <div className="p-3 text-center rounded-md bg-danger-bg">
+                  <div className="text-xl font-semibold text-danger">{result.summary.failed}</div>
+                  <div className="text-xs text-danger">Failed</div>
                 </div>
               </div>
 
@@ -450,7 +450,7 @@ export function FuelImportModal({ open, onOpenChange }: FuelImportModalProps) {
                             <td className="px-3 py-2">{r.identifier || 'â€”'}</td>
                             <td className="px-3 py-2">
                               {r.duplicate ? (
-                                <span className="font-medium text-amber-600 dark:text-amber-400">Duplicate</span>
+                                <span className="font-medium text-warning">Duplicate</span>
                               ) : (
                                 <span className="font-medium text-destructive">Failed</span>
                               )}

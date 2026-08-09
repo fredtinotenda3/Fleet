@@ -30,18 +30,18 @@ export function MaintenanceStatsCards({ licensePlate }: MaintenanceStatsCardsPro
       <StatisticCard
         title="Pending"
         value={stats.pending}
-        icon={<Clock className="w-4 h-4 text-blue-600" />}
+        icon={<Clock className="w-4 h-4 text-info" />}
       />
       <StatisticCard
         title="Overdue"
         value={stats.overdue}
-        icon={<AlertTriangle className="w-4 h-4 text-red-600" />}
+        icon={<AlertTriangle className="w-4 h-4 text-danger" />}
         description={stats.overdue > 0 ? 'Needs attention' : 'All caught up'}
       />
       <StatisticCard
         title="Completion rate"
         value={`${stats.completionRate.toFixed(1)}%`}
-        icon={<CheckCircle2 className="w-4 h-4 text-green-600" />}
+        icon={<CheckCircle2 className="w-4 h-4 text-success" />}
         description={`Avg. ${stats.averageCompletionDays} days to complete`}
       />
     </StatisticCards>

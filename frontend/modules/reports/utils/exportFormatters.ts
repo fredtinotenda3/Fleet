@@ -43,7 +43,7 @@ export const EXECUTION_STATUS_LABELS: Record<ExecutionStatus, string> = {
 
 export const EXECUTION_STATUS_COLORS: Record<ExecutionStatus, string> = {
   pending: 'bg-muted text-muted-foreground',
-  processing: 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300',
-  completed: 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300',
-  failed: 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300',
+  processing: 'bg-info-bg text-info',
+  completed: 'bg-success-bg text-success',
+  failed: 'bg-danger-bg text-danger',
 };

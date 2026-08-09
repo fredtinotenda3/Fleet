@@ -193,7 +193,7 @@ export default function AIReports() {
     const healthData = data.data;
     const { overallScore, metrics, recommendations } = healthData || {};
 
-    const statusColor = overallScore >= 70 ? 'text-green-600' : overallScore >= 50 ? 'text-yellow-600' : 'text-red-600';
+    const statusColor = overallScore >= 70 ? 'text-success' : overallScore >= 50 ? 'text-warning' : 'text-danger';
 
     return (
       <div className="space-y-4">

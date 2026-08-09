@@ -44,19 +44,19 @@ export function VehicleMaintenanceInsightsCards({ licensePlate }: VehicleMainten
       <StatisticCard
         title="Next maintenance due"
         value={data.nextUpcomingReminder ? `${data.nextUpcomingReminder.daysUntilDue}d` : 'None scheduled'}
-        icon={<CalendarClock className="w-4 h-4 text-blue-600" />}
+        icon={<CalendarClock className="w-4 h-4 text-info" />}
         description={data.nextUpcomingReminder ? data.nextUpcomingReminder.title : 'No upcoming maintenance scheduled'}
       />
       <StatisticCard
         title="Breakdown frequency"
         value={data.breakdownFrequency}
-        icon={<AlertOctagon className="w-4 h-4 text-red-600" />}
+        icon={<AlertOctagon className="w-4 h-4 text-danger" />}
         description="Completed emergency repairs"
       />
       <StatisticCard
         title="Total maintenance cost"
         value={formatCurrency(data.totalMaintenanceCost)}
-        icon={<Wallet className="w-4 h-4 text-green-600" />}
+        icon={<Wallet className="w-4 h-4 text-success" />}
         description={`${data.completedRecordCount} completed record${data.completedRecordCount === 1 ? '' : 's'}`}
       />
     </StatisticCards>

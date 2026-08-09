@@ -127,7 +127,7 @@ export default function ExportCenter() {
         )}
 
         {confirmation && (
-          <p className="mt-3 text-sm text-green-600 dark:text-green-400" role="status">
+          <p className="mt-3 text-sm text-success" role="status">
             {confirmation}
           </p>
         )}

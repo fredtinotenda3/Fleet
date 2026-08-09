@@ -94,7 +94,7 @@ export function MaintenanceDashboardPage() {
         <div className="p-4 space-y-3 surface-card">
           <div className="flex items-center justify-between">
             <h3 className="flex items-center gap-2 text-sm font-semibold">
-              <AlertTriangle className="w-4 h-4 text-red-600" /> Overdue ({overdue?.length ?? 0})
+              <AlertTriangle className="w-4 h-4 text-danger" /> Overdue ({overdue?.length ?? 0})
             </h3>
             <Button variant="link" size="sm" onClick={() => router.push(MAINTENANCE_ROUTES.overdue)}>
               View all
@@ -120,7 +120,7 @@ export function MaintenanceDashboardPage() {
         <div className="p-4 space-y-3 surface-card">
           <div className="flex items-center justify-between">
             <h3 className="flex items-center gap-2 text-sm font-semibold">
-              <Clock className="w-4 h-4 text-blue-600" /> Upcoming (next 7 days)
+              <Clock className="w-4 h-4 text-info" /> Upcoming (next 7 days)
             </h3>
             <Button variant="link" size="sm" onClick={() => router.push(MAINTENANCE_ROUTES.upcoming)}>
               View all

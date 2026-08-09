@@ -22,7 +22,7 @@ export function SessionsList() {
         </Button>
       </div>
 
-      {error && <p className="text-sm text-red-500">{error}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
       {isLoading && sessions.length === 0 && <p className="text-sm text-muted-foreground">Loading sessions...</p>}
 
       <ul className="divide-y rounded border">
@@ -30,7 +30,7 @@ export function SessionsList() {
           <li key={session._id} className="flex items-center justify-between p-4">
             <div>
               <p className="text-sm font-medium">
-                {session.deviceLabel || 'Unknown device'} {session.isCurrent && <span className="text-xs text-green-600">(this device)</span>}
+                {session.deviceLabel || 'Unknown device'} {session.isCurrent && <span className="text-xs text-success">(this device)</span>}
               </p>
               <p className="text-xs text-muted-foreground">
                 {session.ipAddress || 'Unknown IP'} &middot; last active {new Date(session.lastActiveAt).toLocaleString()}

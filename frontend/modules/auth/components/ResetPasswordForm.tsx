@@ -44,14 +44,14 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps) {
       <div className="space-y-1.5">
         <Label htmlFor="newPassword">New password</Label>
         <Input id="newPassword" type="password" autoComplete="new-password" {...register('newPassword')} />
-        {errors.newPassword && <p className="text-sm text-red-500">{errors.newPassword.message}</p>}
+        {errors.newPassword && <p className="text-sm text-danger">{errors.newPassword.message}</p>}
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="confirmPassword">Confirm new password</Label>
         <Input id="confirmPassword" type="password" autoComplete="new-password" {...register('confirmPassword')} />
-        {errors.confirmPassword && <p className="text-sm text-red-500">{errors.confirmPassword.message}</p>}
+        {errors.confirmPassword && <p className="text-sm text-danger">{errors.confirmPassword.message}</p>}
       </div>
-      {error && <p className="text-sm text-red-500">{error}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
       <Button type="submit" className="w-full" disabled={isLoading}>
         {isLoading ? 'Resetting...' : 'Reset password'}
       </Button>

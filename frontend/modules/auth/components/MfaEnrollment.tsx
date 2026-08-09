@@ -67,9 +67,9 @@ export function MfaEnrollment() {
         <div className="space-y-1.5">
           <Label htmlFor="code">Verification code</Label>
           <Input id="code" inputMode="numeric" maxLength={6} {...register('code')} />
-          {errors.code && <p className="text-sm text-red-500">{errors.code.message}</p>}
+          {errors.code && <p className="text-sm text-danger">{errors.code.message}</p>}
         </div>
-        {error && <p className="text-sm text-red-500">{error}</p>}
+        {error && <p className="text-sm text-danger">{error}</p>}
         <Button type="submit" disabled={isLoading}>
           {isLoading ? 'Verifying...' : 'Enable MFA'}
         </Button>

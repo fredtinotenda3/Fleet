@@ -53,7 +53,7 @@ export function OverdueMaintenancePage() {
             <button
               key={r._id}
               onClick={() => router.push(MAINTENANCE_ROUTES.detail(r._id!))}
-              className="flex items-center justify-between w-full p-4 text-left border border-red-200 rounded-md bg-red-50/40 hover:bg-red-50"
+              className="flex items-center justify-between w-full p-4 text-left border border-danger-border rounded-md bg-danger-bg hover:bg-danger-bg/80"
             >
               <div>
                 <p className="font-medium">{r.license_plate} — {r.title}</p>

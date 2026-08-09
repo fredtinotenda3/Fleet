@@ -104,7 +104,7 @@ export function MaintenanceTable({
             {records.map((record) => {
               const overdue = isRecordOverdue(record);
               return (
-                <TableRow key={record._id} className={overdue ? 'bg-red-50/40' : undefined}>
+                <TableRow key={record._id} className={overdue ? 'bg-danger-bg' : undefined}>
                   {canDelete && (
                     <TableCell>
                       <Checkbox
@@ -144,7 +144,7 @@ export function MaintenanceTable({
                       )}
                       {canComplete && record.status !== 'completed' && (
                         <Button variant="ghost" size="icon" onClick={() => onComplete(record)} title="Mark complete">
-                          <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+                          <CheckCircle2 className="h-3.5 w-3.5 text-success" />
                         </Button>
                       )}
                       {canDelete && (

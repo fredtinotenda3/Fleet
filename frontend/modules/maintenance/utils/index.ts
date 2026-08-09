@@ -46,17 +46,17 @@ export function canCompleteMaintenance(roles: string[]): boolean {
 }
 
 export const STATUS_BADGE_CLASSES: Record<ReminderStatus, string> = {
-  pending: 'bg-blue-100 text-blue-800',
-  completed: 'bg-green-100 text-green-800',
-  overdue: 'bg-red-100 text-red-800',
-  cancelled: 'bg-gray-100 text-gray-800',
+  pending: 'bg-info-bg text-info',
+  completed: 'bg-success-bg text-success',
+  overdue: 'bg-danger-bg text-danger',
+  cancelled: 'bg-muted text-muted-foreground',
 };
 
 export const PRIORITY_BADGE_CLASSES: Record<Priority, string> = {
-  low: 'bg-slate-100 text-slate-700',
-  medium: 'bg-yellow-100 text-yellow-800',
-  high: 'bg-orange-100 text-orange-800',
-  critical: 'bg-red-100 text-red-800',
+  low: 'bg-muted text-muted-foreground',
+  medium: 'bg-warning-bg text-warning',
+  high: 'bg-warning-bg text-warning border border-warning/50',
+  critical: 'bg-danger-bg text-danger',
 };
 
 export function getStatusLabel(status: ReminderStatus): string {

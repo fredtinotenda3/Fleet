@@ -26,7 +26,7 @@ export function AccountSecurityPage() {
         {status?.enabled ? (
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-green-600">Enabled</p>
+              <p className="text-sm text-success">Enabled</p>
               <p className="text-xs text-muted-foreground">{status.remainingBackupCodes} backup codes remaining</p>
             </div>
             <div className="flex gap-2">

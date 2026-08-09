@@ -41,7 +41,7 @@ export function MfaVerificationForm({ onSuccess }: MfaVerificationFormProps) {
         <div className="space-y-1.5">
           <Label htmlFor="code">Authentication code</Label>
           <Input id="code" inputMode="numeric" maxLength={6} autoFocus {...register('code')} />
-          {errors.code && <p className="text-sm text-red-500">{errors.code.message}</p>}
+          {errors.code && <p className="text-sm text-danger">{errors.code.message}</p>}
         </div>
       ) : (
         <div className="space-y-1.5">
@@ -50,7 +50,7 @@ export function MfaVerificationForm({ onSuccess }: MfaVerificationFormProps) {
         </div>
       )}
 
-      {error && <p className="text-sm text-red-500">{error}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
 
       <Button type="submit" className="w-full" disabled={isLoading}>
         {isLoading ? 'Verifying...' : 'Verify'}

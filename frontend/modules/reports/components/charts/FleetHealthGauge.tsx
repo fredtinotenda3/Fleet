@@ -39,7 +39,7 @@ export function FleetHealthGauge({ score, isLoading, isError, topRecommendation 
     );
   }
 
-  const color = score >= 70 ? 'text-green-600' : score >= 50 ? 'text-yellow-600' : 'text-red-600';
+  const color = score >= 70 ? 'text-success' : score >= 50 ? 'text-warning' : 'text-danger';
 
   return (
     <ChartContainer title="Fleet Health Score">
@@ -47,7 +47,7 @@ export function FleetHealthGauge({ score, isLoading, isError, topRecommendation 
         <div className={`text-4xl font-bold ${color}`}>{score}%</div>
         <div className="mt-2 h-4 w-full bg-muted rounded-full overflow-hidden">
           <div
-            className={`h-full rounded-full ${score >= 70 ? 'bg-green-500' : score >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
+            className={`h-full rounded-full ${score >= 70 ? 'bg-success' : score >= 50 ? 'bg-warning' : 'bg-danger'}`}
             style={{ width: `${score}%` }}
           />
         </div>

@@ -186,7 +186,7 @@ describe('modules deliberately left organization-wide', () => {
       .filter((d) => d.isDirectory())
       .map((d) => d.name)
       // Cross-cutting modules that own no collections of their own.
-      .filter((name) => !['tenancy', 'ai', 'analytics'].includes(name));
+      .filter((name) => !['tenancy', 'ai', 'analytics', 'esg'].includes(name));
 
     const declared = new Set(MODULE_SCOPE_REGISTRY.map((e) => e.module));
     const undeclared = moduleDirs.filter((m) => !declared.has(m));

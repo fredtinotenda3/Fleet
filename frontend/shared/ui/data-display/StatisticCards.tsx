@@ -30,7 +30,7 @@ export function StatisticCard({ title, value, description, icon, trend, classNam
         <div className="text-2xl font-bold leading-tight">{value}</div>
         {description && <p className="text-xs text-muted-foreground">{description}</p>}
         {trend && (
-          <p className={cn('text-xs', trend.isPositive ? 'text-green-600' : 'text-red-600')}>
+          <p className={cn('text-xs', trend.isPositive ? 'text-success' : 'text-danger')}>
             {trend.isPositive ? '↑' : '↓'} {trend.value}%
           </p>
         )}

@@ -44,20 +44,20 @@ export function ChangePasswordForm() {
       <div className="space-y-1.5">
         <Label htmlFor="currentPassword">Current password</Label>
         <Input id="currentPassword" type="password" autoComplete="current-password" {...register('currentPassword')} />
-        {errors.currentPassword && <p className="text-sm text-red-500">{errors.currentPassword.message}</p>}
+        {errors.currentPassword && <p className="text-sm text-danger">{errors.currentPassword.message}</p>}
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="newPassword">New password</Label>
         <Input id="newPassword" type="password" autoComplete="new-password" {...register('newPassword')} />
-        {errors.newPassword && <p className="text-sm text-red-500">{errors.newPassword.message}</p>}
+        {errors.newPassword && <p className="text-sm text-danger">{errors.newPassword.message}</p>}
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="confirmPassword">Confirm new password</Label>
         <Input id="confirmPassword" type="password" autoComplete="new-password" {...register('confirmPassword')} />
-        {errors.confirmPassword && <p className="text-sm text-red-500">{errors.confirmPassword.message}</p>}
+        {errors.confirmPassword && <p className="text-sm text-danger">{errors.confirmPassword.message}</p>}
       </div>
-      {error && <p className="text-sm text-red-500">{error}</p>}
-      {success && <p className="text-sm text-green-600">Password changed. Other devices have been signed out.</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
+      {success && <p className="text-sm text-success">Password changed. Other devices have been signed out.</p>}
       <Button type="submit" disabled={isLoading}>
         {isLoading ? 'Updating...' : 'Update password'}
       </Button>

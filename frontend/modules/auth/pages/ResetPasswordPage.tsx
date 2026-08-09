@@ -18,7 +18,7 @@ export function ResetPasswordPage() {
       {token ? (
         <ResetPasswordForm token={token} />
       ) : (
-        <p className="text-sm text-red-500">This reset link is missing its token. Please request a new one.</p>
+        <p className="text-sm text-danger">This reset link is missing its token. Please request a new one.</p>
       )}
     </div>
   );
