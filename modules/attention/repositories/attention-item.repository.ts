@@ -72,6 +72,7 @@ export class AttentionItemRepository extends TenantScopedRepository<AttentionIte
           $setOnInsert: {
             firstSeenAt: now,
             createdAt: now,
+            status: 'open',
           },
         } as any,
         upsert: true,
@@ -85,6 +86,52 @@ export class AttentionItemRepository extends TenantScopedRepository<AttentionIte
       modifiedCount: result.modifiedCount,
       matchedCount: result.matchedCount,
     };
+  }
+
+  /**
+   * Looks up one persisted item by its stable itemKey (e.g.
+   * "fuel_fraud:alert-1") rather than by the Mongo _id -- itemKey is
+   * the identifier the live feed (and therefore any caller acting on
+   * an item from that feed, e.g. the resolve endpoint) actually knows.
+   */
+  async findByItemKey(tenantId: string, itemKey: string): Promise<AttentionItem | null> {
+    const collection = await this.getCollection();
+    const doc = await collection.findOne({
+      tenantId,
+      itemKey,
+      isDeleted: { $ne: true },
+    } as any);
+    return this.normalizeDoc<AttentionItem | null>(doc ?? null);
+  }
+
+  /**
+   * Marks a persisted item resolved. Deliberately narrow: sets only
+   * status/resolvedAt/resolvedBy/updatedAt, so it can never be used to
+   * rewrite the substantive fields (severity, cost, ...) that
+   * upsertFeedItems() owns. Returns null if no row with this itemKey
+   * exists yet -- the caller (attention-resolution.service.ts) treats
+   * that as "refresh the feed first", not a silent no-op.
+   */
+  async resolveByItemKey(
+    tenantId: string,
+    itemKey: string,
+    resolvedBy: string
+  ): Promise<AttentionItem | null> {
+    const collection = await this.getCollection();
+    const now = new Date();
+    const result = await collection.findOneAndUpdate(
+      { tenantId, itemKey, isDeleted: { $ne: true } } as any,
+      {
+        $set: {
+          status: 'resolved',
+          resolvedAt: now,
+          resolvedBy,
+          updatedAt: now,
+        },
+      } as any,
+      { returnDocument: 'after' }
+    );
+    return this.normalizeDoc<AttentionItem | null>(result ?? null);
   }
 }
 

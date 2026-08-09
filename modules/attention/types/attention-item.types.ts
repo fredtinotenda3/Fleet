@@ -64,4 +64,15 @@ export interface AttentionItem extends OrgUnitScopedEntity {
    * that sweep is a follow-up, not part of this pass.
    */
   lastSeenAt: Date;
+
+  // ─── Resolution (Step 2) ──────────────────────────────────────────
+  // Set by POST /api/ai/needs-attention/:id/resolve (see
+  // attention-resolution.service.ts). getFeed()'s upsert deliberately
+  // never touches these three fields on refresh -- an item that keeps
+  // getting re-detected by its source after being marked resolved
+  // stays resolved here rather than silently flipping back to 'open'.
+  /** Defaults to 'open' on insert (see AttentionItemRepository.upsertFeedItems). */
+  status?: 'open' | 'resolved';
+  resolvedAt?: Date | null;
+  resolvedBy?: string | null;
 }

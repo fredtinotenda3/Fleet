@@ -9,11 +9,13 @@ import {
   expenseAnomalyDetectionService,
 } from '../services';
 import { needsAttentionService } from '../services/needs-attention.service';
+import { attentionResolutionService } from '@/modules/attention/services/attention-resolution.service';
+import { resolveAttentionItemSchema } from '@/shared/validations/attention.schema';
 
-import { successResponse, errorResponse } from '@/server/utils/response.utils';
-import { AppError, isAppError, describeError } from '@/server/errors/app.errors';
+import { successResponse, createdResponse, errorResponse } from '@/server/utils/response.utils';
+import { AppError, isAppError, describeError, ValidationError } from '@/server/errors/app.errors';
 import { getTenantFromRequest } from '@/server/utils/context.utils';
-import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
+import { resolveTenantContext, resolveTenantContextWithUser } from '@/server/utils/tenant-context.utils';
 
 /**
  * RESOLVED -- kept for the next AI endpoint that lands unscoped.
@@ -260,6 +262,43 @@ export class AIController {
 
       const feed = await needsAttentionService.getFeed(tenantId, aiContext, limit);
       return successResponse(feed);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  // ─── Needs Attention: Resolve ──────────────────────────────────────────────
+
+  /**
+   * POST /api/ai/needs-attention/:id/resolve
+   *
+   * `id` is the attention item's itemKey (e.g. "fuel_fraud:alert-1" --
+   * the same `id` field the GET feed above returns per item), not a
+   * Mongo _id. See attention-resolution.service.ts for the full rule
+   * set (org-unit ownership, already-resolved conflict, and the
+   * baselineTier/evidenceRefs requirement for fuel_fraud/expense_anomaly
+   * items).
+   */
+  async resolveNeedsAttentionItem(req: NextRequest, rawItemKey: string) {
+    try {
+      const itemKey = decodeURIComponent(rawItemKey);
+      const { context, userId } = await resolveTenantContextWithUser(req);
+
+      const body = await req.json().catch(() => ({}));
+      const parsed = resolveAttentionItemSchema.safeParse(body);
+      if (!parsed.success) {
+        throw new ValidationError('Invalid resolve request', parsed.error.flatten());
+      }
+
+      const result = await attentionResolutionService.resolve(
+        context.organizationId,
+        itemKey,
+        userId,
+        context,
+        parsed.data
+      );
+
+      return createdResponse(result);
     } catch (error) {
       return this.handleError(error);
     }

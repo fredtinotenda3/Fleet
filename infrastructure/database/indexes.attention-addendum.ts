@@ -24,5 +24,28 @@ export const ATTENTION_INDEXES = {
       key: { tenantId: 1, lastSeenAt: -1 },
       name: 'idx_attentionitem_tenant_lastseen',
     },
+    {
+      key: { tenantId: 1, status: 1 },
+      name: 'idx_attentionitem_tenant_status',
+    },
+  ],
+  tblvalueledger: [
+    {
+      // One posting per attention item per tenant -- mirrors the
+      // controller-side "already resolved" check as a DB-level
+      // guarantee, so a race between two concurrent resolve calls for
+      // the same item can't produce two postings.
+      key: { tenantId: 1, attentionItemKey: 1 },
+      name: 'idx_valueledger_tenant_itemkey',
+      unique: true,
+    },
+    {
+      key: { tenantId: 1, resolvedAt: -1 },
+      name: 'idx_valueledger_tenant_resolved',
+    },
+    {
+      key: { tenantId: 1, source: 1, baselineTier: 1 },
+      name: 'idx_valueledger_tenant_source_tier',
+    },
   ],
 } as const;

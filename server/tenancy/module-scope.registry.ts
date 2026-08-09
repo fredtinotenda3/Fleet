@@ -333,7 +333,7 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
   // ── Newly scoped in the attention-queue persistence pass. ─────────
   {
     module: 'attention',
-    collections: ['tblattentionitems'],
+    collections: ['tblattentionitems', 'tblvalueledger'],
     level: 'org-unit',
     orgUnitSource: 'parent-record',
     rationale:
@@ -346,7 +346,8 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
       "refresh with the request's activeOrgUnitId instead, which is correct only when the " +
       'caller has one org unit active and leaves orgUnitId unset (fail-closed, invisible to ' +
       'narrowed reads) otherwise. Left confirmed:false until a follow-up joins each item back ' +
-      'to its source entity the way tblanomalies does.',
+      'to its source entity the way tblanomalies does. value_ledger inherits the same orgUnitId ' +
+      "(copied from the attention item it evidences) at write time, in POST /:id/resolve.",
     confirmed: false,
   },
 
