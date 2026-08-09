@@ -161,3 +161,12 @@ export const memberSearchFilterSchema = z.object({
   status: z.enum(['active', 'invited', 'suspended']).optional(),
 });
 export type MemberSearchFilterValues = z.infer<typeof memberSearchFilterSchema>;
+
+export const financeSettingsSchema = z.object({
+  reportingCurrency: z.string().length(3, 'Use a 3-letter code like USD'),
+  fxPolicy: z.enum(['transaction-date', 'period-average']),
+  glToleranceAmount: z.number().min(0, 'Cannot be negative'),
+  depreciationMethod: z.enum(['straight-line', 'declining-balance', 'units-of-production']),
+  depreciationUsefulLifeMonths: z.number().int().min(1).optional(),
+});
+export type FinanceSettingsFormValues = z.infer<typeof financeSettingsSchema>;
