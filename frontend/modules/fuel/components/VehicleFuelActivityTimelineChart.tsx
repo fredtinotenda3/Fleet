@@ -15,7 +15,11 @@ import {
 } from '@/frontend/shared/ui/forms/select';
 import { useVehiclesList } from '@/frontend/modules/vehicles/hooks/useVehicles';
 import { useVehicleFuelTimeline } from '../hooks/useFuel';
+import { useFuelDrawer } from '../hooks/useFuelDrawer';
+import { FuelLogDrawer } from './FuelLogDrawer';
+import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
+import { formatDate } from '@/shared/utils/date.utils';
 import type { FuelAnalyticsDateRange } from './FuelAnalyticsFilterBar';
 import type { VehicleFuelTimelinePoint } from '../types';
 
@@ -49,6 +53,7 @@ function TimelineTooltip({ active, payload, label }: any) {
       <p className="text-xs text-muted-foreground">
         Fuel cost: <span className="font-medium text-foreground">{formatCurrency(row.cost)}</span>
       </p>
+      <p className="pt-1 text-caption text-muted-foreground">Click to view fuel logs</p>
     </div>
   );
 }
@@ -62,47 +67,89 @@ export function VehicleFuelActivityTimelineChart({ dateRange, licensePlate }: Ve
   const { data: vehicles } = useVehiclesList({ limit: 1000 });
   const effectivePlate = locked ? licensePlate : vehicle === ALL_VEHICLES ? undefined : vehicle;
   const { data, isLoading, error } = useVehicleFuelTimeline(effectivePlate, dateRange);
+  const { open, setOpen, filter, openDrawer } = useFuelDrawer();
+
+  function handleClick(row: VehicleFuelTimelinePoint) {
+    openDrawer({
+      label: `Fuel entries \u2014 ${row.date}`,
+      license_plate: effectivePlate,
+      startDate: row.date,
+      endDate: row.date,
+    });
+  }
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
-        <div>
-          <CardTitle>Vehicle fuel activity timeline</CardTitle>
-          <CardDescription>
-            {locked ? 'Fuel entries over time for this vehicle' : 'Fuel entries over time, per vehicle or fleet-wide'}
-          </CardDescription>
-        </div>
-        {!locked && (
-          <Select value={vehicle} onValueChange={(value) => setVehicle(value ?? ALL_VEHICLES)}>
-            <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_VEHICLES}>All vehicles</SelectItem>
-              {vehicles?.data?.map((v) => (
-                <SelectItem key={v._id} value={v.license_plate}>{v.license_plate}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-      </CardHeader>
-      <CardContent>
-        {isLoading ? (
-          <div className="rounded-lg h-60 skeleton" />
-        ) : error || !data || data.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No fuel entries in this range.</p>
-        ) : (
-          <div style={{ width: '100%', height: 260 }}>
-            <ResponsiveContainer>
-              <LineChart data={data} margin={{ left: -20, right: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis dataKey="date" stroke="var(--muted-foreground)" fontSize={11} />
-                <YAxis stroke="var(--muted-foreground)" fontSize={11} allowDecimals={false} />
-                <Tooltip content={<TimelineTooltip />} />
-                <Line type="monotone" dataKey="count" stroke="var(--chart-1)" strokeWidth={2} dot={false} name="Entries" />
-              </LineChart>
-            </ResponsiveContainer>
+    <>
+      <Card>
+        <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-4 space-y-0">
+          <div>
+            <CardTitle>Vehicle fuel activity timeline</CardTitle>
+            <CardDescription>
+              {locked ? 'Fuel entries over time for this vehicle' : 'Fuel entries over time, per vehicle or fleet-wide'} &mdash; click a point for details
+            </CardDescription>
           </div>
-        )}
-      </CardContent>
-    </Card>
+          <div className="flex items-center gap-2">
+            {!locked && (
+              <Select value={vehicle} onValueChange={(value) => setVehicle(value ?? ALL_VEHICLES)}>
+                <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_VEHICLES}>All vehicles</SelectItem>
+                  {vehicles?.data?.map((v) => (
+                    <SelectItem key={v._id} value={v.license_plate}>{v.license_plate}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <ChartExportButton
+              filename={slugifyChartFilename(`vehicle-fuel-activity-timeline-${effectivePlate ?? 'fleet'}`)}
+              sheetName="Fuel Activity Timeline"
+              headers={['Date', 'Entries', 'Volume (L)', 'Cost']}
+              rows={(data ?? []).map((r) => ({
+                Date: r.date,
+                Entries: r.count,
+                'Volume (L)': r.volume,
+                Cost: r.cost,
+              }))}
+            />
+          </div>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="rounded-lg h-60 skeleton" />
+          ) : error || !data || data.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No fuel entries in this range.</p>
+          ) : (
+            <div style={{ width: '100%', height: 260 }}>
+              <ResponsiveContainer>
+                <LineChart
+                  data={data}
+                  margin={{ left: -20, right: 8 }}
+                  onClick={(state: any) => {
+                    const point = state?.activePayload?.[0]?.payload;
+                    if (point) handleClick(point);
+                  }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="date" stroke="var(--muted-foreground)" fontSize={11} tickFormatter={(v) => formatDate(v, 'MMM d')} />
+                  <YAxis stroke="var(--muted-foreground)" fontSize={11} allowDecimals={false} />
+                  <Tooltip content={<TimelineTooltip />} />
+                  <Line
+                    type="monotone"
+                    dataKey="count"
+                    stroke="var(--chart-1)"
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                    activeDot={{ r: 5 }}
+                    cursor="pointer"
+                    name="Entries"
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      <FuelLogDrawer open={open} onOpenChange={setOpen} filter={filter} />
+    </>
   );
 }
