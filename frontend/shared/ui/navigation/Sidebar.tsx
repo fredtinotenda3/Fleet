@@ -188,6 +188,16 @@ const NAV_SECTIONS: NavSection[] = [
           { key: 'maintenance-analytics', label: 'Analytics', href: '/maintenance/analytics', permissions: [Permission.MAINTENANCE_VIEW] },
         ],
       },
+      // Work order detail/assign page shipped -- see app/(protected)/workorders/**.
+      // This is the destination for the DVIR defect links surfaced on the
+      // Command Centre and dashboard Needs Attention widget.
+      {
+        key: 'workorders',
+        label: 'Work Orders',
+        href: '/workorders',
+        icon: ClipboardList,
+        permissions: [Permission.WORKORDER_VIEW],
+      },
     ],
   },
   /**
