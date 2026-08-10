@@ -7,6 +7,9 @@
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/frontend/shared/ui/data-display/card';
 import { useFuelByDriver } from '../hooks/useFuel';
+import { useFuelDrawer } from '../hooks/useFuelDrawer';
+import { FuelLogDrawer } from './FuelLogDrawer';
+import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { FuelAnalyticsDateRange } from './FuelAnalyticsFilterBar';
 import type { DriverFuelConsumptionRow } from '../types';
@@ -37,42 +40,72 @@ function DriverCostTooltip({ active, payload }: any) {
       <p className="text-xs text-muted-foreground">
         Fuel entries: <span className="font-medium text-foreground">{row.logCount}</span>
       </p>
+      <p className="pt-1 text-caption text-muted-foreground">Click to view fuel logs</p>
     </div>
   );
 }
 
 export function FuelCostByDriverChart({ dateRange, licensePlate }: FuelCostByDriverChartProps) {
   const { data, isLoading, error } = useFuelByDriver(dateRange, 10, 'cost', licensePlate);
+  const { open, setOpen, filter, openDrawer } = useFuelDrawer();
+
+  function handleClick(row: DriverFuelConsumptionRow) {
+    openDrawer({
+      label: row.driverName,
+      driver_id: row.driver_id ?? undefined,
+      license_plate: licensePlate,
+      startDate: dateRange?.startDate,
+      endDate: dateRange?.endDate,
+    });
+  }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Fuel cost by driver</CardTitle>
-        <CardDescription>Highest fuel spend, ranked by driver</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {isLoading ? (
-          <div className="rounded-lg h-60 skeleton" />
-        ) : error || !data || data.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No driver-attributed fuel entries in this range.</p>
-        ) : (
-          <div style={{ width: '100%', height: Math.max(260, data.length * 36) }}>
-            <ResponsiveContainer>
-              <BarChart data={data} layout="vertical" margin={{ left: 12, right: 24 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
-                <XAxis type="number" stroke="var(--muted-foreground)" fontSize={11} tickFormatter={(v) => formatCurrency(v)} />
-                <YAxis type="category" dataKey="driverName" stroke="var(--muted-foreground)" fontSize={11} width={120} />
-                <Tooltip content={<DriverCostTooltip />} />
-                <Bar dataKey="totalCost" radius={[0, 4, 4, 0]}>
-                  {data.map((_, i) => (
-                    <Cell key={i} fill={BAR_COLORS[i % BAR_COLORS.length]} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+    <>
+      <Card>
+        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+          <div>
+            <CardTitle>Fuel cost by driver</CardTitle>
+            <CardDescription>Highest fuel spend, ranked by driver &mdash; click a bar for details</CardDescription>
           </div>
-        )}
-      </CardContent>
-    </Card>
+          {data && data.length > 0 && (
+            <ChartExportButton
+              filename={slugifyChartFilename('fuel-cost-by-driver')}
+              sheetName="Fuel by Driver"
+              headers={['Driver', 'Total Cost', 'Total Volume (L)', 'Fuel Entries']}
+              rows={data.map((r) => ({
+                Driver: r.driverName,
+                'Total Cost': r.totalCost,
+                'Total Volume (L)': r.totalFuel,
+                'Fuel Entries': r.logCount,
+              }))}
+            />
+          )}
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="rounded-lg h-60 skeleton" />
+          ) : error || !data || data.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No driver-attributed fuel entries in this range.</p>
+          ) : (
+            <div style={{ width: '100%', height: Math.max(260, data.length * 36) }}>
+              <ResponsiveContainer>
+                <BarChart data={data} layout="vertical" margin={{ left: 12, right: 24 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
+                  <XAxis type="number" stroke="var(--muted-foreground)" fontSize={11} tickFormatter={(v) => formatCurrency(v)} />
+                  <YAxis type="category" dataKey="driverName" stroke="var(--muted-foreground)" fontSize={11} width={120} />
+                  <Tooltip content={<DriverCostTooltip />} />
+                  <Bar dataKey="totalCost" radius={[0, 4, 4, 0]} cursor="pointer" onClick={(entry: any) => handleClick(entry)}>
+                    {data.map((_, i) => (
+                      <Cell key={i} fill={BAR_COLORS[i % BAR_COLORS.length]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      <FuelLogDrawer open={open} onOpenChange={setOpen} filter={filter} />
+    </>
   );
 }
