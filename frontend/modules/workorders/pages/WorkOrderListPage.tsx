@@ -16,7 +16,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { useSessionStore } from '@/frontend/shared/store/session.store';
-import { WorkOrderFilters } from '../components/WorkOrderFilters';
+import { WorkOrderFilterBar } from '../components/WorkOrderFilterBar';
 import { WorkOrderTable } from '../components/WorkOrderTable';
 import { AssignMechanicDialog } from '../components/AssignMechanicDialog';
 import { useWorkOrderList } from '../hooks/useWorkOrders';
@@ -82,7 +82,7 @@ export function WorkOrderListPage() {
       />
 
       <div className="p-4 space-y-4 surface-card">
-        <WorkOrderFilters filters={filters} onChange={handleFiltersChange} />
+        <WorkOrderFilterBar filters={filters} onChange={handleFiltersChange} />
         <WorkOrderTable
           result={result}
           isLoading={isLoading}
