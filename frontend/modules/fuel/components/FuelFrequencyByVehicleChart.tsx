@@ -6,6 +6,9 @@
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/frontend/shared/ui/data-display/card';
 import { useFuelingFrequencyByVehicle } from '../hooks/useFuel';
+import { useFuelDrawer } from '../hooks/useFuelDrawer';
+import { FuelLogDrawer } from './FuelLogDrawer';
+import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { FuelAnalyticsDateRange } from './FuelAnalyticsFilterBar';
 import type { FuelFrequencyByVehicleRow } from '../types';
@@ -39,38 +42,75 @@ function FrequencyTooltip({ active, payload }: any) {
       <p className="text-xs text-muted-foreground">
         Total cost: <span className="font-medium text-foreground">{formatCurrency(row.totalCost)}</span>
       </p>
+      <p className="pt-1 text-caption text-muted-foreground">Click to view fuel logs</p>
     </div>
   );
 }
 
 export function FuelFrequencyByVehicleChart({ dateRange, licensePlate }: FuelFrequencyByVehicleChartProps) {
   const { data, isLoading, error } = useFuelingFrequencyByVehicle(dateRange, 20, licensePlate);
+  const { open, setOpen, filter, openDrawer } = useFuelDrawer();
+
+  function handleClick(row: FuelFrequencyByVehicleRow) {
+    openDrawer({
+      label: row.license_plate,
+      license_plate: row.license_plate,
+      startDate: dateRange?.startDate,
+      endDate: dateRange?.endDate,
+    });
+  }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Fueling frequency by vehicle</CardTitle>
-        <CardDescription>Number of fuel events per vehicle -- useful for spotting abnormal fueling behaviour</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {isLoading ? (
-          <div className="rounded-lg h-60 skeleton" />
-        ) : error || !data || data.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No fuel entries in this range.</p>
-        ) : (
-          <div style={{ width: '100%', height: 280 }}>
-            <ResponsiveContainer>
-              <BarChart data={data} margin={{ left: -20, right: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis dataKey="license_plate" stroke="var(--muted-foreground)" fontSize={11} interval={0} angle={-35} textAnchor="end" height={60} />
-                <YAxis stroke="var(--muted-foreground)" fontSize={11} allowDecimals={false} />
-                <Tooltip content={<FrequencyTooltip />} />
-                <Bar dataKey="count" fill="var(--chart-4)" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+    <>
+      <Card>
+        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+          <div>
+            <CardTitle>Fueling frequency by vehicle</CardTitle>
+            <CardDescription>
+              Number of fuel events per vehicle -- useful for spotting abnormal fueling behaviour &mdash; click a bar for details
+            </CardDescription>
           </div>
-        )}
-      </CardContent>
-    </Card>
+          {data && data.length > 0 && (
+            <ChartExportButton
+              filename={slugifyChartFilename('fuel-frequency-by-vehicle')}
+              sheetName="Fuel Frequency"
+              headers={['Vehicle', 'Fuel Events', 'Total Volume (L)', 'Total Cost']}
+              rows={data.map((r) => ({
+                Vehicle: r.license_plate,
+                'Fuel Events': r.count,
+                'Total Volume (L)': r.totalVolume,
+                'Total Cost': r.totalCost,
+              }))}
+            />
+          )}
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="rounded-lg h-60 skeleton" />
+          ) : error || !data || data.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No fuel entries in this range.</p>
+          ) : (
+            <div style={{ width: '100%', height: 280 }}>
+              <ResponsiveContainer>
+                <BarChart data={data} margin={{ left: -20, right: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="license_plate" stroke="var(--muted-foreground)" fontSize={11} interval={0} angle={-35} textAnchor="end" height={60} />
+                  <YAxis stroke="var(--muted-foreground)" fontSize={11} allowDecimals={false} />
+                  <Tooltip content={<FrequencyTooltip />} />
+                  <Bar
+                    dataKey="count"
+                    fill="var(--chart-4)"
+                    radius={[4, 4, 0, 0]}
+                    cursor="pointer"
+                    onClick={(entry: any) => handleClick(entry)}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      <FuelLogDrawer open={open} onOpenChange={setOpen} filter={filter} />
+    </>
   );
 }

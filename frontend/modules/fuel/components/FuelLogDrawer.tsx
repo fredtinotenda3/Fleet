@@ -49,6 +49,17 @@ import type { FuelLog } from '../types';
 export interface FuelDrawerFilter extends Partial<FuelListParams> {
   /** Shown as the drawer title, e.g. "Shell Borrowdale -- Jul 2026" or "AFK4234". */
   label: string;
+  /**
+   * Client-side narrowing applied after the tenant-scoped fetch, for
+   * dimensions the list API doesn't filter on server-side (fuel type,
+   * cost bucket). Never sent over the network -- the underlying query is
+   * still scoped only by the server-supported fields above, so tenancy
+   * scoping is unaffected; this just trims the already-scoped result set
+   * before it's shown/exported.
+   */
+  fuelType?: string;
+  minCost?: number;
+  maxCost?: number;
 }
 
 interface FuelLogDrawerProps {
@@ -72,7 +83,16 @@ export function FuelLogDrawer({ open, onOpenChange, filter }: FuelLogDrawerProps
     staleTime: 30_000,
   });
 
-  const rows = data?.data ?? [];
+  const rows = useMemo(() => {
+    const all = data?.data ?? [];
+    if (!filter) return all;
+    return all.filter((r) => {
+      if (filter.fuelType && r.fuel_type !== filter.fuelType) return false;
+      if (filter.minCost !== undefined && r.cost < filter.minCost) return false;
+      if (filter.maxCost !== undefined && r.cost > filter.maxCost) return false;
+      return true;
+    });
+  }, [data, filter]);
   const totals = useMemo(
     () => ({
       cost: rows.reduce((sum, r) => sum + r.cost, 0),

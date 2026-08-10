@@ -1,3 +1,5 @@
+//frontend/shared/ui/feedback/dialog.tsx
+
 "use client"
 
 import * as React from "react"
