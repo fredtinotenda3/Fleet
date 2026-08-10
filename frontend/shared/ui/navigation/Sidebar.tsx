@@ -13,6 +13,7 @@ import {
   Wallet,
   Wrench,
   ClipboardList,
+  ClipboardCheck,
   Warehouse,
   Boxes,
   ShoppingCart,
@@ -111,6 +112,17 @@ const NAV_SECTIONS: NavSection[] = [
         // Same gate as the needsAttention widget (WidgetRegistry.ts) and
         // the GET /api/ai/needs-attention route itself.
         permissions: [Permission.ANALYTICS_VIEW],
+      },
+      {
+        key: 'driver',
+        label: 'Driver',
+        href: '/driver',
+        icon: ClipboardCheck,
+        // Gated on DVIR_CREATE (not just DVIR_VIEW) so this entry only
+        // shows for roles that actually submit inspections -- drivers --
+        // rather than every role that can browse them (workshop/fleet
+        // managers already reach DVIR data via Work Orders/Needs Attention).
+        permissions: [Permission.DVIR_CREATE],
       },
     ],
   },

@@ -121,6 +121,12 @@ export enum Permission {
   WORKORDER_COMPLETE = 'workorder:complete',
   WORKORDER_MANAGE = 'workorder:manage',
 
+  // ---- FleetOps - Driver Vehicle Inspection Reports (DVIR) ----
+  /** Submit a pre-trip/post-trip inspection for a vehicle in your own org unit. */
+  DVIR_CREATE = 'dvir:create',
+  /** View inspection history/detail (own submissions for drivers; in-scope fleet for managers/mechanics). */
+  DVIR_VIEW = 'dvir:view',
+
   // Ã¢â€â‚¬Ã¢â€â‚¬ FleetOps Ã¢â‚¬â€œ Workshop Ã¢â€â‚¬Ã¢â€â‚¬
   WORKSHOP_VIEW = 'workshop:view',
   WORKSHOP_MANAGE = 'workshop:manage',
@@ -337,6 +343,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     Permission.WORKORDER_MANAGE,
     Permission.WORKSHOP_VIEW,
     Permission.INVENTORY_VIEW,
+    Permission.DVIR_VIEW,
     Permission.PROCUREMENT_VIEW,
     Permission.PROCUREMENT_APPROVE,
     Permission.VENDOR_VIEW,
@@ -439,6 +446,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     Permission.WORKORDER_ASSIGN,
     Permission.WORKORDER_COMPLETE,
     Permission.WORKORDER_MANAGE,
+    // FleetOps Ã¢â‚¬â€œ Driver Vehicle Inspection Reports (DVIR)
+    Permission.DVIR_VIEW,
     // FleetOps Ã¢â‚¬â€œ Workshop
     Permission.WORKSHOP_VIEW,
     Permission.WORKSHOP_MANAGE,
@@ -494,6 +503,7 @@ export const rolePermissions: Record<Role, Permission[]> = {
     Permission.WORKORDER_ASSIGN,
     Permission.WORKORDER_COMPLETE,
     Permission.WORKORDER_MANAGE,
+    Permission.DVIR_VIEW,
     Permission.WORKSHOP_VIEW,
     Permission.WORKSHOP_MANAGE,
     Permission.INVENTORY_VIEW,
@@ -601,6 +611,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
     Permission.BOOKING_VIEW,
     // FleetOps Ã¢â‚¬â€œ Schedule / Shifts
     Permission.SCHEDULE_SHIFT_VIEW,
+    // FleetOps Ã¢â‚¬â€œ Driver Vehicle Inspection Reports (DVIR)
+    Permission.DVIR_CREATE,
+    Permission.DVIR_VIEW,
   ],
 
   [Role.MECHANIC]: [
@@ -614,6 +627,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     // FleetOps Ã¢â‚¬â€œ Work Orders
     Permission.WORKORDER_VIEW,
     Permission.WORKORDER_COMPLETE,
+    // FleetOps Ã¢â‚¬â€œ Driver Vehicle Inspection Reports (DVIR)
+    Permission.DVIR_VIEW,
     // FleetOps Ã¢â‚¬â€œ Workshop
     Permission.WORKSHOP_VIEW,
     // FleetOps Ã¢â‚¬â€œ Inventory

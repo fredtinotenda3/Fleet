@@ -4,6 +4,7 @@ import { Filter } from 'mongodb';
 import { BaseRepository, isPlatformSentinelTenant } from '@/server/repositories/base.repository';
 import { WorkOrder, WorkOrderFilters } from '../types/workorder.types';
 import '../types/workorder.tenancy-addendum';
+import '../types/workorder.dvir-addendum';
 import { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';

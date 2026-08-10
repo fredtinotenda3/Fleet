@@ -1,0 +1,25 @@
+{
+  "name": "Fleet Driver Inspections",
+  "short_name": "Fleet Driver",
+  "description": "Pre-trip and post-trip vehicle inspections (DVIR) for drivers, works offline.",
+  "start_url": "/driver",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0b0f14",
+  "theme_color": "#0b0f14",
+  "icons": [
+    {
+      "src": "/icons/dvir-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/dvir-icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

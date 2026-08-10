@@ -66,6 +66,9 @@ export const WORK_ORDER_PARTS_CONSUMED = 'WorkOrderPartsConsumed';
 export const WORK_ORDER_COMPLETED = 'WorkOrderCompleted';
 export const WORK_ORDER_CANCELLED = 'WorkOrderCancelled';
 
+export const DVIR_SUBMITTED = 'DVIRSubmitted';
+export const DVIR_OUT_OF_SERVICE = 'DVIROutOfService';
+
 export const WORKSHOP_BAY_CREATED = 'WorkshopBayCreated';
 export const WORKSHOP_BAY_STATUS_CHANGED = 'WorkshopBayStatusChanged';
 export const MECHANIC_ASSIGNED = 'MechanicAssigned';

@@ -166,6 +166,18 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
     confirmed: true,
   },
   {
+    module: 'dvir',
+    collections: ['tbldvirinspections'],
+    level: 'org-unit',
+    orgUnitSource: 'vehicle',
+    rationale:
+      'A DVIR inspection is performed by a driver against one vehicle and inherits that ' +
+      "vehicle's orgUnitId at submission time, mirroring workorders/maintenance. A driver " +
+      "must only be able to inspect and browse inspections for their own branch/fleet's " +
+      'vehicles, so scoped reads follow the same TenantScopedRepository pattern.',
+    confirmed: true,
+  },
+  {
     module: 'workshop',
     collections: ['tblworkshopbays', 'tblmechanicassignments'],
     level: 'org-unit',

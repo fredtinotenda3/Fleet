@@ -1,93 +1,181 @@
-# Cost-per-km engine frontend — wiring fixes
+# Driver PWA (DVIR) — Changelog
 
-Verification confirmed the backend claim (0 TS errors, 379/379 security tests) is
-correct, and confirmed the frontend claim (components exist but aren't wired) was
-also correct — every listed component/type/hook already existed in the codebase.
-Nothing needed to be built from scratch; six integration points needed wiring.
-Re-ran `npx tsc --noEmit` (0 errors) and `npm run test:security` (29 suites,
-379/379 passing) after all changes below.
+30 files changed/added. `npx tsc --noEmit`: **0 errors**. Security suite: **382/382 passing**
+(29 suites, up from 379 — the increase is `module-scope-conformance.spec.ts` picking up the
+newly-registered `dvir` module, not a new gap being covered).
 
-## 1. Vehicle Detail Page — Costs tab
-`VehicleCostsPanel` existed, unused. `frontend/modules/vehicles/pages/VehicleDetailPage.tsx`:
-imported it, added a "Costs" tab between Analytics and Activity, passed
-`vehicle._id`. Note: `Vehicle._id` is typed optional (`BaseEntity._id?: ID`) even
-though it's always populated for a persisted vehicle in practice — added a guard
-so this can't become a `tsc` failure.
+## New module: `modules/dvir/`
 
-## 2. Dashboard — Cost-per-km KPI card
-`CostPerKmWidget` existed, unregistered. `frontend/shared/dashboards/WidgetRegistry.ts`:
-added a `costPerKm` entry gated on `Permission.FINANCE_VIEW` (matches the
-widget's own backend calls), added to `WIDGET_ORDER`. New widget keys already
-flow through to existing per-user layouts via `DashboardPersistence.ts`'s
-"add anything in WIDGET_ORDER missing from a saved layout" logic — no other
-file needed to change.
+Driver Vehicle Inspection Report, following the same repository/service/controller/events
+layout as `modules/workorders/`.
 
-## 3. Command Centre — Savings strip
-`SavingsStrip` *was* already wired into `CommandCentrePage`, but it only
-reflected the **value ledger** (resolved fuel-fraud/expense-anomaly savings),
-not the finance module's **allocation ledger** the brief asked for — a real
-gap, not a false alarm.
+- **`types/dvir.types.ts`** — `DVIRInspection`, checklist item shape, create DTO. Includes
+  `clientInspectionId`, a device-minted idempotency key for offline-queue resubmission.
+- **`repositories/dvir.repository.ts`** — extends `TenantScopedRepository<DVIRInspection>`
+  (same base class as `workorders`/`maintenance`). Adds `findByClientInspectionId` (the
+  idempotency lookup) and `appendWorkOrderId`.
+- **`services/dvir.service.ts`** — `DVIRService.submit()`:
+  1. validates the checklist (every defect requires a description; max 50 items)
+  2. resolves the vehicle and checks `tenantScopeService.canAccessOrgUnit()` — a driver can only
+     inspect vehicles inside their own accessible org units (their branch/fleet), enforcing
+     requirement 5
+  3. idempotency check against `clientInspectionId` — a retried offline-queue submission
+     returns the original result instead of duplicating the inspection/work orders
+  4. uploads any defect photos via the existing `storageService`
+  5. persists the inspection, inheriting the vehicle's `orgUnitId`
+  6. creates **one work order per defect item** via `workOrderService.create()` (requirement 3)
+  7. if `outOfService` is set, publishes a `DVIROutOfServiceEvent` and broadcasts a critical
+     notification to the vehicle's workshop org unit (requirement 1's "Out of Service... notifies
+     the workshop")
+- **`controllers/dvir.controller.ts`** — `list`/`get`/`submit`, mirrors the workorders
+  controller pattern. `submit` resolves the driver's identity from the authenticated user (see
+  "Known limitation" below) rather than trusting a client-supplied id.
+- **`events/dvir.events.ts`** — `DVIRSubmittedEvent`, `DVIROutOfServiceEvent`.
 
-Every allocation-read endpoint except one requires a `vehicleId` by design
-(`allocation.controller.ts` documents this as a deliberate anti-DoS
-constraint — no fleet-wide unscoped ledger read). The one exception is
-`GET /api/finance/gl/reconciliation`, which returns a pre-aggregated
-`totalPlatform` figure for the whole org and period, gated on `FINANCE_VIEW`.
-Used that:
-- `frontend/modules/attention/hooks/useAttentionQueue.ts`: added
-  `useMonthToDateAllocationTotal()`.
-- `frontend/modules/attention/components/SavingsStrip.tsx`: added optional
-  `allocationReport`/`isAllocationLoading`/`isAllocationError` props, rendered
-  as a fourth figure ("Allocated ... from the GL ledger"). A caller without
-  `FINANCE_VIEW` just doesn't see this figure — the rest of the strip is
-  unaffected, matching the codebase's existing degrade-gracefully pattern
-  (e.g. `CostPerKmWidget`'s own doc comment).
-- `frontend/modules/attention/pages/CommandCentrePage.tsx`: wired the new
-  hook's data into `SavingsStrip`.
+## New API routes
 
-## 4. GL Reconciliation page
-Route was missing entirely — `GLReconciliationPage` component existed with no
-`app/(protected)/reports/gl-reconciliation/page.tsx` to mount it.
-- Added `app/(protected)/reports/gl-reconciliation/page.tsx` (thin entry
-  point, same pattern as `reports/exports/page.tsx`).
-- Added a "GL Reconciliation" sidebar entry under Reports in
-  `frontend/shared/ui/navigation/Sidebar.tsx`, gated on `Permission.FINANCE_VIEW`
-  (the same permission the route itself requires server-side).
-- CSV export (`exportReconciliationCsv`) was already correctly wired in the
-  page component — verified, no change needed.
+- **`app/api/dvir/route.ts`** — `GET` (list, `Permission.DVIR_VIEW`), `POST` (submit,
+  `Permission.DVIR_CREATE`).
+- **`app/api/dvir/[id]/route.ts`** — `GET` single inspection.
 
-## 5. Organisation Settings — Finance tab
-`FinanceSection`, `financeSettingsSchema`, and `FinanceSettingsFormValues`
-all already existed and were correctly exported from
-`frontend/modules/organizations/schemas/index.ts` — but `FinanceSection` was
-never imported into `OrganizationSettingsPage.tsx`, and no "Finance" tab
-existed. Finance settings live on their own endpoint
-(`GET/PUT /api/finance/settings`, gated on `FINANCE_MANAGE`, tenant-resolved
-server-side) rather than on the organization document, so they needed their
-own hook rather than reusing `useOrganizationSettings`'s mutations — used the
-already-existing `useFinanceSettings()` from
-`frontend/modules/finance/hooks/useFinance.ts`.
+`GET /api/vehicles` (already existing, already org-unit scoped, already reachable by
+`Role.DRIVER`) is reused for the vehicle picker — no new endpoint needed there.
 
-## 6. Shared finance frontend module
-`frontend/modules/finance/{types,api,hooks,utils}` all present and correctly
-structured. `formatMoney` already omits the `currency` key entirely when
-undefined/empty rather than passing `currency: undefined` through to
-`Intl.NumberFormat` (which throws) — verified this is already correct, no
-change needed. `SavingsStrip`'s new allocation figure uses `formatMoney`
-rather than the raw `formatCurrency`, for the same defensive reason.
+## Permissions & tenancy registration
 
-## Files changed
-- `frontend/modules/vehicles/pages/VehicleDetailPage.tsx`
-- `frontend/shared/dashboards/WidgetRegistry.ts`
-- `frontend/modules/attention/hooks/useAttentionQueue.ts`
-- `frontend/modules/attention/components/SavingsStrip.tsx`
-- `frontend/modules/attention/pages/CommandCentrePage.tsx`
-- `app/(protected)/reports/gl-reconciliation/page.tsx` (new)
-- `frontend/shared/ui/navigation/Sidebar.tsx`
-- `frontend/modules/organizations/pages/OrganizationSettingsPage.tsx`
+- **`server/permissions/roles.ts`** — new `Permission.DVIR_CREATE` / `Permission.DVIR_VIEW`.
+  `DVIR_CREATE` + `DVIR_VIEW` → `Role.DRIVER`. `DVIR_VIEW` → `BRANCH_MANAGER`, `FLEET_MANAGER`,
+  `WORKSHOP_MANAGER`, `MECHANIC`.
+- **`server/tenancy/module-scope.registry.ts`** — registered `dvir` as `org-unit` scope,
+  `orgUnitSource: 'vehicle'`, `confirmed: true`. Required — the module-scope conformance test
+  fails closed on any unregistered module directory.
+- **`server/events/event-names.ts`** — `DVIR_SUBMITTED`, `DVIR_OUT_OF_SERVICE`.
 
-## Verification
-```
-npx tsc --noEmit        → 0 errors
-npm run test:security   → 29 suites, 379/379 tests passing
-```
+## Work order integration
+
+- **`modules/workorders/types/workorder.dvir-addendum.ts`** (new) — additive module
+  augmentation (same pattern as the existing `workorder.tenancy-addendum.ts`) adding
+  `source` / `dvirInspectionId` / `driverId` / `photoUrl` to `WorkOrder` and
+  `WorkOrderCreateDTO`, so a DVIR-raised work order carries the defect description, photo,
+  vehicle id, and driver id back-reference (requirement 3).
+- **`modules/workorders/repositories/workorder.repository.ts`** — imports the new addendum.
+- **`modules/workorders/services/workorder.service.ts`** — imports the new addendum, persists
+  the new fields, **and fixes a pre-existing bug**: the tenancy addendum's doc comment on
+  `orgUnitId` promised "falls back to the vehicle's own orgUnitId when omitted," but
+  `WorkOrderService.create()` never actually implemented that fallback — every work order was
+  created with `orgUnitId` silently `undefined` regardless of caller input. This is invisible
+  until an org-unit-scoped read (a workshop manager's queue, or the Needs Attention feed) comes
+  back empty for no apparent reason. Fixed as part of wiring DVIR's work orders through, since
+  DVIR depends on this to actually be visible to a scoped workshop manager.
+
+## Needs Attention queue integration
+
+- **`modules/ai/services/needs-attention.service.ts`** — `readMaintenance()` now also reads
+  open work orders (`readOpenWorkOrders`, new private method) via `workOrderRepository`/
+  `workOrderService`, surfaced under the existing `'maintenance'` source (no new
+  `NeedsAttentionSource` value, so no changes needed to the frontend's source-icon map).
+  DVIR-originated work orders are labeled "(reported by driver inspection)" in the description.
+  Satisfies requirement 3's "appears in the Needs Attention queue immediately."
+  - Wrapped in its **own** try/catch, separate from the outer `safeSource('maintenance', ...)`
+    wrapper, so a failure reading work orders degrades to "no work-order items" rather than also
+    discarding the existing overdue/upcoming maintenance-reminder items — verified against
+    `tests/security/needs-attention-scope.spec.ts`'s failure-isolation test, which exercises this
+    function without mocking work orders (confirmed passing: the real DB call throws fast with
+    no `MONGODB_URI` set, caught, logged, empty array returned, reminder items unaffected).
+  - `makeItem()`'s `extra` parameter type extended to accept `href` (was already a field on
+    `NeedsAttentionItem`, just not exposed through the helper).
+
+## Frontend: `frontend/modules/dvir/`
+
+Client-safe module, deliberately dependency-free of anything under `server/`/`modules/` (a
+separate copy of the shared type shapes, not an import of the server module) so nothing server-
+only can leak into the client bundle.
+
+- **`types.ts`** — client-side type mirror + `DVIR_CHECKLIST` (tyres, lights, brakes, body,
+  fluids, other).
+- **`lib/offline-db.ts`** — hand-rolled IndexedDB wrapper (no new dependency), one object store
+  keyed by `clientInspectionId`.
+- **`lib/sync.ts`** — the offline queue manager:
+  - `queueInspection()` — persists to IndexedDB, attempts an immediate flush if online
+  - `flushQueue()` — POSTs each queued item; on success removes it; on a 4xx (validation/scope
+    rejection — not a connectivity problem) it is marked `permanentFailure` and **kept queued**,
+    not deleted — silently dropping a safety-critical defect report on a bad-but-recoverable
+    error would be worse than an extra visible queue entry. On 5xx/network failure it stays
+    queued with an incremented attempt count for retry.
+  - `initDVIRSync()` — flushes on mount, on the browser `online` event, and every 60s while the
+    tab is open (works even in browsers without Background Sync API support, e.g. Safari/iOS).
+  - `subscribePendingCount()` — the visible-queue-count subscription used by
+    `OfflineQueueBadge`.
+- **`lib/photo.ts`** — downscales/re-encodes a captured photo (max 1600px, JPEG 0.72) before it
+  enters the offline queue, so several queued defect photos don't blow through IndexedDB storage
+  quotas.
+- **`components/ChecklistItem.tsx`** — one checklist row: large (56px height) OK/Defect Found
+  tap targets, description textarea + photo capture (`capture="environment"` for the rear
+  camera) shown only when Defect Found is selected.
+- **`components/DVIRForm.tsx`** — the full inspection form: pre-trip/post-trip toggle, vehicle
+  picker (fetches the driver's own scoped vehicles from `/api/vehicles`, with a manual
+  license-plate fallback), odometer, the six checklist items, an Out of Service toggle, and a
+  sticky submit button. Submission tries `POST /api/dvir` directly when online; falls back to
+  `queueInspection()` when offline, on a 5xx, or on a network-level fetch failure.
+- **`components/OfflineQueueBadge.tsx`** — visible pending-sync count (requirement 2), shown
+  online (mid-sync) and offline.
+
+## New routes
+
+- **`app/(protected)/driver/page.tsx`** — the inspection page (requirement 4's dedicated
+  `/driver` route), inside the existing `(protected)` layout (`DashboardLayout` → `Sidebar` +
+  `TopBar`, already responsive).
+- **`app/(protected)/driver/history/page.tsx`** — past inspections (`GET /api/dvir`) plus the
+  offline queue, with a discard action for permanently-failed queued items.
+
+## Sidebar navigation
+
+- **`frontend/shared/ui/navigation/Sidebar.tsx`** — new "Driver" entry (`ClipboardCheck` icon,
+  `/driver`), gated on `Permission.DVIR_CREATE` specifically (not `DVIR_VIEW`) so it only shows
+  for roles that actually submit inspections; workshop/fleet managers already reach DVIR data via
+  Work Orders and the Needs Attention queue.
+
+## PWA layer
+
+- **`public/manifest.json`** — `start_url: /driver`, `display: standalone`, SVG icons
+  (regular + maskable).
+- **`public/sw.js`** — install/activate/fetch handlers. Caches only the small `/driver` app
+  shell (the page itself, manifest, icons, offline fallback) — **never** caches `/api/*`
+  responses, since those are tenant/org-unit-scoped per signed-in user and stale or cross-user
+  cached data would be a correctness/security problem, not just a UX one. Registers a `sync`
+  event listener as a progressive enhancement for browsers with Background Sync API support,
+  which just wakes any open tab to run the same `flushQueue()` the page already uses.
+- **`public/offline.html`** — static fallback shown for other navigations that fail offline.
+- **`public/icons/dvir-icon.svg`**, **`dvir-icon-maskable.svg`** — placeholder app icons.
+- **`frontend/shared/pwa/ServiceWorkerRegister.tsx`** — registers `/sw.js`, relays
+  `DVIR_FLUSH_QUEUE` postMessages from the service worker's `sync` handler into
+  `flushQueue()`.
+- **`app/layout.tsx`** — added `manifest`/`appleWebApp` metadata, `viewport.themeColor`, and
+  mounted `<ServiceWorkerRegister />`.
+
+## Data scoping (requirement 5)
+
+Every inspection is created with the vehicle's `orgUnitId` (`DVIRService.submit`), and the
+repository's `getFilteredInScope` applies `tenantScopeService.buildFilter(context, 'orgUnitId')`
+— the identical mechanism `workorders`/`maintenance` already use. A driver whose accessible org
+units don't include the vehicle's org unit gets a `ForbiddenError` at submit time
+(`tenantScopeService.canAccessOrgUnit`), and a vehicle with no `orgUnitId` at all is rejected for
+any non-org-wide caller rather than silently defaulting to "visible to everyone."
+
+## Known limitation (flagged for product/eng follow-up)
+
+There is currently no `tbldrivers` ↔ `tbladmin` (auth user) link field anywhere in this
+codebase — `modules/drivers/repositories/driver.repository.ts` has a comment acknowledging this
+gap exists elsewhere too. `DVIRController.submit()` therefore uses the authenticated user's own
+id as the `driverId` on the inspection, with a display name looked up from `tbladmin` — it does
+**not** attempt to resolve a separate `tbldrivers` record. This is safe (a driver still can only
+act as themselves) but means a DVIR inspection's `driverId` is a `tbladmin` user id, not a
+`tbldrivers` record id. If/when that link is built, `DVIRController.submit()` is the one place to
+update.
+
+## Not changed
+
+No existing route, type, or test file was removed or had its existing behavior altered outside
+of the two additive fixes noted above (`orgUnitId` fallback on work orders; `makeItem`'s `extra`
+type gaining `href`). All 379 pre-existing security tests still pass, plus 3 new passing
+assertions from `module-scope-conformance.spec.ts` picking up the registered `dvir` module.

@@ -27,6 +27,8 @@ import { fuelFraudDetectionService } from './fuel-fraud-detection.service';
 import { expenseAnomalyDetectionService } from './expense-anomaly-detection.service';
 import { complianceService } from '@/modules/compliance/services/compliance.service';
 import { maintenanceQueryService } from '@/modules/maintenance/services/maintenance-query.service';
+import { workOrderRepository } from '@/modules/workorders/repositories/workorder.repository';
+import { workOrderService } from '@/modules/workorders/services/workorder.service';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { attentionItemRepository } from '@/modules/attention/repositories/attention-item.repository';
 import { monitoring } from '@/infrastructure/monitoring/logger';
@@ -98,7 +100,7 @@ function makeItem(
   title: string,
   description: string,
   cost: number,
-  extra?: Partial<Pick<NeedsAttentionItem, 'dueDate' | 'entityId' | 'entityLabel'>>
+  extra?: Partial<Pick<NeedsAttentionItem, 'dueDate' | 'entityId' | 'entityLabel' | 'href'>>
 ): NeedsAttentionItem {
   return {
     id: `${source}:${id}`,
@@ -398,7 +400,52 @@ export class NeedsAttentionService {
       )
     );
 
-    return [...overdueItems, ...upcomingItems];
+    // Open work orders (from the DVIR module or created manually) that
+    // haven't been picked up yet. Kept in its own try/catch, separate
+    // from the safeSource() wrapper around the whole of readMaintenance,
+    // so a failure here degrades to "no work-order items" rather than
+    // also discarding the overdue/upcoming reminder items above -- see
+    // needs-attention-scope.spec.ts's failure-isolation test, which
+    // exercises exactly this function without mocking work orders.
+    const workOrderItems = await this.readOpenWorkOrders(tenantId, context);
+
+    return [...overdueItems, ...upcomingItems, ...workOrderItems];
+  }
+
+  /**
+   * Open work orders not yet picked up by a mechanic -- most notably
+   * the ones DVIRService.submit() auto-creates from a driver-reported
+   * defect, which is how "submitted defect -> appears in the Needs
+   * Attention queue immediately" (no separate polling/sync step) is
+   * satisfied. A work order leaves this list the moment it's assigned,
+   * same lifecycle as a reminder leaving once it's resolved.
+   */
+  private async readOpenWorkOrders(tenantId: string, context?: TenantContext): Promise<NeedsAttentionItem[]> {
+    try {
+      const pagination = { page: 1, limit: 100 };
+      const result = context
+        ? await workOrderRepository.getFilteredInScope({ status: 'open' }, context, pagination)
+        : await workOrderService.list({ status: 'open' }, pagination, tenantId);
+
+      return result.data.map((wo) => {
+        const severity: AISeverity =
+          wo.priority === 'critical' ? 'critical' : wo.priority === 'high' ? 'high' : wo.priority === 'low' ? 'low' : 'medium';
+        const fromDvir = (wo as { source?: string }).source === 'dvir';
+        return makeItem(
+          'maintenance',
+          String(wo._id),
+          severity,
+          urgencyFromSeverity(severity),
+          wo.title,
+          `${wo.license_plate}: ${wo.description || 'Work order raised'}${fromDvir ? ' (reported by driver inspection)' : ''}`,
+          wo.totalCost || 0,
+          { entityLabel: wo.license_plate, href: `/workorders?license_plate=${encodeURIComponent(wo.license_plate)}` }
+        );
+      });
+    } catch (error) {
+      monitoring.logError('[needsAttentionService] readOpenWorkOrders failed', error as Error);
+      return [];
+    }
   }
 }
 

@@ -1,6 +1,8 @@
 // modules/workorders/services/workorder.service.ts
 import { workOrderRepository, WorkOrderRepository } from '../repositories/workorder.repository';
 import { WorkOrder, WorkOrderCreateDTO, WorkOrderFilters, WorkOrderStatus } from '../types/workorder.types';
+import '../types/workorder.tenancy-addendum';
+import '../types/workorder.dvir-addendum';
 import { AppError, ConflictError, NotFoundError, ValidationError } from '@/server/errors/app.errors';
 import { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
@@ -50,6 +52,19 @@ export class WorkOrderService {
         status: 'open',
         priority: data.priority || 'medium',
         reminderId: data.reminderId,
+        // FIX: the addendum's doc comment has always promised "falls back
+        // to the vehicle's own orgUnitId when omitted", but that fallback
+        // was never actually wired up here -- every work order was created
+        // with orgUnitId undefined regardless of caller input, which is
+        // invisible to org-unit-scoped reads (getFilteredInScope) until a
+        // human notices a workshop's queue is silently empty. DVIR-raised
+        // work orders depend on this for the Needs Attention queue and the
+        // Workshop Manager's scoped list to actually surface them.
+        orgUnitId: (data as any).orgUnitId ?? (vehicle as any).orgUnitId,
+        source: (data as any).source ?? 'manual',
+        dvirInspectionId: (data as any).dvirInspectionId,
+        driverId: (data as any).driverId,
+        photoUrl: (data as any).photoUrl,
         partsUsed: [],
         partsCost: 0,
         totalCost: 0,
