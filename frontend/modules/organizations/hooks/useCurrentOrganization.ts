@@ -1,3 +1,5 @@
+"use client"
+
 // frontend/modules/organizations/hooks/useCurrentOrganization.ts
 
 import { useEffect, useMemo } from 'react';
