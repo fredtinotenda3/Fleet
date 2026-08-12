@@ -73,8 +73,14 @@ export function VehicleFuelActivityTimelineChart({ dateRange, licensePlate }: Ve
     openDrawer({
       label: `Fuel entries \u2014 ${row.date}`,
       license_plate: effectivePlate,
-      startDate: row.date,
-      endDate: row.date,
+      // FuelDrawerFilter.startDate/endDate are typed as Date (see
+      // shared/types/fuel.types.ts), but VehicleFuelTimelinePoint.date is a
+      // plain day string (e.g. "2026-07-01"). Wrap it the same way
+      // FuelByStationChart/FuelFrequencyByVehicleChart already pass real
+      // Date objects into openDrawer, and the same way FuelLogDrawer itself
+      // re-wraps filter.startDate/endDate in new Date(...) before use.
+      startDate: new Date(row.date),
+      endDate: new Date(row.date),
     });
   }
 
