@@ -2,3 +2,4 @@
 
 export { useLiveMap, useVehicleRouteHistory, telematicsKeys } from './useLiveMap';
 export { useDemoStatus, useSetDemoMode } from './useDemoMode';
+export { useCartrackConfig } from './useCartrackConfig';

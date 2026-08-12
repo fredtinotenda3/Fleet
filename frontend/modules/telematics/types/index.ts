@@ -49,3 +49,14 @@ export interface CartrackSyncResult {
   errors: string[];
   syncedAt: string;
 }
+
+/**
+ * POST /api/telematics/cartrack/test-connection response. The route
+ * takes no body and verifies whatever is currently persisted for the
+ * tenant (see cartrackAdapter.testConnection) -- it does NOT validate
+ * unsaved form input, so the UI must prompt "save first" for a dirty form
+ * rather than implying this checks in-progress edits.
+ */
+export interface CartrackTestConnectionResult {
+  connected: boolean;
+}

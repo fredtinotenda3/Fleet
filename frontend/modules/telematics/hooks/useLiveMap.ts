@@ -8,6 +8,7 @@ export const telematicsKeys = {
   liveMap: () => [...telematicsKeys.all, 'live-map'] as const,
   routeHistory: (vehicleId: string) => [...telematicsKeys.all, 'route-history', vehicleId] as const,
   demoStatus: () => [...telematicsKeys.all, 'demo-status'] as const,
+  cartrackConfig: () => [...telematicsKeys.all, 'cartrack-config'] as const,
 };
 
 /**

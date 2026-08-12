@@ -14,6 +14,7 @@ import { BusinessHoursSection } from '../components/settings/BusinessHoursSectio
 import { TaxSection } from '../components/settings/TaxSection';
 import { FinanceSection } from '../components/settings/FinanceSection';
 import { useFinanceSettings } from '@/frontend/modules/finance/hooks/useFinance';
+import { CartrackConfigSection } from '@/frontend/modules/telematics/components/CartrackConfigSection';
 import { PageLoader } from '@/frontend/shared/loading/PageLoader';
 
 const TABS = [
@@ -24,6 +25,7 @@ const TABS = [
   { value: 'hours', label: 'Business Hours' },
   { value: 'tax', label: 'Tax' },
   { value: 'finance', label: 'Finance' },
+  { value: 'integrations', label: 'Integrations' },
 ] as const;
 
 export function OrganizationSettingsPage() {
@@ -85,6 +87,9 @@ export function OrganizationSettingsPage() {
         </TabsContent>
         <TabsContent value="finance">
           <FinanceSection settings={financeSettings} mutation={financeMutation} />
+        </TabsContent>
+        <TabsContent value="integrations">
+          <CartrackConfigSection />
         </TabsContent>
       </Tabs>
     </div>
