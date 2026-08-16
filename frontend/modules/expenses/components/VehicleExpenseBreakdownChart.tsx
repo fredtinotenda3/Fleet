@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/fro
 import { useVehicleExpenseBreakdown, useExpenseTypes } from '../hooks/useExpenses';
 import { useExpenseDrawer } from '../hooks/useExpenseDrawer';
 import { ExpenseTransactionDrawer } from './ExpenseTransactionDrawer';
+import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import { getChartColor } from '@/shared/utils/chart.utils';
 import type { ExpenseAnalyticsDateRange } from './ExpenseAnalyticsFilterBar';
@@ -78,9 +79,23 @@ export function VehicleExpenseBreakdownChart({ dateRange, licensePlate }: Vehicl
   return (
     <>
       <Card>
-        <CardHeader>
-          <CardTitle>Vehicle expense breakdown</CardTitle>
-          <CardDescription>Category spend, per vehicle &mdash; click a segment for transactions</CardDescription>
+        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+          <div>
+            <CardTitle>Vehicle expense breakdown</CardTitle>
+            <CardDescription>Category spend, per vehicle &mdash; click a segment for transactions</CardDescription>
+          </div>
+          {chartData.length > 0 && (
+            <ChartExportButton
+              filename={slugifyChartFilename('vehicle-expense-breakdown')}
+              sheetName="Vehicle Expense Breakdown"
+              headers={['License Plate', ...categories]}
+              rows={chartData.map((r: any) => {
+                const row: Record<string, string | number> = { 'License Plate': r.license_plate };
+                categories.forEach((c) => { row[c] = r[c] ?? 0; });
+                return row;
+              })}
+            />
+          )}
         </CardHeader>
         <CardContent>
           {isLoading ? (

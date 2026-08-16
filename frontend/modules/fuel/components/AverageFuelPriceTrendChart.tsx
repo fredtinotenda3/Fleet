@@ -19,7 +19,16 @@ interface AverageFuelPriceTrendChartProps {
   licensePlate?: string;
 }
 
-function PriceTrendTooltip({ active, payload, label }: any) {
+/** "2026-07" (month granularity) -> { startDate, endDate }; falls back to the chart's range otherwise. */
+function monthRange(period: string, fallback?: FuelAnalyticsDateRange): { startDate?: Date; endDate?: Date } {
+  if (/^\d{4}-\d{2}$/.test(period)) {
+    const [y, m] = period.split('-').map(Number);
+    return { startDate: new Date(Date.UTC(y, m - 1, 1)), endDate: new Date(Date.UTC(y, m, 1)) };
+  }
+  return { startDate: fallback?.startDate, endDate: fallback?.endDate };
+}
+
+function PriceTooltip({ active, payload, label }: any) {
   if (!active || !payload || !payload.length) return null;
   const row = payload[0].payload as FuelPriceTrendPoint;
   return (
@@ -36,30 +45,13 @@ function PriceTrendTooltip({ active, payload, label }: any) {
   );
 }
 
-/** "2026-01" -> { startDate: Jan 1 2026, endDate: Jan 31 2026 }. Falls back gracefully for
- *  non-monthly period strings (e.g. plain years) by leaving the range undefined so the
- *  drawer simply falls back to the chart's own date range. */
-function monthPeriodToRange(period: string): { startDate?: Date; endDate?: Date } {
-  const match = /^(\d{4})-(\d{2})$/.exec(period);
-  if (!match) return {};
-  const [, year, month] = match;
-  const startDate = new Date(Number(year), Number(month) - 1, 1);
-  const endDate = new Date(Number(year), Number(month), 0);
-  return { startDate, endDate };
-}
-
 export function AverageFuelPriceTrendChart({ dateRange, licensePlate }: AverageFuelPriceTrendChartProps) {
   const { data, isLoading, error } = useAverageFuelPriceTrend(dateRange, 'month', licensePlate);
   const { open, setOpen, filter, openDrawer } = useFuelDrawer();
 
   function handleClick(row: FuelPriceTrendPoint) {
-    const { startDate, endDate } = monthPeriodToRange(row.period);
-    openDrawer({
-      label: `Fuel prices \u2014 ${row.period}`,
-      license_plate: licensePlate,
-      startDate: startDate ?? dateRange?.startDate,
-      endDate: endDate ?? dateRange?.endDate,
-    });
+    const { startDate, endDate } = monthRange(row.period, dateRange);
+    openDrawer({ label: `${row.period} fuel logs`, license_plate: licensePlate, startDate, endDate });
   }
 
   return (
@@ -70,12 +62,14 @@ export function AverageFuelPriceTrendChart({ dateRange, licensePlate }: AverageF
             <CardTitle>Average fuel price trend</CardTitle>
             <CardDescription>Average cost per litre, by month &mdash; click a point for details</CardDescription>
           </div>
-          <ChartExportButton
-            filename={slugifyChartFilename('average-fuel-price-trend')}
-            sheetName="Avg Fuel Price Trend"
-            headers={['Period', 'Avg. Cost / L']}
-            rows={(data ?? []).map((r) => ({ Period: r.period, 'Avg. Cost / L': r.avgCostPerLitre }))}
-          />
+          {data && data.length > 0 && (
+            <ChartExportButton
+              filename={slugifyChartFilename('average-fuel-price-trend')}
+              sheetName="Avg Fuel Price"
+              headers={['Period', 'Avg Cost / L']}
+              rows={data.map((r) => ({ Period: r.period, 'Avg Cost / L': r.avgCostPerLitre }))}
+            />
+          )}
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -85,26 +79,18 @@ export function AverageFuelPriceTrendChart({ dateRange, licensePlate }: AverageF
           ) : (
             <div style={{ width: '100%', height: 260 }}>
               <ResponsiveContainer>
-                <LineChart
-                  data={data}
-                  margin={{ left: -10, right: 8 }}
-                  onClick={(state: any) => {
-                    const point = state?.activePayload?.[0]?.payload;
-                    if (point) handleClick(point);
-                  }}
-                >
+                <LineChart data={data} margin={{ left: -10, right: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                   <XAxis dataKey="period" stroke="var(--muted-foreground)" fontSize={11} />
                   <YAxis stroke="var(--muted-foreground)" fontSize={11} tickFormatter={(v) => formatCurrency(v)} />
-                  <Tooltip content={<PriceTrendTooltip />} />
+                  <Tooltip content={<PriceTooltip />} />
                   <Line
                     type="monotone"
                     dataKey="avgCostPerLitre"
                     stroke="var(--chart-3)"
                     strokeWidth={2}
-                    dot={{ r: 3 }}
-                    activeDot={{ r: 5 }}
-                    cursor="pointer"
+                    dot={{ r: 3, cursor: 'pointer' }}
+                    activeDot={{ r: 5, cursor: 'pointer', onClick: (_: any, e: any) => handleClick(e.payload) }}
                   />
                 </LineChart>
               </ResponsiveContainer>

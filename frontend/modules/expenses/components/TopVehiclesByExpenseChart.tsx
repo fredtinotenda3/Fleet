@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/fro
 import { useTopVehiclesByExpense } from '../hooks/useExpenses';
 import { useExpenseDrawer } from '../hooks/useExpenseDrawer';
 import { ExpenseTransactionDrawer } from './ExpenseTransactionDrawer';
+import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import { formatDate } from '@/shared/utils/date.utils';
 import { getChartColor } from '@/shared/utils/chart.utils';
@@ -68,10 +69,28 @@ export function TopVehiclesByExpenseChart({ dateRange, licensePlate }: TopVehicl
   return (
     <>
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+        <div>
           <CardTitle>Top vehicles by expense</CardTitle>
           <CardDescription>Highest-cost vehicles &mdash; click a bar for transactions</CardDescription>
-        </CardHeader>
+        </div>
+        {data && data.length > 0 && (
+          <ChartExportButton
+            filename={slugifyChartFilename('top-vehicles-by-expense')}
+            sheetName="Top Vehicles"
+            headers={['License Plate', 'Total', 'Expenses', 'Average', 'Min', 'Max', 'Top Category']}
+            rows={data.map((r) => ({
+              'License Plate': r.license_plate,
+              Total: r.totalAmount,
+              Expenses: r.expenseCount,
+              Average: r.average,
+              Min: r.min,
+              Max: r.max,
+              'Top Category': r.topCategory,
+            }))}
+          />
+        )}
+      </CardHeader>
         <CardContent>
           {isLoading ? (
             <div className="rounded-lg h-60 skeleton" />

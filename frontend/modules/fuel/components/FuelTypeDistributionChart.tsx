@@ -6,6 +6,7 @@
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/frontend/shared/ui/data-display/card';
 import { useFuelTypeDistribution } from '../hooks/useFuel';
+import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { FuelAnalyticsDateRange } from './FuelAnalyticsFilterBar';
 
@@ -22,9 +23,24 @@ export function FuelTypeDistributionChart({ dateRange, licensePlate }: FuelTypeD
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Fuel type distribution</CardTitle>
-        <CardDescription>Share of litres purchased, by fuel type</CardDescription>
+      <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+        <div>
+          <CardTitle>Fuel type distribution</CardTitle>
+          <CardDescription>Share of litres purchased, by fuel type</CardDescription>
+        </div>
+        {data && data.length > 0 && (
+          <ChartExportButton
+            filename={slugifyChartFilename('fuel-type-distribution')}
+            sheetName="Fuel Type Distribution"
+            headers={['Fuel Type', 'Litres', 'Cost', 'Share (%)']}
+            rows={data.map((r) => ({
+              'Fuel Type': r.fuelType,
+              Litres: r.litres,
+              Cost: r.cost,
+              'Share (%)': r.percentage,
+            }))}
+          />
+        )}
       </CardHeader>
       <CardContent>
         {isLoading ? (

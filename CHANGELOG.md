@@ -1,181 +1,92 @@
-# Driver PWA (DVIR) — Changelog
+# Fleet Platform — Chart Enhancement Changelog
 
-30 files changed/added. `npx tsc --noEmit`: **0 errors**. Security suite: **382/382 passing**
-(29 suites, up from 379 — the increase is `module-scope-conformance.spec.ts` picking up the
-newly-registered `dvir` module, not a new gap being covered).
+**Result:** `npx tsc --noEmit` → **0 errors**. `npm run test:security` → **382/382 passing** (29 suites).
+No backend files were touched; only frontend chart components, two new
+frontend-only drill-down helpers (maintenance), and one shared UI
+container. Multi-tenancy scoping is unaffected — every chart still reads
+data exclusively through the existing tenant-scoped hooks/APIs, and every
+new drawer query reuses the existing scoped list endpoints.
 
-## New module: `modules/dvir/`
+---
 
-Driver Vehicle Inspection Report, following the same repository/service/controller/events
-layout as `modules/workorders/`.
+## 1. Fuel charts (`frontend/modules/fuel/components/`)
 
-- **`types/dvir.types.ts`** — `DVIRInspection`, checklist item shape, create DTO. Includes
-  `clientInspectionId`, a device-minted idempotency key for offline-queue resubmission.
-- **`repositories/dvir.repository.ts`** — extends `TenantScopedRepository<DVIRInspection>`
-  (same base class as `workorders`/`maintenance`). Adds `findByClientInspectionId` (the
-  idempotency lookup) and `appendWorkOrderId`.
-- **`services/dvir.service.ts`** — `DVIRService.submit()`:
-  1. validates the checklist (every defect requires a description; max 50 items)
-  2. resolves the vehicle and checks `tenantScopeService.canAccessOrgUnit()` — a driver can only
-     inspect vehicles inside their own accessible org units (their branch/fleet), enforcing
-     requirement 5
-  3. idempotency check against `clientInspectionId` — a retried offline-queue submission
-     returns the original result instead of duplicating the inspection/work orders
-  4. uploads any defect photos via the existing `storageService`
-  5. persists the inspection, inheriting the vehicle's `orgUnitId`
-  6. creates **one work order per defect item** via `workOrderService.create()` (requirement 3)
-  7. if `outOfService` is set, publishes a `DVIROutOfServiceEvent` and broadcasts a critical
-     notification to the vehicle's workshop org unit (requirement 1's "Out of Service... notifies
-     the workshop")
-- **`controllers/dvir.controller.ts`** — `list`/`get`/`submit`, mirrors the workorders
-  controller pattern. `submit` resolves the driver's identity from the authenticated user (see
-  "Known limitation" below) rather than trusting a client-supplied id.
-- **`events/dvir.events.ts`** — `DVIRSubmittedEvent`, `DVIROutOfServiceEvent`.
+| Chart | Change |
+|---|---|
+| `FuelMonthlyTrendChart` | Click-to-drill-down (opens `FuelLogDrawer` scoped to that month), rich tooltip (cost, volume), `ChartExportButton`. |
+| `FuelTopConsumersChart` | Click a vehicle row → drawer scoped to that vehicle; `ChartExportButton`. |
+| `FuelCostByDriverChart` | Click a bar → drawer scoped to that driver + date range; rich tooltip; export. |
+| `FuelFrequencyByVehicleChart` | Click a bar → drawer scoped to that vehicle; export. |
+| `FuelActivityTrendChart` | Click a bar → drawer scoped to that period (exact for month/year granularity); export. |
+| `AverageFuelPriceTrendChart` | Click a point → drawer scoped to that month; export. |
+| `FuelCostDistributionChart` | Click a bucket → drawer scoped to the chart's date range (see note below); export. |
+| `VehicleFuelActivityTimelineChart` | Click a point → drawer scoped to that exact day; export. |
+| `FuelTypeDistributionChart` | Export added. **No drill-down** — the fuel list API has no `fuel_type` filter to scope a click to (see "Known limitations"). |
+| `FuelEntryHeatmapChart` | Export added. **No drill-down** — cells are day-of-week/hour aggregates with no matching list filter. |
 
-## New API routes
+## 2. Expense charts (`frontend/modules/expenses/components/`)
 
-- **`app/api/dvir/route.ts`** — `GET` (list, `Permission.DVIR_VIEW`), `POST` (submit,
-  `Permission.DVIR_CREATE`).
-- **`app/api/dvir/[id]/route.ts`** — `GET` single inspection.
+Nine charts already had drill-down wired by the prior session; this pass
+added `ChartExportButton` to all of them: `ExpenseCalendarHeatmapChart`,
+`ExpenseCategoryChart`, `ExpenseCategoryOverTimeChart`, `ExpenseParetoChart`,
+`ExpenseWaterfallChart`, `JobTripExpenseChart`, `TopExpenseTransactionsChart`,
+`TopVehiclesByExpenseChart`, `VehicleExpenseBreakdownChart`.
 
-`GET /api/vehicles` (already existing, already org-unit scoped, already reachable by
-`Role.DRIVER`) is reused for the vehicle picker — no new endpoint needed there.
+Five charts were fully wired from scratch (drill-down + tooltip + export):
 
-## Permissions & tenancy registration
+| Chart | Change |
+|---|---|
+| `ExpenseMonthlyTrendChart` | Click a point → `ExpenseTransactionDrawer` scoped to that month. |
+| `RunningMonthlySpendChart` | New cumulative-spend area chart; click a point → that month's transactions. |
+| `VehicleAverageCostChart` | Click a bar → that vehicle's transactions. |
+| `ExpenseAmountDistributionChart` | Click a bucket → date-range-scoped drawer (no amount-range filter server-side). |
+| `ExpenseHeatmapChart` | Click a category×month cell → drawer scoped to that category + month. |
 
-- **`server/permissions/roles.ts`** — new `Permission.DVIR_CREATE` / `Permission.DVIR_VIEW`.
-  `DVIR_CREATE` + `DVIR_VIEW` → `Role.DRIVER`. `DVIR_VIEW` → `BRANCH_MANAGER`, `FLEET_MANAGER`,
-  `WORKSHOP_MANAGER`, `MECHANIC`.
-- **`server/tenancy/module-scope.registry.ts`** — registered `dvir` as `org-unit` scope,
-  `orgUnitSource: 'vehicle'`, `confirmed: true`. Required — the module-scope conformance test
-  fails closed on any unregistered module directory.
-- **`server/events/event-names.ts`** — `DVIR_SUBMITTED`, `DVIR_OUT_OF_SERVICE`.
+## 3. Maintenance charts (`frontend/modules/maintenance/`)
 
-## Work order integration
+**New shared infrastructure**, mirroring the existing `ExpenseTransactionDrawer`/`FuelLogDrawer` pattern:
+- `hooks/useMaintenanceDrawer.ts` — open/filter state, same shape as the fuel/expense drawer hooks.
+- `components/MaintenanceRecordDrawer.tsx` — lazy tenant-scoped query against `maintenanceApi.list()`, CSV/Excel export, print-to-PDF, "open full list" deep link.
 
-- **`modules/workorders/types/workorder.dvir-addendum.ts`** (new) — additive module
-  augmentation (same pattern as the existing `workorder.tenancy-addendum.ts`) adding
-  `source` / `dvirInspectionId` / `driverId` / `photoUrl` to `WorkOrder` and
-  `WorkOrderCreateDTO`, so a DVIR-raised work order carries the defect description, photo,
-  vehicle id, and driver id back-reference (requirement 3).
-- **`modules/workorders/repositories/workorder.repository.ts`** — imports the new addendum.
-- **`modules/workorders/services/workorder.service.ts`** — imports the new addendum, persists
-  the new fields, **and fixes a pre-existing bug**: the tenancy addendum's doc comment on
-  `orgUnitId` promised "falls back to the vehicle's own orgUnitId when omitted," but
-  `WorkOrderService.create()` never actually implemented that fallback — every work order was
-  created with `orgUnitId` silently `undefined` regardless of caller input. This is invisible
-  until an org-unit-scoped read (a workshop manager's queue, or the Needs Attention feed) comes
-  back empty for no apparent reason. Fixed as part of wiring DVIR's work orders through, since
-  DVIR depends on this to actually be visible to a scoped workshop manager.
+Charts wired:
 
-## Needs Attention queue integration
+| Chart | Change |
+|---|---|
+| `MostExpensiveVehiclesChart` | Click a bar → records for that vehicle; tooltip; export. |
+| `DowntimeEstimateChart` | Click a bar → completed records for that vehicle; tooltip explains this is a proxy metric (avg. days-past-due-to-completion — there's no dedicated downtime field yet); export. |
+| `RepairFrequencyByVehicleChart` | Click a bar → completed records for that vehicle; tooltip; export. |
+| `MaintenanceCostTrendChart` | Click a point → completed records for that month; tooltip; export. |
+| `MaintenanceCharts.tsx` (`MaintenanceStatusChart`, `MaintenanceCategoryChart`) | Click a bar → records filtered by status/category respectively; tooltips; export. |
 
-- **`modules/ai/services/needs-attention.service.ts`** — `readMaintenance()` now also reads
-  open work orders (`readOpenWorkOrders`, new private method) via `workOrderRepository`/
-  `workOrderService`, surfaced under the existing `'maintenance'` source (no new
-  `NeedsAttentionSource` value, so no changes needed to the frontend's source-icon map).
-  DVIR-originated work orders are labeled "(reported by driver inspection)" in the description.
-  Satisfies requirement 3's "appears in the Needs Attention queue immediately."
-  - Wrapped in its **own** try/catch, separate from the outer `safeSource('maintenance', ...)`
-    wrapper, so a failure reading work orders degrades to "no work-order items" rather than also
-    discarding the existing overdue/upcoming maintenance-reminder items — verified against
-    `tests/security/needs-attention-scope.spec.ts`'s failure-isolation test, which exercises this
-    function without mocking work orders (confirmed passing: the real DB call throws fast with
-    no `MONGODB_URI` set, caught, logged, empty array returned, reminder items unaffected).
-  - `makeItem()`'s `extra` parameter type extended to accept `href` (was already a field on
-    `NeedsAttentionItem`, just not exposed through the helper).
+## 4. Trip charts (`frontend/modules/trips/`)
 
-## Frontend: `frontend/modules/dvir/`
+`VehicleUtilizationChart` and `DriverUtilizationChart` already had drill-down
+via the existing `TripTransactionDrawer` — added `ChartExportButton` to both.
 
-Client-safe module, deliberately dependency-free of anything under `server/`/`modules/` (a
-separate copy of the shared type shapes, not an import of the server module) so nothing server-
-only can leak into the client bundle.
+| Chart | Change |
+|---|---|
+| `TripDistanceDistributionChart` | Added optional `onDrillDown` → date-range-scoped drawer (no distance-range filter server-side); export. |
+| `TripMonthlyTrendChart` | Added optional `onDrillDown` → that month's trips; rich tooltip (trips/distance/hours); export. |
+| `TripCostAnalyticsChart` | Click a scatter point → navigates straight to that trip's detail page (each point already carries a `tripId`); rich tooltip; export. |
+| `TripDayOfWeekHeatmapChart` | Export added. No drill-down (day/hour aggregate, no matching list filter). |
+| `TripAnalyticsPage.tsx` | Wired the new `onDrillDown` props through to `openDrawer`. |
 
-- **`types.ts`** — client-side type mirror + `DVIR_CHECKLIST` (tyres, lights, brakes, body,
-  fluids, other).
-- **`lib/offline-db.ts`** — hand-rolled IndexedDB wrapper (no new dependency), one object store
-  keyed by `clientInspectionId`.
-- **`lib/sync.ts`** — the offline queue manager:
-  - `queueInspection()` — persists to IndexedDB, attempts an immediate flush if online
-  - `flushQueue()` — POSTs each queued item; on success removes it; on a 4xx (validation/scope
-    rejection — not a connectivity problem) it is marked `permanentFailure` and **kept queued**,
-    not deleted — silently dropping a safety-critical defect report on a bad-but-recoverable
-    error would be worse than an extra visible queue entry. On 5xx/network failure it stays
-    queued with an incremented attempt count for retry.
-  - `initDVIRSync()` — flushes on mount, on the browser `online` event, and every 60s while the
-    tab is open (works even in browsers without Background Sync API support, e.g. Safari/iOS).
-  - `subscribePendingCount()` — the visible-queue-count subscription used by
-    `OfflineQueueBadge`.
-- **`lib/photo.ts`** — downscales/re-encodes a captured photo (max 1600px, JPEG 0.72) before it
-  enters the offline queue, so several queued defect photos don't blow through IndexedDB storage
-  quotas.
-- **`components/ChecklistItem.tsx`** — one checklist row: large (56px height) OK/Defect Found
-  tap targets, description textarea + photo capture (`capture="environment"` for the rear
-  camera) shown only when Defect Found is selected.
-- **`components/DVIRForm.tsx`** — the full inspection form: pre-trip/post-trip toggle, vehicle
-  picker (fetches the driver's own scoped vehicles from `/api/vehicles`, with a manual
-  license-plate fallback), odometer, the six checklist items, an Out of Service toggle, and a
-  sticky submit button. Submission tries `POST /api/dvir` directly when online; falls back to
-  `queueInspection()` when offline, on a 5xx, or on a network-level fetch failure.
-- **`components/OfflineQueueBadge.tsx`** — visible pending-sync count (requirement 2), shown
-  online (mid-sync) and offline.
+## 5. Dashboard / reports widgets
 
-## New routes
+- `frontend/shared/ui/charts.tsx` — `ChartContainer` gained an optional `actions` slot (right-aligned in the header) so widget charts can host an export button without a bespoke header layout.
+- `ExpenseBreakdownChart`, `FuelTrendChart`, `MaintenanceChart` (`frontend/modules/reports/components/charts/`) — export added to all three; each now navigates to the relevant module's filtered list/analytics page on click (category slice → Expenses list filtered by category, fuel trend point → Fuel Analytics for that month, status bar → Maintenance list filtered by status).
+- `AnalyticsOverview.tsx` — the two inline charts ("Cost by Category", "Fuel Efficiency Trend") got the same export + click-through treatment.
 
-- **`app/(protected)/driver/page.tsx`** — the inspection page (requirement 4's dedicated
-  `/driver` route), inside the existing `(protected)` layout (`DashboardLayout` → `Sidebar` +
-  `TopBar`, already responsive).
-- **`app/(protected)/driver/history/page.tsx`** — past inspections (`GET /api/dvir`) plus the
-  offline queue, with a discard action for permanently-failed queued items.
+## Known limitations / deliberate scope decisions
 
-## Sidebar navigation
+- **Charts with no matching server-side filter** (`FuelTypeDistributionChart`, `FuelEntryHeatmapChart`, `TripDayOfWeekHeatmapChart`) get export but not drill-down. Adding one would mean adding a new filter field to the corresponding list endpoint — a backend change I didn't make, to avoid touching API surface/security-test coverage in a chart-focused pass.
+- **Bucketed charts without a matching range filter** (`FuelCostDistributionChart`, `ExpenseAmountDistributionChart`, `TripDistanceDistributionChart`) open the drawer scoped to the chart's date range/vehicle rather than the exact bucket — still one click from the underlying records, just not bucket-precise. Same reasoning as above.
+- **New "fleet manager" charts requiring new data** (driver fuel-efficiency/safety-score comparison, vehicle idle-vs-driven hours) were **not added**. The backend has the beginnings of what's needed (`modules/ai/services/driver-risk.service.ts`, `modules/telematics` idle-time fields) but no list-all-drivers/vehicles aggregation endpoint to back a comparison chart — building one is backend work beyond this pass's scope, and I didn't want to bolt a chart onto a fabricated/insufficiently-scoped endpoint. Recommend as a follow-up with its own backend + security-test coverage.
+- `frontend/modules/organizations/components/analytics/OrgAnalyticsCharts.tsx` and `frontend/modules/reports/components/charts/ReportChartView.tsx` (the dynamic report-builder renderer) were left untouched — the former is tenant/org admin analytics rather than fleet-operations charts, and the latter is a generic config-driven renderer where "drill down" doesn't have a fixed target per chart type.
 
-- **`frontend/shared/ui/navigation/Sidebar.tsx`** — new "Driver" entry (`ClipboardCheck` icon,
-  `/driver`), gated on `Permission.DVIR_CREATE` specifically (not `DVIR_VIEW`) so it only shows
-  for roles that actually submit inspections; workshop/fleet managers already reach DVIR data via
-  Work Orders and the Needs Attention queue.
+## Verification performed
 
-## PWA layer
-
-- **`public/manifest.json`** — `start_url: /driver`, `display: standalone`, SVG icons
-  (regular + maskable).
-- **`public/sw.js`** — install/activate/fetch handlers. Caches only the small `/driver` app
-  shell (the page itself, manifest, icons, offline fallback) — **never** caches `/api/*`
-  responses, since those are tenant/org-unit-scoped per signed-in user and stale or cross-user
-  cached data would be a correctness/security problem, not just a UX one. Registers a `sync`
-  event listener as a progressive enhancement for browsers with Background Sync API support,
-  which just wakes any open tab to run the same `flushQueue()` the page already uses.
-- **`public/offline.html`** — static fallback shown for other navigations that fail offline.
-- **`public/icons/dvir-icon.svg`**, **`dvir-icon-maskable.svg`** — placeholder app icons.
-- **`frontend/shared/pwa/ServiceWorkerRegister.tsx`** — registers `/sw.js`, relays
-  `DVIR_FLUSH_QUEUE` postMessages from the service worker's `sync` handler into
-  `flushQueue()`.
-- **`app/layout.tsx`** — added `manifest`/`appleWebApp` metadata, `viewport.themeColor`, and
-  mounted `<ServiceWorkerRegister />`.
-
-## Data scoping (requirement 5)
-
-Every inspection is created with the vehicle's `orgUnitId` (`DVIRService.submit`), and the
-repository's `getFilteredInScope` applies `tenantScopeService.buildFilter(context, 'orgUnitId')`
-— the identical mechanism `workorders`/`maintenance` already use. A driver whose accessible org
-units don't include the vehicle's org unit gets a `ForbiddenError` at submit time
-(`tenantScopeService.canAccessOrgUnit`), and a vehicle with no `orgUnitId` at all is rejected for
-any non-org-wide caller rather than silently defaulting to "visible to everyone."
-
-## Known limitation (flagged for product/eng follow-up)
-
-There is currently no `tbldrivers` ↔ `tbladmin` (auth user) link field anywhere in this
-codebase — `modules/drivers/repositories/driver.repository.ts` has a comment acknowledging this
-gap exists elsewhere too. `DVIRController.submit()` therefore uses the authenticated user's own
-id as the `driverId` on the inspection, with a display name looked up from `tbladmin` — it does
-**not** attempt to resolve a separate `tbldrivers` record. This is safe (a driver still can only
-act as themselves) but means a DVIR inspection's `driverId` is a `tbladmin` user id, not a
-`tbldrivers` record id. If/when that link is built, `DVIRController.submit()` is the one place to
-update.
-
-## Not changed
-
-No existing route, type, or test file was removed or had its existing behavior altered outside
-of the two additive fixes noted above (`orgUnitId` fallback on work orders; `makeItem`'s `extra`
-type gaining `href`). All 379 pre-existing security tests still pass, plus 3 new passing
-assertions from `module-scope-conformance.spec.ts` picking up the registered `dvir` module.
+```
+npx tsc --noEmit -p tsconfig.json        # 0 errors
+npx jest tests/security --ci             # 29 suites, 382 tests, all passing
+```

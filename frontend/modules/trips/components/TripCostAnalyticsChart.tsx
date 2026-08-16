@@ -13,7 +13,12 @@ import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Responsive
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/frontend/shared/ui/data-display/card';
 import { useTripCostAnalytics, useTripCostSummary } from '../hooks/useTripCostAnalytics';
 import { formatCurrency } from '@/shared/utils/currency.utils';
+import { useRouter } from 'next/navigation';
 import { formatDistance } from '@/shared/utils/distance.utils';
+import { formatDate } from '@/shared/utils/date.utils';
+import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
+import { TRIP_ROUTES } from '../routes';
+import type { TripCostAnalyticsRow } from '../types';
 
 interface TripCostAnalyticsChartProps {
   dateRange?: { startDate?: Date; endDate?: Date };
@@ -23,6 +28,11 @@ interface TripCostAnalyticsChartProps {
 export function TripCostAnalyticsChart({ dateRange, licensePlate }: TripCostAnalyticsChartProps) {
   const { data, isLoading, error } = useTripCostAnalytics(dateRange, 200, licensePlate);
   const { data: summary } = useTripCostSummary(dateRange, licensePlate);
+  const router = useRouter();
+
+  function handlePointClick(row: TripCostAnalyticsRow) {
+    router.push(TRIP_ROUTES.detail(row.tripId));
+  }
 
   if (isLoading) {
     return (
@@ -50,13 +60,30 @@ export function TripCostAnalyticsChart({ dateRange, licensePlate }: TripCostAnal
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Cost vs. distance</CardTitle>
-        <CardDescription>
-          {summary
-            ? `${summary.linkedTripCount} linked trips \u00B7 avg ${formatCurrency(summary.averageCostPerTrip)}/trip \u00B7 ${formatCurrency(summary.averageCostPerKm)}/km`
-            : 'Each point is one trip with linked fuel or expense records'}
-        </CardDescription>
+      <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+        <div>
+          <CardTitle>Cost vs. distance</CardTitle>
+          <CardDescription>
+            {summary
+              ? `${summary.linkedTripCount} linked trips \u00B7 avg ${formatCurrency(summary.averageCostPerTrip)}/trip \u00B7 ${formatCurrency(summary.averageCostPerKm)}/km \u2014 click a point to open the trip`
+              : 'Each point is one trip with linked fuel or expense records -- click a point to open the trip'}
+          </CardDescription>
+        </div>
+        <ChartExportButton
+          filename={slugifyChartFilename('trip-cost-vs-distance')}
+          sheetName="Cost vs Distance"
+          headers={['Trip ID', 'License Plate', 'Date', 'Distance', 'Fuel Cost', 'Expense Cost', 'Total Cost', 'Cost / km']}
+          rows={data.map((r) => ({
+            'Trip ID': r.tripId,
+            'License Plate': r.license_plate,
+            Date: formatDate(r.date, 'yyyy-MM-dd'),
+            Distance: r.distance,
+            'Fuel Cost': r.fuelCost,
+            'Expense Cost': r.expenseCost,
+            'Total Cost': r.totalCost,
+            'Cost / km': r.costPerKm ?? '',
+          }))}
+        />
       </CardHeader>
       <CardContent>
         <div style={{ width: '100%', height: 280 }}>
@@ -87,8 +114,25 @@ export function TripCostAnalyticsChart({ dateRange, licensePlate }: TripCostAnal
                   name === 'Total cost' ? [formatCurrency(value), name] : [formatDistance(value), name]
                 }
                 labelFormatter={() => ''}
+                content={({ active, payload }: any) => {
+                  if (!active || !payload || !payload.length) return null;
+                  const row = payload[0].payload as TripCostAnalyticsRow;
+                  return (
+                    <div style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8 }} className="p-2.5 space-y-0.5">
+                      <p className="text-sm font-medium">{row.license_plate} \u2014 {formatDate(row.date)}</p>
+                      <p className="text-xs text-muted-foreground">Distance: <span className="font-medium text-foreground">{formatDistance(row.distance)}</span></p>
+                      <p className="text-xs text-muted-foreground">Fuel cost: <span className="font-medium text-foreground">{formatCurrency(row.fuelCost)}</span></p>
+                      <p className="text-xs text-muted-foreground">Expense cost: <span className="font-medium text-foreground">{formatCurrency(row.expenseCost)}</span></p>
+                      <p className="text-xs text-muted-foreground">Total cost: <span className="font-medium text-foreground">{formatCurrency(row.totalCost)}</span></p>
+                      {row.costPerKm != null && (
+                        <p className="text-xs text-muted-foreground">Cost / km: <span className="font-medium text-foreground">{formatCurrency(row.costPerKm)}</span></p>
+                      )}
+                      <p className="pt-1 text-caption text-muted-foreground">Click to open this trip</p>
+                    </div>
+                  );
+                }}
               />
-              <Scatter data={data} fill="var(--chart-4)" />
+              <Scatter data={data} fill="var(--chart-4)" cursor="pointer" onClick={(entry: any) => handlePointClick(entry)} />
             </ScatterChart>
           </ResponsiveContainer>
         </div>

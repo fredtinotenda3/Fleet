@@ -8,6 +8,7 @@
 import { useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/frontend/shared/ui/data-display/card';
 import { useTripDayOfWeekHeatmap } from '../hooks/useTripAnalytics';
+import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 
 interface TripDayOfWeekHeatmapChartProps {
   dateRange?: { startDate?: Date; endDate?: Date };
@@ -60,11 +61,21 @@ export function TripDayOfWeekHeatmapChart({ dateRange, licensePlate }: TripDayOf
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Trip activity heatmap</CardTitle>
-        <CardDescription>
-          {licensePlate ? 'This vehicle\u2019s trips by day of week and hour' : 'Trips by day of week and hour'}
-        </CardDescription>
+      <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+        <div>
+          <CardTitle>Trip activity heatmap</CardTitle>
+          <CardDescription>
+            {licensePlate ? 'This vehicle\u2019s trips by day of week and hour' : 'Trips by day of week and hour'}
+          </CardDescription>
+        </div>
+        {data && data.length > 0 && (
+          <ChartExportButton
+            filename={slugifyChartFilename('trip-activity-heatmap')}
+            sheetName="Trip Activity Heatmap"
+            headers={['Day of Week', 'Hour', 'Trips', 'Distance']}
+            rows={data.map((r) => ({ 'Day of Week': DAY_LABELS[r.dayOfWeek] ?? r.dayOfWeek, Hour: r.hour, Trips: r.count, Distance: r.distance }))}
+          />
+        )}
       </CardHeader>
       <CardContent>
         <div className="overflow-x-auto">

@@ -66,17 +66,15 @@ export function FuelFrequencyByVehicleChart({ dateRange, licensePlate }: FuelFre
         <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
           <div>
             <CardTitle>Fueling frequency by vehicle</CardTitle>
-            <CardDescription>
-              Number of fuel events per vehicle -- useful for spotting abnormal fueling behaviour &mdash; click a bar for details
-            </CardDescription>
+            <CardDescription>Number of fuel events per vehicle -- click a bar for details</CardDescription>
           </div>
           {data && data.length > 0 && (
             <ChartExportButton
               filename={slugifyChartFilename('fuel-frequency-by-vehicle')}
-              sheetName="Fuel Frequency"
-              headers={['Vehicle', 'Fuel Events', 'Total Volume (L)', 'Total Cost']}
+              sheetName="Fueling Frequency"
+              headers={['License Plate', 'Fuel Events', 'Total Volume (L)', 'Total Cost']}
               rows={data.map((r) => ({
-                Vehicle: r.license_plate,
+                'License Plate': r.license_plate,
                 'Fuel Events': r.count,
                 'Total Volume (L)': r.totalVolume,
                 'Total Cost': r.totalCost,
@@ -97,13 +95,7 @@ export function FuelFrequencyByVehicleChart({ dateRange, licensePlate }: FuelFre
                   <XAxis dataKey="license_plate" stroke="var(--muted-foreground)" fontSize={11} interval={0} angle={-35} textAnchor="end" height={60} />
                   <YAxis stroke="var(--muted-foreground)" fontSize={11} allowDecimals={false} />
                   <Tooltip content={<FrequencyTooltip />} />
-                  <Bar
-                    dataKey="count"
-                    fill="var(--chart-4)"
-                    radius={[4, 4, 0, 0]}
-                    cursor="pointer"
-                    onClick={(entry: any) => handleClick(entry)}
-                  />
+                  <Bar dataKey="count" fill="var(--chart-4)" radius={[4, 4, 0, 0]} cursor="pointer" onClick={(entry: any) => handleClick(entry)} />
                 </BarChart>
               </ResponsiveContainer>
             </div>

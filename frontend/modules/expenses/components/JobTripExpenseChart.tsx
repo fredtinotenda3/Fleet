@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/fro
 import { useJobTripExpense, useExpenseTypes } from '../hooks/useExpenses';
 import { useExpenseDrawer } from '../hooks/useExpenseDrawer';
 import { ExpenseTransactionDrawer } from './ExpenseTransactionDrawer';
+import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import { getChartColor } from '@/shared/utils/chart.utils';
 import type { ExpenseAnalyticsDateRange } from './ExpenseAnalyticsFilterBar';
@@ -73,9 +74,23 @@ export function JobTripExpenseChart({ dateRange, licensePlate }: JobTripExpenseC
   return (
     <>
       <Card>
-        <CardHeader>
-          <CardTitle>Job / Trip expense analysis</CardTitle>
-          <CardDescription>Category spend, per job or trip reference &mdash; click a segment for transactions</CardDescription>
+        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+          <div>
+            <CardTitle>Job / Trip expense analysis</CardTitle>
+            <CardDescription>Category spend, per job or trip reference &mdash; click a segment for transactions</CardDescription>
+          </div>
+          {chartData.length > 0 && (
+            <ChartExportButton
+              filename={slugifyChartFilename('job-trip-expense-analysis')}
+              sheetName="Job Trip Expense"
+              headers={['Job / Trip', ...categories]}
+              rows={chartData.map((r: any) => {
+                const row: Record<string, string | number> = { 'Job / Trip': r.jobTrip };
+                categories.forEach((c) => { row[c] = r[c] ?? 0; });
+                return row;
+              })}
+            />
+          )}
         </CardHeader>
         <CardContent>
           {isLoading ? (

@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/fro
 import { useDailyExpenseTotals } from '../hooks/useExpenses';
 import { useExpenseDrawer } from '../hooks/useExpenseDrawer';
 import { ExpenseTransactionDrawer } from './ExpenseTransactionDrawer';
+import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { ExpenseAnalyticsDateRange } from './ExpenseAnalyticsFilterBar';
 
@@ -64,16 +65,28 @@ export function ExpenseCalendarHeatmapChart({ dateRange, licensePlate }: Expense
     openDrawer({ label: day.date, startDate: start, endDate: end, license_plate: licensePlate });
   }
 
+  const flatDays = useMemo(() => weeks.flat(), [weeks]);
+
   return (
     <>
       <Card>
-        <CardHeader>
-          <CardTitle>Expense calendar heatmap</CardTitle>
-          <CardDescription>
-            {rangeStart && rangeEnd
-              ? `Daily spending intensity, ${rangeStart.toLocaleDateString()} \u2013 ${rangeEnd.toLocaleDateString()}`
-              : 'Daily spending intensity'}
-          </CardDescription>
+        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+          <div>
+            <CardTitle>Expense calendar heatmap</CardTitle>
+            <CardDescription>
+              {rangeStart && rangeEnd
+                ? `Daily spending intensity, ${rangeStart.toLocaleDateString()} \u2013 ${rangeEnd.toLocaleDateString()}`
+                : 'Daily spending intensity'}
+            </CardDescription>
+          </div>
+          {flatDays.length > 0 && (
+            <ChartExportButton
+              filename={slugifyChartFilename('expense-calendar-heatmap')}
+              sheetName="Daily Expense Totals"
+              headers={['Date', 'Amount', 'Transactions']}
+              rows={flatDays.map((d) => ({ Date: d.date, Amount: d.amount, Transactions: d.count }))}
+            />
+          )}
         </CardHeader>
         <CardContent>
           {isLoading ? (

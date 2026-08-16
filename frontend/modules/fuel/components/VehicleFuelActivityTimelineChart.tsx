@@ -19,7 +19,6 @@ import { useFuelDrawer } from '../hooks/useFuelDrawer';
 import { FuelLogDrawer } from './FuelLogDrawer';
 import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
-import { formatDate } from '@/shared/utils/date.utils';
 import type { FuelAnalyticsDateRange } from './FuelAnalyticsFilterBar';
 import type { VehicleFuelTimelinePoint } from '../types';
 
@@ -58,6 +57,16 @@ function TimelineTooltip({ active, payload, label }: any) {
   );
 }
 
+/** Best-effort day range for a timeline point's date label ("2026-07-14" or similar). */
+function dayRange(date: string): { startDate?: Date; endDate?: Date } {
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) return {};
+  const startDate = new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate()));
+  const endDate = new Date(startDate);
+  endDate.setUTCDate(endDate.getUTCDate() + 1);
+  return { startDate, endDate };
+}
+
 export function VehicleFuelActivityTimelineChart({ dateRange, licensePlate }: VehicleFuelActivityTimelineChartProps) {
   const locked = Boolean(licensePlate);
   const [vehicle, setVehicle] = useState<string>(ALL_VEHICLES);
@@ -70,92 +79,72 @@ export function VehicleFuelActivityTimelineChart({ dateRange, licensePlate }: Ve
   const { open, setOpen, filter, openDrawer } = useFuelDrawer();
 
   function handleClick(row: VehicleFuelTimelinePoint) {
-    openDrawer({
-      label: `Fuel entries \u2014 ${row.date}`,
-      license_plate: effectivePlate,
-      // FuelDrawerFilter.startDate/endDate are typed as Date (see
-      // shared/types/fuel.types.ts), but VehicleFuelTimelinePoint.date is a
-      // plain day string (e.g. "2026-07-01"). Wrap it the same way
-      // FuelByStationChart/FuelFrequencyByVehicleChart already pass real
-      // Date objects into openDrawer, and the same way FuelLogDrawer itself
-      // re-wraps filter.startDate/endDate in new Date(...) before use.
-      startDate: new Date(row.date),
-      endDate: new Date(row.date),
-    });
+    const { startDate, endDate } = dayRange(row.date);
+    openDrawer({ label: `${row.date} fuel logs`, license_plate: effectivePlate, startDate, endDate });
   }
 
   return (
     <>
-      <Card>
-        <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-4 space-y-0">
-          <div>
-            <CardTitle>Vehicle fuel activity timeline</CardTitle>
-            <CardDescription>
-              {locked ? 'Fuel entries over time for this vehicle' : 'Fuel entries over time, per vehicle or fleet-wide'} &mdash; click a point for details
-            </CardDescription>
+    <Card>
+      <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-4 space-y-0">
+        <div>
+          <CardTitle>Vehicle fuel activity timeline</CardTitle>
+          <CardDescription>
+            {locked ? 'Fuel entries over time for this vehicle' : 'Fuel entries over time, per vehicle or fleet-wide'}
+            {' '}&mdash; click a point for details
+          </CardDescription>
+        </div>
+        <div className="flex items-center gap-2">
+        {data && data.length > 0 && (
+          <ChartExportButton
+            filename={slugifyChartFilename('vehicle-fuel-activity-timeline')}
+            sheetName="Fuel Activity Timeline"
+            headers={['Date', 'Entries', 'Volume (L)', 'Cost']}
+            rows={data.map((r) => ({ Date: r.date, Entries: r.count, 'Volume (L)': r.volume, Cost: r.cost }))}
+          />
+        )}
+        {!locked && (
+          <Select value={vehicle} onValueChange={(value) => setVehicle(value ?? ALL_VEHICLES)}>
+            <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_VEHICLES}>All vehicles</SelectItem>
+              {vehicles?.data?.map((v) => (
+                <SelectItem key={v._id} value={v.license_plate}>{v.license_plate}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="rounded-lg h-60 skeleton" />
+        ) : error || !data || data.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No fuel entries in this range.</p>
+        ) : (
+          <div style={{ width: '100%', height: 260 }}>
+            <ResponsiveContainer>
+              <LineChart data={data} margin={{ left: -20, right: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                <XAxis dataKey="date" stroke="var(--muted-foreground)" fontSize={11} />
+                <YAxis stroke="var(--muted-foreground)" fontSize={11} allowDecimals={false} />
+                <Tooltip content={<TimelineTooltip />} />
+                <Line
+                  type="monotone"
+                  dataKey="count"
+                  stroke="var(--chart-1)"
+                  strokeWidth={2}
+                  name="Entries"
+                  dot={{ r: 3, cursor: 'pointer' }}
+                  activeDot={{ r: 5, cursor: 'pointer', onClick: (_: any, e: any) => handleClick(e.payload) }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
           </div>
-          <div className="flex items-center gap-2">
-            {!locked && (
-              <Select value={vehicle} onValueChange={(value) => setVehicle(value ?? ALL_VEHICLES)}>
-                <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL_VEHICLES}>All vehicles</SelectItem>
-                  {vehicles?.data?.map((v) => (
-                    <SelectItem key={v._id} value={v.license_plate}>{v.license_plate}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-            <ChartExportButton
-              filename={slugifyChartFilename(`vehicle-fuel-activity-timeline-${effectivePlate ?? 'fleet'}`)}
-              sheetName="Fuel Activity Timeline"
-              headers={['Date', 'Entries', 'Volume (L)', 'Cost']}
-              rows={(data ?? []).map((r) => ({
-                Date: r.date,
-                Entries: r.count,
-                'Volume (L)': r.volume,
-                Cost: r.cost,
-              }))}
-            />
-          </div>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="rounded-lg h-60 skeleton" />
-          ) : error || !data || data.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No fuel entries in this range.</p>
-          ) : (
-            <div style={{ width: '100%', height: 260 }}>
-              <ResponsiveContainer>
-                <LineChart
-                  data={data}
-                  margin={{ left: -20, right: 8 }}
-                  onClick={(state: any) => {
-                    const point = state?.activePayload?.[0]?.payload;
-                    if (point) handleClick(point);
-                  }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                  <XAxis dataKey="date" stroke="var(--muted-foreground)" fontSize={11} tickFormatter={(v) => formatDate(v, 'MMM d')} />
-                  <YAxis stroke="var(--muted-foreground)" fontSize={11} allowDecimals={false} />
-                  <Tooltip content={<TimelineTooltip />} />
-                  <Line
-                    type="monotone"
-                    dataKey="count"
-                    stroke="var(--chart-1)"
-                    strokeWidth={2}
-                    dot={{ r: 3 }}
-                    activeDot={{ r: 5 }}
-                    cursor="pointer"
-                    name="Entries"
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-      <FuelLogDrawer open={open} onOpenChange={setOpen} filter={filter} />
+        )}
+      </CardContent>
+    </Card>
+    <FuelLogDrawer open={open} onOpenChange={setOpen} filter={filter} />
     </>
   );
 }

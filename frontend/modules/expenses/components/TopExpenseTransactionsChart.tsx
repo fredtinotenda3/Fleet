@@ -15,6 +15,7 @@ import {
 import { useTopExpenseTransactions } from '../hooks/useExpenses';
 import { useExpenseDrawer } from '../hooks/useExpenseDrawer';
 import { ExpenseTransactionDrawer } from './ExpenseTransactionDrawer';
+import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import { formatDate } from '@/shared/utils/date.utils';
 import type { ExpenseAnalyticsDateRange } from './ExpenseAnalyticsFilterBar';
@@ -40,9 +41,25 @@ export function TopExpenseTransactionsChart({ dateRange, licensePlate }: TopExpe
   return (
     <>
       <Card>
-        <CardHeader>
-          <CardTitle>Top 10 highest expense transactions</CardTitle>
-          <CardDescription>The single biggest individual expenses in this range</CardDescription>
+        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+          <div>
+            <CardTitle>Top 10 highest expense transactions</CardTitle>
+            <CardDescription>The single biggest individual expenses in this range &mdash; click a row for details</CardDescription>
+          </div>
+          {data && data.length > 0 && (
+            <ChartExportButton
+              filename={slugifyChartFilename('top-expense-transactions')}
+              sheetName="Top Transactions"
+              headers={['Date', 'Vehicle', 'Category', 'Amount', 'Description']}
+              rows={data.map((r) => ({
+                Date: r.date,
+                Vehicle: r.license_plate,
+                Category: r.category,
+                Amount: r.amount,
+                Description: r.description ?? '',
+              }))}
+            />
+          )}
         </CardHeader>
         <CardContent>
           {isLoading ? (

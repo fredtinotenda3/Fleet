@@ -3,6 +3,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useFleetKPIs, useOperationalMetrics, useCostBreakdown, useFuelEfficiencyTrend, useMaintenanceForecast } from '@/frontend/modules/analytics/hooks/useAnalytics';
 import { StatsCard } from '@/shared/ui/cards/StatsCard';
 import { ChartContainer } from '@/frontend/shared/ui/charts';
@@ -13,8 +14,12 @@ import { formatDistance, formatEfficiency } from '@/shared/utils/distance.utils'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LineChart, Line, Legend } from 'recharts';
 import { getChartColor } from '@/shared/utils/chart.utils';
 import { DateRange } from '@/shared/types/common.types';
+import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
+import { EXPENSE_ROUTES } from '@/frontend/modules/expenses/routes';
+import { FUEL_ROUTES } from '@/frontend/modules/fuel/routes';
 
 export default function AnalyticsOverview() {
+  const router = useRouter();
   const [dateRange] = useState<DateRange>({
     startDate: new Date(new Date().setDate(new Date().getDate() - 30)),
     endDate: new Date(),
@@ -64,26 +69,52 @@ export default function AnalyticsOverview() {
 
       {/* Cost Breakdown Chart */}
       {cost && (
-        <ChartContainer title="Cost by Category">
+        <ChartContainer
+          title="Cost by Category"
+          actions={
+            <ChartExportButton
+              filename={slugifyChartFilename('cost-by-category')}
+              sheetName="Cost by Category"
+              headers={['Category', 'Amount']}
+              rows={Object.entries(cost.byCategory).map(([name, value]) => ({ Category: name, Amount: value as number }))}
+            />
+          }
+        >
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={Object.entries(cost.byCategory).map(([name, value]) => ({ name, value }))}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="name" tick={{ fontSize: 12 }} />
               <YAxis />
               <Tooltip formatter={(value: number) => formatCurrency(value)} />
-              <Bar dataKey="value" fill="var(--primary)">
+              <Bar
+                dataKey="value"
+                fill="var(--primary)"
+                cursor="pointer"
+                onClick={(entry: any) => router.push(`${EXPENSE_ROUTES.list}?category=${encodeURIComponent(entry.name)}`)}
+              >
                 {Object.keys(cost.byCategory).map((_, idx) => (
                   <Cell key={idx} fill={getChartColor(idx)} />
                 ))}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
+          <p className="mt-2 text-caption text-muted-foreground">Click a bar to view expenses in that category</p>
         </ChartContainer>
       )}
 
       {/* Fuel Efficiency Trend */}
       {fuelTrend.length > 0 && (
-        <ChartContainer title="Fuel Efficiency Trend (km/L)">
+        <ChartContainer
+          title="Fuel Efficiency Trend (km/L)"
+          actions={
+            <ChartExportButton
+              filename={slugifyChartFilename('fuel-efficiency-trend')}
+              sheetName="Fuel Efficiency Trend"
+              headers={['Month', 'Efficiency (km/L)']}
+              rows={fuelTrend.map((f: any) => ({ Month: f.month, 'Efficiency (km/L)': f.efficiency }))}
+            />
+          }
+        >
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={fuelTrend.map((f: any) => ({ month: f.month, efficiency: f.efficiency }))}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -91,9 +122,21 @@ export default function AnalyticsOverview() {
               <YAxis />
               <Tooltip formatter={(value: number) => value.toFixed(2)} />
               <Legend />
-              <Line type="monotone" dataKey="efficiency" stroke="var(--primary)" strokeWidth={2} />
+              <Line
+                type="monotone"
+                dataKey="efficiency"
+                stroke="var(--primary)"
+                strokeWidth={2}
+                dot={{ r: 3, cursor: 'pointer' }}
+                activeDot={{
+                  r: 5,
+                  cursor: 'pointer',
+                  onClick: (_: any, e: any) => router.push(`${FUEL_ROUTES.analytics}?month=${encodeURIComponent(e.payload.month)}`),
+                }}
+              />
             </LineChart>
           </ResponsiveContainer>
+          <p className="mt-2 text-caption text-muted-foreground">Click a point to open that month in Fuel Analytics</p>
         </ChartContainer>
       )}
 

@@ -44,7 +44,7 @@ export function TripAnalyticsPage() {
 
       <TripKpiCards />
 
-      <TripMonthlyTrendChart />
+      <TripMonthlyTrendChart onDrillDown={openDrawer} />
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <VehicleUtilizationChart dateRange={dateRange} onDrillDown={openDrawer} />
@@ -52,7 +52,7 @@ export function TripAnalyticsPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <TripDistanceDistributionChart dateRange={dateRange} />
+        <TripDistanceDistributionChart dateRange={dateRange} onDrillDown={openDrawer} />
         <TripDayOfWeekHeatmapChart dateRange={dateRange} />
       </div>
 

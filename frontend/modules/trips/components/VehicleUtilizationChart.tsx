@@ -6,6 +6,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/frontend/shared/ui/data-display/card';
 import { useVehicleUtilization } from '../hooks/useTripAnalytics';
 import { formatDistance } from '@/shared/utils/distance.utils';
+import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import type { TripDrawerFilter } from './TripTransactionDrawer';
 import type { TripUtilizationSort } from '../types';
 
@@ -40,9 +41,17 @@ export function VehicleUtilizationChart({ dateRange, sortBy = 'trips', onDrillDo
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Vehicle utilization</CardTitle>
-        <CardDescription>Trips and distance by vehicle -- click a bar to drill down</CardDescription>
+      <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+        <div>
+          <CardTitle>Vehicle utilization</CardTitle>
+          <CardDescription>Trips and distance by vehicle -- click a bar to drill down</CardDescription>
+        </div>
+        <ChartExportButton
+          filename={slugifyChartFilename('vehicle-utilization')}
+          sheetName="Vehicle Utilization"
+          headers={['License Plate', 'Trips', 'Total Distance']}
+          rows={data.map((r) => ({ 'License Plate': r.license_plate, Trips: r.trips, 'Total Distance': r.totalDistance }))}
+        />
       </CardHeader>
       <CardContent>
         <div style={{ width: '100%', height: 280 }}>

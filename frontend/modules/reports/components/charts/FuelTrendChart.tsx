@@ -13,7 +13,10 @@ import {
 } from 'recharts';
 import { ChartContainer } from '@/frontend/shared/ui/charts';
 import { Skeleton } from '@/frontend/shared/ui/feedback/skeleton';
+import { useRouter } from 'next/navigation';
 import { formatCurrency } from '@/shared/utils/currency.utils';
+import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
+import { FUEL_ROUTES } from '@/frontend/modules/fuel/routes';
 
 interface FuelTrendPoint {
   month: string;
@@ -29,6 +32,11 @@ interface FuelTrendChartProps {
 }
 
 export function FuelTrendChart({ data, isLoading, totalVolume, totalCost }: FuelTrendChartProps) {
+  const router = useRouter();
+
+  function handlePointClick(row: FuelTrendPoint) {
+    router.push(`${FUEL_ROUTES.analytics}?month=${encodeURIComponent(row.month)}`);
+  }
   if (isLoading) {
     return (
       <ChartContainer title="Fuel Consumption & Cost">
@@ -46,7 +54,17 @@ export function FuelTrendChart({ data, isLoading, totalVolume, totalCost }: Fuel
   }
 
   return (
-    <ChartContainer title={`Fuel Trend (${totalVolume.toFixed(1)} L, ${formatCurrency(totalCost)})`}>
+    <ChartContainer
+      title={`Fuel Trend (${totalVolume.toFixed(1)} L, ${formatCurrency(totalCost)})`}
+      actions={
+        <ChartExportButton
+          filename={slugifyChartFilename('fuel-trend')}
+          sheetName="Fuel Trend"
+          headers={['Month', 'Volume (L)', 'Cost']}
+          rows={data.map((r) => ({ Month: r.month, 'Volume (L)': r.volume, Cost: r.cost }))}
+        />
+      }
+    >
       <ResponsiveContainer width="100%" height={300}>
         <LineChart data={data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
@@ -59,10 +77,29 @@ export function FuelTrendChart({ data, isLoading, totalVolume, totalCost }: Fuel
             }
           />
           <Legend />
-          <Line yAxisId="left" type="monotone" dataKey="volume" stroke="var(--primary)" name="Volume (L)" strokeWidth={2} />
-          <Line yAxisId="right" type="monotone" dataKey="cost" stroke="var(--chart-2)" name="Cost" strokeWidth={2} />
+          <Line
+            yAxisId="left"
+            type="monotone"
+            dataKey="volume"
+            stroke="var(--primary)"
+            name="Volume (L)"
+            strokeWidth={2}
+            dot={{ r: 3, cursor: 'pointer' }}
+            activeDot={{ r: 5, cursor: 'pointer', onClick: (_: any, e: any) => handlePointClick(e.payload) }}
+          />
+          <Line
+            yAxisId="right"
+            type="monotone"
+            dataKey="cost"
+            stroke="var(--chart-2)"
+            name="Cost"
+            strokeWidth={2}
+            dot={{ r: 3, cursor: 'pointer' }}
+            activeDot={{ r: 5, cursor: 'pointer', onClick: (_: any, e: any) => handlePointClick(e.payload) }}
+          />
         </LineChart>
       </ResponsiveContainer>
+      <p className="mt-2 text-caption text-muted-foreground">Click a point to open that month in Fuel Analytics</p>
     </ChartContainer>
   );
 }

@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/fro
 import { useExpenseStats, useExpenseTypes } from '../hooks/useExpenses';
 import { useExpenseDrawer } from '../hooks/useExpenseDrawer';
 import { ExpenseTransactionDrawer } from './ExpenseTransactionDrawer';
+import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { ExpenseAnalyticsDateRange } from './ExpenseAnalyticsFilterBar';
 
@@ -66,9 +67,19 @@ export function ExpenseWaterfallChart({ dateRange, licensePlate }: ExpenseWaterf
   return (
     <>
       <Card>
-        <CardHeader>
-          <CardTitle>Spend waterfall</CardTitle>
-          <CardDescription>How each category builds up to total spend &mdash; click a bar for transactions</CardDescription>
+        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+          <div>
+            <CardTitle>Spend waterfall</CardTitle>
+            <CardDescription>How each category builds up to total spend &mdash; click a bar for transactions</CardDescription>
+          </div>
+          {chartData.length > 0 && (
+            <ChartExportButton
+              filename={slugifyChartFilename('expense-spend-waterfall')}
+              sheetName="Spend Waterfall"
+              headers={['Category', 'Spend']}
+              rows={chartData.map((r) => ({ Category: r.category, Spend: r.spend }))}
+            />
+          )}
         </CardHeader>
         <CardContent>
           {isLoading ? (

@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/fro
 import { useExpenseCategorySummary, useExpenseTypes } from '../hooks/useExpenses';
 import { useExpenseDrawer } from '../hooks/useExpenseDrawer';
 import { ExpenseTransactionDrawer } from './ExpenseTransactionDrawer';
+import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import { formatDate } from '@/shared/utils/date.utils';
 import { getChartColor } from '@/shared/utils/chart.utils';
@@ -93,9 +94,26 @@ export function ExpenseCategoryChart({ licensePlate }: ExpenseCategoryChartProps
   return (
     <>
       <Card>
-        <CardHeader>
-          <CardTitle>Expense distribution</CardTitle>
-          <CardDescription>By category &mdash; click a slice for transaction details</CardDescription>
+        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+          <div>
+            <CardTitle>Expense distribution</CardTitle>
+            <CardDescription>By category &mdash; click a slice for transaction details</CardDescription>
+          </div>
+          <ChartExportButton
+            filename={slugifyChartFilename('expense-distribution-by-category')}
+            sheetName="Expense Distribution"
+            headers={['Category', 'Total', 'Share (%)', 'Transactions', 'Average', 'Min', 'Max', 'Top Vehicle']}
+            rows={chartData.map((r) => ({
+              Category: r.category,
+              Total: r.total,
+              'Share (%)': r.percentageOfTotal,
+              Transactions: r.count,
+              Average: r.average,
+              Min: r.min,
+              Max: r.max,
+              'Top Vehicle': r.topVehicle ?? '',
+            }))}
+          />
         </CardHeader>
         <CardContent>
           <div style={{ width: '100%', height: 260 }}>

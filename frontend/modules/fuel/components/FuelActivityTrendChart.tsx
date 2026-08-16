@@ -14,9 +14,34 @@ import {
   SelectValue,
 } from '@/frontend/shared/ui/forms/select';
 import { useFuelActivityTrend } from '../hooks/useFuel';
+import { useFuelDrawer } from '../hooks/useFuelDrawer';
+import { FuelLogDrawer } from './FuelLogDrawer';
+import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { FuelAnalyticsDateRange } from './FuelAnalyticsFilterBar';
 import type { FuelTrendGranularity, FuelActivityTrendPoint } from '../types';
+
+/**
+ * Best-effort period -> date range for drill-down. Exact for 'month'
+ * ("2026-07"); for week/quarter/year we fall back to the chart's overall
+ * date range, since those bucket formats aren't unambiguously parseable
+ * client-side -- still scopes the drawer, just not to that single bucket.
+ */
+function periodRange(
+  period: string,
+  granularity: FuelTrendGranularity,
+  fallback?: FuelAnalyticsDateRange
+): { startDate?: Date; endDate?: Date } {
+  if (granularity === 'month' && /^\d{4}-\d{2}$/.test(period)) {
+    const [y, m] = period.split('-').map(Number);
+    return { startDate: new Date(Date.UTC(y, m - 1, 1)), endDate: new Date(Date.UTC(y, m, 1)) };
+  }
+  if (granularity === 'year' && /^\d{4}$/.test(period)) {
+    const y = Number(period);
+    return { startDate: new Date(Date.UTC(y, 0, 1)), endDate: new Date(Date.UTC(y + 1, 0, 1)) };
+  }
+  return { startDate: fallback?.startDate, endDate: fallback?.endDate };
+}
 
 type LineMetric = 'volume' | 'cost' | 'avgCostPerLitre';
 
@@ -57,6 +82,7 @@ function ActivityTrendTooltip({ active, payload, label }: any) {
       <p className="text-xs text-muted-foreground">
         Fuel cost: <span className="font-medium text-foreground">{formatCurrency(row.cost)}</span>
       </p>
+      <p className="pt-1 text-caption text-muted-foreground">Click to view fuel logs</p>
     </div>
   );
 }
@@ -65,17 +91,38 @@ export function FuelActivityTrendChart({ dateRange, licensePlate }: FuelActivity
   const [granularity, setGranularity] = useState<FuelTrendGranularity>('month');
   const [metric, setMetric] = useState<LineMetric>('volume');
   const { data, isLoading, error } = useFuelActivityTrend(granularity, dateRange, licensePlate);
+  const { open, setOpen, filter, openDrawer } = useFuelDrawer();
 
   const formatMetric = (value: number) => (metric === 'volume' ? `${value.toFixed(1)} L` : formatCurrency(value));
 
+  function handleClick(row: FuelActivityTrendPoint) {
+    const { startDate, endDate } = periodRange(row.period, granularity, dateRange);
+    openDrawer({ label: `${row.period} fuel logs`, license_plate: licensePlate, startDate, endDate });
+  }
+
   return (
+    <>
     <Card>
       <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-4 space-y-0">
         <div>
           <CardTitle>Fuel activity trend</CardTitle>
-          <CardDescription>Entries vs. {METRIC_LABELS[metric].toLowerCase()}, by {GRANULARITY_LABELS[granularity].toLowerCase()}</CardDescription>
+          <CardDescription>Entries vs. {METRIC_LABELS[metric].toLowerCase()}, by {GRANULARITY_LABELS[granularity].toLowerCase()} &mdash; click a bar for details</CardDescription>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {data && data.length > 0 && (
+            <ChartExportButton
+              filename={slugifyChartFilename('fuel-activity-trend')}
+              sheetName="Fuel Activity Trend"
+              headers={['Period', 'Entries', 'Volume (L)', 'Cost', 'Avg Cost / L']}
+              rows={data.map((r) => ({
+                Period: r.period,
+                Entries: r.entries,
+                'Volume (L)': r.volume,
+                Cost: r.cost,
+                'Avg Cost / L': r.avgCostPerLitre,
+              }))}
+            />
+          )}
           <Select value={granularity} onValueChange={(v) => setGranularity(v as FuelTrendGranularity)}>
             <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -108,7 +155,15 @@ export function FuelActivityTrendChart({ dateRange, licensePlate }: FuelActivity
                 <YAxis yAxisId="entries" stroke="var(--muted-foreground)" fontSize={11} allowDecimals={false} />
                 <YAxis yAxisId="metric" orientation="right" stroke="var(--muted-foreground)" fontSize={11} tickFormatter={formatMetric} />
                 <Tooltip content={<ActivityTrendTooltip />} />
-                <Bar yAxisId="entries" dataKey="entries" fill="var(--chart-2)" radius={[4, 4, 0, 0]} name="entries" />
+                <Bar
+                  yAxisId="entries"
+                  dataKey="entries"
+                  fill="var(--chart-2)"
+                  radius={[4, 4, 0, 0]}
+                  name="entries"
+                  cursor="pointer"
+                  onClick={(entry: any) => handleClick(entry)}
+                />
                 <Line yAxisId="metric" type="monotone" dataKey={metric} stroke="var(--chart-1)" strokeWidth={2} dot={false} name={metric} />
               </ComposedChart>
             </ResponsiveContainer>
@@ -116,5 +171,7 @@ export function FuelActivityTrendChart({ dateRange, licensePlate }: FuelActivity
         )}
       </CardContent>
     </Card>
+    <FuelLogDrawer open={open} onOpenChange={setOpen} filter={filter} />
+    </>
   );
 }

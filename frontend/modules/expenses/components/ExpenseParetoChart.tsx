@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/fro
 import { useExpenseStats, useExpenseTypes } from '../hooks/useExpenses';
 import { useExpenseDrawer } from '../hooks/useExpenseDrawer';
 import { ExpenseTransactionDrawer } from './ExpenseTransactionDrawer';
+import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { ExpenseAnalyticsDateRange } from './ExpenseAnalyticsFilterBar';
 
@@ -62,9 +63,19 @@ export function ExpenseParetoChart({ dateRange, licensePlate }: ExpenseParetoCha
   return (
     <>
       <Card>
-        <CardHeader>
-          <CardTitle>Pareto analysis</CardTitle>
-          <CardDescription>Which categories drive the majority of cost (80/20 view) &mdash; click a bar for transactions</CardDescription>
+        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+          <div>
+            <CardTitle>Pareto analysis</CardTitle>
+            <CardDescription>Which categories drive the majority of cost (80/20 view) &mdash; click a bar for transactions</CardDescription>
+          </div>
+          {chartData.length > 0 && (
+            <ChartExportButton
+              filename={slugifyChartFilename('expense-pareto-analysis')}
+              sheetName="Pareto Analysis"
+              headers={['Category', 'Spend', 'Cumulative %']}
+              rows={chartData.map((r) => ({ Category: r.category, Spend: r.spend, 'Cumulative %': Number(r.cumulativePercent.toFixed(1)) }))}
+            />
+          )}
         </CardHeader>
         <CardContent>
           {isLoading ? (
