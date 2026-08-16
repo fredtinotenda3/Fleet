@@ -74,9 +74,13 @@ describe('module scope registry integrity', () => {
     }
   });
 
-  it('declares at least one collection per module', () => {
+  it('declares at least one collection per module, except computed (no-owned-collection) modules', () => {
     for (const entry of MODULE_SCOPE_REGISTRY) {
-      expect(entry.collections.length).toBeGreaterThan(0);
+      if (entry.level === 'computed') {
+        expect(entry.collections.length).toBe(0);
+      } else {
+        expect(entry.collections.length).toBeGreaterThan(0);
+      }
     }
   });
 
@@ -185,8 +189,16 @@ describe('modules deliberately left organization-wide', () => {
       .readdirSync(path.join(ROOT, 'modules'), { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => d.name)
-      // Cross-cutting modules that own no collections of their own.
-      .filter((name) => !['tenancy', 'ai', 'analytics', 'esg'].includes(name));
+      // 'tenancy' implements org-unit scoping itself (TenantContext,
+      // tenantScopeService, this very registry) rather than being a
+      // module whose OWN data has a scoping decision to record --
+      // there is no "tenancy module's rows" for an entry to describe.
+      // 'ai', 'analytics', and 'esg' used to be exempted here too;
+      // Phase 0 registered all three (see module-scope.registry.ts)
+      // after auditing their actual data access, so they are no
+      // longer exempt and must appear in the registry like every
+      // other module.
+      .filter((name) => name !== 'tenancy');
 
     const declared = new Set(MODULE_SCOPE_REGISTRY.map((e) => e.module));
     const undeclared = moduleDirs.filter((m) => !declared.has(m));
@@ -202,7 +214,6 @@ describe('open decisions stay visible', () => {
     // surface so the count cannot quietly drift upward unnoticed. If you
     // are confirming a decision, flip `confirmed` and update this number.
     expect(open.map((e) => e.module).sort()).toEqual([
-      'attention',
       'compliance',
       // finance: allocation postings/depreciation profiles inherit vehicle
       // scope (settled), but whether GL submissions are per-branch or one
@@ -211,7 +222,6 @@ describe('open decisions stay visible', () => {
       'finance',
       'fuel-cards',
       'fuel-stations',
-      'intelligence',
       'procurement',
       'reporting',
       'sla',

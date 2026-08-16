@@ -1,0 +1,9 @@
+Files DELETED from the original repository by this Phase 0 pass
+(a zip archive cannot represent a deletion, so it is recorded here):
+
+  modules/intelligence/services/predictive-maintenance.service.ts
+
+Reason: dead/duplicate code, consolidated into
+modules/ai/services/predictive-maintenance.service.ts. Full evidence
+trail in modules/intelligence/services/DECISIONS.md (included in this
+archive) and in the Phase 0 completion report, section 9.

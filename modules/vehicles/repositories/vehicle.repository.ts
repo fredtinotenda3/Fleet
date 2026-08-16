@@ -408,10 +408,27 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
     return collection.aggregate<Vehicle>(pipeline).toArray();
   }
 
+  /**
+   * PHASE 0 FIX: this aggregation had no org-unit scoping option at all
+   * (unlike every sibling *Stats method on this repository, which
+   * accepts an optional `context` and applies
+   * `tenantScopeService.buildFilter(context, 'orgUnitId')` -- see
+   * getVehicleStats above) -- and fleetAnalyticsService.getCostBreakdown()
+   * called it WITHOUT a context even though it threads context through
+   * every other repository call in the same method. Net effect: the
+   * "cost by vehicle" panel of the cost-breakdown dashboard returned
+   * every vehicle in the tenant, regardless of the caller's org-unit
+   * scope, while the KPI/operational-metrics panels right next to it on
+   * the same dashboard were correctly scoped. Exactly the
+   * "list endpoint scoped, aggregate endpoint not" pattern this
+   * codebase has hit before (see the Phase 0 report's analytics
+   * scope-governance section).
+   */
   async getVehicleAnalytics(
     tenantId: string,
     startDate: Date,
-    endDate: Date
+    endDate: Date,
+    context?: TenantContext
   ): Promise<Document[]> {
     const collection = await this.getCollection();
     const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
@@ -421,6 +438,9 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
     };
     if (!isSuperAdmin) {
       baseFilter.tenantId = tenantId;
+    }
+    if (context) {
+      Object.assign(baseFilter, tenantScopeService.buildFilter<Vehicle>(context, 'orgUnitId'));
     }
 
     const pipeline = [

@@ -39,6 +39,7 @@
     "lint": "next lint",
     "start": "next start",
     "tenancy:backfill": "tsx scripts/backfill-org-units.ts",
+    "tenancy:backfill-attention-ownership": "tsx scripts/backfill-attention-item-ownership.ts",
     "tenancy:provision": "tsx scripts/tenancy-provision.ts",
     "tenancy:purge": "tsx scripts/tenancy-purge.ts",
     "tenancy:rebuild": "tsx scripts/tenancy-rebuild.ts",

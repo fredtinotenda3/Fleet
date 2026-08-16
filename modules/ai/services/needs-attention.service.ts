@@ -31,6 +31,7 @@ import { workOrderRepository } from '@/modules/workorders/repositories/workorder
 import { workOrderService } from '@/modules/workorders/services/workorder.service';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { attentionItemRepository } from '@/modules/attention/repositories/attention-item.repository';
+import { attentionOwnershipResolver } from '@/modules/attention/services/attention-ownership.resolver';
 import { monitoring } from '@/infrastructure/monitoring/logger';
 import type { AISeverity } from '../types/ai.types';
 import type {
@@ -100,7 +101,7 @@ function makeItem(
   title: string,
   description: string,
   cost: number,
-  extra?: Partial<Pick<NeedsAttentionItem, 'dueDate' | 'entityId' | 'entityLabel' | 'href'>>
+  extra?: Partial<Pick<NeedsAttentionItem, 'dueDate' | 'entityId' | 'entityLabel' | 'href' | 'ownerTarget'>>
 ): NeedsAttentionItem {
   return {
     id: `${source}:${id}`,
@@ -198,17 +199,26 @@ export class NeedsAttentionService {
    * Upserts this refresh's items into attention_items, keyed so repeat
    * calls update the same rows instead of duplicating them.
    *
-   * orgUnitId tagging: see the 'attention' entry in
-   * server/tenancy/module-scope.registry.ts for the full rationale.
-   * Short version -- this tags every row from a refresh with the
-   * caller's `activeOrgUnitId` (the org unit currently selected for
-   * this request), not each item's individually-resolved owning
-   * entity. That is a known simplification, not an oversight: every
-   * item still passed through an org-unit-scoped read to get here, so
-   * nothing leaks; it just means a caller with several org units
-   * active but none individually selected will persist rows without an
-   * orgUnitId, which is fail-closed (invisible to scope-narrowed reads)
-   * rather than fail-open.
+   * PHASE 0 FIX: orgUnitId is now resolved PER ITEM, from that item's
+   * own `ownerTarget` (set by each per-source reader below), via
+   * AttentionOwnershipResolver -- not tagged uniformly with the
+   * caller's `activeOrgUnitId` as this used to do. A Harare-scoped
+   * caller who surfaces an item about a Bulawayo vehicle now persists
+   * that row with orgUnitId = Bulawayo, matching the vehicle's own
+   * scope, not the caller's. See the 'attention' entry in
+   * server/tenancy/module-scope.registry.ts for the full history of
+   * this decision.
+   *
+   * Resolution runs for every item concurrently (bounded by however
+   * many items a single refresh produces, typically well under 100)
+   * rather than sequentially, for the same reason the per-source reads
+   * above run via Promise.all -- there is no ordering dependency
+   * between resolving one item's owner and another's.
+   *
+   * A resolution failure for one item (including "cannot be
+   * determined") never blocks the others: AttentionOwnershipResolver
+   * itself never throws (see its fail-closed contract), so this is
+   * defence in depth, not the primary safety mechanism.
    */
   private async persistFeed(
     tenantId: string,
@@ -216,7 +226,14 @@ export class NeedsAttentionService {
     context?: TenantContext
   ): Promise<void> {
     try {
-      await attentionItemRepository.upsertFeedItems(tenantId, items, context?.activeOrgUnitId);
+      const resolvedOrgUnitIds = await Promise.all(
+        items.map((item) => attentionOwnershipResolver.resolveOrgUnitId(tenantId, item.ownerTarget))
+      );
+      const withOwnership = items.map((item, index) => ({
+        item,
+        orgUnitId: resolvedOrgUnitIds[index],
+      }));
+      await attentionItemRepository.upsertFeedItems(tenantId, withOwnership);
     } catch (error) {
       monitoring.logError('[needsAttentionService] failed to persist attention_items', error as Error);
     }
@@ -242,7 +259,12 @@ export class NeedsAttentionService {
           `${p.component} may fail soon`,
           `${p.licensePlate}: ${p.recommendedAction}`,
           p.estimatedCost,
-          { dueDate: p.predictedFailureDate, entityId: p.vehicleId, entityLabel: p.licensePlate }
+          {
+            dueDate: p.predictedFailureDate,
+            entityId: p.vehicleId,
+            entityLabel: p.licensePlate,
+            ownerTarget: { kind: 'vehicle', vehicleId: p.vehicleId },
+          }
         );
       });
   }
@@ -262,7 +284,15 @@ export class NeedsAttentionService {
         rec.title,
         rec.description,
         rec.estimatedCost,
-        { entityLabel: rec.affectedVehicles.slice(0, 3).join(', ') || undefined }
+        {
+          entityLabel: rec.affectedVehicles.slice(0, 3).join(', ') || undefined,
+          // A fleet-health recommendation spans zero or more vehicles
+          // (see FleetHealthRecommendation.affectedVehicles), so there
+          // is no single owning entity to resolve. Fails closed --
+          // orgUnitId is left unset rather than guessed from any one
+          // of the affected vehicles.
+          ownerTarget: { kind: 'none' },
+        }
       );
     });
   }
@@ -285,7 +315,15 @@ export class NeedsAttentionService {
           `${d.driverName}: elevated driving risk`,
           d.recommendations[0] || `Risk score ${d.overallScore}/100`,
           0,
-          { entityId: d.driverId, entityLabel: d.driverName }
+          {
+            entityId: d.driverId,
+            entityLabel: d.driverName,
+            // d.driverId is OrganizationMember.userId (see
+            // driver-risk.service.ts), not a tbldrivers _id -- resolve
+            // via the organization's embedded member record, not
+            // driverRepository. See attention-ownership.resolver.ts.
+            ownerTarget: { kind: 'organization-member', userId: d.driverId },
+          }
         );
       });
   }
@@ -309,7 +347,11 @@ export class NeedsAttentionService {
           `Possible fuel fraud: ${alert.licensePlate}`,
           alert.recommendation,
           cost,
-          { entityId: alert.vehicleId, entityLabel: alert.licensePlate }
+          {
+            entityId: alert.vehicleId,
+            entityLabel: alert.licensePlate,
+            ownerTarget: { kind: 'vehicle', vehicleId: alert.vehicleId },
+          }
         );
       });
   }
@@ -333,7 +375,18 @@ export class NeedsAttentionService {
           `Unusual expense pattern: ${alert.pattern}`,
           alert.recommendation,
           cost,
-          { entityId: alert.entityId }
+          {
+            entityId: alert.entityId,
+            // alert.entityId here is the EXPENSE record's own _id (see
+            // expense-anomaly-detection.service.ts), not a vehicle or
+            // driver id -- confirmed from the service's own
+            // makeAlert-equivalent construction. The expense record
+            // already carries its own orgUnitId, inherited from its
+            // vehicle at write time (see expense.types.ts), so this
+            // resolves via a single expense lookup rather than a
+            // second hop through the vehicle it references.
+            ownerTarget: { kind: 'expense', expenseId: alert.entityId },
+          }
         );
       });
   }
@@ -363,7 +416,17 @@ export class NeedsAttentionService {
           rule?.name || 'Compliance requirement due',
           `${record.entityType} ${record.entityId}${rule?.description ? `: ${rule.description}` : ''}`,
           0,
-          { dueDate: record.dueDate, entityId: record.entityId }
+          {
+            dueDate: record.dueDate,
+            entityId: record.entityId,
+            // The compliance RECORD (not the rule) already carries its
+            // own orgUnitId, inherited from the vehicle or driver it
+            // is evidence about at write time -- see
+            // compliance.tenancy-addendum.ts. `record` here came from
+            // an org-unit-scoped read (complianceService.listInScope),
+            // so this value is trustworthy without a second lookup.
+            ownerTarget: { kind: 'org-unit-direct', orgUnitId: record.orgUnitId },
+          }
         );
       });
   }
@@ -383,7 +446,13 @@ export class NeedsAttentionService {
         reminder.title,
         `${reminder.license_plate}: overdue since ${new Date(reminder.due_date).toLocaleDateString()}`,
         reminder.estimated_cost || 0,
-        { dueDate: reminder.due_date, entityLabel: reminder.license_plate }
+        {
+          dueDate: reminder.due_date,
+          entityLabel: reminder.license_plate,
+          // Reminder already carries its own orgUnitId, inherited from
+          // its vehicle at write time -- see maintenance.types.ts.
+          ownerTarget: { kind: 'org-unit-direct', orgUnitId: reminder.orgUnitId },
+        }
       )
     );
 
@@ -396,7 +465,11 @@ export class NeedsAttentionService {
         reminder.title,
         `${reminder.license_plate}: due ${new Date(reminder.due_date).toLocaleDateString()}`,
         reminder.estimated_cost || 0,
-        { dueDate: reminder.due_date, entityLabel: reminder.license_plate }
+        {
+          dueDate: reminder.due_date,
+          entityLabel: reminder.license_plate,
+          ownerTarget: { kind: 'org-unit-direct', orgUnitId: reminder.orgUnitId },
+        }
       )
     );
 
@@ -439,7 +512,14 @@ export class NeedsAttentionService {
           wo.title,
           `${wo.license_plate}: ${wo.description || 'Work order raised'}${fromDvir ? ' (reported by driver inspection)' : ''}`,
           wo.totalCost || 0,
-          { entityLabel: wo.license_plate, href: `/workorders?license_plate=${encodeURIComponent(wo.license_plate)}` }
+          {
+            entityLabel: wo.license_plate,
+            href: `/workorders?license_plate=${encodeURIComponent(wo.license_plate)}`,
+            // WorkOrder already carries its own orgUnitId (the
+            // workshop org unit, falling back to the vehicle's own at
+            // creation time -- see workorder.tenancy-addendum.ts).
+            ownerTarget: { kind: 'org-unit-direct', orgUnitId: wo.orgUnitId },
+          }
         );
       });
     } catch (error) {

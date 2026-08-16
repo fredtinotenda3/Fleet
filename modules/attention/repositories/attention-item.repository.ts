@@ -33,20 +33,30 @@ export class AttentionItemRepository extends TenantScopedRepository<AttentionIte
    * rest of the batch -- consistent with the aggregator's own
    * failure-isolation stance (needs-attention.service.ts) that one
    * source's problem should not blank out everything else.
+   *
+   * PHASE 0 FIX: takes a per-item `orgUnitId` (paired with its item by
+   * the caller) rather than a single value applied to every row in the
+   * batch. See needsAttentionService.persistFeed() for how each item's
+   * orgUnitId is resolved from its own TRUE owning entity via
+   * AttentionOwnershipResolver, and the 'attention' entry in
+   * server/tenancy/module-scope.registry.ts for the history of why
+   * this changed. `null`/`undefined` (unresolvable owner) is persisted
+   * as `null` -- fail-closed, invisible to org-unit-scope-narrowed
+   * reads -- exactly as an unset orgUnitId already behaved before this
+   * fix.
    */
   async upsertFeedItems(
     tenantId: string,
-    items: NeedsAttentionItem[],
-    orgUnitId?: string
+    itemsWithOwnership: Array<{ item: NeedsAttentionItem; orgUnitId: string | null | undefined }>
   ): Promise<UpsertFeedResult> {
-    if (items.length === 0) {
+    if (itemsWithOwnership.length === 0) {
       return { upsertedCount: 0, modifiedCount: 0, matchedCount: 0 };
     }
 
     const collection = await this.getCollection();
     const now = new Date();
 
-    const ops: AnyBulkWriteOperation<AttentionItem>[] = items.map((item) => ({
+    const ops: AnyBulkWriteOperation<AttentionItem>[] = itemsWithOwnership.map(({ item, orgUnitId }) => ({
       updateOne: {
         filter: { tenantId, itemKey: item.id } as any,
         update: {

@@ -16,7 +16,9 @@
 import { fuelRepository } from '@/modules/fuel/repositories/fuel.repository';
 import { expenseRepository } from '@/modules/expenses/repositories/expense.repository';
 import { anomalyRepository } from '@/modules/intelligence/repositories/anomaly.repository';
+import { vehicleIdentityResolver } from '@/modules/vehicles/services/vehicle-identity-resolver.service';
 import { Anomaly, AnomalySeverity } from '@/shared/types/anomaly.types';
+import '@/shared/types/anomaly.tenancy-addendum';
 import crypto from 'crypto';
 
 export interface DetectedAnomaly {
@@ -168,6 +170,23 @@ export class AnomalyDetectionService {
     return this.persistBatch(detected, 'expense', tenantId, userId);
   }
 
+  /**
+   * PHASE 0 FIX (item 7 spillover, same bug class as item 1): the
+   * anomaly.tenancy-addendum.ts declaration for `Anomaly.orgUnitId`
+   * says "BACKFILL: from the vehicle identified by
+   * Anomaly.licensePlate" -- but nothing ever actually resolved and
+   * set it at write time; every persisted anomaly had orgUnitId
+   * undefined. Combined with AnomalyRepository's org-unit-scoped reads
+   * (tenantScopeService.buildFilter), the practical effect was
+   * fail-closed invisibility: a scope-restricted caller's anomaly feed
+   * was always empty, regardless of how many anomalies existed for
+   * their vehicles.
+   *
+   * Reuses VehicleIdentityResolver (Phase 0 item 3) rather than a
+   * bespoke plate lookup -- the exact "resolve a mutable license plate
+   * to the vehicle's own orgUnitId, tenant-scoped, fail-closed on an
+   * ambiguous or missing plate" problem it exists for.
+   */
   private async persistBatch(
     detected: DetectedAnomaly[],
     category: 'fuel' | 'expense' | 'maintenance',
@@ -182,6 +201,9 @@ export class AnomalyDetectionService {
       const existing = await anomalyRepository.findOpenByFingerprint(fingerprint, tenantId);
       if (existing) continue; // already tracked and still open -- don't duplicate
 
+      const vehicleLookup = await vehicleIdentityResolver.resolveByPlate(item.licensePlate, tenantId);
+      const orgUnitId = vehicleLookup.status === 'resolved' ? vehicleLookup.vehicle.orgUnitId : undefined;
+
       const saved = await anomalyRepository.create(
         {
           tenantId,
@@ -194,6 +216,7 @@ export class AnomalyDetectionService {
           licensePlate: item.licensePlate,
           data: item.data,
           fingerprint,
+          orgUnitId,
           detectedAt: new Date(),
           isDeleted: false,
         } as Omit<Anomaly, '_id' | 'createdAt' | 'updatedAt'>,

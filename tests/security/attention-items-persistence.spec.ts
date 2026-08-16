@@ -10,6 +10,12 @@
 // suite uses (tests/helpers/fake-collection.ts), exercising the REAL
 // AttentionItemRepository.upsertFeedItems() bulkWrite logic rather than
 // mocking the repository itself.
+//
+// PHASE 0: upsertFeedItems() now takes a per-item orgUnitId (paired
+// item-by-item by the caller) instead of one value applied to the
+// whole batch -- see attention-item.repository.ts and
+// attention-ownership.resolver.ts. `withOrgUnit()` below is this
+// suite's helper for building that pairing.
 
 import { AttentionItemRepository } from '../../modules/attention/repositories/attention-item.repository';
 import { FakeCollection } from '../helpers/fake-collection';
@@ -43,6 +49,11 @@ function makeItem(overrides: Partial<NeedsAttentionItem> = {}): NeedsAttentionIt
   };
 }
 
+/** Pairs one or more items with a single orgUnitId, for tests that don't care about per-item variation. */
+function withOrgUnit(items: NeedsAttentionItem[], orgUnitId: string | null) {
+  return items.map((item) => ({ item, orgUnitId }));
+}
+
 beforeEach(() => {
   collection.docs = [];
   collection.seenFilters = [];
@@ -50,7 +61,7 @@ beforeEach(() => {
 
 describe('AttentionItemRepository.upsertFeedItems', () => {
   it('inserts a new row on first upsert', async () => {
-    const result = await repo.upsertFeedItems(TENANT, [makeItem()], 'branch-harare');
+    const result = await repo.upsertFeedItems(TENANT, withOrgUnit([makeItem()], 'branch-harare'));
 
     expect(result.upsertedCount).toBe(1);
     expect(result.modifiedCount).toBe(0);
@@ -66,14 +77,13 @@ describe('AttentionItemRepository.upsertFeedItems', () => {
   });
 
   it('is idempotent: refreshing the same item again updates the row instead of inserting a duplicate', async () => {
-    await repo.upsertFeedItems(TENANT, [makeItem()], 'branch-harare');
+    await repo.upsertFeedItems(TENANT, withOrgUnit([makeItem()], 'branch-harare'));
     const firstSeenAt = collection.docs[0].firstSeenAt;
 
     // Simulate a later refresh where the underlying condition worsened.
     await repo.upsertFeedItems(
       TENANT,
-      [makeItem({ severity: 'critical', priorityScore: 175, cost: 900 })],
-      'branch-harare'
+      withOrgUnit([makeItem({ severity: 'critical', priorityScore: 175, cost: 900 })], 'branch-harare')
     );
 
     expect(collection.docs).toHaveLength(1);
@@ -91,7 +101,7 @@ describe('AttentionItemRepository.upsertFeedItems', () => {
     ];
 
     for (let refresh = 0; refresh < 5; refresh++) {
-      await repo.upsertFeedItems(TENANT, feed, 'branch-harare');
+      await repo.upsertFeedItems(TENANT, withOrgUnit(feed, 'branch-harare'));
     }
 
     expect(collection.docs).toHaveLength(3);
@@ -102,15 +112,15 @@ describe('AttentionItemRepository.upsertFeedItems', () => {
   });
 
   it('scopes rows to tenantId: two tenants with the same itemKey do not collide', async () => {
-    await repo.upsertFeedItems(TENANT, [makeItem()], 'branch-harare');
-    await repo.upsertFeedItems('another-org-abc123', [makeItem()], 'branch-bulawayo');
+    await repo.upsertFeedItems(TENANT, withOrgUnit([makeItem()], 'branch-harare'));
+    await repo.upsertFeedItems('another-org-abc123', withOrgUnit([makeItem()], 'branch-bulawayo'));
 
     expect(collection.docs).toHaveLength(2);
     expect(new Set(collection.docs.map((d) => d.tenantId)).size).toBe(2);
   });
 
   it('an empty feed is a no-op and never touches the collection', async () => {
-    const result = await repo.upsertFeedItems(TENANT, [], 'branch-harare');
+    const result = await repo.upsertFeedItems(TENANT, []);
 
     expect(result).toEqual({ upsertedCount: 0, modifiedCount: 0, matchedCount: 0 });
     expect(collection.docs).toHaveLength(0);
@@ -119,16 +129,57 @@ describe('AttentionItemRepository.upsertFeedItems', () => {
   it('when a source stops reporting an item it disappears from a fresh feed but the previously-persisted row is left as-is (no deletion in this pass)', async () => {
     await repo.upsertFeedItems(
       TENANT,
-      [makeItem({ id: 'fuel_fraud:alert-1' }), makeItem({ id: 'fuel_fraud:alert-2' })],
-      'branch-harare'
+      withOrgUnit([makeItem({ id: 'fuel_fraud:alert-1' }), makeItem({ id: 'fuel_fraud:alert-2' })], 'branch-harare')
     );
     expect(collection.docs).toHaveLength(2);
 
     // alert-2's underlying condition cleared; the next feed no longer contains it.
-    await repo.upsertFeedItems(TENANT, [makeItem({ id: 'fuel_fraud:alert-1' })], 'branch-harare');
+    await repo.upsertFeedItems(TENANT, withOrgUnit([makeItem({ id: 'fuel_fraud:alert-1' })], 'branch-harare'));
 
     // Known, documented limitation of this pass (see attention-item.types.ts):
     // stale rows are not pruned yet, so the row count is unchanged.
     expect(collection.docs).toHaveLength(2);
+  });
+
+  // ─── PHASE 0: per-item orgUnitId ────────────────────────────────────
+
+  it('persists a DIFFERENT orgUnitId per item within the same batch -- the core Phase 0 fix', async () => {
+    const items = [
+      makeItem({ id: 'fuel_fraud:alert-harare', entityLabel: 'HRE1234' }),
+      makeItem({ id: 'fuel_fraud:alert-bulawayo', entityLabel: 'BYO5678' }),
+    ];
+
+    await repo.upsertFeedItems(TENANT, [
+      { item: items[0], orgUnitId: 'branch-harare' },
+      { item: items[1], orgUnitId: 'branch-bulawayo' },
+    ]);
+
+    const harareDoc = collection.docs.find((d) => d.itemKey === 'fuel_fraud:alert-harare');
+    const bulawayoDoc = collection.docs.find((d) => d.itemKey === 'fuel_fraud:alert-bulawayo');
+
+    expect(harareDoc?.orgUnitId).toBe('branch-harare');
+    expect(bulawayoDoc?.orgUnitId).toBe('branch-bulawayo');
+  });
+
+  it('persists orgUnitId: null (fail-closed) when the owner could not be resolved, never a guessed value', async () => {
+    await repo.upsertFeedItems(TENANT, [{ item: makeItem(), orgUnitId: null }]);
+
+    expect(collection.docs).toHaveLength(1);
+    expect(collection.docs[0].orgUnitId).toBeNull();
+  });
+
+  it('treats an undefined orgUnitId the same as null', async () => {
+    await repo.upsertFeedItems(TENANT, [{ item: makeItem(), orgUnitId: undefined }]);
+
+    expect(collection.docs[0].orgUnitId).toBeNull();
+  });
+
+  it('a later refresh can correct a previously-unresolved orgUnitId once the owner backfills', async () => {
+    await repo.upsertFeedItems(TENANT, [{ item: makeItem(), orgUnitId: null }]);
+    expect(collection.docs[0].orgUnitId).toBeNull();
+
+    await repo.upsertFeedItems(TENANT, [{ item: makeItem(), orgUnitId: 'branch-harare' }]);
+    expect(collection.docs).toHaveLength(1);
+    expect(collection.docs[0].orgUnitId).toBe('branch-harare');
   });
 });

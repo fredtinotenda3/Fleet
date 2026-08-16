@@ -42,7 +42,18 @@ export type ModuleScopeLevel =
   /** Shared across the whole organization. Every member sees the same rows. */
   | 'organization'
   /** Belongs to one branch/department/workshop/fleet. Filtered by orgUnitId. */
-  | 'org-unit';
+  | 'org-unit'
+  /**
+   * Owns no collection of its own. Every read is a call into another
+   * module's already-scoped repository/service, with the caller's
+   * TenantContext forwarded unchanged -- so this module's own
+   * "scoping decision" is really "does every read site forward
+   * context instead of dropping it". See the 'ai' / 'analytics' /
+   * 'esg' entries below for what was actually audited to confirm
+   * this, including a real bug (fixed in this pass) where one read
+   * site silently didn't.
+   */
+  | 'computed';
 
 /**
  * Where a row's `orgUnitId` comes from when it is created, and what a
@@ -58,7 +69,11 @@ export type OrgUnitSource =
 export interface ModuleScopeEntry {
   /** Directory name under modules/. */
   module: string;
-  /** MongoDB collections this module owns. Used by the backfill + audit tooling. */
+  /**
+   * MongoDB collections this module owns. Used by the backfill + audit
+   * tooling. Empty ONLY for `level: 'computed'` modules, which by
+   * definition own no collection -- see that level's doc comment.
+   */
   collections: string[];
   level: ModuleScopeLevel;
   /**
@@ -324,8 +339,17 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
       'SCOPED. An anomaly is derived from a vehicle\'s fuel/trip/expense history and names ' +
       'the vehicle (licensePlate) in its payload. A derived record cannot be less protected ' +
       'than its inputs, or the analytics layer becomes a bypass for the scoping applied to ' +
-      'the source collections.',
-    confirmed: false,
+      'the source collections. PHASE 0 FIX: orgUnitId was declared on the type (see ' +
+      'anomaly.tenancy-addendum.ts) and already used to filter READS ' +
+      '(AnomalyRepository.getFiltered -> tenantScopeService.buildFilter), but nothing ever ' +
+      'resolved and set it at WRITE time -- AnomalyDetectionService.persistBatch() created ' +
+      'every anomaly with orgUnitId undefined. Net effect before this fix: fail-closed ' +
+      'invisibility, not a leak -- a scope-restricted caller\'s anomaly feed was always empty ' +
+      'regardless of how many anomalies existed for their vehicles. persistBatch() now ' +
+      'resolves each anomaly\'s licensePlate to its vehicle\'s own orgUnitId via ' +
+      'VehicleIdentityResolver (Phase 0 item 3) before persisting, fail-closed (orgUnitId left ' +
+      'undefined) on an unresolvable or ambiguous plate rather than guessing.',
+    confirmed: true,
   },
   {
     module: 'reporting',
@@ -342,25 +366,29 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
     confirmed: false,
   },
 
-  // ── Newly scoped in the attention-queue persistence pass. ─────────
+  // ── Confirmed in the Phase 0 foundation-integrity pass. ────────────
   {
     module: 'attention',
     collections: ['tblattentionitems', 'tblvalueledger'],
     level: 'org-unit',
     orgUnitSource: 'parent-record',
     rationale:
-      'SCOPED, WITH A KNOWN GAP. Each attention_items row is a persisted snapshot of a ' +
-      'NeedsAttentionItem produced by needsAttentionService, which already reads every ' +
+      'SCOPED, OWNERSHIP RESOLVED PER ITEM. Each attention_items row is a persisted snapshot ' +
+      'of a NeedsAttentionItem produced by needsAttentionService, which already reads every ' +
       "upstream source (vehicles, drivers, fuel, expenses, compliance) through the caller's " +
       'org-unit-scoped TenantContext, so a row cannot exist that the caller who generated it ' +
-      "was not allowed to see. What is NOT yet done is resolving each item's own true owning " +
-      "entity (its source vehicle or driver) into orgUnitId -- this pass tags every row in a " +
-      "refresh with the request's activeOrgUnitId instead, which is correct only when the " +
-      'caller has one org unit active and leaves orgUnitId unset (fail-closed, invisible to ' +
-      'narrowed reads) otherwise. Left confirmed:false until a follow-up joins each item back ' +
-      'to its source entity the way tblanomalies does. value_ledger inherits the same orgUnitId ' +
-      "(copied from the attention item it evidences) at write time, in POST /:id/resolve.",
-    confirmed: false,
+      "was not allowed to see. PHASE 0 FIX: needsAttentionService.persistFeed() now resolves " +
+      "each item's TRUE owning orgUnitId via AttentionOwnershipResolver (see " +
+      'attention-ownership.resolver.ts), keyed off that item\'s own vehicle/driver/expense -- ' +
+      "it no longer tags every row in a refresh with the request's activeOrgUnitId. A caller " +
+      "in Harare who surfaces an item about a Bulawayo vehicle now persists that row scoped to " +
+      'Bulawayo, not Harare. An item whose owner cannot be safely determined (no single owning ' +
+      'entity, e.g. a multi-vehicle fleet-health recommendation; or an entity not yet backfilled ' +
+      'with its own orgUnitId) is persisted with orgUnitId unset -- fail-closed, invisible to ' +
+      'narrowed reads, same as any other unbackfilled row in this codebase. value_ledger ' +
+      'inherits the same (now correctly-resolved) orgUnitId from the attention item it ' +
+      'evidences at write time, in POST /:id/resolve.',
+    confirmed: true,
   },
 
   // ── Organization- and platform-level by nature. Do not scope. ─────
@@ -456,6 +484,76 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
       'scoping, not a real reconciliation gap. Left confirmed:false until product answers ' +
       'branch-vs-consolidated; surfaced by `npm run tenancy:report`.',
     confirmed: false,
+  },
+
+  // ── Registered in the Phase 0 foundation-integrity pass. ───────────
+  // 'ai', 'analytics', 'esg' own no collection of their own -- confirmed
+  // by grepping for `collectionName =` and any *.repository.ts file
+  // under each module directory (none exist). Every read they perform
+  // is a call into another module's already-scoped repository/service.
+  // Their real scoping question is therefore not "which orgUnitId
+  // field do our rows carry" but "does every call site forward the
+  // caller's TenantContext instead of dropping it" -- audited
+  // individually below, not assumed.
+  {
+    module: 'ai',
+    collections: [],
+    level: 'computed',
+    rationale:
+      'NO OWNED COLLECTION. All five services (fleet-health, driver-risk, ' +
+      'predictive-maintenance, fuel-fraud, expense-anomaly) accept an optional TenantContext ' +
+      'and narrow every underlying read to it (see each service file and ai.controller.ts, ' +
+      'which resolves TenantContext once per request via resolveTenantContext/' +
+      'resolveTenantContextWithUser and forwards it into every one of the five). ' +
+      'needsAttentionService (also in this module) composes all five plus compliance and ' +
+      'maintenance reads the same way, and is additionally covered by this pass\'s ' +
+      'AttentionOwnershipResolver for the persisted-row ownership problem (see the ' +
+      '\'attention\' entry above) -- that fix lives in the attention module since it concerns ' +
+      'attention_items, not a new ai-owned collection. Verified (not assumed) by ' +
+      'tests/security/{needs-attention,driver-risk,fuel-fraud,expense-anomaly}-scope.spec.ts, ' +
+      'each of which asserts a caller with restricted accessibleOrgUnitIds cannot see another ' +
+      'org unit\'s prediction. This module NEVER gates a whole feature on scope being unset ' +
+      '(fail-closed default) -- see ai.controller.ts\'s scopedAiUnavailable() helper, kept as ' +
+      'the template for the next AI endpoint.',
+    confirmed: true,
+  },
+  {
+    module: 'analytics',
+    collections: [],
+    level: 'computed',
+    rationale:
+      'NO OWNED COLLECTION. fleetAnalyticsService composes vehicle/expense/fuel/maintenance/trip ' +
+      'repository *Stats calls, each already org-unit-scoped via an optional TenantContext ' +
+      'parameter, forwarded from analytics.controller.ts\'s single resolveTenantContext() call ' +
+      'per request. PHASE 0 FINDING (fixed in this pass, not merely documented): ' +
+      'getCostBreakdown()\'s "cost by vehicle" panel called ' +
+      'vehicleRepository.getVehicleAnalytics(tenantId, startDate, endDate) WITHOUT the context ' +
+      'every sibling call in the same method received -- and getVehicleAnalytics did not even ' +
+      'accept an org-unit-scope parameter to begin with, unlike getVehicleStats on the same ' +
+      'repository. Net effect before this fix: the per-vehicle cost breakdown on the analytics ' +
+      'dashboard returned every vehicle in the tenant regardless of the caller\'s org-unit ' +
+      'scope, while the KPI/operational-metrics panels on the same dashboard were correctly ' +
+      'scoped -- exactly the "aggregate endpoint forgotten, list endpoint scoped" pattern this ' +
+      'registry exists to catch. getVehicleAnalytics now accepts an optional context and ' +
+      'applies tenantScopeService.buildFilter the same way getVehicleStats does; ' +
+      'getCostBreakdown now forwards it. analyticsScopeService (the "which slice of MY scoped ' +
+      'data" concern -- vehicle/driver/branch drill-down) is a separate, correctly-layered ' +
+      'concern on top, not a substitute for this authorization-level scoping.',
+    confirmed: true,
+  },
+  {
+    module: 'esg',
+    collections: [],
+    level: 'computed',
+    rationale:
+      'NO OWNED COLLECTION. esgExportService.buildExport composes fleetHealthService, ' +
+      'driverRiskService, and complianceService reads, all forwarded the single TenantContext ' +
+      'esg.controller.ts resolves per request. Audited call-by-call: every one of the three ' +
+      'underlying reads received `context`; none was found calling through with it dropped ' +
+      '(contrast with the analytics finding above). Covered by ' +
+      'tests/security/esg-export-scope.spec.ts, which asserts a restricted caller\'s export ' +
+      'cannot include a vehicle/driver/compliance record outside their accessible org units.',
+    confirmed: true,
   },
 ];
 

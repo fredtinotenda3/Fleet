@@ -12,7 +12,6 @@
 import { IEventHandler } from '../../base/IEventHandler';
 import { DomainEvent } from '../../base/DomainEvent';
 import { anomalyDetectionService } from '@/modules/intelligence/services/anomaly-detection.service';
-import { predictiveMaintenanceService } from '@/modules/intelligence/services/predictive-maintenance.service';
 import { notificationService } from '@/modules/notifications/services/notification.service';
 import { Anomaly } from '@/shared/types/anomaly.types';
 
@@ -28,11 +27,28 @@ export class IntelligenceHandler implements IEventHandler<DomainEvent> {
       case 'ExpenseCreated':
         this.runExpenseAnomalyDetection(tenantId, userId).catch(console.error);
         break;
-      case 'TripCreated':
-      case 'TripCompleted':
-      case 'VehicleUpdated':
-        this.runPredictiveMaintenance(tenantId).catch(console.error);
-        break;
+      // PHASE 0: 'TripCreated' | 'TripCompleted' | 'VehicleUpdated' used
+      // to also trigger runPredictiveMaintenance() here. Removed --
+      // see the Phase 0 completion report's predictive-maintenance
+      // consolidation section for the full evidence trail. Short
+      // version: it called the OTHER predictive-maintenance
+      // implementation (modules/intelligence/services/
+      // predictive-maintenance.service.ts, now deleted), which (a) ran
+      // an unscoped `vehicleRepository.findMany({}, tenantId)` across
+      // the tenant's ENTIRE fleet on every single trip completion
+      // rather than the one vehicle the event was about, (b) discarded
+      // every prediction it computed (the return value was never
+      // assigned, persisted, or read), and (c) defaulted to a
+      // `'default'` tenantId on a missing event.metadata.tenantId,
+      // which server/tenancy/tenant-scope.ts's resolveTenantScope()
+      // now hard-rejects -- so this branch was, at best, an expensive
+      // no-op, and at worst a per-event thrown-and-swallowed error.
+      // AIPredictionTriggerHandler (server/events/handlers/ai/) already
+      // subscribes to these same events and correctly calls
+      // modules/ai/services' predictiveMaintenanceService.predictVehicle()
+      // for the SPECIFIC vehicle the event names, with proper
+      // tenant resolution (resolveEventTenantOrWarn) -- that is the
+      // sole, authoritative event-triggered path now.
       default:
         break;
     }
@@ -46,10 +62,6 @@ export class IntelligenceHandler implements IEventHandler<DomainEvent> {
   private async runExpenseAnomalyDetection(tenantId: string, triggeredBy?: string): Promise<void> {
     const created = await anomalyDetectionService.detectAndPersistExpenseAnomalies(tenantId, triggeredBy);
     await this.notifyNewAnomalies(created, tenantId, triggeredBy);
-  }
-
-  private async runPredictiveMaintenance(tenantId: string): Promise<void> {
-    await predictiveMaintenanceService.predictMaintenanceNeeds(tenantId);
   }
 
   /**

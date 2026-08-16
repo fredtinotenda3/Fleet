@@ -10,11 +10,16 @@
 //
 // SCOPING
 // Registered 'org-unit' in server/tenancy/module-scope.registry.ts.
-// `orgUnitId` is set by needsAttentionService at upsert time -- see the
-// rationale on that registry entry for exactly how (and its current
-// limitation: it tags the ACTIVE org unit for the request rather than
-// resolving each item's true owning entity, which is why the decision
-// is still `confirmed: false`).
+// `orgUnitId` is set by needsAttentionService.persistFeed() at upsert
+// time, resolved PER ITEM from that item's own true owning entity via
+// AttentionOwnershipResolver (see attention-ownership.resolver.ts) --
+// not tagged uniformly with the request's active org unit, which was
+// the Phase 0 finding this fixes. A row whose owner cannot be safely
+// determined (no single owning entity, entity not found, or entity not
+// yet backfilled with its own orgUnitId) is persisted with orgUnitId
+// left unset, which is fail-closed: invisible to any org-unit-scope-
+// narrowed read, same convention as every other org-unit-scoped
+// module in this codebase.
 //
 // IDENTITY
 // `itemKey` carries the aggregator's own id (e.g. "fuel_fraud:alert-1",

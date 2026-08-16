@@ -158,7 +158,8 @@ export class FleetAnalyticsService {
     const byVehicle = await vehicleRepository.getVehicleAnalytics(
       tenantId,
       dateRange.startDate,
-      dateRange.endDate
+      dateRange.endDate,
+      context
     );
 
     const byVehicleMapped = (byVehicle as any[])

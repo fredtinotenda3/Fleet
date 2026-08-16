@@ -6,6 +6,13 @@
 // and scoring logic.
 
 import type { AISeverity } from './ai.types';
+import type { AttentionOwnerTarget } from '@/modules/attention/services/attention-ownership.resolver';
+// NOTE: this is the ai module (a source of intelligence) depending on
+// the attention module (its persistence layer) for a TYPE ONLY. That
+// is backwards from the usual "AI produces, attention persists"
+// direction, so this import must remain `import type` -- it is erased
+// at compile time and creates no runtime dependency or module-init
+// ordering issue between the two modules.
 
 /**
  * Every upstream feed the aggregator reads from. Kept in sync with
@@ -42,6 +49,15 @@ export interface NeedsAttentionItem {
   entityLabel?: string;
   /** Deep link into the module that owns this item, if the frontend has one. */
   href?: string;
+  /**
+   * PHASE 0: what entity (if any) this item is "about", for
+   * AttentionOwnershipResolver to resolve into the item's TRUE owning
+   * orgUnitId at persist time -- see attention-ownership.resolver.ts.
+   * Not part of this item's identity or display; never sent to the
+   * frontend, only consumed by needsAttentionService.persistFeed().
+   * Omitted (undefined) is treated exactly like `{ kind: 'none' }`.
+   */
+  ownerTarget?: AttentionOwnerTarget;
 }
 
 export interface NeedsAttentionFeed {
