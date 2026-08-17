@@ -1,9 +1,12 @@
-Files DELETED from the original repository by this Phase 0 pass
-(a zip archive cannot represent a deletion, so it is recorded here):
+Additional file deleted as part of this fix (a zip archive cannot
+represent a deletion, so it is recorded here — mirrors the pattern
+already used by this repo's own DELETED_FILES.txt):
 
   modules/intelligence/services/predictive-maintenance.service.ts
 
-Reason: dead/duplicate code, consolidated into
-modules/ai/services/predictive-maintenance.service.ts. Full evidence
-trail in modules/intelligence/services/DECISIONS.md (included in this
-archive) and in the Phase 0 completion report, section 9.
+Reason: already-documented dead/duplicate code (see this repo's
+original DELETED_FILES.txt). It was still physically present in the
+zip you gave me, which fails
+tests/security/predictive-maintenance-consolidation.spec.ts. Deleting
+it is unrelated to the Command Centre fix itself but was necessary for
+`npm run test:security` to pass cleanly as requested.
