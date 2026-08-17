@@ -16,6 +16,29 @@ import { successResponse, createdResponse, errorResponse } from '@/server/utils/
 import { AppError, isAppError, describeError, ValidationError } from '@/server/errors/app.errors';
 import { getTenantFromRequest } from '@/server/utils/context.utils';
 import { resolveTenantContext, resolveTenantContextWithUser } from '@/server/utils/tenant-context.utils';
+import { bootstrapCqrs } from '@/server/cqrs/cqrs.module';
+
+// FIX (Command Centre -- "maintenance" source of the needs-attention
+// feed silently dropping out): getNeedsAttention() -> needsAttentionService
+// .getFeed() -> readMaintenance() calls maintenanceQueryService
+// .getOverdueReminders()/.getUpcomingReminders(), which route through the
+// CQRS QueryBus (see maintenance-query.service.ts). Every OTHER controller
+// that touches the query/command bus (vehicle, fuel, expense, maintenance,
+// trip) calls bootstrapCqrs() here, at module scope, so its handlers are
+// registered the moment that controller is first loaded -- independent of
+// whether instrumentation.ts's server-start hook has already run in this
+// process. ai.controller.ts never did this, so a request whose module
+// graph reaches the QueryBus before any of those five controllers have
+// been loaded in this server/lambda instance hits "No handler registered
+// for query GetOverdueRemindersQuery" -- caught by needsAttentionService's
+// per-source isolation, so it doesn't 500 the whole feed, but it does
+// silently zero out every overdue/upcoming maintenance reminder (and
+// mark 'maintenance' unavailable) on exactly the requests most likely to
+// be a user's first hit of the server process: opening the Command Centre.
+// bootstrapCqrs() is idempotent (guarded by global._cqrsBootstrapped), so
+// this is a no-op once instrumentation.ts or any other controller has
+// already run it.
+bootstrapCqrs();
 
 /**
  * RESOLVED -- kept for the next AI endpoint that lands unscoped.
