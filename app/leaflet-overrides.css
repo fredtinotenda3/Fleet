@@ -1,0 +1,118 @@
+/* app/leaflet-overrides.css
+   ==========================================================================
+   Live-map marker and tooltip styling that must WIN against
+   leaflet/dist/leaflet.css.
+
+   IMPORT ORDER IS LOAD-BEARING. app/layout.tsx previously imported
+   ./globals.css on one line and leaflet/dist/leaflet.css on the next, so
+   Leaflet's stylesheet came last and won every specificity tie against
+   anything the design system declared. This file is imported AFTER
+   leaflet.css for that reason; moving it above the Leaflet import
+   silently reverts the fixes below. That is also why these rules live
+   here rather than in globals.css.
+
+   Everything here is scoped to an explicit `fleet-` class, so nothing in
+   it can affect a Leaflet map rendered by any other part of the product.
+   ========================================================================== */
+
+/* ---- Marker palette -------------------------------------------------
+   One place to retune the live-map colours. Each maps onto an existing
+   design-system token and falls back to a literal only if that token is
+   ever removed. The brief's palette is green / amber / grey / red:
+
+     moving  -> --success        (green)
+     idle    -> --warning        (amber)
+     offline -> --fleet-offline  (grey; a FIXED grey rather than
+                --muted-foreground, because OSM raster tiles stay light
+                whatever the app theme is, so a theme-reactive grey would
+                wash out in dark mode)
+     alert   -> --danger         (red)
+
+   --map-marker-ring is the contrast halo drawn around every marker so it
+   stays legible over dark tile features; it follows the surface colour.
+   -------------------------------------------------------------------- */
+:root {
+  --map-marker-moving: var(--success, #0e8a5f);
+  --map-marker-idle: var(--warning, #a15c00);
+  --map-marker-offline: var(--fleet-offline, #6b7488);
+  --map-marker-alert: var(--danger, #b3261e);
+  --map-marker-ring: var(--card, #ffffff);
+}
+
+/* ---- Vehicle marker -------------------------------------------------
+   Leaflet's DivIcon defaults to `className: 'leaflet-div-icon'`, which
+   carries `background: #fff; border: 1px solid #666`. The component
+   passes its own class instead, so that rule should not apply -- these
+   declarations are belt-and-braces so a future Leaflet version (or a
+   caller that forgets to override className) cannot draw a white box
+   behind the marker.
+   -------------------------------------------------------------------- */
+.leaflet-marker-icon.fleet-vehicle-marker,
+.fleet-vehicle-marker {
+  background: transparent;
+  border: 0;
+  /* The wedge is drawn outside the icon's nominal box when a vehicle is
+     selected (the halo) -- don't clip it. */
+  overflow: visible;
+}
+
+.fleet-vehicle-marker:focus-visible {
+  outline: 2px solid var(--ring, #2f63c7);
+  outline-offset: 2px;
+  border-radius: 9999px;
+}
+
+/* ---- Tooltip --------------------------------------------------------
+   Leaflet's `.leaflet-tooltip` paints its own white box, 1px border,
+   border-radius and drop shadow, plus a `::before` arrow. The component
+   renders its own themed pill inside, so the Leaflet chrome has to go or
+   the result is a box inside a box.
+
+   This previously used Tailwind classes -- `!border-0 !shadow-none
+   !p-0` -- which are Tailwind v3 important-PREFIX syntax on a project
+   running Tailwind v4. v4 uses a trailing `!` (`border-0!`), so those
+   three classes generated no CSS at all and the Leaflet chrome was never
+   removed. Doing it in plain CSS here removes the version dependency
+   entirely, and is the only way to reach the `::before` arrow anyway.
+   -------------------------------------------------------------------- */
+.leaflet-tooltip.fleet-map-tooltip {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  white-space: nowrap;
+}
+
+.leaflet-tooltip.fleet-map-tooltip::before {
+  display: none;
+}
+
+/* ---- Reduced motion -------------------------------------------------
+   WCAG 2.3.3 / prefers-reduced-motion: the selected-vehicle halo pulses.
+   Honour the user's setting by holding it static rather than removing
+   the affordance.
+   -------------------------------------------------------------------- */
+@keyframes fleet-marker-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.22;
+  }
+  50% {
+    transform: scale(1.18);
+    opacity: 0.1;
+  }
+}
+
+.fleet-vehicle-marker__halo {
+  animation: fleet-marker-pulse 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fleet-vehicle-marker__halo {
+    animation: none;
+  }
+}
