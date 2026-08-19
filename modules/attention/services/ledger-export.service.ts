@@ -23,6 +23,8 @@ import type {
   LedgerExportEntry,
   LedgerExportOptions,
   LedgerExportSummary,
+  LedgerSummaryData,
+  LedgerSummaryOptions,
 } from '../types/ledger-export.types';
 
 const SOURCE_KEYS: LedgerEligibleSource[] = ['fuel_fraud', 'expense_anomaly'];
@@ -58,14 +60,57 @@ export class LedgerExportService {
         to: options.to ?? null,
         source: options.source ?? null,
       },
-      summary: this.buildSummary(entries),
+      summary: this.computeSummary(entries),
       entries,
       truncated: dataset.truncated,
       exportCap: dataset.exportCap,
     };
   }
 
-  private buildSummary(entries: LedgerExportEntry[]): LedgerExportSummary {
+  /**
+   * Summary-only read: same scoped/capped repository call as buildExport,
+   * same summary rollup, but never assembles or returns the row-level
+   * `entries` (evidenceRefs, notes, resolvedBy). Backs GET
+   * /api/attention/ledger/summary (Permission.FINANCE_VIEW) -- for a
+   * caller who should see the month-to-date modelled/realised totals but
+   * not individual postings, the way ANALYTICS_EXPORT-gated /export does.
+   */
+  async buildSummary(context: TenantContext, options: LedgerSummaryOptions): Promise<LedgerSummaryData> {
+    const dataset = await valueLedgerRepository.getFilteredEntriesForExport(
+      { source: options.source, from: options.from, to: options.to },
+      context
+    );
+
+    const entries: LedgerExportEntry[] = dataset.rows.map((row) => ({
+      attentionItemKey: row.attentionItemKey,
+      source: row.source,
+      baselineTier: row.baselineTier,
+      modelledAmount: row.modelledAmount,
+      realisedAmount: row.realisedAmount,
+      variance: row.realisedAmount - row.modelledAmount,
+      evidenceRefs: row.evidenceRefs,
+      notes: row.notes,
+      resolvedBy: row.resolvedBy,
+      resolvedAt: row.resolvedAt,
+      orgUnitId: row.orgUnitId ?? null,
+    }));
+
+    return {
+      organization: { id: context.organizationId, name: context.organizationName },
+      generatedAt: new Date(),
+      scope: { orgUnitId: context.activeOrgUnitId ?? null },
+      filters: {
+        from: options.from ?? null,
+        to: options.to ?? null,
+        source: options.source ?? null,
+      },
+      summary: this.computeSummary(entries),
+      truncated: dataset.truncated,
+      exportCap: dataset.exportCap,
+    };
+  }
+
+  private computeSummary(entries: LedgerExportEntry[]): LedgerExportSummary {
     const bySource = SOURCE_KEYS.reduce((acc, source) => {
       acc[source] = { count: 0, modelledAmount: 0, realisedAmount: 0 };
       return acc;

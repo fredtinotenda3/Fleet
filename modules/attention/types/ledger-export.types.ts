@@ -90,3 +90,36 @@ export interface LedgerExportData {
   truncated: boolean;
   exportCap: number;
 }
+
+/** Input for the summary-only read -- same filters as LedgerExportOptions, minus `format` (there's no PDF rendering of a summary). */
+export type LedgerSummaryOptions = LedgerExportFilters;
+
+/**
+ * The value-ledger export's `summary`/`truncated`/`exportCap`/`organization`/
+ * `scope`/`filters` shape, without the row-level `entries` array. Backs
+ * GET /api/attention/ledger/summary (Permission.FINANCE_VIEW) -- callers who
+ * can see the resolved-savings rollup but shouldn't see individual postings
+ * (evidenceRefs, notes, resolvedBy) get this instead of the full export,
+ * which stays gated behind Permission.ANALYTICS_EXPORT. Structurally a
+ * subset of LedgerExportData, so anything that only reads `summary`/
+ * `truncated` (e.g. the SavingsStrip) accepts either.
+ */
+export interface LedgerSummaryData {
+  organization: {
+    id: string;
+    name: string;
+  };
+  generatedAt: Date;
+  scope: {
+    orgUnitId: string | null;
+  };
+  filters: {
+    from: Date | null;
+    to: Date | null;
+    source: LedgerEligibleSource | null;
+  };
+  summary: LedgerExportSummary;
+  /** Same meaning as LedgerExportData.truncated: true when totalMatched exceeded exportCap, in which case `summary` was computed over the capped row set rather than every matching posting. */
+  truncated: boolean;
+  exportCap: number;
+}

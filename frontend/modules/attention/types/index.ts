@@ -8,10 +8,19 @@
 
 import type { NeedsAttentionSource } from '@/modules/ai/types/needs-attention.types';
 import type { AISeverity } from '@/modules/ai/types/ai.types';
-import type { LedgerExportData } from '@/modules/attention/types/ledger-export.types';
+import type { LedgerExportData, LedgerSummaryData } from '@/modules/attention/types/ledger-export.types';
 
 export type { NeedsAttentionFeed, NeedsAttentionItem } from '@/frontend/modules/dashboard/types';
-export type { LedgerExportData };
+export type { LedgerExportData, LedgerSummaryData };
+
+/**
+ * What the SavingsStrip actually reads off either the full export
+ * (Permission.ANALYTICS_EXPORT, GET /api/attention/ledger/export) or the
+ * lighter summary (Permission.FINANCE_VIEW, GET /api/attention/ledger/
+ * summary) -- both LedgerExportData and LedgerSummaryData satisfy this
+ * structurally, so the strip doesn't need to know which one it got.
+ */
+export type SavingsStripData = Pick<LedgerExportData, 'summary' | 'truncated'>;
 
 /** Client-side severity filter for the full-screen queue. 'all' = no filter. */
 export type SeverityFilterValue = AISeverity | 'all';

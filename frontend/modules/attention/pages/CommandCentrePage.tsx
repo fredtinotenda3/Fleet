@@ -3,12 +3,14 @@
 // Step 4 -- Command Centre UI. Full-screen, priority-ranked attention
 // queue (GET /api/ai/needs-attention) with a month-to-date
 // realised-vs-modelled savings strip pinned to the bottom (GET
-// /api/attention/ledger/export?format=json). Both endpoints already
-// scope their results to the caller's tenant/org-unit server-side
-// (resolveTenantContext / TenantContextService) -- a branch-scoped user
-// simply never receives another branch's items or postings, so this
-// page does no scoping of its own, the same way NeedsAttentionWidget and
-// every other dashboard widget don't.
+// /api/attention/ledger/summary for FINANCE_VIEW callers, or the full
+// GET /api/attention/ledger/export?format=json for ANALYTICS_EXPORT
+// callers without FINANCE_VIEW -- see useSavingsStripAccess). Both
+// endpoints already scope their results to the caller's tenant/org-unit
+// server-side (resolveTenantContext / TenantContextService) -- a
+// branch-scoped user simply never receives another branch's items or
+// postings, so this page does no scoping of its own, the same way
+// NeedsAttentionWidget and every other dashboard widget don't.
 
 'use client';
 
@@ -19,7 +21,7 @@ import { LoadingState } from '@/shared/ui/feedback/LoadingState';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { cn } from '@/lib/utils';
-import { useAttentionQueue, useMonthToDateSavings, useMonthToDateAllocationTotal } from '../hooks/useAttentionQueue';
+import { useAttentionQueue, useMonthToDateSavings, useMonthToDateAllocationTotal, useSavingsStripAccess } from '../hooks/useAttentionQueue';
 import { SeverityFilterBar } from '../components/SeverityFilterBar';
 import { AttentionQueueList } from '../components/AttentionQueueList';
 import { SavingsStrip } from '../components/SavingsStrip';
@@ -34,6 +36,7 @@ export function CommandCentrePage({ embedded = false }: CommandCentrePageProps) 
   const [severity, setSeverity] = useState<SeverityFilterValue>('all');
   const [source, setSource] = useState<SourceFilterValue>('all');
 
+  const { mode: savingsStripMode } = useSavingsStripAccess();
   const { data: feed, isLoading, isError, refetch } = useAttentionQueue(200);
   const { data: savings, isLoading: isSavingsLoading, isError: isSavingsError, refetch: refetchSavings } =
     useMonthToDateSavings();
@@ -99,15 +102,17 @@ export function CommandCentrePage({ embedded = false }: CommandCentrePageProps) 
         </>
       )}
 
-      <SavingsStrip
-        data={savings}
-        isLoading={isSavingsLoading}
-        isError={isSavingsError}
-        onRefresh={() => refetchSavings()}
-        allocationReport={allocationReport}
-        isAllocationLoading={isAllocationLoading}
-        isAllocationError={isAllocationError}
-      />
+      {savingsStripMode !== 'none' && (
+        <SavingsStrip
+          data={savings}
+          isLoading={isSavingsLoading}
+          isError={isSavingsError}
+          onRefresh={() => refetchSavings()}
+          allocationReport={allocationReport}
+          isAllocationLoading={isAllocationLoading}
+          isAllocationError={isAllocationError}
+        />
+      )}
     </div>
   );
 }

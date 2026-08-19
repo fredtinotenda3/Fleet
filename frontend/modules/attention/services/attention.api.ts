@@ -9,7 +9,7 @@
 
 import { apiClient } from '@/shared/utils/api-client.utils';
 import { toISODate } from '@/shared/utils/date.utils';
-import type { LedgerExportData } from '../types';
+import type { LedgerExportData, LedgerSummaryData } from '../types';
 
 /** First calendar day of the month containing `date`, at local midnight. */
 export function startOfMonth(date: Date = new Date()): Date {
@@ -36,5 +36,25 @@ export const attentionApi = {
   /** Convenience wrapper: the ledger export filtered to the current month so far. */
   async getMonthToDateLedgerExport(): Promise<LedgerExportData> {
     return attentionApi.getLedgerExport(startOfMonth(), new Date());
+  },
+
+  /**
+   * Lighter counterpart to getLedgerExport() for callers without
+   * Permission.ANALYTICS_EXPORT: calls GET /api/attention/ledger/summary
+   * (Permission.FINANCE_VIEW), same scoping, same `summary`/`truncated`
+   * shape, no row-level `entries`.
+   */
+  async getLedgerSummary(from?: Date, to?: Date): Promise<LedgerSummaryData> {
+    return apiClient.get<LedgerSummaryData>('/api/attention/ledger/summary', {
+      params: {
+        from: from ? toISODate(from) : undefined,
+        to: to ? toISODate(to) : undefined,
+      },
+    });
+  },
+
+  /** Convenience wrapper: the ledger summary filtered to the current month so far. */
+  async getMonthToDateLedgerSummary(): Promise<LedgerSummaryData> {
+    return attentionApi.getLedgerSummary(startOfMonth(), new Date());
   },
 };

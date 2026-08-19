@@ -14,11 +14,11 @@ import { Button } from '@/frontend/shared/ui/primitives/button';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import { formatMoney } from '@/frontend/modules/finance/utils/money.utils';
 import { cn } from '@/lib/utils';
-import type { LedgerExportData } from '../types';
+import type { SavingsStripData } from '../types';
 import type { GLReconciliationReport } from '@/frontend/modules/finance/types';
 
 interface SavingsStripProps {
-  data: LedgerExportData | undefined;
+  data: SavingsStripData | undefined;
   isLoading: boolean;
   isError: boolean;
   onRefresh: () => void;
