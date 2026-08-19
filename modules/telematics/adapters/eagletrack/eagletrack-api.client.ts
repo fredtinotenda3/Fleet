@@ -128,23 +128,42 @@ export class EagleTrackApiError extends Error {
 }
 
 /**
- * `uin` selector for the fleet-wide poll.
+ * `uin` selector for the fleet-wide poll, as vendor-documented.
  *
  * The vendor documents four selectors: a single tracker id,
  * `__group<id>`, `__all_sub` (every tracker belonging to the token's
  * user and its sub-users) and `__all_sys_` (every tracker on the whole
- * deployment). `__all_sys_` is deliberately NOT used: on a reseller-run
- * instance that would pull other customers' vehicles into this tenant's
- * sync, which is precisely the cross-tenant leak class this codebase has
- * spent several phases eliminating. `__all_sub` is the least-privilege
- * selector that still covers a whole account in one call.
+ * deployment). `__all_sys_` was never used: on a reseller-run instance
+ * that would pull other customers' vehicles into this tenant's sync,
+ * precisely the cross-tenant leak class this codebase has spent several
+ * phases eliminating.
  *
- * The adapter cross-checks the roster against what this returns and
- * reports any tracker the poll did not cover (`trackersWithoutFix`), so
- * if `__all_sub` turns out to under-report on a real deployment that
- * shows up as data rather than as silence.
+ * `__all_sub` is NOT used either, despite being documented as
+ * least-privilege: production testing against a live deployment
+ * established that this selector is REJECTED outright --
+ * `GET /api2/last?uin=__all_sub&token=...` answers HTTP 200 with the
+ * literal body `Access Denied:__all_sub`, not the JSON envelope this
+ * client expects (that response is classified the same way any other
+ * non-JSON body is -- see request()'s nonJsonBody handling). The
+ * selector that DOES work on that deployment, and is used instead, is
+ * `?user=<account username>` -- see EAGLETRACK_USER_QUERY_PARAM and
+ * getLastForAll.
+ *
+ * Kept here, unused by this client, only because it is still what the
+ * vendor's own documentation names for a fleet-wide pull and a future
+ * reader comparing the two needs to see why it was abandoned.
  */
 export const EAGLETRACK_FLEET_SELECTOR = '__all_sub';
+
+/**
+ * The query parameter the live-status poll authenticates against
+ * instead of `uin=__all_sub` (see EAGLETRACK_FLEET_SELECTOR). Its value
+ * is the vendor account's username, e.g. "Willsgrove" -- NOT a
+ * per-tenant constant. eagletrack.adapter.ts derives it fresh from each
+ * sync's own `GET /api2/trackers` response and passes it in; nothing in
+ * this client hardcodes a tenant's username.
+ */
+export const EAGLETRACK_USER_QUERY_PARAM = 'user';
 
 export interface EagleTrackApiClientConfig {
   /** Base URL of the tenant's deployment. Path suffixes and trailing slashes are normalised away. */
@@ -211,10 +230,16 @@ export class EagleTrackApiClient {
    * and stamps each entry's `uin` from the KEY rather than trusting the
    * (duplicated) field inside the entry, so a vendor-side inconsistency
    * between the two can't quietly re-attribute a fix to another vehicle.
+   *
+   * `username` selects the account (`?user=<username>`) -- see
+   * EAGLETRACK_USER_QUERY_PARAM for why this replaced the documented
+   * `uin=__all_sub` selector, and eagletrack.adapter.ts for where the
+   * caller derives it. Required, not defaulted: there is no tenant-wide
+   * value that is safe to guess here.
    */
-  async getLastForAll(): Promise<EagleTrackTrackerStatus[]> {
+  async getLastForAll(username: string): Promise<EagleTrackTrackerStatus[]> {
     const envelope = await this.request<EagleTrackLastResponse>('/api2/last', {
-      uin: EAGLETRACK_FLEET_SELECTOR,
+      [EAGLETRACK_USER_QUERY_PARAM]: username,
     });
 
     return flattenLastPayload(envelope.data);
@@ -224,15 +249,31 @@ export class EagleTrackApiClient {
    * The tracker roster -- uin, name, owner, and whatever plate-bearing
    * fields the deployment populates. See eagletrack.adapter.ts for which
    * of those are used for vehicle matching, and in what order.
+   *
+   * Delegates to getTrackersWithRefData and discards `refData`, for
+   * callers that only need the roster itself.
    */
   async getTrackers(): Promise<EagleTrackTracker[]> {
+    return (await this.getTrackersWithRefData()).trackers;
+  }
+
+  /**
+   * The tracker roster, together with the response's `refData` section.
+   *
+   * `refData.users` is the fallback source eagletrack.adapter.ts uses to
+   * derive the account username for getLastForAll, when no roster row
+   * carries a usable `belong`. See EagleTrackRefData's doc comment.
+   */
+  async getTrackersWithRefData(): Promise<{ trackers: EagleTrackTracker[]; refData?: EagleTrackTrackersResponse['refData'] }> {
     const envelope = await this.request<EagleTrackTrackersResponse>('/api2/trackers');
     const data = envelope.data;
-    if (!Array.isArray(data)) return [];
+    const trackers = Array.isArray(data)
+      ? data.filter((tracker): tracker is EagleTrackTracker => {
+          return Boolean(tracker) && typeof tracker === 'object' && tracker.uin !== undefined && tracker.uin !== null;
+        })
+      : [];
 
-    return data.filter((tracker): tracker is EagleTrackTracker => {
-      return Boolean(tracker) && typeof tracker === 'object' && tracker.uin !== undefined && tracker.uin !== null;
-    });
+    return { trackers, refData: envelope.refData };
   }
 
   /**

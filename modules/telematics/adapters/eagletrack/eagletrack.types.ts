@@ -138,8 +138,33 @@ export interface EagleTrackTracker {
  */
 export type EagleTrackMatchSource = 'plate' | 'platenumber' | 'name';
 
-/** GET /api2/trackers. `refData` is vendor UI metadata and is deliberately ignored. */
-export type EagleTrackTrackersResponse = EagleTrackEnvelope<EagleTrackTracker[]>;
+/**
+ * `refData.users` from GET /api2/trackers -- vendor UI lookup metadata,
+ * keyed by the same username api2 expects on `GET /api2/last?user=...`.
+ *
+ * Mostly ignored (it exists to populate dropdowns in the vendor's own
+ * UI), with one exception: it is the fallback source for the account
+ * username the live-status poll authenticates as, when no roster row
+ * carries a usable `belong`. See deriveEagleTrackUsername in
+ * eagletrack.adapter.ts.
+ */
+export interface EagleTrackRefData {
+  users?: Record<string, { title?: string; objId?: string; [field: string]: unknown }>;
+  [section: string]: unknown;
+}
+
+/**
+ * GET /api2/trackers. `refData` was previously "deliberately ignored" --
+ * it no longer can be: production testing established that the fleet-wide
+ * `uin=__all_sub` selector this integration used for `GET /api2/last` is
+ * rejected outright ("Access Denied:__all_sub") on at least one live
+ * deployment, and the only endpoint that DOES authenticate,
+ * `?user=<username>`, needs an account username this response is the
+ * only source of. See deriveEagleTrackUsername.
+ */
+export type EagleTrackTrackersResponse = EagleTrackEnvelope<EagleTrackTracker[]> & {
+  refData?: EagleTrackRefData;
+};
 
 /**
  * Per-tenant Eagle Track credentials, as stored.

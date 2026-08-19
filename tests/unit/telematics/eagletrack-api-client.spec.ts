@@ -26,8 +26,8 @@
 import {
   EagleTrackApiClient,
   EagleTrackApiError,
-  EAGLETRACK_FLEET_SELECTOR,
   EAGLETRACK_TOKEN_QUERY_PARAM,
+  EAGLETRACK_USER_QUERY_PARAM,
   flattenLastPayload,
   normaliseEagleTrackBaseUrl,
 } from '@/modules/telematics/adapters/eagletrack/eagletrack-api.client';
@@ -108,7 +108,7 @@ describe('authentication', () => {
   it('sends the token as a query parameter -- the only form this platform authenticates', async () => {
     const calls = mockFetch(() => ({ body: { error: 0, msg: '', data: {} } }));
 
-    await client().getLastForAll();
+    await client().getLastForAll('Willsgrove');
 
     expect(calls).toHaveLength(1);
     expect(new URL(calls[0].url).searchParams.get(EAGLETRACK_TOKEN_QUERY_PARAM)).toBe(TOKEN);
@@ -135,21 +135,23 @@ describe('authentication', () => {
     expect(occurrences).toBe(1);
   });
 
-  it('polls with the least-privilege fleet selector, never the whole-deployment one', async () => {
+  it('polls with the derived account username, not the vendor-documented (and, on this deployment, rejected) fleet selector', async () => {
     const calls = mockFetch(() => ({ body: { error: 0, msg: '', data: {} } }));
 
-    await client().getLastForAll();
+    await client().getLastForAll('Willsgrove');
 
-    expect(new URL(calls[0].url).searchParams.get('uin')).toBe(EAGLETRACK_FLEET_SELECTOR);
-    // __all_sys_ would pull every tracker on a reseller-run instance,
-    // including other customers' vehicles.
+    expect(new URL(calls[0].url).searchParams.get(EAGLETRACK_USER_QUERY_PARAM)).toBe('Willsgrove');
+    // __all_sub is rejected outright on the deployment this was tested
+    // against ("Access Denied:__all_sub"); __all_sys_ would pull every
+    // tracker on a reseller-run instance, including other customers'.
+    expect(calls[0].url).not.toContain('__all_sub');
     expect(calls[0].url).not.toContain('__all_sys_');
   });
 
   it('appends /api2 exactly once when the operator already included it in the domain', async () => {
     const calls = mockFetch(() => ({ body: { error: 0, msg: '', data: {} } }));
 
-    await client('https://gps.example.com/api2/').getLastForAll();
+    await client('https://gps.example.com/api2/').getLastForAll('Willsgrove');
 
     expect(calls[0].url).toContain('/api2/last');
     expect(calls[0].url).not.toContain('/api2/api2');
@@ -160,8 +162,8 @@ describe('envelope error handling', () => {
   it('throws on error !== 0 even though the transport said HTTP 200', async () => {
     mockFetch(() => ({ status: 200, body: { error: 101, msg: 'Invalid token', data: [] } }));
 
-    await expect(client().getLastForAll()).rejects.toThrow(EagleTrackApiError);
-    await expect(client().getLastForAll()).rejects.toThrow(/101.*Invalid token/);
+    await expect(client().getLastForAll('Willsgrove')).rejects.toThrow(EagleTrackApiError);
+    await expect(client().getLastForAll('Willsgrove')).rejects.toThrow(/101.*Invalid token/);
   });
 
   it('classifies a vendor error code as a rejection, so test-connection can report bad credentials', async () => {
@@ -179,7 +181,7 @@ describe('envelope error handling', () => {
   it('treats a stringified "0" as success, since deployments have been seen to quote the code', async () => {
     mockFetch(() => ({ body: { error: '0', msg: '', data: { '917': { uin: '917', lat: 1, lng: 2 } } } }));
 
-    await expect(client().getLastForAll()).resolves.toHaveLength(1);
+    await expect(client().getLastForAll('Willsgrove')).resolves.toHaveLength(1);
   });
 
   it('throws on an HTTP-level failure and does NOT classify a 500 as a credentials problem', async () => {
@@ -402,5 +404,49 @@ describe('getTrackers', () => {
   it('returns an empty array when data is not an array, instead of throwing', async () => {
     mockFetch(() => ({ body: { error: 0, data: {} } }));
     await expect(client().getTrackers()).resolves.toEqual([]);
+  });
+});
+
+describe('getTrackersWithRefData', () => {
+  it('surfaces refData.users alongside the roster, for username derivation', async () => {
+    mockFetch(() => ({
+      body: {
+        error: 0,
+        data: [{ id: '1332', name: 'ADY2531', uin: '865585040533451', belong: 'Willsgrove', plate: '' }],
+        refData: { users: { Willsgrove: { title: 'Willsgrove Farm Enterprises', objId: '538' } } },
+      },
+    }));
+
+    const { trackers, refData } = await client().getTrackersWithRefData();
+
+    expect(trackers).toHaveLength(1);
+    expect(Object.keys(refData?.users ?? {})).toEqual(['Willsgrove']);
+  });
+
+  it('leaves refData undefined rather than throwing when the response omits it', async () => {
+    mockFetch(() => ({ body: { error: 0, data: [] } }));
+
+    const { trackers, refData } = await client().getTrackersWithRefData();
+
+    expect(trackers).toEqual([]);
+    expect(refData).toBeUndefined();
+  });
+});
+
+describe('the rejected __all_sub selector (regression coverage)', () => {
+  it('classifies "Access Denied:__all_sub" -- the live deployment response to the old selector -- as a non-JSON vendor rejection, not a crash', async () => {
+    // This client no longer sends uin=__all_sub (see
+    // EAGLETRACK_FLEET_SELECTOR's doc comment), but the body-parsing
+    // path that would receive this exact response if it ever did must
+    // still fail safely rather than throwing an unhandled parse error.
+    mockFetch(() => ({ status: 200, body: 'Access Denied:__all_sub' }));
+
+    const error = await client()
+      .getLastForAll('Willsgrove')
+      .catch((e) => e as EagleTrackApiError);
+
+    expect(error).toBeInstanceOf(EagleTrackApiError);
+    expect(error.nonJsonBody).toBe(true);
+    expect(error.isVendorRejection).toBe(true);
   });
 });

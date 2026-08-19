@@ -110,6 +110,7 @@ import { EagleTrackApiClient } from './eagletrack-api.client';
 import {
   EagleTrackMatchSource,
   EagleTrackReadingMetadata,
+  EagleTrackRefData,
   EagleTrackSyncResult,
   EagleTrackTracker,
   EagleTrackTrackerStatus,
@@ -233,6 +234,56 @@ export function hasUsableFix(status: EagleTrackTrackerStatus): boolean {
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return false;
   if (lat === 0 && lng === 0) return false;
   return true;
+}
+
+/**
+ * Derives the account username `GET /api2/last?user=<username>` needs to
+ * authenticate a fleet-wide poll.
+ *
+ * WHY THIS EXISTS: production testing against a live deployment found
+ * that the vendor-documented fleet-wide selector, `uin=__all_sub`, is
+ * rejected outright on that deployment ("Access Denied:__all_sub"). The
+ * selector that DOES work, `?user=<username>`, is not a static value --
+ * it is the vendor account's username, and this integration is
+ * multi-tenant, so it must be derived per sync rather than hardcoded.
+ * ("Willsgrove" appears throughout this file's tests and comments only
+ * because that is the account the live deployment used for testing; it
+ * must never appear as a literal in the sync path itself.)
+ *
+ * ORDER, and why:
+ *
+ *   1. The first roster row's `belong` field. `belong` is the vendor's
+ *      own "owning userid" on every tracker (see EagleTrackTracker.belong)
+ *      and, on the deployment tested, is populated on every row and
+ *      identical across all of them -- exactly the value `user=`
+ *      expects. Preferred because it travels with the roster response
+ *      this sync already fetched, needing no extra data.
+ *   2. The first key of `refData.users`. Present on the same response,
+ *      alongside the roster, as vendor UI lookup metadata; used only
+ *      when no roster row carries a usable `belong` (an empty roster,
+ *      or one where every row omits it).
+ *
+ * Returns null when neither source yields anything -- the caller must
+ * treat that as "cannot poll this account", not guess a username.
+ */
+export function deriveEagleTrackUsername(
+  trackers: EagleTrackTracker[],
+  refData?: EagleTrackRefData
+): string | null {
+  for (const tracker of trackers) {
+    const belong = tracker?.belong;
+    if (typeof belong === 'string' && belong.trim()) {
+      return belong.trim();
+    }
+  }
+
+  const users = refData?.users;
+  if (users && typeof users === 'object') {
+    const [firstKey] = Object.keys(users);
+    if (firstKey) return firstKey;
+  }
+
+  return null;
 }
 
 /** One plate value to try, and the roster field it came from. */
@@ -446,10 +497,15 @@ export class EagleTrackAdapter {
     }
 
     // The roster is required, not optional: `last` carries no plate
-    // field, so without /api2/trackers there is nothing to match on.
+    // field, so without /api2/trackers there is nothing to match on. It
+    // is now ALSO the only source of the account username the live-status
+    // call authenticates with -- see deriveEagleTrackUsername.
     let roster: EagleTrackTracker[];
+    let refData: EagleTrackRefData | undefined;
     try {
-      roster = await client.getTrackers();
+      const rosterResponse = await client.getTrackersWithRefData();
+      roster = rosterResponse.trackers;
+      refData = rosterResponse.refData;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown Eagle Track API error';
       result.errors.push(message);
@@ -458,14 +514,34 @@ export class EagleTrackAdapter {
       return result;
     }
 
+    // Nothing to match against and, as of this deployment's rejection of
+    // `uin=__all_sub`, no username to derive either. Reported as a clean
+    // empty sync -- an account with no trackers yet is not an error --
+    // rather than attempting a /last call that has nothing to poll for.
+    if (roster.length === 0) {
+      await eagletrackConfigRepository.recordSyncResult(tenantId, 'success');
+      return result;
+    }
+
     const trackersByUin = new Map<string, EagleTrackTracker>();
     for (const tracker of roster) {
       trackersByUin.set(String(tracker.uin), tracker);
     }
 
+    const username = deriveEagleTrackUsername(roster, refData);
+    if (!username) {
+      const message =
+        'Eagle Track: could not derive an account username from the tracker roster ' +
+        '(no roster row carries a `belong` value and refData.users is empty) -- skipping the live-status poll.';
+      result.errors.push(message);
+      await eagletrackConfigRepository.recordSyncResult(tenantId, 'error', message);
+      monitoring.logError('[EagleTrackAdapter] Could not derive account username', new Error(message), { tenantId });
+      return result;
+    }
+
     let statuses: EagleTrackTrackerStatus[];
     try {
-      statuses = await client.getLastForAll();
+      statuses = await client.getLastForAll(username);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown Eagle Track API error';
       result.errors.push(message);
@@ -514,9 +590,10 @@ export class EagleTrackAdapter {
     }
 
     // Trackers on the roster that the fleet poll did not return. Usually
-    // a device that has never reported; on a reseller deployment it can
-    // also mean the `__all_sub` selector does not cover them (see
-    // EAGLETRACK_FLEET_SELECTOR). Either way it is reported rather than
+    // a device that has never reported; it can also mean the derived
+    // `user=<username>` account does not cover every tracker on the
+    // roster (e.g. a mixed-ownership deployment -- see
+    // deriveEagleTrackUsername). Either way it is reported rather than
     // silently treated as "no vehicles to sync".
     for (const uin of trackersByUin.keys()) {
       if (!seenUins.has(uin)) result.trackersWithoutFix.push(uin);

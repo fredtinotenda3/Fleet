@@ -12,6 +12,7 @@
 //      silently dropped, and nothing is silently guessed.
 
 import {
+  deriveEagleTrackUsername,
   hasUsableFix,
   mapStatusToTelematicsData,
   parseEagleTrackDate,
@@ -288,6 +289,45 @@ describe('eagletrackDeviceIdFor', () => {
   });
 });
 
+describe('deriveEagleTrackUsername', () => {
+  it('prefers the first roster row\'s `belong` field', () => {
+    const trackers = [
+      { uin: '1', belong: 'Willsgrove' },
+      { uin: '2', belong: 'SomeoneElse' },
+    ] as EagleTrackTracker[];
+
+    expect(deriveEagleTrackUsername(trackers)).toBe('Willsgrove');
+  });
+
+  it('never hardcodes a tenant username -- it reflects whatever the roster actually carries', () => {
+    const trackers = [{ uin: '1', belong: 'AcmeLogistics' }] as EagleTrackTracker[];
+    expect(deriveEagleTrackUsername(trackers)).toBe('AcmeLogistics');
+  });
+
+  it('skips rows with a blank or non-string `belong` and keeps looking', () => {
+    const trackers = [
+      { uin: '1', belong: '   ' },
+      { uin: '2', belong: 42 as unknown as string },
+      { uin: '3', belong: 'Willsgrove' },
+    ] as EagleTrackTracker[];
+
+    expect(deriveEagleTrackUsername(trackers)).toBe('Willsgrove');
+  });
+
+  it('falls back to the first key of refData.users when no roster row has a usable `belong`', () => {
+    const trackers = [{ uin: '1' }, { uin: '2' }] as EagleTrackTracker[];
+    const refData = { users: { Willsgrove: { title: 'Willsgrove Farm Enterprises', objId: '538' } } };
+
+    expect(deriveEagleTrackUsername(trackers, refData)).toBe('Willsgrove');
+  });
+
+  it('returns null rather than guessing when neither source yields a username', () => {
+    expect(deriveEagleTrackUsername([])).toBeNull();
+    expect(deriveEagleTrackUsername([{ uin: '1' }] as EagleTrackTracker[])).toBeNull();
+    expect(deriveEagleTrackUsername([{ uin: '1' }] as EagleTrackTracker[], { users: {} })).toBeNull();
+  });
+});
+
 // ---------------------------------------------------------------------
 // syncOrganization accounting
 // ---------------------------------------------------------------------
@@ -342,11 +382,23 @@ const TENANT = 'willsgrove-farm-enterprises-9e80ed';
  * that only implemented json() would make every request look like an
  * unauthenticated one.
  */
-function stubApi(roster: EagleTrackTracker[], last: Record<string, EagleTrackTrackerStatus>) {
+function stubApi(
+  roster: EagleTrackTracker[],
+  last: Record<string, EagleTrackTrackerStatus>,
+  refData?: { users?: Record<string, unknown> }
+) {
+  // The live-status poll now authenticates as `?user=<username>`,
+  // derived from the roster's `belong` field (see
+  // deriveEagleTrackUsername). Defaulting it here, unless a fixture
+  // already set one, keeps every pre-existing test's roster realistic
+  // without hand-editing each one -- production rosters carry `belong`
+  // on every row.
+  const rosterWithOwner = roster.map((tracker) => ({ belong: 'Willsgrove', ...tracker }));
+
   (global as unknown as { fetch: unknown }).fetch = jest.fn(async (url: unknown) => {
     const href = String(url);
     const body = href.includes('/api2/trackers')
-      ? { error: 0, msg: '', data: roster }
+      ? { error: 0, msg: '', data: rosterWithOwner, ...(refData ? { refData } : {}) }
       : { error: 0, msg: '', data: last };
 
     return { ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify(body) };
@@ -518,6 +570,56 @@ describe('EagleTrackAdapter.syncOrganization', () => {
 
     expect(result.errors).toHaveLength(1);
     expect(telematicsService.ingestTelematicsData).not.toHaveBeenCalled();
+  });
+
+  it('skips the /last call entirely and returns a clean empty sync when the roster is empty', async () => {
+    stubApi([], {});
+
+    const result = await new EagleTrackAdapter().syncOrganization(TENANT);
+
+    expect(result.matched).toBe(0);
+    expect(result.errors).toEqual([]);
+    expect(eagletrackConfigRepository.recordSyncResult).toHaveBeenCalledWith(TENANT, 'success');
+    // Only one fetch call -- the roster -- and none to /api2/last.
+    expect((global.fetch as jest.Mock).mock.calls).toHaveLength(1);
+    expect(String((global.fetch as jest.Mock).mock.calls[0][0])).toContain('/api2/trackers');
+  });
+
+  it('polls /api2/last with the username derived from the roster\'s `belong` field, not a fleet-wide selector', async () => {
+    stubApi([{ uin: '1', __platenumber: 'ABC123', belong: 'AcmeLogistics' }], {
+      '1': { uin: '1', lat: -17.8, lng: 31.05, date: '2026-08-18 08:00:00' },
+    });
+    vehicleRepository.findByLicensePlate.mockResolvedValue({ _id: 'veh-1' });
+
+    await new EagleTrackAdapter().syncOrganization(TENANT);
+
+    const lastCall = (global.fetch as jest.Mock).mock.calls.find((call) => String(call[0]).includes('/api2/last'));
+    expect(lastCall).toBeDefined();
+    const url = new URL(String(lastCall![0]));
+    expect(url.searchParams.get('user')).toBe('AcmeLogistics');
+    expect(url.searchParams.get('uin')).toBeNull();
+  });
+
+  it('reports an error and skips /api2/last when no tracker carries a username and refData has none either', async () => {
+    (global as unknown as { fetch: unknown }).fetch = jest.fn(async (url: unknown) => {
+      const href = String(url);
+      const body = href.includes('/api2/trackers')
+        ? { error: 0, msg: '', data: [{ uin: '1', __platenumber: 'ABC123' }] } // no `belong`, no refData
+        : { error: 0, msg: '', data: {} };
+      return { ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify(body) };
+    });
+
+    const result = await new EagleTrackAdapter().syncOrganization(TENANT);
+
+    expect(result.matched).toBe(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toMatch(/username/i);
+    expect(eagletrackConfigRepository.recordSyncResult).toHaveBeenCalledWith(
+      TENANT,
+      'error',
+      expect.stringMatching(/username/i)
+    );
+    expect((global.fetch as jest.Mock).mock.calls.some((call) => String(call[0]).includes('/api2/last'))).toBe(false);
   });
 
   it('records a vendor envelope error as a sync failure rather than an empty successful sync', async () => {
