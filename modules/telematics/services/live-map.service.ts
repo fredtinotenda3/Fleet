@@ -31,11 +31,14 @@ import {
   LiveMapVehicle,
   LiveMapVehicleDetail,
   LiveMapVehicleStatus,
+  LiveMapAlertState,
   LiveMapGeofence,
   LiveMapRouteHistory,
   LiveMapDataSource,
 } from '../types/live-map.types';
-import { Geofence, TelematicsData } from '../types/telematics.types';
+import { Geofence, TelematicsAlert, TelematicsData } from '../types/telematics.types';
+import { deriveReadingAlerts, maxSeverity } from './reading-alerts';
+import { describeIoCode, EAGLETRACK_IO } from '../adapters/eagletrack/eagletrack-io.map';
 
 /**
  * Labels a real fix with the provider that produced it.
@@ -86,27 +89,93 @@ function extractDeviceHealth(
   providerMetadata: Record<string, unknown> | undefined
 ): LiveMapVehicleDetail['deviceHealth'] {
   const signalQuality = providerMetadata?.signalQuality;
-  if (!signalQuality || typeof signalQuality !== 'object') return undefined;
+  const parsedSignal =
+    signalQuality && typeof signalQuality === 'object' ? (signalQuality as Record<string, unknown>) : {};
+  const { batteryPercent, gsmQuality, gpsSatellites } = parsedSignal;
 
-  const { batteryPercent, gsmQuality, gpsSatellites } = signalQuality as Record<string, unknown>;
   const health = {
     batteryPercent: typeof batteryPercent === 'number' ? batteryPercent : undefined,
     gsmQuality: typeof gsmQuality === 'number' ? gsmQuality : undefined,
     gpsSatellites: typeof gpsSatellites === 'number' ? gpsSatellites : undefined,
+    batteryVoltage: numericIoMetadata(providerMetadata, EAGLETRACK_IO.BATTERY_VOLTS),
+    powerVoltage: numericIoMetadata(providerMetadata, EAGLETRACK_IO.POWER_VOLTS),
   };
 
-  // All three absent is the same as no signalQuality at all -- don't
-  // hand the UI an object it would just render as three "No data" rows.
-  if (health.batteryPercent === undefined && health.gsmQuality === undefined && health.gpsSatellites === undefined) {
+  // All signals absent is the same as no device health at all -- don't
+  // hand the UI an object it would just render as five "No data" rows.
+  if (Object.values(health).every((value) => value === undefined)) {
     return undefined;
   }
   return health;
 }
 
-/** Below this speed (km/h) a vehicle with a recent fix is considered idle rather than moving. */
-const IDLE_SPEED_THRESHOLD_KMH = 3;
-/** A real fix older than this is treated as offline rather than stale-but-current. */
-const STALE_FIX_MINUTES = 15;
+/**
+ * Reads one numeric signal out of EagleTrackReadingMetadata.io, which is
+ * keyed by the vendor's own documented NAMES rather than raw IO codes
+ * (that is what collectMetadataOnlyIo writes).
+ *
+ * The key is derived through describeIoCode rather than hardcoded as
+ * the string 'Battery', so renaming a code in EAGLETRACK_IO_CATALOGUE
+ * cannot silently turn this into a permanent "No data" -- the catalogue
+ * stays the single source of truth for that mapping, exactly as it is
+ * on the write side.
+ */
+function numericIoMetadata(
+  providerMetadata: Record<string, unknown> | undefined,
+  code: string
+): number | undefined {
+  const io = providerMetadata?.io;
+  if (!io || typeof io !== 'object') return undefined;
+
+  const value = (io as Record<string, unknown>)[describeIoCode(code)];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * Whether the PROVIDER itself declared the tracker offline on the
+ * snapshot this reading came from.
+ *
+ * Eagle Track carries this as a first-class `offline` boolean, which the
+ * adapter records verbatim on providerMetadata (see
+ * EagleTrackReadingMetadata.offline). Narrowed defensively rather than
+ * cast, because providerMetadata is opaque by design and Cartrack/demo
+ * readings have no such field: `undefined` means "the provider did not
+ * say", which is different from "the provider said online" and is
+ * treated as such by resolveLiveStatus.
+ */
+export function readProviderOffline(
+  providerMetadata: Record<string, unknown> | undefined
+): boolean | undefined {
+  const offline = providerMetadata?.offline;
+  return typeof offline === 'boolean' ? offline : undefined;
+}
+
+/** At or below this speed (km/h) a reporting vehicle is idle rather than moving. */
+export const IDLE_SPEED_THRESHOLD_KMH = 3;
+/**
+ * A fix older than this is flagged STALE. It is explicitly NOT the
+ * offline decision any more -- see resolveLiveStatus.
+ *
+ * It used to be: `ageMinutes > STALE_FIX_MINUTES ? 'offline' : ...`.
+ * Fleets whose trackers report on a slower duty cycle than every 15
+ * minutes (parked overnight, low-power mode, a poll interval measured in
+ * tens of minutes) therefore rendered as 100% offline, in grey, with no
+ * heading wedge -- which is the whole of the "every vehicle is a plain
+ * grey dot" symptom. Kept as a secondary indicator because "this fix is
+ * a while old" is still worth telling an operator; it just isn't the
+ * same claim as "this vehicle is not reporting".
+ */
+export const STALE_FIX_MINUTES = 15;
+/**
+ * Hard ceiling: a fix older than this cannot describe the present,
+ * whatever speed it recorded, so the vehicle is offline.
+ *
+ * This is what stops the opposite failure from the one being fixed: a
+ * tracker that dies mid-journey keeps returning its last snapshot with a
+ * non-zero speed, and a rule of "speed beats age" alone would show it as
+ * actively moving, at a frozen location, forever.
+ */
+export const OFFLINE_FIX_MINUTES = 60;
 /** Minimum spacing between persisted demo samples for the same vehicle, so polling the map doesn't flood tbltelematics. */
 const DEMO_SAMPLE_THROTTLE_MS = 20_000;
 /** How many vehicles the live map will render at once -- generous for a fleet dashboard without being unbounded. */
@@ -170,6 +239,138 @@ function normalizeVehicleId(rawId: unknown): string | null {
     return (rawId as { toHexString: () => string }).toHexString();
   }
   return null;
+}
+
+/**
+ * The live-map status decision, in one pure function so it can be unit
+ * tested without a database and so the map marker and the detail panel
+ * can never disagree about the same vehicle.
+ *
+ * OFFLINE IS A DISJUNCTION, which is what makes this correct rather than
+ * merely re-ordered. A vehicle is offline if ANY of the following holds:
+ *
+ *   * it has no position at all;
+ *   * the provider itself says the tracker is offline;
+ *   * the fix is older than OFFLINE_FIX_MINUTES.
+ *
+ * Because it is an OR, the order of those three checks carries no
+ * meaning and cannot be got subtly wrong later. It also settles the one
+ * genuine conflict in the inputs: a provider that reports
+ * `offline: false` on an hours-old snapshot cannot make that snapshot
+ * live, so the age ceiling must be able to override the vendor flag,
+ * while the vendor flag can only ever ADD offline, never remove it.
+ *
+ * Only once the vehicle is known to be reporting does speed decide
+ * between moving and idle. STALE_FIX_MINUTES appears nowhere in this
+ * function -- that is the point of the change.
+ *
+ * WORTH KNOWING about the vendor flag in practice: Eagle Track's
+ * ingestion skips a snapshot whose fix it already holds, so a tracker
+ * that goes quiet stops producing new rows and the stored reading keeps
+ * whatever `offline` value it had when it was last written. The vendor
+ * flag is therefore a bonus signal when present, and fix age does most
+ * of the work -- which is exactly the "prefer the provider's own field
+ * when available" behaviour, no more.
+ */
+export function resolveLiveStatus(input: {
+  hasPosition: boolean;
+  speed: number;
+  fixAgeMinutes: number;
+  providerOffline?: boolean;
+}): LiveMapVehicleStatus {
+  const { hasPosition, speed, fixAgeMinutes, providerOffline } = input;
+
+  if (!hasPosition) return 'offline';
+  if (providerOffline === true) return 'offline';
+  if (!Number.isFinite(fixAgeMinutes) || fixAgeMinutes > OFFLINE_FIX_MINUTES) return 'offline';
+
+  return speed > IDLE_SPEED_THRESHOLD_KMH ? 'moving' : 'idle';
+}
+
+/** Secondary indicator only. Never consulted by resolveLiveStatus. */
+export function isStaleFix(fixAgeMinutes: number): boolean {
+  return Number.isFinite(fixAgeMinutes) && fixAgeMinutes > STALE_FIX_MINUTES;
+}
+
+/**
+ * Alert state for one reading, or null when nothing is flagged.
+ *
+ * THREE SOURCES, all read off the row already in hand -- no extra query
+ * per vehicle (see reading-alerts.ts for why the alert store is not
+ * consulted):
+ *
+ *   1. deriveReadingAlerts() -- the same speeding / DTC / low-fuel rules
+ *      the ingestion path uses to CREATE alerts, so a red marker means
+ *      the same thing as a row in tbltelematics_alerts.
+ *   2. `alerts` embedded on the reading itself, when a caller of the
+ *      generic HTTP ingest endpoint supplied them.
+ *   3. The provider's own alerting. Eagle Track's `alert.cmd` /
+ *      `alert.trigger` are recorded verbatim on providerMetadata and
+ *      deliberately NOT reconciled with our alert engine (see the
+ *      adapter header) -- so they are surfaced as an unmapped vendor
+ *      alert at 'medium' rather than being assigned a severity we have
+ *      no basis for.
+ *
+ * Reasons are deduplicated and ordered worst-first so the UI can show
+ * the most serious cause without sorting.
+ */
+export function resolveAlertState(latest: TelematicsData): LiveMapAlertState | null {
+  const alerts: TelematicsAlert[] = [...deriveReadingAlerts(latest)];
+
+  if (Array.isArray(latest.alerts)) {
+    for (const stored of latest.alerts) {
+      // An acknowledged alert has been dealt with; it must not keep the
+      // marker red forever.
+      if (stored && !stored.acknowledgedAt) alerts.push(stored);
+    }
+  }
+
+  const vendorAlert = readVendorAlert(latest.providerMetadata);
+  if (vendorAlert) {
+    alerts.push({
+      type: 'engine',
+      severity: 'medium',
+      message: vendorAlert,
+      timestamp: latest.timestamp,
+    });
+  }
+
+  if (alerts.length === 0) return null;
+
+  const severity = alerts.reduce<TelematicsAlert['severity']>(
+    (worst, alert) => maxSeverity(worst, alert.severity),
+    'low'
+  );
+
+  const rank: Record<TelematicsAlert['severity'], number> = { critical: 0, high: 1, medium: 2, low: 3 };
+  const reasons = Array.from(
+    new Set([...alerts].sort((a, b) => rank[a.severity] - rank[b.severity]).map((alert) => alert.message))
+  );
+
+  return { severity, reasons };
+}
+
+/**
+ * Eagle Track's vendor-side alert, as a display string, or null.
+ *
+ * The adapter only records this when at least one of cmd/trigger is
+ * non-zero (0/0 is the vendor's "no alert" resting state), so its mere
+ * presence is the signal. The ids are shown raw because they reference
+ * vendor-side trigger objects we do not fetch -- printing an invented
+ * label for them would be exactly the kind of fabrication the rest of
+ * this change removes.
+ */
+function readVendorAlert(providerMetadata: Record<string, unknown> | undefined): string | null {
+  const vendorAlert = providerMetadata?.vendorAlert;
+  if (!vendorAlert || typeof vendorAlert !== 'object') return null;
+
+  const { cmd, trigger } = vendorAlert as Record<string, unknown>;
+  const parts: string[] = [];
+  if (typeof cmd === 'number' && cmd !== 0) parts.push(`cmd ${cmd}`);
+  if (typeof trigger === 'number' && trigger !== 0) parts.push(`trigger ${trigger}`);
+  if (parts.length === 0) return null;
+
+  return `Provider alert (${parts.join(', ')})`;
 }
 
 export class LiveMapService {
@@ -291,15 +492,19 @@ export class LiveMapService {
       ? Math.max(0, Math.round((Date.now() - new Date(latest.timestamp).getTime()) / 1000))
       : null;
 
-    const ageMinutes = fixAgeSeconds !== null ? fixAgeSeconds / 60 : Infinity;
-    const status: LiveMapVehicleStatus =
-      !latest.location || ageMinutes > STALE_FIX_MINUTES
-        ? 'offline'
-        : this.statusFromSpeed(latest.location.speed);
+    const fixAgeMinutes = fixAgeSeconds !== null ? fixAgeSeconds / 60 : Infinity;
+    const status = resolveLiveStatus({
+      hasPosition: Boolean(latest.location),
+      speed: latest.location?.speed ?? 0,
+      fixAgeMinutes,
+      providerOffline: readProviderOffline(latest.providerMetadata),
+    });
 
     return {
       vehicleId,
       status,
+      stale: isStaleFix(fixAgeMinutes),
+      alert: resolveAlertState(latest),
       source: providerSourceFor(latest.deviceId),
       location,
       fixAgeSeconds,
@@ -339,25 +544,39 @@ export class LiveMapService {
     const vehicleId = normalizeVehicleId(vehicle._id);
 
     if (!vehicleId) {
-      return { ...base, status: 'offline', source: 'unavailable', position: null };
+      return { ...base, status: 'offline', stale: false, alert: null, source: 'unavailable', position: null };
     }
 
     const latest = await telematicsRepository.getLatestTelematicsDataInScope(vehicleId, context);
     if (!latest || !latest.location) {
-      return { ...base, status: 'offline', source: 'unavailable', position: null };
+      // No fix at all (or a reading with no position): `stale` is left
+      // false deliberately -- there is no fix here to have gone stale,
+      // and flagging one would put a "stale fix" hint on a vehicle that
+      // has never reported. The offline status already says everything
+      // that is known.
+      return { ...base, status: 'offline', stale: false, alert: null, source: 'unavailable', position: null };
     }
 
-    const ageMinutes = (Date.now() - new Date(latest.timestamp).getTime()) / 60_000;
-    const status = ageMinutes > STALE_FIX_MINUTES ? 'offline' : this.statusFromSpeed(latest.location.speed);
+    const fixAgeMinutes = (Date.now() - new Date(latest.timestamp).getTime()) / 60_000;
 
     return {
       ...base,
-      status,
+      status: resolveLiveStatus({
+        hasPosition: true,
+        speed: latest.location.speed,
+        fixAgeMinutes,
+        providerOffline: readProviderOffline(latest.providerMetadata),
+      }),
+      stale: isStaleFix(fixAgeMinutes),
+      alert: resolveAlertState(latest),
       source: providerSourceFor(latest.deviceId),
       position: {
         lat: latest.location.lat,
         lng: latest.location.lng,
         speed: latest.location.speed,
+        // Passed through as-is, INCLUDING absent: a provider that does
+        // not report a bearing must not have one invented for it here
+        // (0 would render as due north on every such vehicle).
         heading: latest.location.heading,
         fuelLevel: latest.engine?.fuelLevel,
         timestamp: new Date(latest.timestamp).toISOString(),
@@ -369,7 +588,7 @@ export class LiveMapService {
     const base = this.baseVehicleFields(vehicle);
     const vehicleId = normalizeVehicleId(vehicle._id);
     if (!vehicleId) {
-      return { ...base, status: 'offline', source: 'unavailable', position: null };
+      return { ...base, status: 'offline', stale: false, alert: null, source: 'unavailable', position: null };
     }
 
     const elapsedSeconds = Math.max(0, (Date.now() - startedAt.getTime()) / 1000);
@@ -386,7 +605,13 @@ export class LiveMapService {
 
     return {
       ...base,
+      // Demo mode's own architecture is unchanged: the simulator remains
+      // the authority on a demo vehicle's status, and its positions are
+      // generated for "now", so there is no fix age to evaluate and
+      // nothing to be stale or alerting about.
       status: sim.status === 'idle' ? 'idle' : 'moving',
+      stale: false,
+      alert: null,
       source: 'demo',
       position: {
         lat: sim.lat,
@@ -457,7 +682,7 @@ export class LiveMapService {
     await telematicsService.ingestTelematicsData(payload);
   }
 
-  private baseVehicleFields(vehicle: Vehicle): Omit<LiveMapVehicle, 'status' | 'source' | 'position'> {
+  private baseVehicleFields(vehicle: Vehicle): Omit<LiveMapVehicle, 'status' | 'stale' | 'alert' | 'source' | 'position'> {
     return {
       vehicleId: normalizeVehicleId(vehicle._id) ?? '',
       licensePlate: vehicle.license_plate,
@@ -465,10 +690,6 @@ export class LiveMapService {
       model: vehicle.model,
       orgUnitId: vehicle.orgUnitId,
     };
-  }
-
-  private statusFromSpeed(speed: number): 'moving' | 'idle' {
-    return speed > IDLE_SPEED_THRESHOLD_KMH ? 'moving' : 'idle';
   }
 
   private toLiveMapGeofence(geofence: Geofence): LiveMapGeofence {

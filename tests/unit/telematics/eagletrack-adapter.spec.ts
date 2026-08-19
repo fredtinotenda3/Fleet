@@ -273,8 +273,90 @@ describe('mapStatusToTelematicsData', () => {
     const mapped = mapStatusToTelematicsData(status, CONTEXT);
 
     expect(mapped!.payload.providerMetadata?.io).toEqual({ Battery: 4.1, Power: 12.6 });
-    // coolantTemp must not have been hijacked to carry a voltage.
-    expect(mapped!.payload.engine.coolantTemp).toBe(0);
+    // coolantTemp must not have been hijacked to carry a voltage. It is
+    // now UNDEFINED rather than 0: the vendor sample reports no engine
+    // temperature code at all, and 0 C is a real reading a device could
+    // legitimately send, so substituting it made "no CAN bus attached"
+    // indistinguishable from "freezing engine" in the detail panel.
+    expect(mapped!.payload.engine.coolantTemp).toBeUndefined();
+    expect('coolantTemp' in mapped!.payload.engine).toBe(false);
+  });
+
+  describe('absent signals are OMITTED, never defaulted to 0', () => {
+    // The vendor sample carries only io["7"] (odometer) and io["1"]
+    // (ignition) among the codes this adapter reads, so every other
+    // mapped field is genuinely unreported for it.
+    const mapped = mapStatusToTelematicsData(VENDOR_SAMPLE, CONTEXT)!;
+
+    it('omits every engine signal the payload does not carry', () => {
+      expect(mapped.payload.engine.rpm).toBeUndefined();
+      expect(mapped.payload.engine.coolantTemp).toBeUndefined();
+      // api2 has no IO code for either of these at all, so they are
+      // never written from this provider.
+      expect(mapped.payload.engine.throttlePosition).toBeUndefined();
+      expect(mapped.payload.engine.engineLoad).toBeUndefined();
+    });
+
+    it('omits fuel-flow signals rather than reporting a fleet as burning 0 L', () => {
+      expect(mapped.payload.fuel.consumptionRate).toBeUndefined();
+      expect(mapped.payload.fuel.fuelUsed).toBeUndefined();
+      expect(mapped.payload.fuel.instantConsumption).toBeUndefined();
+    });
+
+    it('omits trip aggregates, which api2 does not report at all', () => {
+      expect(mapped.payload.trip.tripDistance).toBeUndefined();
+      expect(mapped.payload.trip.tripDuration).toBeUndefined();
+    });
+
+    it('never presents a single instantaneous sample as a trip average or maximum', () => {
+      // VENDOR_SAMPLE.speed is 29.97. Writing that into averageSpeed /
+      // maxSpeed claimed a trip aggregate this endpoint never provided.
+      expect(mapped.payload.trip.averageSpeed).toBeUndefined();
+      expect(mapped.payload.trip.maxSpeed).toBeUndefined();
+      expect(mapped.payload.location.speed).toBe(29.97);
+    });
+
+    it('omits trip.odometer when unreported, so it cannot overwrite the vehicle\'s own recorded odometer', () => {
+      // digital-twin.service.ts resolves odometer as
+      // `latestTelemetry?.trip?.odometer ?? vehicle.odometer ?? 0`.
+      // A written 0 wins that chain; an absent field falls through to
+      // the vehicle's real figure.
+      const noOdometer = mapStatusToTelematicsData(
+        { ...VENDOR_SAMPLE, io: { '1': 1 } },
+        CONTEXT
+      )!;
+
+      expect(noOdometer.payload.trip.odometer).toBeUndefined();
+      expect('odometer' in noOdometer.payload.trip).toBe(false);
+      // Still present when the payload does carry it.
+      expect(mapped.payload.trip.odometer).toBe(0.82);
+    });
+
+    it('keeps idleTime, which is DERIVED rather than read, so 0 means "not idling"', () => {
+      expect(mapped.payload.trip.idleTime).toBe(0);
+    });
+  });
+
+  describe('heading', () => {
+    it('maps a reported bearing through unchanged', () => {
+      const mapped = mapStatusToTelematicsData(VENDOR_SAMPLE, CONTEXT)!;
+      expect(mapped.payload.location.heading).toBe(229);
+    });
+
+    it('OMITS heading when no bearing is reported, rather than pointing the vehicle due north', () => {
+      // 0 degrees is a legitimate bearing, so a `?? 0` fallback made
+      // every non-reporting vehicle's map arrow point the same wrong
+      // way with no way to tell it apart from a real northbound fix.
+      const noBearing = mapStatusToTelematicsData({ ...VENDOR_SAMPLE, bearing: undefined }, CONTEXT)!;
+
+      expect(noBearing.payload.location.heading).toBeUndefined();
+      expect('heading' in noBearing.payload.location).toBe(false);
+    });
+
+    it('rejects a non-finite bearing rather than propagating NaN into a rotate() transform', () => {
+      const nan = mapStatusToTelematicsData({ ...VENDOR_SAMPLE, bearing: Number.NaN }, CONTEXT)!;
+      expect(nan.payload.location.heading).toBeUndefined();
+    });
   });
 
   it('returns null for an unparseable timestamp rather than stamping a stale fix as "now"', () => {

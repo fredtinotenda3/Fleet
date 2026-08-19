@@ -61,10 +61,19 @@ export function LiveMapPage() {
     }
   }, [vehicles, selectedVehicleId]);
 
-  const statusCounts = useMemo(() => {
+  // Alert and stale are counted SEPARATELY and deliberately overlap the
+  // three status buckets, so moving + idle + offline still sums to the
+  // fleet total (MapsWidget relies on that too).
+  const { statusCounts, alertCount, staleCount } = useMemo(() => {
     const counts: Record<LiveMapVehicleStatus, number> = { moving: 0, idle: 0, offline: 0 };
-    for (const v of vehicles) counts[v.status] += 1;
-    return counts;
+    let alerts = 0;
+    let stale = 0;
+    for (const v of vehicles) {
+      counts[v.status] += 1;
+      if (v.alert) alerts += 1;
+      if (v.stale) stale += 1;
+    }
+    return { statusCounts: counts, alertCount: alerts, staleCount: stale };
   }, [vehicles]);
 
   if (!canView) {
@@ -107,7 +116,7 @@ export function LiveMapPage() {
       ) : (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3 px-1">
-            <LiveMapLegend counts={statusCounts} />
+            <LiveMapLegend counts={statusCounts} alertCount={alertCount} staleCount={staleCount} />
             {payload?.demoMode && (
               <Badge variant="secondary" className="gap-1">
                 <MapPin className="h-3 w-3" aria-hidden="true" />

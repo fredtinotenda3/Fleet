@@ -494,7 +494,14 @@ export interface TelematicsEntity {
     };
   }>;
   trip?: {
-    idleTime: number;
+    /**
+     * Optional to stay assignable from TelematicsData, whose trip
+     * members are all optional so a provider that reports no trip
+     * aggregation writes nothing rather than a fabricated 0 (see
+     * TelematicsData.trip). driver-risk.service.ts already reads this as
+     * `t.trip?.idleTime || 0`, so no consumer behaviour changes.
+     */
+    idleTime?: number;
   };
 }
 

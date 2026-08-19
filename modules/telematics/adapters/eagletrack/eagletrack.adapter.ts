@@ -362,8 +362,18 @@ export function mapStatusToTelematicsData(
   if (!timestamp) return null;
 
   const io = status.io;
+  // Speed keeps a 0 default and TelematicsLocation.speed stays required:
+  // 0 is the FAIL-SAFE reading here (it resolves to 'idle', never to
+  // 'moving'), api2 sends speed on every observed snapshot, and the
+  // status/alerting paths all take speed as a number. Bearing gets no
+  // such default -- see below.
   const speed = typeof status.speed === 'number' && Number.isFinite(status.speed) ? status.speed : 0;
-  const heading = typeof status.bearing === 'number' && Number.isFinite(status.bearing) ? status.bearing : 0;
+  // NO `?? 0` FALLBACK. 0 degrees is due north, a perfectly legitimate
+  // bearing, so substituting it for "not reported" makes every
+  // non-reporting vehicle's direction wedge on the live map point the
+  // same confidently-wrong way. Absent stays absent.
+  const heading =
+    typeof status.bearing === 'number' && Number.isFinite(status.bearing) ? status.bearing : undefined;
 
   const odometer = pickNumericIo(io, ODOMETER_KM_CODES);
   const fuelPercent = pickNumericIo(io, FUEL_PERCENT_CODES);
@@ -408,6 +418,53 @@ export function mapStatusToTelematicsData(
   const extraIo = collectMetadataOnlyIo(io);
   if (Object.keys(extraIo).length > 0) metadata.io = extraIo;
 
+  /**
+   * NOTHING BELOW SUBSTITUTES 0 FOR AN ABSENT SIGNAL.
+   *
+   * Every field is written only when this snapshot actually carried it.
+   * The previous `?? 0` defaults were invisible in the data but very
+   * visible in the product: the live-map vehicle detail panel renders
+   * whatever it is given, so a tracker with no OBD/CAN wiring reported
+   * "0 rpm", "0 C" coolant, "0% throttle", "0% engine load" and "0.0 L"
+   * fuel used -- readings that look like a seized engine rather than
+   * like a device that simply has no engine bus attached. The panel has
+   * always rendered "No data" for an absent field (see the `Stat`
+   * component); it was never being given one.
+   *
+   * TWO CONSEQUENCES BEYOND DISPLAY, both fixed by the same change:
+   *
+   *   * `trip.odometer: 0` did not merely display wrongly, it WON over
+   *     the vehicle's own recorded odometer in digital-twin.service.ts's
+   *     `latestTelemetry?.trip?.odometer ?? vehicle.odometer ?? 0`
+   *     fallback chain -- a real number replaced by a placeholder.
+   *     Omitting it restores that fallback.
+   *   * `averageSpeed`/`maxSpeed` were set to the INSTANTANEOUS speed of
+   *     this single snapshot. api2's `last` endpoint carries no trip
+   *     aggregation at all, so labelling one sample as a trip average or
+   *     maximum was a category error, not a rounding one. Both are now
+   *     omitted; `GET /api2/history` would be the honest source and is
+   *     out of scope here (see this file's header).
+   *
+   * `throttlePosition` and `engineLoad` have no IO code in the vendor's
+   * supported list at all, so they are never populated from this
+   * provider and are simply never written.
+   */
+  const engine: TelematicsData['engine'] = {};
+  if (rpm) engine.rpm = rpm.value;
+  if (engineTemp) engine.coolantTemp = engineTemp.value;
+  // Percent only -- litres never reach this field. See
+  // FUEL_LEVEL_LITRE_CODES for why that would fabricate fuel alerts.
+  if (fuelPercent) engine.fuelLevel = fuelPercent.value;
+
+  // idleTime is DERIVED (ignition + zero speed), not read, so it is
+  // always known and 0 here means "not idling", not "unreported".
+  const trip: TelematicsData['trip'] = { idleTime };
+  if (odometer) trip.odometer = odometer.value;
+
+  const fuel: TelematicsData['fuel'] = {};
+  if (consumption) fuel.consumptionRate = consumption.value;
+  if (fuelUsed) fuel.fuelUsed = fuelUsed.value;
+
   const payload: Omit<TelematicsData, '_id' | 'createdAt' | 'updatedAt'> & { tenantId: string } = {
     deviceId: context.deviceId,
     vehicleId: context.vehicleId,
@@ -416,35 +473,20 @@ export function mapStatusToTelematicsData(
       lat: status.lat as number,
       lng: status.lng as number,
       speed,
-      heading,
+      ...(heading !== undefined ? { heading } : {}),
       // api2 reports neither altitude nor horizontal accuracy; 0 matches
-      // what the Cartrack adapter records for the same absence.
+      // what the Cartrack adapter records for the same absence. Left as
+      // 0 rather than widened with the rest: neither is surfaced in any
+      // UI today, so neither can mislead an operator, and both are
+      // required by TelematicsLocation. Flagged in the changelog as the
+      // remaining instance of this pattern rather than silently changed.
       altitude: 0,
       accuracy: 0,
       timestamp,
     },
-    engine: {
-      rpm: rpm?.value ?? 0,
-      coolantTemp: engineTemp?.value ?? 0,
-      // Deliberately absent when unreported, NOT 0 -- see the doc comment
-      // on TelematicsData.engine.fuelLevel.
-      ...(fuelPercent ? { fuelLevel: fuelPercent.value } : {}),
-      throttlePosition: 0,
-      engineLoad: 0,
-    },
-    trip: {
-      odometer: odometer?.value ?? 0,
-      tripDistance: 0,
-      tripDuration: 0,
-      averageSpeed: speed,
-      maxSpeed: speed,
-      idleTime,
-    },
-    fuel: {
-      consumptionRate: consumption?.value ?? 0,
-      instantConsumption: 0,
-      fuelUsed: fuelUsed?.value ?? 0,
-    },
+    engine,
+    trip,
+    fuel,
     providerMetadata: metadata as unknown as Record<string, unknown>,
     timestamp,
   };

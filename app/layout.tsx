@@ -3,6 +3,10 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css"; 
 import 'leaflet/dist/leaflet.css';
+// MUST stay immediately after leaflet.css: it overrides Leaflet's own
+// marker/tooltip chrome and only wins on source order. See the header of
+// app/leaflet-overrides.css.
+import './leaflet-overrides.css';
 import SessionWrapper from "./session-wrapper";
 import { Toaster } from "@/frontend/shared/ui/sonner";
 import { ThemeProvider } from "next-themes";

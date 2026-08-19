@@ -13,9 +13,7 @@ import { queueService, JobType } from '@/infrastructure/queue/queue.service';
 import { notificationService } from '@/modules/notifications/services/notification.service';
 import { organizationRepository } from '@/modules/organizations/repositories/organization.repository';
 import { resolveOrganization } from '@/server/tenancy/organization-resolver';
-
-const SPEEDING_THRESHOLD_KMH = 120;
-const LOW_FUEL_THRESHOLD_PERCENT = 10;
+import { deriveReadingAlerts } from './reading-alerts';
 
 export class TelematicsService {
   async ingestTelematicsData(
@@ -75,49 +73,19 @@ export class TelematicsService {
     }
   }
 
+  /**
+   * Delegates to the shared pure derivation in reading-alerts.ts.
+   *
+   * Kept as a method (rather than inlining the import at every call
+   * site) so this class's ingestion flow reads unchanged, but the RULES
+   * now live in exactly one place: live-map.service.ts colours its
+   * markers from the same function, so the map can never disagree with
+   * what ingestion decided was an alert.
+   */
   private checkForAlerts(
     data: Omit<TelematicsData, '_id' | 'createdAt' | 'updatedAt'>
   ): TelematicsAlert[] {
-    const alerts: TelematicsAlert[] = [];
-
-    if (data.location && data.location.speed > SPEEDING_THRESHOLD_KMH) {
-      alerts.push({
-        type: 'speeding',
-        severity: 'high',
-        message: `Vehicle exceeding speed limit: ${data.location.speed} km/h`,
-        value: data.location.speed,
-        threshold: SPEEDING_THRESHOLD_KMH,
-        timestamp: data.timestamp,
-      });
-    }
-
-    if (data.engine?.dtcCodes && data.engine.dtcCodes.length > 0) {
-      alerts.push({
-        type: 'engine',
-        severity: 'critical',
-        message: `Engine fault codes detected: ${data.engine.dtcCodes.join(', ')}`,
-        value: data.engine.dtcCodes.length,
-        timestamp: data.timestamp,
-      });
-    }
-
-    // `typeof === 'number'` rather than a truthiness or `!= null` check:
-    // fuelLevel is optional (see TelematicsData.engine.fuelLevel), and a
-    // reading from a device that does not report fuel must not raise a
-    // "Low fuel level" alert. 0 is a legitimate reported value and still
-    // alerts; absent does not.
-    if (data.engine && typeof data.engine.fuelLevel === 'number' && data.engine.fuelLevel < LOW_FUEL_THRESHOLD_PERCENT) {
-      alerts.push({
-        type: 'maintenance',
-        severity: 'high',
-        message: `Low fuel level: ${data.engine.fuelLevel}%`,
-        value: data.engine.fuelLevel,
-        threshold: LOW_FUEL_THRESHOLD_PERCENT,
-        timestamp: data.timestamp,
-      });
-    }
-
-    return alerts;
+    return deriveReadingAlerts(data);
   }
 
   private async processAlerts(

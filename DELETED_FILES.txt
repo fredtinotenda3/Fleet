@@ -1,31 +1,18 @@
-DELETIONS REQUIRED — a zip archive cannot represent a deletion, so they
-are recorded here. This mirrors the pattern this repo already uses.
+Files to DELETE after unpacking this archive
+============================================
+
+(none for this change)
+
+STILL OUTSTANDING FROM AN EARLIER ROUND -- this is the only thing
+standing between you and a fully green `npm run test:security`:
 
   modules/intelligence/services/predictive-maintenance.service.ts
 
-WHY: dead duplicate code. modules/ai holds the authoritative
-predictive-maintenance service; this one is referenced by nothing except
-tests/security/predictive-maintenance-consolidation.spec.ts, which
-asserts it is GONE.
-
-This is the SECOND time this deletion has been requested — the
-DELETED_FILES.txt already in your repo root asked for it in a previous
-round and it was not applied. Consequence, measured on the tree you
-uploaded today:
-
-  npm run test:security  ->  467 passed, 2 FAILED
-
-Both failures are that spec. They are unrelated to the Eagle Track
-changes in this delivery.
-
-With the deletion applied:
-
-  npm run test:security  ->  491 passed, 0 failed  (38 suites)
-  npx jest               ->  620 passed, 0 failed  (44 suites)
-  npx tsc --noEmit       ->  0 errors
-
-Without it, expect 489 passed / 2 failed — the same pre-existing pair.
-
-Apply with:
+tests/security/predictive-maintenance-consolidation.spec.ts asserts this
+file has been removed and it is still on disk, so that suite is red in the
+archive as uploaded and stays red until it is deleted. Nothing imports it
+except the test that wants it gone -- the authoritative implementation is
+modules/ai/services/predictive-maintenance.service.ts. It has been listed
+in DELETED_FILES.txt since a previous round.
 
   git rm modules/intelligence/services/predictive-maintenance.service.ts

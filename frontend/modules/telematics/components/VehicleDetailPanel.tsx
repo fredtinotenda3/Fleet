@@ -16,7 +16,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { Loader2, X } from 'lucide-react';
+import { AlertTriangle, Clock, Loader2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
 import { Button } from '@/frontend/shared/ui/primitives/button';
@@ -65,6 +65,26 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
+/**
+ * Formats an optional numeric reading, or returns null so `Stat` renders
+ * "No data".
+ *
+ * Every telemetry member is optional now (see TelematicsData) precisely
+ * so this distinction survives to the UI: `num(0, '%')` still renders
+ * "0%" because a reported zero is real, while `num(undefined, '%')`
+ * renders "No data". A `?? 0` anywhere in this file would collapse the
+ * two back together and undo the whole change.
+ */
+function num(
+  value: number | undefined,
+  suffix = '',
+  format: (n: number) => string | number = Math.round
+): string | null {
+  return typeof value === 'number' && Number.isFinite(value) ? `${format(value)}${suffix}` : null;
+}
+
+const oneDp = (n: number) => n.toFixed(1);
+
 function formatFixAge(seconds: number | null): string | null {
   if (seconds === null) return null;
   if (seconds < 60) return `${Math.round(seconds)}s ago`;
@@ -82,6 +102,21 @@ export function VehicleDetailPanel({ vehicle, detail, isLoading, onClose, classN
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="text-base font-medium text-foreground truncate">{vehicle.licensePlate}</h3>
             <Badge className={status.className}>{status.label}</Badge>
+            {vehicle.alert && (
+              <Badge className="gap-1 bg-danger-bg text-danger">
+                <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                Alert
+              </Badge>
+            )}
+            {/* Secondary indicator, shown next to the status rather than
+                replacing it -- an old fix does not by itself mean the
+                vehicle stopped reporting. */}
+            {vehicle.stale && (
+              <Badge variant="outline" className="gap-1 text-muted-foreground">
+                <Clock className="h-3 w-3" aria-hidden="true" />
+                Stale fix
+              </Badge>
+            )}
             <Badge variant="outline">{SOURCE_LABEL[vehicle.source]}</Badge>
           </div>
           <p className="text-body-sm text-muted-foreground truncate">
@@ -102,53 +137,70 @@ export function VehicleDetailPanel({ vehicle, detail, isLoading, onClose, classN
           No telemetry has been recorded for this vehicle yet.
         </p>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          <Section title="Location">
-            <Stat label="Latitude" value={detail.location ? detail.location.lat.toFixed(5) : null} />
-            <Stat label="Longitude" value={detail.location ? detail.location.lng.toFixed(5) : null} />
-            <Stat label="Speed" value={detail.location ? `${Math.round(detail.location.speed)} km/h` : null} />
-            <Stat label="Heading" value={detail.location ? `${Math.round(detail.location.heading)}°` : null} />
-            <Stat label="Last ping" value={formatFixAge(detail.fixAgeSeconds)} />
-          </Section>
+        <div className="space-y-4">
+          {detail.alert && (
+            <div className="p-3 border rounded-lg border-danger-border bg-danger-bg">
+              <div className="flex items-center gap-2 text-danger">
+                <AlertTriangle className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <span className="font-medium text-body-sm">
+                  Alert · {detail.alert.severity}
+                </span>
+              </div>
+              <ul className="mt-1 space-y-0.5 text-caption text-foreground/80 list-disc list-inside">
+                {detail.alert.reasons.map((reason) => (
+                  <li key={reason}>{reason}</li>
+                ))}
+              </ul>
+            </div>
+          )}
 
-          <Section title="Odometer & trip">
-            <Stat label="Odometer" value={typeof detail.odometer === 'number' ? `${Math.round(detail.odometer)} km` : null} />
-            <Stat label="Trip distance" value={detail.trip ? `${detail.trip.tripDistance.toFixed(1)} km` : null} />
-            <Stat label="Trip duration" value={detail.trip ? `${Math.round(detail.trip.tripDuration)} min` : null} />
-            <Stat label="Average speed" value={detail.trip ? `${Math.round(detail.trip.averageSpeed)} km/h` : null} />
-            <Stat label="Max speed" value={detail.trip ? `${Math.round(detail.trip.maxSpeed)} km/h` : null} />
-            <Stat label="Idle time" value={detail.trip ? `${Math.round(detail.trip.idleTime)} min` : null} />
-          </Section>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <Section title="Location">
+              <Stat label="Latitude" value={detail.location ? detail.location.lat.toFixed(5) : null} />
+              <Stat label="Longitude" value={detail.location ? detail.location.lng.toFixed(5) : null} />
+              <Stat label="Speed" value={num(detail.location?.speed, ' km/h')} />
+              {/* Heading is optional at the source -- a device that
+                  reports no bearing shows "No data" rather than 0° (due
+                  north), which would be a confidently wrong reading. */}
+              <Stat label="Heading" value={num(detail.location?.heading, '\u00b0')} />
+              <Stat label="Last ping" value={formatFixAge(detail.fixAgeSeconds)} />
+            </Section>
 
-          <Section title="Engine">
-            <Stat label="Fuel level" value={typeof detail.engine?.fuelLevel === 'number' ? `${Math.round(detail.engine.fuelLevel)}%` : null} />
-            <Stat label="RPM" value={typeof detail.engine?.rpm === 'number' ? Math.round(detail.engine.rpm) : null} />
-            <Stat label="Coolant temp" value={typeof detail.engine?.coolantTemp === 'number' ? `${Math.round(detail.engine.coolantTemp)}°C` : null} />
-            <Stat label="Throttle" value={typeof detail.engine?.throttlePosition === 'number' ? `${Math.round(detail.engine.throttlePosition)}%` : null} />
-            <Stat label="Engine load" value={typeof detail.engine?.engineLoad === 'number' ? `${Math.round(detail.engine.engineLoad)}%` : null} />
-            <Stat
-              label="Fault codes"
-              value={detail.engine?.dtcCodes && detail.engine.dtcCodes.length > 0 ? detail.engine.dtcCodes.join(', ') : null}
-            />
-          </Section>
+            <Section title="Odometer & trip">
+              <Stat label="Odometer" value={num(detail.odometer, ' km')} />
+              <Stat label="Trip distance" value={num(detail.trip?.tripDistance, ' km', oneDp)} />
+              <Stat label="Trip duration" value={num(detail.trip?.tripDuration, ' min')} />
+              <Stat label="Average speed" value={num(detail.trip?.averageSpeed, ' km/h')} />
+              <Stat label="Max speed" value={num(detail.trip?.maxSpeed, ' km/h')} />
+              <Stat label="Idle time" value={num(detail.trip?.idleTime, ' min')} />
+            </Section>
 
-          <Section title="Fuel">
-            <Stat
-              label="Consumption rate"
-              value={typeof detail.fuel?.consumptionRate === 'number' ? `${detail.fuel.consumptionRate.toFixed(1)} L/100km` : null}
-            />
-            <Stat
-              label="Instant consumption"
-              value={typeof detail.fuel?.instantConsumption === 'number' ? `${detail.fuel.instantConsumption.toFixed(1)} L/h` : null}
-            />
-            <Stat label="Fuel used" value={typeof detail.fuel?.fuelUsed === 'number' ? `${detail.fuel.fuelUsed.toFixed(1)} L` : null} />
-          </Section>
+            <Section title="Engine">
+              <Stat label="Fuel level" value={num(detail.engine?.fuelLevel, '%')} />
+              <Stat label="RPM" value={num(detail.engine?.rpm)} />
+              <Stat label="Coolant temp" value={num(detail.engine?.coolantTemp, '\u00b0C')} />
+              <Stat label="Throttle" value={num(detail.engine?.throttlePosition, '%')} />
+              <Stat label="Engine load" value={num(detail.engine?.engineLoad, '%')} />
+              <Stat
+                label="Fault codes"
+                value={detail.engine?.dtcCodes && detail.engine.dtcCodes.length > 0 ? detail.engine.dtcCodes.join(', ') : null}
+              />
+            </Section>
 
-          <Section title="Device health">
-            <Stat label="Battery" value={typeof detail.deviceHealth?.batteryPercent === 'number' ? `${Math.round(detail.deviceHealth.batteryPercent)}%` : null} />
-            <Stat label="GSM signal" value={typeof detail.deviceHealth?.gsmQuality === 'number' ? `${detail.deviceHealth.gsmQuality}/31` : null} />
-            <Stat label="GPS satellites" value={typeof detail.deviceHealth?.gpsSatellites === 'number' ? detail.deviceHealth.gpsSatellites : null} />
-          </Section>
+            <Section title="Fuel">
+              <Stat label="Consumption rate" value={num(detail.fuel?.consumptionRate, ' L/100km', oneDp)} />
+              <Stat label="Instant consumption" value={num(detail.fuel?.instantConsumption, ' L/h', oneDp)} />
+              <Stat label="Fuel used" value={num(detail.fuel?.fuelUsed, ' L', oneDp)} />
+            </Section>
+
+            <Section title="Device health">
+              <Stat label="Battery charge" value={num(detail.deviceHealth?.batteryPercent, '%')} />
+              <Stat label="Battery voltage" value={num(detail.deviceHealth?.batteryVoltage, ' V', oneDp)} />
+              <Stat label="Supply voltage" value={num(detail.deviceHealth?.powerVoltage, ' V', oneDp)} />
+              <Stat label="GSM signal" value={num(detail.deviceHealth?.gsmQuality, '/31')} />
+              <Stat label="GPS satellites" value={num(detail.deviceHealth?.gpsSatellites)} />
+            </Section>
+          </div>
         </div>
       )}
     </div>

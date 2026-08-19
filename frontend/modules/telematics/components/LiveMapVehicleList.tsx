@@ -2,7 +2,7 @@
 
 'use client';
 
-import { Fuel, Gauge } from 'lucide-react';
+import { AlertTriangle, Clock, Fuel, Gauge } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { LiveMapVehicle } from '../types';
 
@@ -12,11 +12,14 @@ interface LiveMapVehicleListProps {
   onSelectVehicle: (vehicleId: string | null) => void;
 }
 
-const STATUS_DOT_CLASS: Record<LiveMapVehicle['status'], string> = {
-  moving: 'bg-success',
-  idle: 'bg-warning',
-  offline: 'bg-muted-foreground',
+/** Same custom properties the markers use, so the list and the map can never disagree about a colour. See app/leaflet-overrides.css. */
+const STATUS_COLOR_VAR: Record<LiveMapVehicle['status'], string> = {
+  moving: 'var(--map-marker-moving, #0e8a5f)',
+  idle: 'var(--map-marker-idle, #a15c00)',
+  offline: 'var(--map-marker-offline, #6b7488)',
 };
+
+const ALERT_COLOR_VAR = 'var(--map-marker-alert, #b3261e)';
 
 const STATUS_LABEL: Record<LiveMapVehicle['status'], string> = {
   moving: 'Moving',
@@ -47,13 +50,36 @@ export function LiveMapVehicleList({ vehicles, selectedVehicleId, onSelectVehicl
               <div className="flex items-center justify-between gap-2">
                 <span className="font-medium truncate text-body-sm text-foreground">{vehicle.licensePlate}</span>
                 <span className="flex items-center gap-1 shrink-0 text-caption text-muted-foreground">
-                  <span className={cn('h-2 w-2 rounded-full', STATUS_DOT_CLASS[vehicle.status])} aria-hidden="true" />
+                  <span
+                    className="w-2 h-2 rounded-full"
+                    style={{ background: vehicle.alert ? ALERT_COLOR_VAR : STATUS_COLOR_VAR[vehicle.status] }}
+                    aria-hidden="true"
+                  />
                   {STATUS_LABEL[vehicle.status]}
                 </span>
               </div>
               <p className="truncate text-caption text-muted-foreground">
                 {vehicle.make} {vehicle.model}
               </p>
+              {(vehicle.alert || vehicle.stale) && (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption">
+                  {vehicle.alert && (
+                    <span className="flex items-center gap-1" style={{ color: ALERT_COLOR_VAR }}>
+                      <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />
+                      <span className="truncate">{vehicle.alert.reasons[0]}</span>
+                    </span>
+                  )}
+                  {/* Stale is shown ALONGSIDE the status, never instead of
+                      it -- the fix being old is a data-freshness caveat,
+                      not a claim that the vehicle stopped reporting. */}
+                  {vehicle.stale && (
+                    <span className="flex items-center gap-1 text-muted-foreground">
+                      <Clock className="h-3 w-3 shrink-0" aria-hidden="true" />
+                      Stale fix
+                    </span>
+                  )}
+                </div>
+              )}
               {vehicle.position && (
                 <div className="flex items-center gap-3 text-caption text-muted-foreground">
                   <span className="flex items-center gap-1">

@@ -19,7 +19,23 @@ export interface TelematicsLocation {
   lat: number;
   lng: number;
   speed: number;
-  heading: number;
+  /**
+   * Compass bearing in degrees, 0-360.
+   *
+   * OPTIONAL for the same reason `engine.fuelLevel` is (see its doc
+   * comment below): "this device does not report a bearing" and "this
+   * vehicle is heading due north" are different facts, and 0 is a
+   * legitimate value for the second. A provider adapter that substitutes
+   * 0 for an unreported bearing makes every non-reporting vehicle's
+   * direction arrow on the live map point the same wrong way, which is a
+   * confidently-wrong reading rather than a missing one.
+   *
+   * Widening (required -> optional) is source-compatible for the HTTP
+   * ingest path, whose schema still requires it
+   * (shared/validations/telematics.schema.ts), so only provider adapters
+   * can omit it.
+   */
+  heading?: number;
   altitude: number;
   accuracy: number;
   timestamp: Date;
@@ -29,9 +45,23 @@ export interface TelematicsData extends BaseEntity {
   deviceId: string;
   vehicleId: string;
   location?: TelematicsLocation;
+  /**
+   * Engine signals from the reading.
+   *
+   * EVERY MEMBER IS OPTIONAL, and deliberately so. These fields are
+   * displayed verbatim in the live-map vehicle detail panel, and a
+   * fabricated 0 there is indistinguishable from a real reading of zero:
+   * "0 rpm" reads as a stalled engine, "0 C" as a frozen one, "0%
+   * throttle" as a closed pedal. Absent must stay absent all the way to
+   * the UI so it can render "No data".
+   *
+   * The object itself stays required so existing readers
+   * (`data.engine?.x`) keep their shape; an adapter with no engine
+   * signals at all writes `{}`.
+   */
   engine: {
-    rpm: number;
-    coolantTemp: number;
+    rpm?: number;
+    coolantTemp?: number;
     /**
      * Fuel level as a PERCENTAGE, 0-100 (see
      * shared/validations/telematics.schema.ts, which constrains the HTTP
@@ -52,22 +82,32 @@ export interface TelematicsData extends BaseEntity {
      * treat it as possibly-absent.
      */
     fuelLevel?: number;
-    throttlePosition: number;
-    engineLoad: number;
+    throttlePosition?: number;
+    engineLoad?: number;
     dtcCodes?: string[];
   };
+  /**
+   * Trip/odometer aggregates. Optional members for the same reason as
+   * `engine` above, plus one consequence worth naming: a fabricated
+   * `odometer: 0` does not merely display wrongly, it WINS over the
+   * vehicle's own recorded odometer in
+   * digital-twin.service.ts's `latestTelemetry?.trip?.odometer ??
+   * vehicle.odometer ?? 0` fallback chain. Omitting it restores that
+   * fallback instead of overwriting real data with a placeholder.
+   */
   trip: {
-    odometer: number;
-    tripDistance: number;
-    tripDuration: number;
-    averageSpeed: number;
-    maxSpeed: number;
-    idleTime: number;
+    odometer?: number;
+    tripDistance?: number;
+    tripDuration?: number;
+    averageSpeed?: number;
+    maxSpeed?: number;
+    idleTime?: number;
   };
+  /** Fuel-flow signals. Optional members for the same reason as `engine` above. */
   fuel: {
-    consumptionRate: number;
-    instantConsumption: number;
-    fuelUsed: number;
+    consumptionRate?: number;
+    instantConsumption?: number;
+    fuelUsed?: number;
   };
   alerts?: TelematicsAlert[];
   /**
