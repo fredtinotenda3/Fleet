@@ -1,40 +1,76 @@
 // tests/unit/telematics/eagletrack-api-client.spec.ts
 //
-// Covers the three ways Eagle Track's wire protocol differs from
+// Covers the four ways Eagle Track's wire protocol differs from
 // Cartrack's, each of which is a silent-failure risk if handled wrongly:
 //
-//   1. The token goes in a HEADER, never the query string. A credential
-//      in a URL is copied into access logs and proxy logs.
+//   1. The token authenticates ONLY as a `?token=` QUERY PARAMETER. The
+//      documented `token` header is treated as anonymous and redirected
+//      to the login page. This file previously asserted the opposite --
+//      the inversion is deliberate and is the whole point of the change;
+//      production testing against a live deployment settled it.
 //   2. Failure is reported IN THE BODY (`error !== 0`) on an HTTP 200.
 //      Checking `response.ok` alone would turn a rejected token into a
 //      successful empty sync -- indistinguishable from "this tenant has
 //      no vehicles".
-//   3. `GET /api2/last` returns `data` keyed by uin, not as an array.
+//   3. Content-Type is meaningless. The live deployment labels its JSON
+//      `text/html`, and serves an actual HTML login page under the same
+//      label and an HTTP 200 when unauthenticated. So the client parses
+//      the body itself and must never branch on the header.
+//   4. `GET /api2/last` returns `data` keyed by uin, not as an array.
+//
+// The "must not leak the credential" properties that follow from (1)
+// live in tests/security/telematics-eagletrack-token-leak.spec.ts. The
+// couple asserted here are the ones a developer changing this file would
+// break first.
 
 import {
   EagleTrackApiClient,
   EagleTrackApiError,
   EAGLETRACK_FLEET_SELECTOR,
+  EAGLETRACK_TOKEN_QUERY_PARAM,
   flattenLastPayload,
   normaliseEagleTrackBaseUrl,
-} from '../../../modules/telematics/adapters/eagletrack/eagletrack-api.client';
+} from '@/modules/telematics/adapters/eagletrack/eagletrack-api.client';
+
+jest.mock('@/infrastructure/monitoring/logger', () => ({
+  monitoring: { logDebug: jest.fn(), logWarn: jest.fn(), logError: jest.fn(), logInfo: jest.fn() },
+}));
+
+const TOKEN = 'secret-token-value';
 
 type FetchCall = { url: string; init: RequestInit };
 
-function mockFetch(responder: (call: FetchCall) => { status?: number; body: unknown }) {
+/**
+ * Installs a fake fetch.
+ *
+ * A string `body` is returned verbatim (for the HTML-login-page cases);
+ * anything else is JSON-serialised.
+ *
+ * The response's `headers` is a THROWING getter, not an omission: the
+ * client must never branch on Content-Type, because on this platform
+ * Content-Type is `text/html` whether the body is JSON or a login page.
+ * A future edit that reads it fails here rather than in production.
+ */
+function mockFetch(responder: (call: FetchCall) => { status?: number; statusText?: string; body: unknown }) {
   const calls: FetchCall[] = [];
 
   const fn = jest.fn(async (url: unknown, init: unknown) => {
     const call = { url: String(url), init: (init ?? {}) as RequestInit };
     calls.push(call);
-    const { status = 200, body } = responder(call);
+    const { status = 200, statusText, body } = responder(call);
+    const text = typeof body === 'string' ? body : JSON.stringify(body);
 
     return {
       ok: status >= 200 && status < 300,
       status,
-      statusText: status === 200 ? 'OK' : 'Error',
-      json: async () => body,
-      text: async () => JSON.stringify(body),
+      statusText: statusText ?? (status === 200 ? 'OK' : 'Error'),
+      get headers(): never {
+        throw new Error('the client must not branch on Content-Type: this platform labels JSON as text/html');
+      },
+      text: async () => text,
+      json: async () => {
+        throw new Error('the client must read the body as text and parse it itself');
+      },
     };
   });
 
@@ -49,8 +85,11 @@ afterEach(() => {
 });
 
 function client(domain = 'https://gps.example.com') {
-  return new EagleTrackApiClient({ domain, token: 'secret-token-value' });
+  return new EagleTrackApiClient({ domain, token: TOKEN });
 }
+
+/** A minimal stand-in for the HTML login page the platform serves to an unauthenticated request. */
+const LOGIN_PAGE_HTML = '<!DOCTYPE html><html><head><title>Login</title></head><body><form>...</form></body></html>';
 
 describe('normaliseEagleTrackBaseUrl', () => {
   it('strips trailing slashes and an /api2 suffix an operator is likely to paste in', () => {
@@ -66,15 +105,34 @@ describe('normaliseEagleTrackBaseUrl', () => {
 });
 
 describe('authentication', () => {
-  it('sends the token as a header and never in the URL', async () => {
+  it('sends the token as a query parameter -- the only form this platform authenticates', async () => {
     const calls = mockFetch(() => ({ body: { error: 0, msg: '', data: {} } }));
 
     await client().getLastForAll();
 
     expect(calls).toHaveLength(1);
-    expect((calls[0].init.headers as Record<string, string>).token).toBe('secret-token-value');
-    expect(calls[0].url).not.toContain('secret-token-value');
-    expect(calls[0].url).not.toContain('token=');
+    expect(new URL(calls[0].url).searchParams.get(EAGLETRACK_TOKEN_QUERY_PARAM)).toBe(TOKEN);
+  });
+
+  it('sends NO token header -- a header-only request is treated as anonymous and redirected to login', async () => {
+    const calls = mockFetch(() => ({ body: { error: 0, msg: '', data: {} } }));
+
+    await client().getTrackers();
+
+    const headers = (calls[0].init.headers ?? {}) as Record<string, string>;
+    expect(headers.token).toBeUndefined();
+    expect(Object.keys(headers).map((k) => k.toLowerCase())).not.toContain('token');
+    // Accept is still sent, and is still advisory only.
+    expect(headers.Accept).toBe('application/json');
+  });
+
+  it('appends the token exactly once, not per accumulated param', async () => {
+    const calls = mockFetch(() => ({ body: { error: 0, msg: '', data: [] } }));
+
+    await client().verifyCredentials();
+
+    const occurrences = calls[0].url.split(`${EAGLETRACK_TOKEN_QUERY_PARAM}=`).length - 1;
+    expect(occurrences).toBe(1);
   });
 
   it('polls with the least-privilege fleet selector, never the whole-deployment one', async () => {
@@ -82,7 +140,7 @@ describe('authentication', () => {
 
     await client().getLastForAll();
 
-    expect(calls[0].url).toContain(`uin=${EAGLETRACK_FLEET_SELECTOR}`);
+    expect(new URL(calls[0].url).searchParams.get('uin')).toBe(EAGLETRACK_FLEET_SELECTOR);
     // __all_sys_ would pull every tracker on a reseller-run instance,
     // including other customers' vehicles.
     expect(calls[0].url).not.toContain('__all_sys_');
@@ -145,6 +203,59 @@ describe('envelope error handling', () => {
 
     expect(error.isVendorRejection).toBe(true);
   });
+
+  it('classifies a redirect as a rejection -- how this platform answers an unauthenticated request', async () => {
+    // Only observable when fetch does not follow it; when it does, the
+    // followed response is the login page and nonJsonBody covers it.
+    mockFetch(() => ({ status: 302, statusText: 'Found', body: '' }));
+
+    const error = await client()
+      .getTrackers()
+      .catch((e) => e as EagleTrackApiError);
+
+    expect(error.statusCode).toBe(302);
+    expect(error.isVendorRejection).toBe(true);
+  });
+});
+
+describe('non-JSON responses', () => {
+  it('treats an HTML login page on an HTTP 200 as a credentials rejection, not a crash', async () => {
+    // Before this classification existed, response.json() threw a bare
+    // TypeError here and the failure surfaced as "the platform is down"
+    // for the one condition test-connection exists to detect.
+    mockFetch(() => ({ status: 200, body: LOGIN_PAGE_HTML }));
+
+    const error = await client()
+      .getTrackers()
+      .catch((e) => e as EagleTrackApiError);
+
+    expect(error).toBeInstanceOf(EagleTrackApiError);
+    expect(error.nonJsonBody).toBe(true);
+    expect(error.isVendorRejection).toBe(true);
+    expect(error.message).toMatch(/non-JSON/i);
+    // The operator needs to be pointed at the token, not the network.
+    expect(error.message).toMatch(/token/i);
+  });
+
+  it('parses a JSON body regardless of what Content-Type claims', async () => {
+    // The live deployment returns its JSON envelope labelled
+    // `text/html; charset=UTF-8`. The mock's `headers` getter throws, so
+    // this passing is itself the proof that nothing read it.
+    mockFetch(() => ({ status: 200, body: { error: 0, data: [{ uin: '1332', name: 'ADY2531' }] } }));
+
+    await expect(client().getTrackers()).resolves.toHaveLength(1);
+  });
+
+  it('rejects a body that parses but is not an object', async () => {
+    mockFetch(() => ({ status: 200, body: '"just a string"' }));
+
+    const error = await client()
+      .getTrackers()
+      .catch((e) => e as EagleTrackApiError);
+
+    expect(error).toBeInstanceOf(EagleTrackApiError);
+    expect(error.message).toMatch(/malformed/i);
+  });
 });
 
 describe('verifyCredentials', () => {
@@ -153,7 +264,7 @@ describe('verifyCredentials', () => {
 
     await expect(client().verifyCredentials()).resolves.toBe(true);
     expect(calls[0].url).toContain('/api2/trackers');
-    expect(calls[0].url).toContain('pageSize=1');
+    expect(new URL(calls[0].url).searchParams.get('pageSize')).toBe('1');
     // Must not be a fleet-wide pull.
     expect(calls[0].url).not.toContain('/api2/last');
   });
@@ -163,9 +274,52 @@ describe('verifyCredentials', () => {
     await expect(client().verifyCredentials()).resolves.toBe(false);
   });
 
+  it('returns false when the platform serves its login page -- the real invalid-token behaviour', async () => {
+    mockFetch(() => ({ status: 200, body: LOGIN_PAGE_HTML }));
+    await expect(client().verifyCredentials()).resolves.toBe(false);
+  });
+
   it('RETHROWS a transport failure rather than reporting invalid credentials -- an unreachable host is not a bad token', async () => {
     mockFetch(() => ({ status: 503, body: {} }));
     await expect(client().verifyCredentials()).rejects.toThrow(EagleTrackApiError);
+  });
+});
+
+describe('transport failures', () => {
+  it('reports a timeout against the endpoint, with no URL and no credential in the message', async () => {
+    (global as unknown as { fetch: unknown }).fetch = jest.fn(async () => {
+      const abort = new Error('The operation was aborted');
+      abort.name = 'AbortError';
+      throw abort;
+    });
+
+    const error = await new EagleTrackApiClient({ domain: 'https://gps.example.com', token: TOKEN, timeoutMs: 5 })
+      .getTrackers()
+      .catch((e) => e as EagleTrackApiError);
+
+    expect(error.message).toContain('https://gps.example.com/api2/trackers');
+    expect(error.message).toMatch(/timed out/);
+    expect(error.message).not.toContain(TOKEN);
+    expect(error.isVendorRejection).toBe(false);
+  });
+
+  it('carries an errno code through but not the underlying message, which can contain a URL', async () => {
+    (global as unknown as { fetch: unknown }).fetch = jest.fn(async () => {
+      const failure = new TypeError('fetch failed');
+      (failure as unknown as { cause: unknown }).cause = Object.assign(
+        new Error(`getaddrinfo ENOTFOUND gps.example.com (https://gps.example.com/api2/trackers?token=${TOKEN})`),
+        { code: 'ENOTFOUND' }
+      );
+      throw failure;
+    });
+
+    const error = await client()
+      .getTrackers()
+      .catch((e) => e as EagleTrackApiError);
+
+    expect(error.message).toContain('ENOTFOUND');
+    expect(error.message).not.toContain(TOKEN);
+    expect(error.message).not.toContain('?token=');
   });
 });
 
@@ -220,6 +374,29 @@ describe('getTrackers', () => {
     const trackers = await client().getTrackers();
     expect(trackers).toHaveLength(1);
     expect(trackers[0].uin).toBe('723001');
+  });
+
+  it('preserves the live deployment roster shape: empty `plate`, no `__platenumber`, plate in `name`', async () => {
+    // Trimmed from the real GET /api2/trackers response. The fields the
+    // matching order depends on must survive parsing exactly as sent --
+    // an empty string must stay an empty string, not become undefined.
+    mockFetch(() => ({
+      body: {
+        error: 0,
+        data: [
+          { id: '1332', name: 'ADY2531', uin: '865585040533451', model: '10104', belong: 'Willsgrove', plate: '' },
+          { id: '1317', name: 'AFU0078', uin: '861100068912274', model: '10192', belong: 'Willsgrove', plate: '' },
+        ],
+        refData: { users: { Willsgrove: { title: 'Willsgrove Farm Enterprises', objId: '538' } } },
+      },
+    }));
+
+    const trackers = await client().getTrackers();
+
+    expect(trackers).toHaveLength(2);
+    expect(trackers[0].plate).toBe('');
+    expect(trackers[0].__platenumber).toBeUndefined();
+    expect(trackers.map((t) => t.name)).toEqual(['ADY2531', 'AFU0078']);
   });
 
   it('returns an empty array when data is not an array, instead of throwing', async () => {

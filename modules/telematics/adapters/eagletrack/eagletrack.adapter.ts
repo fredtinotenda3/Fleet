@@ -13,25 +13,58 @@
 // VEHICLE MATCHING -- READ THIS BEFORE CHANGING IT
 // ---------------------------------------------------------------------
 // Cartrack matches on `registration`, a first-class field that Cartrack
-// guarantees. Eagle Track has no equivalent. `/api2/trackers` exposes:
+// guarantees. Eagle Track has no single field that plays that role, so
+// matching walks an ordered list of candidates. Production testing
+// against a live deployment is what determined both the list and the
+// order:
 //
-//   * `__platenumber` -- a vendor CUSTOM field. Optional, frequently
-//     blank, and in the vendor's own published sample data frequently
-//     junk ("abc", "deef", "xyz-123").
-//   * `name` -- free text. Sometimes contains something plate-shaped
-//     ("BEV 664"), sometimes not ("DashCam2"), sometimes a plate buried
-//     in prose ("PT201B abc long long title name").
+//   * `plate` -- first-class, PRESENT on the live roster, and empty on
+//     every row of it. First in the order anyway: when a deployment does
+//     populate it, it is the field the vendor's own UI calls the plate,
+//     so it is the most authoritative thing on offer.
+//   * `__platenumber` -- the documented vendor CUSTOM field, and ABSENT
+//     from the live roster entirely. This adapter was originally written
+//     to match on it exclusively, which on the live deployment matched
+//     nothing at all. Kept second for deployments that do populate it;
+//     never depended on.
+//   * `name` -- free text, and where the plate actually lives in
+//     practice ("ADY2531", "AFU0078"). Also legitimately holds
+//     non-plates ("DashCam2") and plates buried in prose ("PT201B abc
+//     long long title name").
 //
-// The matching rule is therefore deliberately narrow:
+// The rule:
 //
-//   1. If `__platenumber` is present and non-empty, look it up with
-//      vehicleRepository.findByLicensePlate(plate, tenantId).
-//   2. Otherwise: NO MATCH. We do not fuzzy-match against `name`.
-//   3. Every unmatched tracker is returned in the sync result
-//      (`unmatchedTrackers`). Never dropped silently, never
-//      auto-created as a vehicle.
+//   1. Collect the candidates above, in that order, skipping any that
+//      is absent, non-string, or blank after trimming. Duplicates are
+//      collapsed (two fields holding the same plate is one lookup).
+//   2. Try each against vehicleRepository.findByLicensePlate(value,
+//      tenantId) -- an EXACT, tenant-scoped equality match. First
+//      candidate that resolves to a vehicle wins, and which field it
+//      was is recorded (result.matchedBy, and the device's metadata).
+//   3. No candidate resolves -> NO MATCH. The tracker is returned in
+//      `unmatchedTrackers`. Never dropped silently, never auto-created
+//      as a vehicle.
 //
-// WHY NOT FUZZY-MATCH: a wrong match here is worse than no match. A
+// MATCHING ON `name` IS NOT FUZZY MATCHING, and the distinction is the
+// whole safety argument. There is no similarity scoring, no substring
+// search, no plate-shaped regex, and no normalisation beyond trimming
+// whitespace and the case-folding findByLicensePlate already applies
+// (this codebase stores license_plate upper-cased, so case folding is
+// canonicalisation, not guessing). "PT201B abc long long title name"
+// does not match a vehicle plated PT201B -- it is not equal to it. The
+// authority on what counts as a plate is the tenant's own vehicle table,
+// never a heuristic in this file. That is deliberate: a regex here would
+// have to encode the plate format of every jurisdiction we ever sell
+// into, and would silently drop the ones it got wrong.
+//
+// WHY FIRST-MATCH-WINS RATHER THAN FIRST-FIELD-WINS: a stale or junk
+// `plate` value would otherwise permanently mask a perfectly good
+// `name`, and the vendor's plate-ish fields are documented junk
+// carriers. Falling through costs at most two extra indexed lookups per
+// tracker per poll and cannot widen what matches, because every
+// candidate must still equal a real plate in this tenant.
+//
+// WHY NOT LOOSER STILL: a wrong match is worse than no match. A
 // misattributed reading writes another vehicle's GPS trace, odometer and
 // fuel level into this vehicle's history, fires its geofence and
 // speeding alerts, and -- once the finance module posts telemetry-driven
@@ -40,14 +73,16 @@
 // server/utils/tenant-context.utils.ts applies to org-unit resolution
 // (refuse to guess an owner) applies here.
 //
-// EXPECT LOW MATCH RATES on a deployment that has not curated
-// `__platenumber`. That is a data-quality fact about the vendor's
-// platform surfaced honestly, not a bug in this adapter. The correct
-// long-term fix is an explicit, admin-managed uin <-> vehicle mapping
-// table (a small settings UI listing unmatched uins next to a vehicle
-// picker), which removes the dependency on a free-text custom field
-// entirely. `unmatchedTrackers` is exactly the input such a screen would
-// need, which is why it is reported rather than logged and forgotten.
+// RESIDUAL AMBIGUITY, stated rather than hidden: if `plate` and `name`
+// hold the plates of two DIFFERENT vehicles, the order above resolves it
+// deterministically to `plate` and nothing flags the conflict. The
+// counters in result.matchedBy make the reliance visible, but they are
+// not a substitute for the correct long-term fix, which has not changed:
+// an explicit, admin-managed uin <-> vehicle mapping table (a small
+// settings screen listing unmatched uins next to a vehicle picker),
+// removing the dependency on vendor free text entirely.
+// `unmatchedTrackers` is exactly the input such a screen would need,
+// which is why it is reported rather than logged and forgotten.
 //
 // ---------------------------------------------------------------------
 // SCOPED OUT OF THIS PASS (extension points, not oversights)
@@ -73,6 +108,7 @@ import { telematicsRepository } from '../../repositories/telematics.repository';
 import { eagletrackConfigRepository } from '../../repositories/eagletrack-config.repository';
 import { EagleTrackApiClient } from './eagletrack-api.client';
 import {
+  EagleTrackMatchSource,
   EagleTrackReadingMetadata,
   EagleTrackSyncResult,
   EagleTrackTracker,
@@ -199,12 +235,57 @@ export function hasUsableFix(status: EagleTrackTrackerStatus): boolean {
   return true;
 }
 
-/** The plate we will attempt to match on, or null when the tracker gives us nothing usable. */
-export function plateFromTracker(tracker: EagleTrackTracker | undefined): string | null {
-  const raw = tracker?.__platenumber;
-  if (typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
-  return trimmed.length > 0 ? trimmed : null;
+/** One plate value to try, and the roster field it came from. */
+export interface EagleTrackPlateCandidate {
+  value: string;
+  source: EagleTrackMatchSource;
+}
+
+/**
+ * The plate values we will attempt to match on, in priority order.
+ *
+ * Empty array means the tracker carries nothing usable and is unmatched
+ * without a database round trip. See the file header for the ordering
+ * rationale.
+ */
+export function plateCandidatesFromTracker(
+  tracker: EagleTrackTracker | undefined
+): EagleTrackPlateCandidate[] {
+  if (!tracker) return [];
+
+  const candidates: EagleTrackPlateCandidate[] = [];
+  const seen = new Set<string>();
+
+  const consider = (raw: unknown, source: EagleTrackMatchSource): void => {
+    /**
+     * The typeof guard is load-bearing for SECURITY, not just for types.
+     * `raw` is untrusted vendor JSON: the declared field types are our
+     * transcription of a document, not a contract the wire honours. A
+     * non-string reaching findByLicensePlate hits `.toUpperCase()` and
+     * throws mid-sync, and an OBJECT reaching it would be spread into a
+     * Mongo filter -- `{ license_plate: { $ne: null } }` matches the
+     * first vehicle in the tenant, which is precisely the silent
+     * misattribution the matching rules exist to prevent.
+     */
+    if (typeof raw !== 'string') return;
+
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+
+    // Dedupe on the same casing findByLicensePlate matches on, so two
+    // fields carrying the same plate cost one lookup rather than two.
+    const key = trimmed.toUpperCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+
+    candidates.push({ value: trimmed, source });
+  };
+
+  consider(tracker.plate, 'plate');
+  consider(tracker.__platenumber, 'platenumber');
+  consider(tracker.name, 'name');
+
+  return candidates;
 }
 
 export interface EagleTrackMappedReading {
@@ -349,6 +430,7 @@ export class EagleTrackAdapter {
     const result: EagleTrackSyncResult = {
       tenantId,
       matched: 0,
+      matchedBy: { plate: 0, platenumber: 0, name: 0 },
       skippedStale: 0,
       skippedNoFix: 0,
       unmatchedTrackers: [],
@@ -400,7 +482,13 @@ export class EagleTrackAdapter {
       try {
         const outcome = await this.ingestStatus(tenantId, status, trackersByUin.get(status.uin));
 
-        switch (outcome) {
+        // Counted for every outcome that resolved to a vehicle, so
+        // matchedBy sums to matched + skippedNoFix (see its doc comment).
+        if (outcome.matchedBy) {
+          result.matchedBy[outcome.matchedBy] += 1;
+        }
+
+        switch (outcome.status) {
           case 'ingested':
             result.matched += 1;
             break;
@@ -444,12 +532,38 @@ export class EagleTrackAdapter {
   }
 
   /**
+   * Resolves a tracker to a vehicle in this tenant, or null.
+   *
+   * Walks plateCandidatesFromTracker in order and returns the FIRST
+   * candidate that resolves. Every lookup is
+   * vehicleRepository.findByLicensePlate, which is tenant-scoped and an
+   * exact equality match -- this method adds ordering, not leniency.
+   */
+  private async matchVehicle(
+    tenantId: string,
+    tracker: EagleTrackTracker | undefined
+  ): Promise<{ vehicleId: string; matchedBy: EagleTrackMatchSource } | null> {
+    for (const candidate of plateCandidatesFromTracker(tracker)) {
+      const vehicle = await vehicleRepository.findByLicensePlate(candidate.value, tenantId);
+      if (vehicle?._id) {
+        return { vehicleId: vehicle._id, matchedBy: candidate.source };
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Maps and ingests a single Eagle Track reading.
    *
    *   'unmatched' -- no vehicle in this tenant owns this tracker.
    *   'no-fix'    -- matched, but the payload carries no usable position.
    *   'stale'     -- matched, but we already hold this fix (or a newer one).
    *   'ingested'  -- written through telematicsService.
+   *
+   * `matchedBy` is present for every outcome except 'unmatched', so
+   * syncOrganization can report which roster field the integration is
+   * actually standing on.
    *
    * Never throws for any of the first three: they are ordinary states of
    * a real fleet, not failures.
@@ -458,14 +572,13 @@ export class EagleTrackAdapter {
     tenantId: string,
     status: EagleTrackTrackerStatus,
     tracker: EagleTrackTracker | undefined
-  ): Promise<'ingested' | 'stale' | 'no-fix' | 'unmatched'> {
-    const plate = plateFromTracker(tracker);
-    if (!plate) return 'unmatched';
+  ): Promise<{ status: 'ingested' | 'stale' | 'no-fix' | 'unmatched'; matchedBy?: EagleTrackMatchSource }> {
+    const match = await this.matchVehicle(tenantId, tracker);
+    if (!match) return { status: 'unmatched' };
 
-    const vehicle = await vehicleRepository.findByLicensePlate(plate, tenantId);
-    if (!vehicle || !vehicle._id) return 'unmatched';
+    const { vehicleId, matchedBy } = match;
 
-    if (!hasUsableFix(status)) return 'no-fix';
+    if (!hasUsableFix(status)) return { status: 'no-fix', matchedBy };
 
     const deviceId = eagletrackDeviceIdFor(status.uin);
     // One read serves both purposes: registering the device if new, and
@@ -473,12 +586,12 @@ export class EagleTrackAdapter {
     // trip.
     const existingDevice = await telematicsRepository.getDevice(deviceId, tenantId);
     if (!existingDevice) {
-      await this.registerDevice(deviceId, vehicle._id, tenantId, status, tracker);
+      await this.registerDevice(deviceId, vehicleId, tenantId, status, tracker, matchedBy);
     }
 
     const mapped = mapStatusToTelematicsData(status, {
       tenantId,
-      vehicleId: vehicle._id,
+      vehicleId,
       deviceId,
       tracker,
     });
@@ -489,13 +602,13 @@ export class EagleTrackAdapter {
 
     const lastPingAt = existingDevice?.lastPingAt ? new Date(existingDevice.lastPingAt) : null;
     if (lastPingAt && !Number.isNaN(lastPingAt.getTime()) && mapped.timestamp.getTime() <= lastPingAt.getTime()) {
-      return 'stale';
+      return { status: 'stale', matchedBy };
     }
 
     await telematicsService.ingestTelematicsData(mapped.payload);
     await telematicsRepository.updateDeviceLastPing(deviceId, tenantId, mapped.payload.location);
 
-    return 'ingested';
+    return { status: 'ingested', matchedBy };
   }
 
   private async registerDevice(
@@ -503,7 +616,8 @@ export class EagleTrackAdapter {
     vehicleId: string,
     tenantId: string,
     status: EagleTrackTrackerStatus,
-    tracker: EagleTrackTracker | undefined
+    tracker: EagleTrackTracker | undefined,
+    matchedBy: EagleTrackMatchSource
   ): Promise<void> {
     await telematicsRepository.registerDevice(
       {
@@ -518,6 +632,13 @@ export class EagleTrackAdapter {
         metadata: {
           source: 'eagletrack',
           uin: status.uin,
+          /**
+           * Which roster field linked this device to this vehicle. Kept
+           * because if the link is ever wrong, this is the first thing
+           * anyone needs to know -- and it cannot be re-derived later
+           * from a vendor payload we did not store.
+           */
+          matchedBy,
           trackerName: typeof tracker?.name === 'string' ? tracker.name : undefined,
           // The vendor-side owning userid. Recorded for support/debugging
           // only -- our tenancy is decided by the matched vehicle, never

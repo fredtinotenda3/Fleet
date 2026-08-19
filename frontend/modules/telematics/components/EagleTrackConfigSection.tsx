@@ -24,9 +24,12 @@
 //
 // http WARNING: the backend deliberately accepts a plain-http domain
 // because real Eagle Track deployments run without TLS and rejecting
-// them would make the integration unusable. The token travels in a
-// request header, so on http it is exposed on the network path -- hence
-// the inline warning rather than silent acceptance.
+// them would make the integration unusable. The warning is now stronger
+// than it was: the platform only authenticates a token supplied as a URL
+// QUERY PARAMETER (see eagletrack-api.client.ts), so the credential is
+// part of the request line. On http that is readable by anyone on the
+// path, and on either scheme it lands in the vendor's own web-server
+// access log -- hence the inline warning rather than silent acceptance.
 
 'use client';
 
@@ -205,8 +208,9 @@ export function EagleTrackConfigSection() {
           <Alert variant="destructive">
             <TriangleAlert aria-hidden="true" />
             <AlertDescription>
-              This domain uses <strong>http</strong>, not https. Your API token is sent with every request and would
-              be readable by anyone on the network path. Use https if your Eagle Track deployment supports it.
+              This domain uses <strong>http</strong>, not https. Eagle Track only accepts the API token in the
+              request URL, so on http it is readable by anyone on the network path. Use https if your Eagle Track
+              deployment supports it, and treat the token as rotatable either way.
             </AlertDescription>
           </Alert>
         )}
@@ -298,9 +302,11 @@ export function EagleTrackConfigSection() {
       </p>
 
       <p className="text-caption text-muted-foreground">
-        Vehicles are matched to Eagle Track trackers by the tracker&apos;s <code>__platenumber</code> field. Trackers
-        with a blank or unrecognised plate are reported as unmatched by each sync rather than being guessed at — check
-        the sync result if a vehicle is missing from the live map.
+        Vehicles are matched to Eagle Track trackers by licence plate, tried in order: the tracker&apos;s{' '}
+        <code>plate</code> field, then <code>__platenumber</code>, then its <code>name</code>. Most deployments leave
+        the first two blank and carry the plate in the tracker name. Each candidate must match one of your vehicle
+        plates exactly — nothing is guessed at, and trackers that match nothing are reported as unmatched by each sync.
+        Check the sync result if a vehicle is missing from the live map.
       </p>
     </div>
   );

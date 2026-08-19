@@ -1,17 +1,24 @@
 // modules/telematics/adapters/eagletrack/eagletrack.types.ts
 //
-// Shapes for Eagle Track's white-labelled "api2" GPS platform. As with
-// cartrack.types.ts, we have no sandbox or live credentials at the time
-// of writing, so these types follow the vendor's published API V2
-// document (single static token in a `token` header, per-deployment
-// domain, `{error,msg,data}` envelope on every call, per-tracker signals
-// delivered as a numeric-keyed `io` object). If a real tenant's
-// deployment differs, the only file that needs to change is
-// eagletrack-api.client.ts's response parsing -- everything downstream
-// (the adapter, the ingest pipeline, alerting, geofencing) is written
-// against EagleTrackTrackerStatus below rather than the wire format.
+// Shapes for Eagle Track's white-labelled "api2" GPS platform. These
+// began as a transcription of the vendor's published API V2 document and
+// have since been corrected against a LIVE DEPLOYMENT
+// (GET /api2/trackers, production testing). Where the two disagree, the
+// live response wins and the discrepancy is noted inline, because the
+// documentation is demonstrably not a reliable contract.
 //
-// TWO DIFFERENCES FROM CARTRACK worth stating up front, because they
+// Corrections the live response forced:
+//
+//   * the static token authenticates as a QUERY PARAMETER only. The
+//     documented `token` header is treated as anonymous and redirected
+//     to the login page. See eagletrack-api.client.ts.
+//   * `__platenumber` DOES NOT EXIST on the live roster. The documented
+//     custom field is simply absent from the payload.
+//   * a first-class `plate` field does exist, but is empty on every row
+//     of the deployment tested.
+//   * the plate is carried in `name` (e.g. "ADY2531").
+//
+// THREE DIFFERENCES FROM CARTRACK worth stating up front, because they
 // are the shape assumptions most likely to be wrong in the field:
 //
 //  1. `last` returns `data` as an OBJECT KEYED BY UIN, not an array.
@@ -19,6 +26,10 @@
 //     tracker id.
 //  2. Failure is signalled IN THE BODY (`error !== 0`) on an HTTP 200,
 //     not by status code. The client throws on both.
+//  3. Content-Type is meaningless: the live deployment labels its JSON
+//     envelope `text/html; charset=UTF-8`, and also answers with a real
+//     HTML login page under the same status and Content-Type when a
+//     request is unauthenticated. Nothing may branch on it.
 
 import type { EagleTrackSignalQuality } from './eagletrack-io.map';
 
@@ -79,25 +90,53 @@ export type EagleTrackLastResponse = EagleTrackEnvelope<Record<string, EagleTrac
  * One row of GET /api2/trackers -- the roster used to build the
  * uin -> internal-vehicle match table.
  *
- * `__platenumber` is a vendor CUSTOM FIELD, not a first-class one. It is
- * frequently blank and, in the vendor's own sample data, frequently
- * junk ("abc", "deef"). It is nonetheless the only plate-shaped field
- * available -- see eagletrack.adapter.ts's header for the matching
- * discipline this forces.
+ * THREE PLATE-BEARING FIELDS, none of them guaranteed. All three are
+ * optional here because on the live deployment tested, exactly one of
+ * them was usable:
+ *
+ *   * `plate` -- first-class, and PRESENT on the live response, but
+ *     empty ("") on every row of it. Preferred when populated because it
+ *     is the field the vendor's own UI labels as the plate.
+ *   * `__platenumber` -- a vendor CUSTOM field, documented but entirely
+ *     ABSENT from the live response. Where deployments do populate it,
+ *     the vendor's own sample data shows it is frequently junk ("abc",
+ *     "deef"). Kept in the matching order for those deployments; not
+ *     relied on.
+ *   * `name` -- free text, and in practice where the plate actually
+ *     lives ("ADY2531", "AFU0078"). Also legitimately holds non-plates
+ *     ("DashCam2") and plates buried in prose.
+ *
+ * See eagletrack.adapter.ts's header for the order these are tried in
+ * and why matching on `name` is exact-only.
  */
 export interface EagleTrackTracker {
   id?: string;
   uin: string;
+  /** Free text. On the live deployment this is where the plate is (e.g. "ADY2531"). */
   name?: string;
   model?: string;
   /** Owning userid within the vendor platform. Recorded, not used for scoping -- our tenancy is our own. */
   belong?: string;
   image?: string | false;
   expirationDate?: string | false;
+  /** First-class plate field. Present but empty on the live deployment tested. */
+  plate?: string;
+  /** Documented vendor custom field. Absent from the live deployment tested. */
   __platenumber?: string;
   __phonenumber?: string;
   [customField: string]: unknown;
 }
+
+/**
+ * Which roster field a tracker's vehicle match came from.
+ *
+ * Recorded rather than discarded for the same reason
+ * EagleTrackReadingMetadata.odometerSourceCode is: when a link turns out
+ * to be wrong, the first question is "what did we match on", and
+ * answering it from a counter is cheaper than re-deriving it from a
+ * vendor payload nobody kept.
+ */
+export type EagleTrackMatchSource = 'plate' | 'platenumber' | 'name';
 
 /** GET /api2/trackers. `refData` is vendor UI metadata and is deliberately ignored. */
 export type EagleTrackTrackersResponse = EagleTrackEnvelope<EagleTrackTracker[]>;
@@ -139,6 +178,19 @@ export interface EagleTrackSyncResult {
   tenantId: string;
   /** Trackers whose reading was matched to a vehicle AND ingested. */
   matched: number;
+  /**
+   * How the trackers that DID resolve to a vehicle were matched, by
+   * roster field. Sums to `matched + skippedNoFix` -- a tracker whose
+   * fix was unusable was still matched to a vehicle, so it is counted
+   * here even though it is excluded from `matched`.
+   *
+   * Operationally this is the number that answers "is our matching
+   * standing on the fragile field?". On the deployment this integration
+   * was tested against, a healthy sync reports everything under `name`
+   * and nothing under `plate` or `platenumber`; a sudden shift between
+   * buckets means the vendor-side data changed under us.
+   */
+  matchedBy: Record<EagleTrackMatchSource, number>;
   /** Matched, but the fix was not newer than the one already stored -- see the adapter's staleness guard. */
   skippedStale: number;
   /** Matched, but the payload carried no usable GPS fix (missing/out-of-range/null-island coordinates). */

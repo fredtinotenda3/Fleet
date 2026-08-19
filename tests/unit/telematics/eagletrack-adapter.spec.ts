@@ -15,7 +15,7 @@ import {
   hasUsableFix,
   mapStatusToTelematicsData,
   parseEagleTrackDate,
-  plateFromTracker,
+  plateCandidatesFromTracker,
   eagletrackDeviceIdFor,
 } from '../../../modules/telematics/adapters/eagletrack/eagletrack.adapter';
 import { EAGLETRACK_IO } from '../../../modules/telematics/adapters/eagletrack/eagletrack-io.map';
@@ -113,20 +113,71 @@ describe('hasUsableFix', () => {
   });
 });
 
-describe('plateFromTracker', () => {
-  it('uses __platenumber when it is present and non-empty', () => {
-    expect(plateFromTracker({ uin: '1', __platenumber: 'ABC 123' })).toBe('ABC 123');
-    expect(plateFromTracker({ uin: '1', __platenumber: '  ABC 123  ' })).toBe('ABC 123');
+describe('plateCandidatesFromTracker', () => {
+  it('orders candidates plate -> __platenumber -> name', () => {
+    expect(
+      plateCandidatesFromTracker({ uin: '1', plate: 'AAA111', __platenumber: 'BBB222', name: 'CCC333' })
+    ).toEqual([
+      { value: 'AAA111', source: 'plate' },
+      { value: 'BBB222', source: 'platenumber' },
+      { value: 'CCC333', source: 'name' },
+    ]);
   });
 
-  it('returns null rather than falling back to `name` -- no fuzzy matching, by design', () => {
-    // "BEV 664" looks like a plate. Guessing would attribute another
-    // vehicle's GPS trace, odometer and alerts to this one.
-    expect(plateFromTracker({ uin: '1', name: 'BEV 664' })).toBeNull();
-    expect(plateFromTracker({ uin: '1', name: 'PT201B abc long long title name' })).toBeNull();
-    expect(plateFromTracker({ uin: '1', __platenumber: '' })).toBeNull();
-    expect(plateFromTracker({ uin: '1', __platenumber: '   ' })).toBeNull();
-    expect(plateFromTracker(undefined)).toBeNull();
+  it('offers `name` when the fields the vendor documents are blank or absent -- the live deployment shape', () => {
+    // Real GET /api2/trackers row: plate is "", __platenumber does not
+    // exist, the plate is in name. Matching exclusively on __platenumber
+    // (the previous rule) matched nothing at all here.
+    expect(plateCandidatesFromTracker({ uin: '865585040533451', name: 'ADY2531', plate: '' })).toEqual([
+      { value: 'ADY2531', source: 'name' },
+    ]);
+  });
+
+  it('skips absent, blank and whitespace-only values without a database round trip', () => {
+    expect(plateCandidatesFromTracker({ uin: '1', plate: '', __platenumber: '   ' })).toEqual([]);
+    expect(plateCandidatesFromTracker({ uin: '1' })).toEqual([]);
+    expect(plateCandidatesFromTracker(undefined)).toEqual([]);
+  });
+
+  it('trims but does NOT otherwise normalise -- matching stays exact', () => {
+    expect(plateCandidatesFromTracker({ uin: '1', plate: '  ABC 123  ' })).toEqual([
+      { value: 'ABC 123', source: 'plate' },
+    ]);
+    // Internal spacing is preserved: "ADY 2531" is not silently turned
+    // into "ADY2531". If a deployment needs that, it is a data-cleanup
+    // decision, not something to guess at per reading.
+    expect(plateCandidatesFromTracker({ uin: '1', name: 'ADY 2531' })[0].value).toBe('ADY 2531');
+  });
+
+  it('collapses duplicates case-insensitively, matching how findByLicensePlate compares', () => {
+    expect(plateCandidatesFromTracker({ uin: '1', plate: 'ady2531', name: 'ADY2531' })).toEqual([
+      { value: 'ady2531', source: 'plate' },
+    ]);
+  });
+
+  it('ignores non-string values -- an object here would reach a Mongo filter as an operator', () => {
+    // The declared field types are our transcription of a vendor
+    // document, not a contract the wire honours.
+    const hostile = {
+      uin: '1',
+      plate: { $ne: null } as unknown as string,
+      __platenumber: 42 as unknown as string,
+      name: ['ADY2531'] as unknown as string,
+    };
+
+    expect(plateCandidatesFromTracker(hostile)).toEqual([]);
+  });
+
+  it('still offers a name that merely LOOKS unlike a plate -- the vehicle table decides, not a regex', () => {
+    // These are offered as candidates and will simply fail to match. No
+    // plate-shaped heuristic gets to pre-emptively discard them, because
+    // such a heuristic would have to encode every jurisdiction's format.
+    expect(plateCandidatesFromTracker({ uin: '1', name: 'PT201B abc long long title name' })).toEqual([
+      { value: 'PT201B abc long long title name', source: 'name' },
+    ]);
+    expect(plateCandidatesFromTracker({ uin: '1', name: 'DashCam2' })).toEqual([
+      { value: 'DashCam2', source: 'name' },
+    ]);
   });
 });
 
@@ -260,8 +311,11 @@ jest.mock('../../../modules/telematics/repositories/telematics.repository', () =
     updateDeviceLastPing: jest.fn(),
   },
 }));
+// The API client logs too (endpoint only, never the token -- see
+// tests/security/telematics-eagletrack-token-leak.spec.ts), so the mock
+// has to cover more than logError or every request throws.
 jest.mock('../../../infrastructure/monitoring/logger', () => ({
-  monitoring: { logError: jest.fn() },
+  monitoring: { logError: jest.fn(), logWarn: jest.fn(), logDebug: jest.fn(), logInfo: jest.fn() },
 }));
 
 // Imported after the mocks so the adapter picks them up.
@@ -278,7 +332,16 @@ const { telematicsRepository } = require('../../../modules/telematics/repositori
 
 const TENANT = 'willsgrove-farm-enterprises-9e80ed';
 
-/** Installs a fake fetch that answers /api2/trackers and /api2/last from the supplied fixtures. */
+/**
+ * Installs a fake fetch that answers /api2/trackers and /api2/last from
+ * the supplied fixtures.
+ *
+ * Serves the body from `text()`, not `json()`: the client reads the body
+ * as text and parses it itself, because this platform's Content-Type
+ * says `text/html` whether the body is JSON or its login page. A stub
+ * that only implemented json() would make every request look like an
+ * unauthenticated one.
+ */
 function stubApi(roster: EagleTrackTracker[], last: Record<string, EagleTrackTrackerStatus>) {
   (global as unknown as { fetch: unknown }).fetch = jest.fn(async (url: unknown) => {
     const href = String(url);
@@ -286,7 +349,7 @@ function stubApi(roster: EagleTrackTracker[], last: Record<string, EagleTrackTra
       ? { error: 0, msg: '', data: roster }
       : { error: 0, msg: '', data: last };
 
-    return { ok: true, status: 200, statusText: 'OK', json: async () => body, text: async () => '' };
+    return { ok: true, status: 200, statusText: 'OK', text: async () => JSON.stringify(body) };
   });
 }
 
@@ -464,8 +527,7 @@ describe('EagleTrackAdapter.syncOrganization', () => {
       ok: true,
       status: 200,
       statusText: 'OK',
-      json: async () => ({ error: 101, msg: 'Invalid token' }),
-      text: async () => '',
+      text: async () => JSON.stringify({ error: 101, msg: 'Invalid token' }),
     }));
 
     const result = await new EagleTrackAdapter().syncOrganization(TENANT);
@@ -477,5 +539,220 @@ describe('EagleTrackAdapter.syncOrganization', () => {
       'error',
       expect.stringContaining('101')
     );
+  });
+});
+
+// ---------------------------------------------------------------------
+// Matching order, end to end through syncOrganization
+// ---------------------------------------------------------------------
+//
+// The unit tests above prove which CANDIDATES a roster row yields. These
+// prove what the adapter does with them: which lookups it issues, in what
+// order, when it stops, and what it reports afterwards.
+
+describe('EagleTrackAdapter vehicle matching order', () => {
+  const originalFetch = global.fetch;
+
+  /** Three rows from the real GET /api2/trackers response, trimmed to the fields matching uses. */
+  const LIVE_ROSTER: EagleTrackTracker[] = [
+    { id: '1332', uin: '865585040533451', name: 'ADY2531', model: '10104', belong: 'Willsgrove', plate: '' },
+    { id: '1317', uin: '861100068912274', name: 'AFU0078', model: '10192', belong: 'Willsgrove', plate: '' },
+    { id: '1336', uin: '865585040464392', name: 'ADL5345', model: '10104', belong: 'Willsgrove', plate: '' },
+  ];
+
+  const liveLast = (): Record<string, EagleTrackTrackerStatus> => ({
+    '865585040533451': { uin: '865585040533451', lat: -17.82, lng: 31.05, date: '2026-08-19 08:40:00', speed: 42 },
+    '861100068912274': { uin: '861100068912274', lat: -17.83, lng: 31.06, date: '2026-08-19 08:40:00', speed: 0 },
+    '865585040464392': { uin: '865585040464392', lat: -17.84, lng: 31.07, date: '2026-08-19 08:40:00', speed: 12 },
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    eagletrackConfigRepository.getResolvedConfig.mockResolvedValue({
+      tenantId: TENANT,
+      enabled: true,
+      domain: 'https://gps.example.com',
+      token: 'secret-token-value',
+    });
+    telematicsRepository.getDevice.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    (global as unknown as { fetch: unknown }).fetch = originalFetch;
+  });
+
+  it('matches the live deployment roster on `name`, which the previous __platenumber-only rule could not', async () => {
+    // The regression this change exists to fix: plate is "",
+    // __platenumber is absent, so the old rule produced three unmatched
+    // trackers and a sync that looked like "this tenant has no vehicles".
+    stubApi(LIVE_ROSTER, liveLast());
+    vehicleRepository.findByLicensePlate.mockImplementation(async (plate: string) =>
+      ['ADY2531', 'AFU0078', 'ADL5345'].includes(plate) ? { _id: `veh-${plate}`, license_plate: plate } : null
+    );
+
+    const result = await new EagleTrackAdapter().syncOrganization(TENANT);
+
+    expect(result.matched).toBe(3);
+    expect(result.unmatchedTrackers).toEqual([]);
+    expect(result.matchedBy).toEqual({ plate: 0, platenumber: 0, name: 3 });
+    expect(telematicsService.ingestTelematicsData).toHaveBeenCalledTimes(3);
+  });
+
+  it('prefers `plate` over `name` when both resolve to a vehicle, and stops after the first match', async () => {
+    stubApi([{ uin: '1', plate: 'AAA111', name: 'BBB222' }], {
+      '1': { uin: '1', lat: -17.8, lng: 31.05, date: '2026-08-19 08:00:00' },
+    });
+    vehicleRepository.findByLicensePlate.mockImplementation(async (plate: string) => ({ _id: `veh-${plate}` }));
+
+    const result = await new EagleTrackAdapter().syncOrganization(TENANT);
+
+    expect(result.matchedBy).toEqual({ plate: 1, platenumber: 0, name: 0 });
+    // `name` must not even be queried once `plate` has resolved.
+    expect(vehicleRepository.findByLicensePlate).toHaveBeenCalledTimes(1);
+    expect(vehicleRepository.findByLicensePlate).toHaveBeenCalledWith('AAA111', TENANT);
+    expect(telematicsService.ingestTelematicsData).toHaveBeenCalledWith(
+      expect.objectContaining({ vehicleId: 'veh-AAA111' })
+    );
+  });
+
+  it('falls through a junk `plate` and `__platenumber` to a `name` that does match', async () => {
+    // Falling through rather than first-field-wins is the point: a stale
+    // vendor plate field would otherwise permanently mask a good name,
+    // and every candidate still has to equal a real plate in the tenant.
+    stubApi([{ uin: '1', plate: 'GONE01', __platenumber: 'abc', name: 'ADY2531' }], {
+      '1': { uin: '1', lat: -17.8, lng: 31.05, date: '2026-08-19 08:00:00' },
+    });
+    vehicleRepository.findByLicensePlate.mockImplementation(async (plate: string) =>
+      plate === 'ADY2531' ? { _id: 'veh-1' } : null
+    );
+
+    const result = await new EagleTrackAdapter().syncOrganization(TENANT);
+
+    expect(result.matched).toBe(1);
+    expect(result.matchedBy).toEqual({ plate: 0, platenumber: 0, name: 1 });
+    expect(vehicleRepository.findByLicensePlate.mock.calls.map((c: unknown[]) => c[0])).toEqual([
+      'GONE01',
+      'abc',
+      'ADY2531',
+    ]);
+  });
+
+  it('still matches on `__platenumber` for deployments that populate it -- Cartrack-era behaviour is preserved', async () => {
+    stubApi([{ uin: '1', plate: '', __platenumber: 'ABC123', name: 'DashCam2' }], {
+      '1': { uin: '1', lat: -17.8, lng: 31.05, date: '2026-08-19 08:00:00' },
+    });
+    vehicleRepository.findByLicensePlate.mockImplementation(async (plate: string) =>
+      plate === 'ABC123' ? { _id: 'veh-1' } : null
+    );
+
+    const result = await new EagleTrackAdapter().syncOrganization(TENANT);
+
+    expect(result.matched).toBe(1);
+    expect(result.matchedBy).toEqual({ plate: 0, platenumber: 1, name: 0 });
+  });
+
+  it('issues ONE lookup when two fields carry the same plate in different casing', async () => {
+    stubApi([{ uin: '1', plate: 'ady2531', name: 'ADY2531' }], {
+      '1': { uin: '1', lat: -17.8, lng: 31.05, date: '2026-08-19 08:00:00' },
+    });
+    vehicleRepository.findByLicensePlate.mockResolvedValue({ _id: 'veh-1' });
+
+    await new EagleTrackAdapter().syncOrganization(TENANT);
+
+    expect(vehicleRepository.findByLicensePlate).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a tracker whose every candidate fails as unmatched, and never auto-creates a vehicle', async () => {
+    stubApi([{ uin: '1', plate: 'NOPE01', name: 'PT201B abc long long title name' }], {
+      '1': { uin: '1', lat: -17.8, lng: 31.05, date: '2026-08-19 08:00:00' },
+    });
+    vehicleRepository.findByLicensePlate.mockResolvedValue(null);
+
+    const result = await new EagleTrackAdapter().syncOrganization(TENANT);
+
+    expect(result.unmatchedTrackers).toEqual(['1']);
+    expect(result.matchedBy).toEqual({ plate: 0, platenumber: 0, name: 0 });
+    expect(telematicsService.ingestTelematicsData).not.toHaveBeenCalled();
+    expect(telematicsRepository.registerDevice).not.toHaveBeenCalled();
+  });
+
+  it('issues NO lookup at all for a roster row with nothing usable', async () => {
+    stubApi([{ uin: '1', plate: '', name: '   ' }], {
+      '1': { uin: '1', lat: -17.8, lng: 31.05, date: '2026-08-19 08:00:00' },
+    });
+
+    const result = await new EagleTrackAdapter().syncOrganization(TENANT);
+
+    expect(result.unmatchedTrackers).toEqual(['1']);
+    expect(vehicleRepository.findByLicensePlate).not.toHaveBeenCalled();
+  });
+
+  it('issues NO lookup for a non-string field, which would otherwise reach a Mongo filter as an operator', async () => {
+    stubApi([{ uin: '1', plate: { $ne: null } as unknown as string }], {
+      '1': { uin: '1', lat: -17.8, lng: 31.05, date: '2026-08-19 08:00:00' },
+    });
+
+    const result = await new EagleTrackAdapter().syncOrganization(TENANT);
+
+    expect(result.unmatchedTrackers).toEqual(['1']);
+    expect(vehicleRepository.findByLicensePlate).not.toHaveBeenCalled();
+  });
+
+  it('counts a matched-but-unusable fix in matchedBy, so the counters sum to matched + skippedNoFix', async () => {
+    stubApi(
+      [
+        { uin: '1', name: 'ADY2531' },
+        { uin: '2', name: 'AFU0078' },
+      ],
+      {
+        '1': { uin: '1', lat: -17.8, lng: 31.05, date: '2026-08-19 08:00:00' },
+        // Null island: matched to a vehicle, but no usable position.
+        '2': { uin: '2', lat: 0, lng: 0, date: '2026-08-19 08:00:00' },
+      }
+    );
+    vehicleRepository.findByLicensePlate.mockImplementation(async (plate: string) => ({ _id: `veh-${plate}` }));
+
+    const result = await new EagleTrackAdapter().syncOrganization(TENANT);
+
+    expect(result.matched).toBe(1);
+    expect(result.skippedNoFix).toBe(1);
+    const total = result.matchedBy.plate + result.matchedBy.platenumber + result.matchedBy.name;
+    expect(total).toBe(result.matched + result.skippedNoFix);
+  });
+
+  it('records which field the link came from on the registered device', async () => {
+    // If a tracker turns out to be attached to the wrong vehicle, this is
+    // the first thing anyone needs, and it cannot be re-derived later
+    // from a vendor payload nobody stored.
+    stubApi([{ uin: '865585040533451', plate: '', name: 'ADY2531' }], {
+      '865585040533451': { uin: '865585040533451', lat: -17.8, lng: 31.05, date: '2026-08-19 08:00:00' },
+    });
+    vehicleRepository.findByLicensePlate.mockResolvedValue({ _id: 'veh-1' });
+
+    await new EagleTrackAdapter().syncOrganization(TENANT);
+
+    expect(telematicsRepository.registerDevice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'eagletrack-865585040533451',
+        vehicleId: 'veh-1',
+        metadata: expect.objectContaining({ matchedBy: 'name', trackerName: 'ADY2531' }),
+      }),
+      TENANT
+    );
+  });
+
+  it('keeps the vehicle lookup tenant-scoped for every candidate, not just the first', async () => {
+    stubApi([{ uin: '1', plate: 'GONE01', __platenumber: 'GONE02', name: 'ADY2531' }], {
+      '1': { uin: '1', lat: -17.8, lng: 31.05, date: '2026-08-19 08:00:00' },
+    });
+    vehicleRepository.findByLicensePlate.mockImplementation(async (plate: string) =>
+      plate === 'ADY2531' ? { _id: 'veh-1' } : null
+    );
+
+    await new EagleTrackAdapter().syncOrganization(TENANT);
+
+    for (const call of vehicleRepository.findByLicensePlate.mock.calls) {
+      expect(call[1]).toBe(TENANT);
+    }
   });
 });
