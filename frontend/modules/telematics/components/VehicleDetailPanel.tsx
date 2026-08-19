@@ -1,0 +1,156 @@
+// frontend/modules/telematics/components/VehicleDetailPanel.tsx
+//
+// Shows every live telemetry field already ingested and stored for the
+// selected vehicle -- not just the compact speed/fuel shown on the map
+// marker and vehicle list. Backed by GET
+// /api/telematics/live-map/vehicle/[vehicleId] (see useVehicleDetail),
+// which reads the vehicle's latest TelematicsData row through the same
+// org-unit-scoped path the rest of the live map uses.
+//
+// A field with no value for this vehicle (device doesn't report it,
+// provider doesn't populate providerMetadata, etc.) renders "No data"
+// rather than a bare 0/blank, which would read as a real reading of
+// zero -- see LiveMapVehicleDetail's doc comment for which fields are
+// optional for exactly this reason.
+
+'use client';
+
+import type { ReactNode } from 'react';
+import { Loader2, X } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/frontend/shared/ui/data-display/badge';
+import { Button } from '@/frontend/shared/ui/primitives/button';
+import type { LiveMapVehicle, LiveMapVehicleDetail, LiveMapVehicleStatus, LiveMapDataSource } from '../types';
+
+interface VehicleDetailPanelProps {
+  vehicle: LiveMapVehicle;
+  detail: LiveMapVehicleDetail | null | undefined;
+  isLoading: boolean;
+  onClose: () => void;
+  className?: string;
+}
+
+const STATUS_BADGE: Record<LiveMapVehicleStatus, { label: string; className: string }> = {
+  moving: { label: 'Moving', className: 'bg-success-bg text-success' },
+  idle: { label: 'Idle', className: 'bg-warning-bg text-warning' },
+  offline: { label: 'Offline', className: 'bg-muted text-muted-foreground' },
+};
+
+const SOURCE_LABEL: Record<LiveMapDataSource, string> = {
+  cartrack: 'Cartrack',
+  eagletrack: 'Eagle Track',
+  demo: 'Demo',
+  unavailable: 'Unavailable',
+};
+
+/** A single label/value row. Renders "No data" (muted) when `value` is null/undefined rather than letting a caller accidentally pass a misleading 0. */
+function Stat({ label, value }: { label: string; value: string | number | null | undefined }) {
+  const hasValue = value !== null && value !== undefined && value !== '';
+  return (
+    <div className="flex items-center justify-between gap-3 py-1">
+      <span className="text-caption text-muted-foreground">{label}</span>
+      <span className={cn('text-body-sm text-right', hasValue ? 'text-foreground font-medium' : 'text-muted-foreground italic')}>
+        {hasValue ? value : 'No data'}
+      </span>
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="space-y-0.5">
+      <h4 className="text-caption font-medium uppercase tracking-wide text-muted-foreground">{title}</h4>
+      <div className="divide-y divide-border/60">{children}</div>
+    </div>
+  );
+}
+
+function formatFixAge(seconds: number | null): string | null {
+  if (seconds === null) return null;
+  if (seconds < 60) return `${Math.round(seconds)}s ago`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
+  return `${Math.round(seconds / 3600)}h ago`;
+}
+
+export function VehicleDetailPanel({ vehicle, detail, isLoading, onClose, className }: VehicleDetailPanelProps) {
+  const status = STATUS_BADGE[vehicle.status];
+
+  return (
+    <div className={cn('surface-card p-4 space-y-4', className)}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="text-base font-medium text-foreground truncate">{vehicle.licensePlate}</h3>
+            <Badge className={status.className}>{status.label}</Badge>
+            <Badge variant="outline">{SOURCE_LABEL[vehicle.source]}</Badge>
+          </div>
+          <p className="text-body-sm text-muted-foreground truncate">
+            {vehicle.make} {vehicle.model}
+          </p>
+        </div>
+        <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close vehicle detail">
+          <X className="w-4 h-4" aria-hidden="true" />
+        </Button>
+      </div>
+
+      {isLoading && !detail ? (
+        <div className="flex items-center justify-center py-8 text-muted-foreground">
+          <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+        </div>
+      ) : !detail ? (
+        <p className="py-6 text-center text-body-sm text-muted-foreground">
+          No telemetry has been recorded for this vehicle yet.
+        </p>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <Section title="Location">
+            <Stat label="Latitude" value={detail.location ? detail.location.lat.toFixed(5) : null} />
+            <Stat label="Longitude" value={detail.location ? detail.location.lng.toFixed(5) : null} />
+            <Stat label="Speed" value={detail.location ? `${Math.round(detail.location.speed)} km/h` : null} />
+            <Stat label="Heading" value={detail.location ? `${Math.round(detail.location.heading)}°` : null} />
+            <Stat label="Last ping" value={formatFixAge(detail.fixAgeSeconds)} />
+          </Section>
+
+          <Section title="Odometer & trip">
+            <Stat label="Odometer" value={typeof detail.odometer === 'number' ? `${Math.round(detail.odometer)} km` : null} />
+            <Stat label="Trip distance" value={detail.trip ? `${detail.trip.tripDistance.toFixed(1)} km` : null} />
+            <Stat label="Trip duration" value={detail.trip ? `${Math.round(detail.trip.tripDuration)} min` : null} />
+            <Stat label="Average speed" value={detail.trip ? `${Math.round(detail.trip.averageSpeed)} km/h` : null} />
+            <Stat label="Max speed" value={detail.trip ? `${Math.round(detail.trip.maxSpeed)} km/h` : null} />
+            <Stat label="Idle time" value={detail.trip ? `${Math.round(detail.trip.idleTime)} min` : null} />
+          </Section>
+
+          <Section title="Engine">
+            <Stat label="Fuel level" value={typeof detail.engine?.fuelLevel === 'number' ? `${Math.round(detail.engine.fuelLevel)}%` : null} />
+            <Stat label="RPM" value={typeof detail.engine?.rpm === 'number' ? Math.round(detail.engine.rpm) : null} />
+            <Stat label="Coolant temp" value={typeof detail.engine?.coolantTemp === 'number' ? `${Math.round(detail.engine.coolantTemp)}°C` : null} />
+            <Stat label="Throttle" value={typeof detail.engine?.throttlePosition === 'number' ? `${Math.round(detail.engine.throttlePosition)}%` : null} />
+            <Stat label="Engine load" value={typeof detail.engine?.engineLoad === 'number' ? `${Math.round(detail.engine.engineLoad)}%` : null} />
+            <Stat
+              label="Fault codes"
+              value={detail.engine?.dtcCodes && detail.engine.dtcCodes.length > 0 ? detail.engine.dtcCodes.join(', ') : null}
+            />
+          </Section>
+
+          <Section title="Fuel">
+            <Stat
+              label="Consumption rate"
+              value={typeof detail.fuel?.consumptionRate === 'number' ? `${detail.fuel.consumptionRate.toFixed(1)} L/100km` : null}
+            />
+            <Stat
+              label="Instant consumption"
+              value={typeof detail.fuel?.instantConsumption === 'number' ? `${detail.fuel.instantConsumption.toFixed(1)} L/h` : null}
+            />
+            <Stat label="Fuel used" value={typeof detail.fuel?.fuelUsed === 'number' ? `${detail.fuel.fuelUsed.toFixed(1)} L` : null} />
+          </Section>
+
+          <Section title="Device health">
+            <Stat label="Battery" value={typeof detail.deviceHealth?.batteryPercent === 'number' ? `${Math.round(detail.deviceHealth.batteryPercent)}%` : null} />
+            <Stat label="GSM signal" value={typeof detail.deviceHealth?.gsmQuality === 'number' ? `${detail.deviceHealth.gsmQuality}/31` : null} />
+            <Stat label="GPS satellites" value={typeof detail.deviceHealth?.gpsSatellites === 'number' ? detail.deviceHealth.gpsSatellites : null} />
+          </Section>
+        </div>
+      )}
+    </div>
+  );
+}

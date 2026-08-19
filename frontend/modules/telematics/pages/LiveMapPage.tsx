@@ -9,19 +9,31 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { RefreshCw, MapPin, AlertTriangle } from 'lucide-react';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { PageLoader } from '@/frontend/shared/loading/PageLoader';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
 import { useSessionStore } from '@/frontend/shared/store/session.store';
-import { useLiveMap, useVehicleRouteHistory } from '../hooks';
-import { LiveMapSvg } from '../components/LiveMapSvg';
+import { useLiveMap, useVehicleRouteHistory, useVehicleDetail } from '../hooks';
 import { LiveMapLegend } from '../components/LiveMapLegend';
 import { LiveMapVehicleList } from '../components/LiveMapVehicleList';
+import { VehicleDetailPanel } from '../components/VehicleDetailPanel';
 import { DemoModeToggle } from '../components/DemoModeToggle';
 import { canViewLiveMap, canToggleDemoMode } from '../utils';
 import type { LiveMapVehicleStatus } from '../types';
+
+// Leaflet touches `window` at module-eval time, which breaks under
+// Next's server render of this client component -- loaded client-only
+// via next/dynamic, same pattern Next's own docs use for Leaflet.
+const LiveMapLeaflet = dynamic(
+  () => import('../components/LiveMapLeaflet').then((mod) => mod.LiveMapLeaflet),
+  {
+    ssr: false,
+    loading: () => <div className="flex items-center justify-center w-full h-full text-body-sm text-muted-foreground">Loading map…</div>,
+  }
+);
 
 export function LiveMapPage() {
   const user = useSessionStore((s) => s.user);
@@ -33,9 +45,11 @@ export function LiveMapPage() {
 
   const { data: payload, isLoading, isError, refetch, isFetching } = useLiveMap({ enabled: canView });
   const { data: routeHistory } = useVehicleRouteHistory(selectedVehicleId ?? undefined);
+  const { data: vehicleDetail, isLoading: isDetailLoading } = useVehicleDetail(selectedVehicleId ?? undefined);
 
   const vehicles = payload?.vehicles ?? [];
   const geofences = payload?.geofences ?? [];
+  const selectedVehicle = vehicles.find((v) => v.vehicleId === selectedVehicleId) ?? null;
 
   // If the selected vehicle drops out of scope/list (deleted, filtered,
   // reassigned to another org unit) between polls, clear the selection
@@ -112,7 +126,7 @@ export function LiveMapPage() {
             </div>
 
             <div className="p-2 overflow-hidden surface-card" style={{ minHeight: 560 }}>
-              <LiveMapSvg
+              <LiveMapLeaflet
                 vehicles={vehicles}
                 geofences={geofences}
                 routePoints={routeHistory?.points ?? []}
@@ -122,6 +136,15 @@ export function LiveMapPage() {
               />
             </div>
           </div>
+
+          {selectedVehicle && (
+            <VehicleDetailPanel
+              vehicle={selectedVehicle}
+              detail={vehicleDetail}
+              isLoading={isDetailLoading}
+              onClose={() => setSelectedVehicleId(null)}
+            />
+          )}
         </div>
       )}
     </div>

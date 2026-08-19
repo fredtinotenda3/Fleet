@@ -69,3 +69,57 @@ export interface LiveMapRouteHistory {
   vehicleId: string;
   points: LiveMapRoutePoint[];
 }
+
+/**
+ * Full live-telemetry detail for one vehicle, as already ingested and
+ * stored on TelematicsData -- shown in the vehicle detail panel when a
+ * vehicle is selected on the live map. A superset of the compact
+ * `LiveMapVehicle.position` used for the map marker itself, which only
+ * carries what's needed to draw a pin (lat/lng/speed/heading/fuelLevel).
+ *
+ * Every field mirrors an existing TelematicsData/EagleTrackReadingMetadata
+ * field one-to-one -- nothing here is invented. A field that is optional
+ * on the source type stays optional here, so the UI can render "No data"
+ * for it instead of a misleading 0/blank.
+ */
+export interface LiveMapVehicleDetail {
+  vehicleId: string;
+  status: LiveMapVehicleStatus;
+  source: LiveMapDataSource;
+  location: {
+    lat: number;
+    lng: number;
+    speed: number;
+    heading: number;
+    timestamp: string;
+  } | null;
+  /** Seconds since this fix was recorded; null when the vehicle has never reported a fix. */
+  fixAgeSeconds: number | null;
+  odometer?: number;
+  trip?: {
+    tripDistance: number;
+    tripDuration: number;
+    averageSpeed: number;
+    maxSpeed: number;
+    idleTime: number;
+  };
+  engine?: {
+    rpm?: number;
+    coolantTemp?: number;
+    fuelLevel?: number;
+    throttlePosition?: number;
+    engineLoad?: number;
+    dtcCodes?: string[];
+  };
+  fuel?: {
+    consumptionRate?: number;
+    instantConsumption?: number;
+    fuelUsed?: number;
+  };
+  /** Device-health signals -- currently only populated for Eagle Track fixes (see EagleTrackReadingMetadata.signalQuality); absent for Cartrack/demo. */
+  deviceHealth?: {
+    batteryPercent?: number;
+    gsmQuality?: number;
+    gpsSatellites?: number;
+  };
+}

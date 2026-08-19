@@ -3,6 +3,7 @@
 import type {
   LiveMapPayload,
   LiveMapVehicle,
+  LiveMapVehicleDetail,
   LiveMapGeofence,
   LiveMapVehicleStatus,
   LiveMapDataSource,
@@ -14,6 +15,7 @@ import type {
 export type {
   LiveMapPayload,
   LiveMapVehicle,
+  LiveMapVehicleDetail,
   LiveMapGeofence,
   LiveMapVehicleStatus,
   LiveMapDataSource,

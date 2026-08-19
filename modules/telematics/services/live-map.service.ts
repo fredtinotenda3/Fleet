@@ -29,6 +29,8 @@ import { simulateVehicleState, SimulatedVehicleState } from '../demo/demo-simula
 import {
   LiveMapPayload,
   LiveMapVehicle,
+  LiveMapVehicleDetail,
+  LiveMapVehicleStatus,
   LiveMapGeofence,
   LiveMapRouteHistory,
   LiveMapDataSource,
@@ -52,10 +54,53 @@ import { Geofence, TelematicsData } from '../types/telematics.types';
  * `provider` field on TelematicsDevice, set at registration and
  * backfilled from the prefix. Noted as a follow-up rather than done
  * here, since it touches every existing device row.
+ *
+ * The `demo-` branch is additive, for getVehicleDetail below: demo
+ * fixes are persisted through the SAME ingestTelematicsData pipeline as
+ * real ones (see maybePersistDemoSample), with deviceId `demo-<vehicleId>`,
+ * so a raw TelematicsData row read back for the detail panel needs this
+ * to label a demo fix as 'demo' rather than falling into the 'cartrack'
+ * default. resolveDemoVehicle below never calls this function -- it
+ * already knows its own source without inspecting the device id -- so
+ * this branch cannot change that path's behaviour.
  */
 export function providerSourceFor(deviceId: string | undefined): LiveMapDataSource {
   if (typeof deviceId === 'string' && deviceId.startsWith('eagletrack-')) return 'eagletrack';
+  if (typeof deviceId === 'string' && deviceId.startsWith('demo-')) return 'demo';
   return 'cartrack';
+}
+
+/**
+ * Pulls device-health signals out of providerMetadata for the vehicle
+ * detail panel, without assuming any particular provider populated it.
+ *
+ * providerMetadata is deliberately opaque (`Record<string, unknown>` --
+ * see TelematicsData's doc comment), so this narrows defensively field
+ * by field rather than casting the whole object: only Eagle Track
+ * writes a `signalQuality` shape today (EagleTrackReadingMetadata), and
+ * this must degrade to "no device health data" rather than throw for
+ * every other provider (Cartrack, demo) whose providerMetadata is
+ * absent or shaped differently.
+ */
+function extractDeviceHealth(
+  providerMetadata: Record<string, unknown> | undefined
+): LiveMapVehicleDetail['deviceHealth'] {
+  const signalQuality = providerMetadata?.signalQuality;
+  if (!signalQuality || typeof signalQuality !== 'object') return undefined;
+
+  const { batteryPercent, gsmQuality, gpsSatellites } = signalQuality as Record<string, unknown>;
+  const health = {
+    batteryPercent: typeof batteryPercent === 'number' ? batteryPercent : undefined,
+    gsmQuality: typeof gsmQuality === 'number' ? gsmQuality : undefined,
+    gpsSatellites: typeof gpsSatellites === 'number' ? gpsSatellites : undefined,
+  };
+
+  // All three absent is the same as no signalQuality at all -- don't
+  // hand the UI an object it would just render as three "No data" rows.
+  if (health.batteryPercent === undefined && health.gsmQuality === undefined && health.gpsSatellites === undefined) {
+    return undefined;
+  }
+  return health;
 }
 
 /** Below this speed (km/h) a vehicle with a recent fix is considered idle rather than moving. */
@@ -202,6 +247,91 @@ export class LiveMapService {
       .reverse();
 
     return { vehicleId, points };
+  }
+
+  /**
+   * Full live-telemetry detail for one vehicle, for the detail panel
+   * shown when a vehicle is selected on the live map -- everything
+   * already ingested and stored on its latest TelematicsData row
+   * (engine, trip/odometer, fuel, device health), not just the compact
+   * `position` used for the map marker.
+   *
+   * SCOPING: goes through the exact same org-unit-scoped read
+   * (getLatestTelematicsDataInScope) that resolveRealVehicle uses for
+   * the map marker itself -- a caller outside the vehicle's org unit
+   * gets `null`, never another org unit's telemetry, for the same
+   * reason getVehicleRouteHistory above does.
+   *
+   * Works unchanged for demo vehicles: resolveDemoVehicle persists demo
+   * samples through the SAME ingestTelematicsData pipeline real devices
+   * use (see maybePersistDemoSample), so a demo vehicle's full engine/
+   * trip/fuel readings are already sitting in the same collection this
+   * reads from -- no separate demo-only code path is needed here.
+   */
+  async getVehicleDetail(vehicleId: string, context: TenantContext): Promise<LiveMapVehicleDetail | null> {
+    const latest = await telematicsRepository.getLatestTelematicsDataInScope(vehicleId, context);
+    if (!latest) {
+      return null;
+    }
+    return this.toVehicleDetail(vehicleId, latest);
+  }
+
+  private toVehicleDetail(vehicleId: string, latest: TelematicsData): LiveMapVehicleDetail {
+    const location = latest.location
+      ? {
+          lat: latest.location.lat,
+          lng: latest.location.lng,
+          speed: latest.location.speed,
+          heading: latest.location.heading,
+          timestamp: new Date(latest.timestamp).toISOString(),
+        }
+      : null;
+
+    const fixAgeSeconds = latest.location
+      ? Math.max(0, Math.round((Date.now() - new Date(latest.timestamp).getTime()) / 1000))
+      : null;
+
+    const ageMinutes = fixAgeSeconds !== null ? fixAgeSeconds / 60 : Infinity;
+    const status: LiveMapVehicleStatus =
+      !latest.location || ageMinutes > STALE_FIX_MINUTES
+        ? 'offline'
+        : this.statusFromSpeed(latest.location.speed);
+
+    return {
+      vehicleId,
+      status,
+      source: providerSourceFor(latest.deviceId),
+      location,
+      fixAgeSeconds,
+      odometer: latest.trip?.odometer,
+      trip: latest.trip
+        ? {
+            tripDistance: latest.trip.tripDistance,
+            tripDuration: latest.trip.tripDuration,
+            averageSpeed: latest.trip.averageSpeed,
+            maxSpeed: latest.trip.maxSpeed,
+            idleTime: latest.trip.idleTime,
+          }
+        : undefined,
+      engine: latest.engine
+        ? {
+            rpm: latest.engine.rpm,
+            coolantTemp: latest.engine.coolantTemp,
+            fuelLevel: latest.engine.fuelLevel,
+            throttlePosition: latest.engine.throttlePosition,
+            engineLoad: latest.engine.engineLoad,
+            dtcCodes: latest.engine.dtcCodes,
+          }
+        : undefined,
+      fuel: latest.fuel
+        ? {
+            consumptionRate: latest.fuel.consumptionRate,
+            instantConsumption: latest.fuel.instantConsumption,
+            fuelUsed: latest.fuel.fuelUsed,
+          }
+        : undefined,
+      deviceHealth: extractDeviceHealth(latest.providerMetadata),
+    };
   }
 
   private async resolveRealVehicle(vehicle: Vehicle, context: TenantContext): Promise<LiveMapVehicle> {

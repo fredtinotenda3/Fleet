@@ -4,6 +4,7 @@ import { apiClient } from '@/shared/utils/api-client.utils';
 import type {
   LiveMapPayload,
   LiveMapRouteHistory,
+  LiveMapVehicleDetail,
   DemoModeStatus,
   CartrackConfigStatus,
   CartrackConfigInput,
@@ -24,6 +25,17 @@ export const telematicsApi = {
     return apiClient.get<LiveMapRouteHistory>(`${BASE}/live-map/history/${vehicleId}`, {
       params: { minutes },
     });
+  },
+
+  /**
+   * GET /api/telematics/live-map/vehicle/[vehicleId] -- full live
+   * telemetry (engine, trip/odometer, fuel, device health) for the
+   * detail panel shown when a vehicle is selected on the live map.
+   * `null` when the vehicle has never reported a fix, or is outside the
+   * caller's org-unit scope.
+   */
+  async getVehicleDetail(vehicleId: string): Promise<LiveMapVehicleDetail | null> {
+    return apiClient.get<LiveMapVehicleDetail | null>(`${BASE}/live-map/vehicle/${vehicleId}`);
   },
 
   async getDemoStatus(): Promise<DemoModeStatus> {

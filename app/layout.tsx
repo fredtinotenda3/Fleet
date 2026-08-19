@@ -2,6 +2,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css"; 
+import 'leaflet/dist/leaflet.css';
 import SessionWrapper from "./session-wrapper";
 import { Toaster } from "@/frontend/shared/ui/sonner";
 import { ThemeProvider } from "next-themes";

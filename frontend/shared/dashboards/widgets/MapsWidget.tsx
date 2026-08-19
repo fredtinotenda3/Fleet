@@ -1,11 +1,12 @@
 ﻿// frontend/shared/dashboards/widgets/MapsWidget.tsx
 //
 // Dashboard preview card for the live fleet map. The full interactive
-// map (SVG-rendered, no mapping library dependency -- see
-// frontend/modules/telematics/components/LiveMapSvg.tsx) now lives at
-// /telematics/map; this widget stays a lightweight summary consuming
+// map (Leaflet + OpenStreetMap tiles -- see
+// frontend/modules/telematics/components/LiveMapLeaflet.tsx) now lives
+// at /telematics/map; this widget stays a lightweight summary consuming
 // the same GET /api/telematics/live-map payload, and links out to the
-// full page rather than duplicating the map rendering in a small card.
+// full page rather than duplicating the map rendering (or pulling
+// Leaflet into) a small dashboard card.
 
 'use client';
 

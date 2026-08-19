@@ -46,6 +46,27 @@ export class LiveMapController {
       return handleTelematicsError('LiveMapController', error);
     }
   }
+
+  /**
+   * GET /api/telematics/live-map/vehicle/[vehicleId]
+   *
+   * Full live-telemetry detail for one vehicle (engine, trip/odometer,
+   * fuel, device health), for the detail panel shown when a vehicle is
+   * selected on the live map. Same permission, same org-unit-scoped
+   * path (resolveTenantContext -> getLatestTelematicsDataInScope, see
+   * LiveMapService.getVehicleDetail) as the live map and its route
+   * history -- a vehicle outside the caller's scope returns `null`, not
+   * another org unit's telemetry.
+   */
+  async getVehicleDetail(req: NextRequest, vehicleId: string) {
+    try {
+      const context = await resolveTenantContext(req);
+      const detail = await liveMapService.getVehicleDetail(vehicleId, context);
+      return successResponse(detail);
+    } catch (error) {
+      return handleTelematicsError('LiveMapController', error);
+    }
+  }
 }
 
 export const liveMapController = new LiveMapController();
