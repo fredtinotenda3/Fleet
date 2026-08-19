@@ -73,6 +73,60 @@ const MAX_ROUTE_HISTORY_MINUTES = 24 * 60;
 /** Points are for a lightweight breadcrumb trail, not a full replay -- capped well below getTelematicsHistoryInScope's own 1000 default. */
 const MAX_ROUTE_HISTORY_POINTS = 200;
 
+/**
+ * Normalizes a vehicle id to the plain hex string every other part of
+ * the system stores/queries by.
+ *
+ * ROOT CAUSE OF THE "live-map never shows real telematics" bug: unlike
+ * every other read path in this codebase (findOne/findMany/findById/
+ * findWithPagination all route through BaseRepository.normalizeDoc,
+ * which converts Mongo's `_id: ObjectId` to `_id: string`),
+ * vehicleRepository.getFilteredVehiclesInScope() -- the query this
+ * service uses to list vehicles -- returns collection.find().toArray()
+ * RAW, with only a type-level `as Vehicle[]` cast. At runtime
+ * `vehicle._id` coming out of it is still a live ObjectId instance, not
+ * a string, even though the Vehicle type says `_id: string`.
+ *
+ * That would be harmless for a field that's only ever displayed, but
+ * this service uses vehicle._id as a JOIN KEY into tbltelematics:
+ * telematicsRepository.getLatestTelematicsDataInScope(vehicle._id, ...)
+ * builds a Mongo filter `{ vehicleId: <that value>, ... }`. Every real
+ * telematics row -- Cartrack and Eagle Track alike -- is written with
+ * `vehicleId` as a normalized STRING, because both adapters resolve
+ * their match through vehicleRepository.findByLicensePlate(), which
+ * (unlike getFilteredVehiclesInScope) DOES go through findOne() and
+ * therefore IS normalized. An ObjectId filter value can never equal a
+ * stored string, so the query silently returns zero rows for every
+ * vehicle regardless of source or demoMode -- real telematics could
+ * never surface here no matter how correctly it was ingested.
+ *
+ * Fixed at the point of use, in this service, rather than in
+ * vehicleRepository: that repository is shared by five other modules
+ * (trips, fuel, workshop, maintenance, the vehicles list itself), none
+ * of which use the id as a cross-collection join key the way this
+ * service does, so widening that fix here keeps the change scoped to
+ * live-map's own source resolution.
+ */
+function normalizeVehicleId(rawId: unknown): string | null {
+  if (typeof rawId === 'string') {
+    const trimmed = rawId.trim();
+    return trimmed ? trimmed : null;
+  }
+  // Duck-typed rather than `instanceof ObjectId` so this also normalizes
+  // anything else Mongo-ObjectId-shaped (e.g. a driver-version mismatch
+  // producing a BSON ObjectId from a different mongodb package instance,
+  // which fails `instanceof` across module boundaries but still exposes
+  // toHexString()).
+  if (
+    rawId &&
+    typeof rawId === 'object' &&
+    typeof (rawId as { toHexString?: unknown }).toHexString === 'function'
+  ) {
+    return (rawId as { toHexString: () => string }).toHexString();
+  }
+  return null;
+}
+
 export class LiveMapService {
   async getLiveMapData(context: TenantContext): Promise<LiveMapPayload> {
     const [demoState, vehiclesPage, geofences] = await Promise.all([
@@ -152,12 +206,13 @@ export class LiveMapService {
 
   private async resolveRealVehicle(vehicle: Vehicle, context: TenantContext): Promise<LiveMapVehicle> {
     const base = this.baseVehicleFields(vehicle);
+    const vehicleId = normalizeVehicleId(vehicle._id);
 
-    if (!vehicle._id) {
+    if (!vehicleId) {
       return { ...base, status: 'offline', source: 'unavailable', position: null };
     }
 
-    const latest = await telematicsRepository.getLatestTelematicsDataInScope(vehicle._id, context);
+    const latest = await telematicsRepository.getLatestTelematicsDataInScope(vehicleId, context);
     if (!latest || !latest.location) {
       return { ...base, status: 'offline', source: 'unavailable', position: null };
     }
@@ -182,17 +237,22 @@ export class LiveMapService {
 
   private async resolveDemoVehicle(vehicle: Vehicle, tenantId: string, startedAt: Date): Promise<LiveMapVehicle> {
     const base = this.baseVehicleFields(vehicle);
-    if (!vehicle._id) {
+    const vehicleId = normalizeVehicleId(vehicle._id);
+    if (!vehicleId) {
       return { ...base, status: 'offline', source: 'unavailable', position: null };
     }
 
     const elapsedSeconds = Math.max(0, (Date.now() - startedAt.getTime()) / 1000);
-    const sim = simulateVehicleState(vehicle._id, elapsedSeconds);
+    const sim = simulateVehicleState(vehicleId, elapsedSeconds);
 
     // Fire-and-forget: don't let a throttled/slow persistence write hold
     // up the map response the caller is waiting on. Failures here only
     // affect route-history depth, never the live position returned below.
-    void this.maybePersistDemoSample(vehicle._id, tenantId, sim).catch(() => undefined);
+    // Uses the SAME normalized vehicleId as above -- persisting the raw
+    // (possibly unnormalized) vehicle._id here is exactly how a stale,
+    // frozen demo row could end up permanently shadowing real telematics
+    // later (see normalizeVehicleId's doc comment).
+    void this.maybePersistDemoSample(vehicleId, tenantId, sim).catch(() => undefined);
 
     return {
       ...base,
@@ -269,7 +329,7 @@ export class LiveMapService {
 
   private baseVehicleFields(vehicle: Vehicle): Omit<LiveMapVehicle, 'status' | 'source' | 'position'> {
     return {
-      vehicleId: vehicle._id ?? '',
+      vehicleId: normalizeVehicleId(vehicle._id) ?? '',
       licensePlate: vehicle.license_plate,
       make: vehicle.make,
       model: vehicle.model,
