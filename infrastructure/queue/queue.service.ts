@@ -37,6 +37,8 @@ export enum JobType {
   DETECT_OFFLINE_DEVICES = 'detect-offline-devices',
   /** Periodic pull of every enabled tenant's Cartrack fleet status -- see workers/telemetry.worker.ts. */
   CARTRACK_SYNC = 'cartrack-sync',
+  /** Periodic pull of every enabled tenant's Eagle Track fleet status -- see workers/telemetry.worker.ts. */
+  EAGLETRACK_SYNC = 'eagletrack-sync',
 
   // Cleanup
   CLEANUP_LOGS = 'cleanup-logs',
@@ -143,6 +145,7 @@ const JOB_TYPE_QUEUE_MAP: Record<JobType, QueueName> = {
   [JobType.INGEST_TELEMETRY_BATCH]: 'telemetry-jobs',
   [JobType.DETECT_OFFLINE_DEVICES]: 'telemetry-jobs',
   [JobType.CARTRACK_SYNC]: 'telemetry-jobs',
+  [JobType.EAGLETRACK_SYNC]: 'telemetry-jobs',
   [JobType.CLEANUP_LOGS]: 'cleanup-jobs',
   [JobType.CLEANUP_SESSIONS]: 'cleanup-jobs',
   [JobType.CLEANUP_NOTIFICATIONS]: 'cleanup-jobs',

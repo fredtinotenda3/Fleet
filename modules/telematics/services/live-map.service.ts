@@ -31,8 +31,32 @@ import {
   LiveMapVehicle,
   LiveMapGeofence,
   LiveMapRouteHistory,
+  LiveMapDataSource,
 } from '../types/live-map.types';
 import { Geofence, TelematicsData } from '../types/telematics.types';
+
+/**
+ * Labels a real fix with the provider that produced it.
+ *
+ * Derived from the device-id prefix each provider adapter stamps
+ * (`eagletrack-<uin>`, `cartrack-<terminal_serial>`) rather than from a
+ * stored provider field, because TelematicsDevice has no such field
+ * today and adding one would require backfilling every existing device.
+ *
+ * APPROXIMATE BY CONSTRUCTION: 'cartrack' remains the fallback for any
+ * device that is not identifiably Eagle Track, which includes devices
+ * that post to the generic ingest endpoint and have nothing to do with
+ * Cartrack. That was already the behaviour before Eagle Track existed
+ * (the label was hardcoded), so this is strictly an improvement rather
+ * than a new inaccuracy -- but the correct fix is a first-class
+ * `provider` field on TelematicsDevice, set at registration and
+ * backfilled from the prefix. Noted as a follow-up rather than done
+ * here, since it touches every existing device row.
+ */
+export function providerSourceFor(deviceId: string | undefined): LiveMapDataSource {
+  if (typeof deviceId === 'string' && deviceId.startsWith('eagletrack-')) return 'eagletrack';
+  return 'cartrack';
+}
 
 /** Below this speed (km/h) a vehicle with a recent fix is considered idle rather than moving. */
 const IDLE_SPEED_THRESHOLD_KMH = 3;
@@ -144,7 +168,7 @@ export class LiveMapService {
     return {
       ...base,
       status,
-      source: 'cartrack',
+      source: providerSourceFor(latest.deviceId),
       position: {
         lat: latest.location.lat,
         lng: latest.location.lng,

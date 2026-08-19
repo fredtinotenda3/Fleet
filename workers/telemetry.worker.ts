@@ -6,6 +6,8 @@ import { notificationService } from '@/modules/notifications/services/notificati
 import { backgroundJobScopeService } from '@/server/scheduler/background-job-scope.service';
 import { cartrackAdapter } from '@/modules/telematics/adapters/cartrack/cartrack.adapter';
 import { cartrackConfigRepository } from '@/modules/telematics/repositories/cartrack-config.repository';
+import { eagletrackAdapter } from '@/modules/telematics/adapters/eagletrack/eagletrack.adapter';
+import { eagletrackConfigRepository } from '@/modules/telematics/repositories/eagletrack-config.repository';
 import { monitoring } from '@/infrastructure/monitoring/logger';
 import type { TelematicsDevice } from '@/modules/telematics/types/telematics.types';
 
@@ -92,6 +94,49 @@ export class TelemetryWorker extends BaseWorker<IngestBatchPayload | Record<stri
           }
         } catch (error) {
           monitoring.logError('[TelemetryWorker] Cartrack sync failed', error as Error, { tenantId });
+        }
+      }
+      return;
+    }
+
+    if (jobName === 'eagletrack-sync') {
+      /**
+       * Structurally identical to the Cartrack branch above: enumerate
+       * only the tenants that actually have Eagle Track enabled (via
+       * eagletrackConfigRepository.listEnabledTenantIds) rather than
+       * every organization on the platform, and isolate failures per
+       * tenant.
+       *
+       * The per-tenant try/catch is load-bearing, not defensive
+       * decoration. Eagle Track is deployed per customer, so each tenant
+       * points at a DIFFERENT host that we do not operate: one tenant's
+       * expired token, DNS failure, or unreachable box must not stop the
+       * sweep for every other tenant. eagletrackAdapter.syncOrganization
+       * already converts API failures into a result with `errors` and
+       * records them via recordSyncResult, so the catch here only covers
+       * genuinely unexpected throws.
+       *
+       * A manual trigger also exists (POST /api/telematics/eagletrack/sync)
+       * for right after saving credentials.
+       */
+      const tenantIds = await eagletrackConfigRepository.listEnabledTenantIds();
+      for (const tenantId of tenantIds) {
+        try {
+          const result = await eagletrackAdapter.syncOrganization(tenantId);
+          if (result.errors.length > 0) {
+            monitoring.logError(
+              '[TelemetryWorker] Eagle Track sync completed with errors',
+              new Error(result.errors.join('; ')),
+              {
+                tenantId,
+                matched: result.matched,
+                unmatched: result.unmatchedTrackers.length,
+                withoutFix: result.trackersWithoutFix.length,
+              }
+            );
+          }
+        } catch (error) {
+          monitoring.logError('[TelemetryWorker] Eagle Track sync failed', error as Error, { tenantId });
         }
       }
     }

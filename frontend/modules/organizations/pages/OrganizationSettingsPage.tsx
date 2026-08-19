@@ -15,6 +15,7 @@ import { TaxSection } from '../components/settings/TaxSection';
 import { FinanceSection } from '../components/settings/FinanceSection';
 import { useFinanceSettings } from '@/frontend/modules/finance/hooks/useFinance';
 import { CartrackConfigSection } from '@/frontend/modules/telematics/components/CartrackConfigSection';
+import { EagleTrackConfigSection } from '@/frontend/modules/telematics/components/EagleTrackConfigSection';
 import { PageLoader } from '@/frontend/shared/loading/PageLoader';
 
 const TABS = [
@@ -89,7 +90,17 @@ export function OrganizationSettingsPage() {
           <FinanceSection settings={financeSettings} mutation={financeMutation} />
         </TabsContent>
         <TabsContent value="integrations">
-          <CartrackConfigSection />
+          {/*
+            Telemetry providers are listed side by side. A tenant may run
+            both (e.g. a Cartrack-fitted fleet plus Eagle Track units on
+            subcontracted vehicles); each config is independent and each
+            provider's readings are matched to vehicles separately.
+          */}
+          <div className="space-y-8">
+            <CartrackConfigSection />
+            <div className="border-t border-border" />
+            <EagleTrackConfigSection />
+          </div>
         </TabsContent>
       </Tabs>
     </div>

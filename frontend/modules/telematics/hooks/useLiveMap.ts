@@ -9,6 +9,7 @@ export const telematicsKeys = {
   routeHistory: (vehicleId: string) => [...telematicsKeys.all, 'route-history', vehicleId] as const,
   demoStatus: () => [...telematicsKeys.all, 'demo-status'] as const,
   cartrackConfig: () => [...telematicsKeys.all, 'cartrack-config'] as const,
+  eagletrackConfig: () => [...telematicsKeys.all, 'eagletrack-config'] as const,
 };
 
 /**

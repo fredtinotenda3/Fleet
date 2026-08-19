@@ -8,6 +8,9 @@ import type {
   CartrackConfigStatus,
   CartrackConfigInput,
   CartrackTestConnectionResult,
+  EagleTrackConfigStatus,
+  EagleTrackConfigInput,
+  EagleTrackTestConnectionResult,
 } from '../types';
 
 const BASE = '/api/telematics';
@@ -55,5 +58,29 @@ export const telematicsApi = {
   /** POST /api/telematics/cartrack/test-connection -- verifies the tenant's already-saved credentials; takes no body. */
   async testCartrackConnection(): Promise<CartrackTestConnectionResult> {
     return apiClient.post<CartrackTestConnectionResult>(`${BASE}/cartrack/test-connection`);
+  },
+
+  /**
+   * GET /api/telematics/eagletrack/config -- gated on
+   * Permission.ORG_SETTINGS server-side. The response never carries the
+   * API token or its ciphertext; only the domain plus sync status.
+   */
+  async getEagleTrackConfig(): Promise<EagleTrackConfigStatus> {
+    return apiClient.get<EagleTrackConfigStatus>(`${BASE}/eagletrack/config`);
+  },
+
+  /**
+   * PUT /api/telematics/eagletrack/config. As with Cartrack, the backend
+   * contract (shared/validations/eagletrack.schema.ts) requires the token
+   * on every call, including one that only flips `enabled` -- there is no
+   * partial-update / "keep existing token" endpoint.
+   */
+  async updateEagleTrackConfig(data: EagleTrackConfigInput): Promise<EagleTrackConfigStatus> {
+    return apiClient.put<EagleTrackConfigStatus>(`${BASE}/eagletrack/config`, data);
+  },
+
+  /** POST /api/telematics/eagletrack/test-connection -- verifies the tenant's already-saved credentials; takes no body. */
+  async testEagleTrackConnection(): Promise<EagleTrackTestConnectionResult> {
+    return apiClient.post<EagleTrackTestConnectionResult>(`${BASE}/eagletrack/test-connection`);
   },
 };

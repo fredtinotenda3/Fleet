@@ -32,7 +32,26 @@ export interface TelematicsData extends BaseEntity {
   engine: {
     rpm: number;
     coolantTemp: number;
-    fuelLevel: number;
+    /**
+     * Fuel level as a PERCENTAGE, 0-100 (see
+     * shared/validations/telematics.schema.ts, which constrains the HTTP
+     * ingest payload to that range).
+     *
+     * OPTIONAL because "this device does not report fuel" and "this tank
+     * is empty" are different facts and telematics.service.ts treats
+     * them very differently: checkForAlerts raises a high-severity
+     * "Low fuel level" alert -- and a fleet-manager notification --
+     * for any value below 10. A provider adapter that substitutes 0 for
+     * an unreported reading therefore manufactures that alert on every
+     * single poll. Leaving the field absent makes the `< 10` comparison
+     * false, which is the correct behaviour for an unknown value.
+     *
+     * Widening (required -> optional) is source-compatible for every
+     * reader: the HTTP ingest schema still requires it, and the only
+     * consumers (live-map.service.ts, digital-twin.service.ts) already
+     * treat it as possibly-absent.
+     */
+    fuelLevel?: number;
     throttlePosition: number;
     engineLoad: number;
     dtcCodes?: string[];
@@ -51,6 +70,19 @@ export interface TelematicsData extends BaseEntity {
     fuelUsed: number;
   };
   alerts?: TelematicsAlert[];
+  /**
+   * Provider-specific signals that have no first-class field on this
+   * type -- device battery voltage, GSM/GPS signal quality, the vendor's
+   * own alert ids, which IO code a value was read from.
+   *
+   * Exists so an adapter never has to force a foreign signal into an
+   * unrelated field to keep it (battery volts into `engine.coolantTemp`,
+   * litres into a percentage field). Opaque by design: nothing in the
+   * alerting, geofencing or reporting paths reads it, so its contents
+   * can never change how a reading is interpreted. Each provider
+   * documents its own shape -- see EagleTrackReadingMetadata.
+   */
+  providerMetadata?: Record<string, unknown>;
   timestamp: Date;
 }
 

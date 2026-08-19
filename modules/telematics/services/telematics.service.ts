@@ -101,7 +101,12 @@ export class TelematicsService {
       });
     }
 
-    if (data.engine && data.engine.fuelLevel < LOW_FUEL_THRESHOLD_PERCENT) {
+    // `typeof === 'number'` rather than a truthiness or `!= null` check:
+    // fuelLevel is optional (see TelematicsData.engine.fuelLevel), and a
+    // reading from a device that does not report fuel must not raise a
+    // "Low fuel level" alert. 0 is a legitimate reported value and still
+    // alerts; absent does not.
+    if (data.engine && typeof data.engine.fuelLevel === 'number' && data.engine.fuelLevel < LOW_FUEL_THRESHOLD_PERCENT) {
       alerts.push({
         type: 'maintenance',
         severity: 'high',
