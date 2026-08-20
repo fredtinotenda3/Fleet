@@ -91,6 +91,17 @@ export interface LiveMapPayload {
   generatedAt: string;
   vehicles: LiveMapVehicle[];
   geofences: LiveMapGeofence[];
+  /**
+   * Eagle Track's own `lastSyncAt`, as recorded by
+   * eagletrackConfigRepository.recordSyncResult -- the SAME timestamp
+   * the read-through refresh (see eagletrack-read-through.service.ts)
+   * checks staleness against. `null`/absent when Eagle Track has never
+   * synced for this tenant, or isn't configured/enabled at all -- the
+   * UI should hide the indicator in that case rather than show it as an
+   * error.
+   */
+  eagletrackLastSyncAt?: string | null;
+  eagletrackLastSyncStatus?: 'success' | 'error';
 }
 
 export interface DemoModeStatus {

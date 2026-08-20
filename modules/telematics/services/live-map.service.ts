@@ -25,6 +25,8 @@ import { TenantContext } from '@/modules/tenancy/services/tenant-context.service
 import { telematicsRepository } from '../repositories/telematics.repository';
 import { telematicsService } from './telematics.service';
 import { demoStateRepository } from '../repositories/demo-state.repository';
+import { eagletrackConfigRepository } from '../repositories/eagletrack-config.repository';
+import { refreshEagleTrackIfStale } from './eagletrack-read-through.service';
 import { simulateVehicleState, SimulatedVehicleState } from '../demo/demo-simulator.service';
 import {
   LiveMapPayload,
@@ -375,8 +377,27 @@ function readVendorAlert(providerMetadata: Record<string, unknown> | undefined):
 
 export class LiveMapService {
   async getLiveMapData(context: TenantContext): Promise<LiveMapPayload> {
-    const [demoState, vehiclesPage, geofences] = await Promise.all([
+    const [demoState, eagletrackConfig] = await Promise.all([
       demoStateRepository.getState(context.organizationId),
+      eagletrackConfigRepository.getConfig(context.organizationId),
+    ]);
+
+    const demoEnabled = demoState?.enabled ?? false;
+
+    // Read-through refresh: replaces the per-minute Vercel Cron this
+    // project can't run on Hobby (see vercel.json). Blocking, by
+    // design -- the caller is asking for the live map right now, so if
+    // the last Eagle Track sync is stale this trigger-then-read is what
+    // makes the response actually fresh, not just fast. No-op (an
+    // immediate return) whenever Eagle Track isn't configured/enabled
+    // for this tenant, or its last sync is still within the staleness
+    // window, or demo mode is on (nothing here reads real telemetry in
+    // that case, so there's nothing to refresh for).
+    const refreshedEagletrackConfig = demoEnabled
+      ? eagletrackConfig
+      : await refreshEagleTrackIfStale(context.organizationId, eagletrackConfig);
+
+    const [vehiclesPage, geofences] = await Promise.all([
       vehicleRepository.getFilteredVehiclesInScope(
         {},
         { page: 1, limit: MAX_LIVE_MAP_VEHICLES, sortBy: 'license_plate', sortOrder: 'asc' },
@@ -384,8 +405,6 @@ export class LiveMapService {
       ),
       telematicsRepository.getActiveGeofencesInScope(undefined, context),
     ]);
-
-    const demoEnabled = demoState?.enabled ?? false;
 
     const vehicles = await Promise.all(
       vehiclesPage.data.map((vehicle) =>
@@ -400,6 +419,10 @@ export class LiveMapService {
       generatedAt: new Date().toISOString(),
       vehicles,
       geofences: geofences.map(this.toLiveMapGeofence),
+      eagletrackLastSyncAt: refreshedEagletrackConfig?.lastSyncAt
+        ? new Date(refreshedEagletrackConfig.lastSyncAt).toISOString()
+        : null,
+      eagletrackLastSyncStatus: refreshedEagletrackConfig?.lastSyncStatus,
     };
   }
 
@@ -470,6 +493,15 @@ export class LiveMapService {
    * reads from -- no separate demo-only code path is needed here.
    */
   async getVehicleDetail(vehicleId: string, context: TenantContext): Promise<LiveMapVehicleDetail | null> {
+    // Same read-through refresh as getLiveMapData above -- the detail
+    // panel polls independently (see useVehicleDetail), so it needs its
+    // own staleness check rather than relying on the live map's poll
+    // having just run one. isStale/the Redis lock inside
+    // refreshEagleTrackIfStale is what keeps the two polls landing in
+    // the same ~10s tick from triggering two syncs.
+    const eagletrackConfig = await eagletrackConfigRepository.getConfig(context.organizationId);
+    await refreshEagleTrackIfStale(context.organizationId, eagletrackConfig);
+
     const latest = await telematicsRepository.getLatestTelematicsDataInScope(vehicleId, context);
     if (!latest) {
       return null;

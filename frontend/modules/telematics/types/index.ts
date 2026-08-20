@@ -11,6 +11,9 @@ import type {
   LiveMapRoutePoint,
   DemoModeStatus,
 } from '@/modules/telematics/types/live-map.types';
+// LiveMapPayload now also carries eagletrackLastSyncAt /
+// eagletrackLastSyncStatus (see live-map.types.ts) -- re-exported as-is
+// below, no separate frontend-only type needed.
 
 export type {
   LiveMapPayload,

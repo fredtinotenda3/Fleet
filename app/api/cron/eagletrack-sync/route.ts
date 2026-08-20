@@ -13,31 +13,41 @@
 // This project is a Vercel serverless deployment with no such process --
 // nothing ever calls bootstrapWorkers(), so no BullMQ Worker ever
 // consumes the 'telemetry-jobs' queue, and the repeatable job's
-// enqueues just accumulate unprocessed. That is the entire reason the
-// live map has been stuck on manual POST /api/telematics/eagletrack/sync
-// calls: the automatic side of the pipeline was never actually running.
+// enqueues just accumulate unprocessed.
 //
-// This route is the serverless-native replacement for that consumer.
-// Vercel Cron (see vercel.json) hits it once a minute; it authenticates
-// with CRON_SECRET exactly like the platform's other cron endpoints
+// THIS IS NO LONGER THE PRIMARY FRESHNESS MECHANISM. It originally ran
+// every minute (Vercel Cron `* * * * *`), but Vercel Hobby rejects any
+// cron schedule more frequent than once daily, so that deployment
+// failed outright. The actual freshness path is now read-through: GET
+// /api/telematics/live-map and GET /api/telematics/live-map/vehicle/
+// [vehicleId] each check Eagle Track's own lastSyncAt before returning
+// data and trigger a sync inline when it's stale (see
+// modules/telematics/services/eagletrack-read-through.service.ts) --
+// driven by the live map frontend's existing ~10s poll (see
+// frontend/modules/telematics/hooks/useLiveMap.ts), not by this cron.
+//
+// This route now runs once a day (see vercel.json's "0 0 * * *"
+// schedule) purely as a BACKSTOP: it keeps every enabled tenant's Eagle
+// Track config from going fully stale on a day nobody opens the live
+// map at all, and it's a convenient manual trigger point
+// (curl + CRON_SECRET) for ops. It authenticates with CRON_SECRET
+// exactly like the platform's other cron endpoints
 // (/api/reminders/notify-overdue, /api/reminders/update-status,
 // /api/workflows/process-timeouts, /api/security/expire-grants), then
 // walks every tenant with Eagle Track enabled and calls
 // eagletrackAdapter.syncOrganization(tenantId) -- the SAME adapter
-// method the manual sync route (app/api/telematics/eagletrack/sync) and
-// the BullMQ worker branch call. No parallel sync implementation is
-// introduced; only the trigger mechanism differs. The live map frontend
-// already polls the Fleet API every ~10s (see
-// frontend/modules/telematics/hooks/useLiveMap.ts), so a 1-minute
-// upstream refresh is the freshness ceiling, not the polling interval.
+// method the manual sync route (app/api/telematics/eagletrack/sync), the
+// BullMQ worker branch, and the read-through refresh all call. No
+// parallel sync implementation is introduced anywhere in this stack;
+// only the trigger mechanism differs per caller.
 //
 // The manual route keeps working unchanged (still useful right after
-// saving credentials, without waiting for the next minute), and
-// workers/telemetry.worker.ts / bootstrap-schedules.ts are left exactly
-// as they were -- they're correct for a deployment that DOES run a
-// dedicated worker process (see docker-compose.yml's `worker` service),
-// and tests/unit/telematics/eagletrack-worker-wiring.spec.ts pins that
-// file's structure.
+// saving credentials, without waiting for a poll or the next cron run),
+// and workers/telemetry.worker.ts / bootstrap-schedules.ts are left
+// exactly as they were -- they're correct for a deployment that DOES run
+// a dedicated worker process (see docker-compose.yml's `worker`
+// service), and tests/unit/telematics/eagletrack-worker-wiring.spec.ts
+// pins that file's structure.
 //
 // IDEMPOTENCY / NO DUPLICATE SYNCS:
 //   1. A short-lived Redis lock (SET NX PX) wraps the whole run, so an
@@ -73,9 +83,15 @@ import { monitoring } from '@/infrastructure/monitoring/logger';
 const CRON_SECRET = process.env.CRON_SECRET;
 
 const LOCK_KEY = 'cron:eagletrack-sync:lock';
-/** Under the 1-minute cron interval, so a crashed run can never wedge the lock past the next scheduled tick. */
+/**
+ * Kept short (not "under the cron interval" any more, now that the
+ * interval is a full day) so a crashed run can't wedge this lock for
+ * any meaningful stretch against the read-through refresh's OWN,
+ * separate lock (see eagletrack-read-through.service.ts) or a manual
+ * re-trigger of this route.
+ */
 const LOCK_TTL_MS = 55_000;
-/** Skip re-syncing a tenant whose Eagle Track config already recorded a sync within this window. */
+/** Skip re-syncing a tenant whose Eagle Track config already recorded a sync within this window -- e.g. the read-through refresh just ran for it moments before this daily backstop fired. */
 const MIN_TENANT_SYNC_INTERVAL_MS = 20_000;
 
 const UNLOCK_SCRIPT = `

@@ -10,7 +10,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { RefreshCw, MapPin, AlertTriangle } from 'lucide-react';
+import { formatDistanceToNow } from 'date-fns';
+import { RefreshCw, MapPin, AlertTriangle, Clock } from 'lucide-react';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { PageLoader } from '@/frontend/shared/loading/PageLoader';
 import { Button } from '@/frontend/shared/ui/primitives/button';
@@ -76,6 +77,14 @@ export function LiveMapPage() {
     return { statusCounts: counts, alertCount: alerts, staleCount: stale };
   }, [vehicles]);
 
+  // Eagle Track's own last-sync time, as refreshed by the read-through
+  // trigger on GET /api/telematics/live-map (see
+  // eagletrack-read-through.service.ts) -- not the same thing as
+  // `generatedAt`, which is just when THIS response was assembled.
+  // Absent for tenants that don't have Eagle Track configured/enabled,
+  // in which case the indicator is simply not shown.
+  const eagletrackLastSyncAt = payload?.eagletrackLastSyncAt ?? null;
+
   if (!canView) {
     return (
       <div className="flex flex-col items-center justify-center gap-2 py-24 text-center">
@@ -117,12 +126,24 @@ export function LiveMapPage() {
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3 px-1">
             <LiveMapLegend counts={statusCounts} alertCount={alertCount} staleCount={staleCount} />
-            {payload?.demoMode && (
-              <Badge variant="secondary" className="gap-1">
-                <MapPin className="h-3 w-3" aria-hidden="true" />
-                Showing simulated demo positions
-              </Badge>
-            )}
+            <div className="flex items-center gap-2">
+              {eagletrackLastSyncAt && (
+                <Badge
+                  variant={payload?.eagletrackLastSyncStatus === 'error' ? 'destructive' : 'outline'}
+                  className="gap-1"
+                  title={new Date(eagletrackLastSyncAt).toLocaleString()}
+                >
+                  <Clock className="h-3 w-3" aria-hidden="true" />
+                  Eagle Track synced {formatDistanceToNow(new Date(eagletrackLastSyncAt), { addSuffix: true })}
+                </Badge>
+              )}
+              {payload?.demoMode && (
+                <Badge variant="secondary" className="gap-1">
+                  <MapPin className="h-3 w-3" aria-hidden="true" />
+                  Showing simulated demo positions
+                </Badge>
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
