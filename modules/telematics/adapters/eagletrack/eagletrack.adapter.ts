@@ -345,6 +345,69 @@ export interface EagleTrackMappedReading {
 }
 
 /**
+ * The subset of a snapshot the staleness guard treats as "the telemetry
+ * that matters" for deciding whether a fix with the SAME provider
+ * timestamp as the one we hold is nonetheless a new observation.
+ *
+ * Deliberately snapshot-shaped rather than payload-shaped: it exists only
+ * to be diffed against the previous snapshot's signature
+ * (signaturesDiffer, below), never written to TelematicsData itself.
+ * `null` (not `undefined`) marks "not reported" so an absent field
+ * compares equal to another absent field rather than to `undefined !==
+ * undefined` giving a false positive on every diff (JSON round-tripping
+ * through Mongo also turns `undefined` into a dropped key, which would
+ * make a stored signature compare unequal to a freshly-built one for a
+ * reason that has nothing to do with the vendor's data).
+ */
+export interface EagleTrackFixSignature {
+  speed: number | null;
+  lat: number | null;
+  lng: number | null;
+  bearing: number | null;
+  odometer: number | null;
+  offline: boolean | null;
+  id: number | null;
+}
+
+/** Builds the comparison signature for one snapshot. See EagleTrackFixSignature. */
+export function buildEagleTrackFixSignature(status: EagleTrackTrackerStatus): EagleTrackFixSignature {
+  return {
+    speed: typeof status.speed === 'number' && Number.isFinite(status.speed) ? status.speed : null,
+    lat: typeof status.lat === 'number' && Number.isFinite(status.lat) ? status.lat : null,
+    lng: typeof status.lng === 'number' && Number.isFinite(status.lng) ? status.lng : null,
+    bearing: typeof status.bearing === 'number' && Number.isFinite(status.bearing) ? status.bearing : null,
+    odometer: typeof status.odometer === 'number' && Number.isFinite(status.odometer) ? status.odometer : null,
+    offline: typeof status.offline === 'boolean' ? status.offline : null,
+    id: typeof status.id === 'number' && Number.isFinite(status.id) ? status.id : null,
+  };
+}
+
+/**
+ * Whether two same-timestamp signatures represent different telemetry.
+ *
+ * `previous` may be missing entirely -- a device registered before this
+ * guard existed, or one whose last ingest predates signature storage.
+ * Treated as "cannot prove these are identical", which means "differs":
+ * the safe default when a same-timestamp fix cannot be shown to be a
+ * pure replay is to ingest it, not to drop it.
+ */
+export function signaturesDiffer(
+  previous: EagleTrackFixSignature | null | undefined,
+  current: EagleTrackFixSignature
+): boolean {
+  if (!previous) return true;
+  return (
+    previous.speed !== current.speed ||
+    previous.lat !== current.lat ||
+    previous.lng !== current.lng ||
+    previous.bearing !== current.bearing ||
+    previous.odometer !== current.odometer ||
+    previous.offline !== current.offline ||
+    previous.id !== current.id
+  );
+}
+
+/**
  * Pure mapping from one Eagle Track snapshot onto our TelematicsData
  * shape. Separated from the I/O so it can be unit-tested directly
  * against sample payloads without mocking Mongo, the service layer, or
@@ -719,13 +782,62 @@ export class EagleTrackAdapter {
       throw new Error(`Unparseable timestamp from Eagle Track: ${String(status.date)}`);
     }
 
-    const lastPingAt = existingDevice?.lastPingAt ? new Date(existingDevice.lastPingAt) : null;
-    if (lastPingAt && !Number.isNaN(lastPingAt.getTime()) && mapped.timestamp.getTime() <= lastPingAt.getTime()) {
-      return { status: 'stale', matchedBy };
+    /**
+     * STALENESS GUARD.
+     *
+     * Compared strictly against the PROVIDER'S OWN timestamp for the last
+     * fix we ingested (`existingDevice.lastFixAt`) -- never against
+     * `lastPingAt`, which is our server's wall-clock ingest time and has
+     * no fixed relationship to the provider's clock. Comparing a fresh
+     * provider `date` against a stale server wall-clock reading was
+     * exactly the bug this guard existed to avoid falling into: poll
+     * latency and any provider clock/timezone drift make wall-clock
+     * "now" an unrelated timeline to the provider's own timestamps, so
+     * that comparison could mark every incoming fix "stale" even though
+     * the provider was sending fresh, changing data on every poll
+     * (matched: N, skippedStale: N, forever).
+     *
+     * Three cases, in order:
+     *   1. No prior fix on record (new device, or one predating this
+     *      guard) -- always ingest.
+     *   2. Provider date is strictly newer than the one we hold --
+     *      always ingest, unconditionally. A newer provider timestamp is
+     *      never treated as stale, regardless of what changed.
+     *   3. Provider date is EQUAL to the one we hold -- ingest only if
+     *      the telemetry itself changed (speed, odometer, offline flag,
+     *      position, bearing, or vendor id; see signaturesDiffer). This
+     *      is what keeps a genuinely unchanged replay (a parked vehicle
+     *      returning the identical snapshot every poll) from appending a
+     *      duplicate point, while not discarding a real update that
+     *      happens to share a timestamp with the one before it.
+     *   4. Provider date is strictly older -- stale. A fleet poll must
+     *      never regress a vehicle's position on the live map.
+     */
+    const lastFixAt = existingDevice?.lastFixAt ? new Date(existingDevice.lastFixAt) : null;
+    const currentSignature = buildEagleTrackFixSignature(status);
+
+    if (lastFixAt && !Number.isNaN(lastFixAt.getTime())) {
+      const comparison = mapped.timestamp.getTime() - lastFixAt.getTime();
+
+      if (comparison < 0) {
+        return { status: 'stale', matchedBy };
+      }
+
+      if (comparison === 0) {
+        const previousSignature = existingDevice?.metadata?.eagletrackLastFix as
+          | EagleTrackFixSignature
+          | undefined;
+        if (!signaturesDiffer(previousSignature, currentSignature)) {
+          return { status: 'stale', matchedBy };
+        }
+      }
     }
 
     await telematicsService.ingestTelematicsData(mapped.payload);
-    await telematicsRepository.updateDeviceLastPing(deviceId, tenantId, mapped.payload.location);
+    await telematicsRepository.updateDeviceLastPing(deviceId, tenantId, mapped.payload.location, {
+      fixTimestamp: mapped.timestamp,
+      metadataPatch: { eagletrackLastFix: currentSignature },
+    });
 
     return { status: 'ingested', matchedBy };
   }

@@ -10,7 +10,38 @@ export interface TelematicsDevice extends BaseEntity {
   model: string;
   firmwareVersion: string;
   status: 'active' | 'inactive' | 'offline';
+  /**
+   * REAL wall-clock time of the last successful ingest for this device --
+   * i.e. "when did our server last hear from this device", independent of
+   * whatever timestamp the provider's payload itself carried. This is
+   * what offline detection (getOfflineDevices) means by "stale": a device
+   * we have not successfully ingested from recently, regardless of what
+   * the provider's own clock says.
+   *
+   * NOT a substitute for `lastFixAt` below, and must never be compared
+   * against a provider-reported fix timestamp -- the two clocks have no
+   * guaranteed relationship (network/poll latency, provider processing
+   * lag, and provider timezone/clock drift all separate them), so
+   * comparing a provider `date` field against this wall-clock value
+   * produces a comparison between two unrelated timelines. See
+   * eagletrack.adapter.ts's staleness guard for the incident this
+   * caused: readings were skipped as "stale" essentially permanently
+   * because a provider-time fix was being measured against
+   * ingest-time wall clock.
+   */
   lastPingAt?: Date;
+  /**
+   * The PROVIDER'S OWN reported timestamp for the last fix this device
+   * successfully ingested (e.g. Eagle Track's `date` field, parsed).
+   * This -- not `lastPingAt` -- is the correct baseline for a staleness
+   * guard that decides whether a newly-polled fix is actually newer than
+   * what we already hold: both sides of that comparison must come from
+   * the same clock (the provider's), or "newer" is meaningless.
+   *
+   * Optional because not every provider adapter populates it (Cartrack's
+   * poll has no staleness guard to begin with and always ingests).
+   */
+  lastFixAt?: Date;
   lastLocation?: TelematicsLocation;
   metadata: Record<string, any>;
 }

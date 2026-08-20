@@ -396,24 +396,48 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
     return (result as TelematicsDevice) || null;
   }
 
+  /**
+   * Records a successful ingest for a device.
+   *
+   * `lastPingAt` is ALWAYS stamped with the real wall-clock "now" -- it
+   * answers "when did we last hear from this device" for offline
+   * detection (getOfflineDevices) and must never be derived from a
+   * provider's own payload.
+   *
+   * `fix`, when supplied, additionally records the PROVIDER'S OWN
+   * timestamp for this reading (`lastFixAt`) and an optional adapter-
+   * specific comparison signature (`fix.metadataPatch`, merged into
+   * `metadata` by key) that a staleness guard can use to detect a
+   * same-timestamp-but-changed fix. Backward compatible: callers that
+   * omit `fix` (e.g. CartrackAdapter, which has no staleness guard) see
+   * no change in behaviour -- lastFixAt and metadata are left untouched.
+   */
   async updateDeviceLastPing(
     deviceId: string,
     tenantId: string,
-    location?: TelematicsLocation
+    location?: TelematicsLocation,
+    fix?: { fixTimestamp?: Date; metadataPatch?: Record<string, unknown> }
   ): Promise<void> {
     const collection = await this.devicesCollection();
 
-    await collection.updateOne(
-      { deviceId, tenantId, isDeleted: { $ne: true } } as any,
-      {
-        $set: {
-          lastPingAt: new Date(),
-          lastLocation: location,
-          status: 'active',
-          updatedAt: new Date(),
-        },
+    const set: Record<string, unknown> = {
+      lastPingAt: new Date(),
+      lastLocation: location,
+      status: 'active',
+      updatedAt: new Date(),
+    };
+
+    if (fix?.fixTimestamp && !Number.isNaN(fix.fixTimestamp.getTime())) {
+      set.lastFixAt = fix.fixTimestamp;
+    }
+
+    if (fix?.metadataPatch) {
+      for (const [key, value] of Object.entries(fix.metadataPatch)) {
+        set[`metadata.${key}`] = value;
       }
-    );
+    }
+
+    await collection.updateOne({ deviceId, tenantId, isDeleted: { $ne: true } } as any, { $set: set });
   }
 
   async getOfflineDevices(

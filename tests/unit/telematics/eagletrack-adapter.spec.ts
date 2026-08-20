@@ -557,16 +557,22 @@ describe('EagleTrackAdapter.syncOrganization', () => {
     expect(vehicleRepository.findByLicensePlate).toHaveBeenCalledWith('ABC123', TENANT);
   });
 
-  it('skips a fix it has already stored, so repeated polling does not append duplicate points', async () => {
+  it('skips a fix it has already stored -- same provider timestamp, identical telemetry -- so repeated polling does not append duplicate points', async () => {
     // GET /api2/last returns the LAST KNOWN fix, so a parked vehicle
     // returns the identical snapshot on every 2-minute poll.
     stubApi([{ uin: '1', __platenumber: 'ABC123' }], {
-      '1': { uin: '1', lat: -17.8, lng: 31.05, date: '2026-08-18 08:00:00' },
+      '1': { uin: '1', lat: -17.8, lng: 31.05, date: '2026-08-18 08:00:00', speed: 0 },
     });
     vehicleRepository.findByLicensePlate.mockResolvedValue({ _id: 'veh-1' });
     telematicsRepository.getDevice.mockResolvedValue({
       deviceId: 'eagletrack-1',
-      lastPingAt: new Date('2026-08-18T08:00:00.000Z'),
+      // The guard compares against the PROVIDER's own timestamp for the
+      // last fix, never against lastPingAt (our wall-clock ingest time --
+      // see telematics.types.ts for why those must never be conflated).
+      lastFixAt: new Date('2026-08-18T08:00:00.000Z'),
+      metadata: {
+        eagletrackLastFix: { speed: 0, lat: -17.8, lng: 31.05, bearing: null, odometer: null, offline: null, id: null },
+      },
     });
 
     const result = await new EagleTrackAdapter().syncOrganization(TENANT);
@@ -586,7 +592,7 @@ describe('EagleTrackAdapter.syncOrganization', () => {
     vehicleRepository.findByLicensePlate.mockResolvedValue({ _id: 'veh-1' });
     telematicsRepository.getDevice.mockResolvedValue({
       deviceId: 'eagletrack-1',
-      lastPingAt: new Date('2026-08-18T08:00:00.000Z'),
+      lastFixAt: new Date('2026-08-18T08:00:00.000Z'),
     });
 
     const result = await new EagleTrackAdapter().syncOrganization(TENANT);
@@ -594,6 +600,132 @@ describe('EagleTrackAdapter.syncOrganization', () => {
     expect(result.matched).toBe(1);
     expect(result.skippedStale).toBe(0);
     expect(telematicsService.ingestTelematicsData).toHaveBeenCalledTimes(1);
+    expect(telematicsRepository.updateDeviceLastPing).toHaveBeenCalledWith(
+      'eagletrack-1',
+      TENANT,
+      expect.objectContaining({ lat: -17.8, lng: 31.05 }),
+      expect.objectContaining({ fixTimestamp: new Date('2026-08-18T09:00:00.000Z') })
+    );
+  });
+
+  it('ingests a newer provider fix even when our wall-clock ingest time (lastPingAt) is later than the new fix\'s own timestamp', async () => {
+    // This is the exact regression: poll latency and provider clock
+    // drift routinely put lastPingAt (real "now" at the time we saved
+    // the PREVIOUS fix) ahead of the CURRENT fix's own, earlier-labelled
+    // provider timestamp. A guard that compares against lastPingAt would
+    // therefore see the new fix as "older" and skip it forever, even
+    // though it is strictly newer than the last fix we actually ingested
+    // (lastFixAt). The guard must use lastFixAt only.
+    stubApi([{ uin: '1', __platenumber: 'ABC123' }], {
+      '1': { uin: '1', lat: -17.83, lng: 31.06, date: '2026-08-19 08:40:00', speed: 60.31 },
+    });
+    vehicleRepository.findByLicensePlate.mockResolvedValue({ _id: 'veh-1' });
+    telematicsRepository.getDevice.mockResolvedValue({
+      deviceId: 'eagletrack-1',
+      lastFixAt: new Date('2026-08-19T08:38:00.000Z'),
+      // Wall-clock ingest time is AFTER the new fix's provider timestamp
+      // -- exactly the scenario that must not matter to the guard.
+      lastPingAt: new Date('2026-08-19T10:59:35.000Z'),
+      metadata: {
+        eagletrackLastFix: { speed: 0, lat: -17.83, lng: 31.06, bearing: null, odometer: null, offline: null, id: null },
+      },
+    });
+
+    const result = await new EagleTrackAdapter().syncOrganization(TENANT);
+
+    expect(result.matched).toBe(1);
+    expect(result.skippedStale).toBe(0);
+    expect(telematicsService.ingestTelematicsData).toHaveBeenCalledTimes(1);
+  });
+
+  it('ingests a same-timestamp fix when the telemetry itself changed (speed, position, etc.)', async () => {
+    // Same provider timestamp as the fix we hold, but speed and position
+    // moved -- a real update, not a replay, and must not be dropped.
+    stubApi([{ uin: '1', __platenumber: 'ABC123' }], {
+      '1': { uin: '1', lat: -17.9, lng: 31.2, date: '2026-08-18 08:00:00', speed: 60.31, bearing: 355 },
+    });
+    vehicleRepository.findByLicensePlate.mockResolvedValue({ _id: 'veh-1' });
+    telematicsRepository.getDevice.mockResolvedValue({
+      deviceId: 'eagletrack-1',
+      lastFixAt: new Date('2026-08-18T08:00:00.000Z'),
+      metadata: {
+        eagletrackLastFix: { speed: 0, lat: -17.8, lng: 31.05, bearing: null, odometer: null, offline: null, id: null },
+      },
+    });
+
+    const result = await new EagleTrackAdapter().syncOrganization(TENANT);
+
+    expect(result.matched).toBe(1);
+    expect(result.skippedStale).toBe(0);
+    expect(telematicsService.ingestTelematicsData).toHaveBeenCalledTimes(1);
+    expect(telematicsRepository.updateDeviceLastPing).toHaveBeenCalledWith(
+      'eagletrack-1',
+      TENANT,
+      expect.objectContaining({ lat: -17.9, lng: 31.2 }),
+      expect.objectContaining({
+        metadataPatch: {
+          eagletrackLastFix: expect.objectContaining({ speed: 60.31, lat: -17.9, lng: 31.2, bearing: 355 }),
+        },
+      })
+    );
+  });
+
+  it('treats a same-timestamp fix with no prior signature on record as changed rather than assuming it is a replay', async () => {
+    // A device registered before this guard existed (or whose metadata
+    // predates signature storage) has a lastFixAt but no
+    // eagletrackLastFix signature. Cannot prove "identical", so the safe
+    // default is to ingest, not to drop a possibly-real update.
+    stubApi([{ uin: '1', __platenumber: 'ABC123' }], {
+      '1': { uin: '1', lat: -17.8, lng: 31.05, date: '2026-08-18 08:00:00' },
+    });
+    vehicleRepository.findByLicensePlate.mockResolvedValue({ _id: 'veh-1' });
+    telematicsRepository.getDevice.mockResolvedValue({
+      deviceId: 'eagletrack-1',
+      lastFixAt: new Date('2026-08-18T08:00:00.000Z'),
+      metadata: {},
+    });
+
+    const result = await new EagleTrackAdapter().syncOrganization(TENANT);
+
+    expect(result.skippedStale).toBe(0);
+    expect(telematicsService.ingestTelematicsData).toHaveBeenCalledTimes(1);
+  });
+
+  it('always ingests the first fix for a device with no lastFixAt on record yet', async () => {
+    stubApi([{ uin: '1', __platenumber: 'ABC123' }], {
+      '1': { uin: '1', lat: -17.8, lng: 31.05, date: '2026-08-18 08:00:00' },
+    });
+    vehicleRepository.findByLicensePlate.mockResolvedValue({ _id: 'veh-1' });
+    telematicsRepository.getDevice.mockResolvedValue({
+      deviceId: 'eagletrack-1',
+      // No lastFixAt at all (e.g. a device that predates this guard, or
+      // one whose earlier ingest never recorded a provider timestamp).
+    });
+
+    const result = await new EagleTrackAdapter().syncOrganization(TENANT);
+
+    expect(result.skippedStale).toBe(0);
+    expect(telematicsService.ingestTelematicsData).toHaveBeenCalledTimes(1);
+  });
+
+  it('never regresses: an older provider fix is stale even when it differs from the one on record', async () => {
+    stubApi([{ uin: '1', __platenumber: 'ABC123' }], {
+      // Older provider timestamp than what we hold, despite different speed/position.
+      '1': { uin: '1', lat: -17.99, lng: 31.99, date: '2026-08-18 07:00:00', speed: 99 },
+    });
+    vehicleRepository.findByLicensePlate.mockResolvedValue({ _id: 'veh-1' });
+    telematicsRepository.getDevice.mockResolvedValue({
+      deviceId: 'eagletrack-1',
+      lastFixAt: new Date('2026-08-18T08:00:00.000Z'),
+      metadata: {
+        eagletrackLastFix: { speed: 0, lat: -17.8, lng: 31.05, bearing: null, odometer: null, offline: null, id: null },
+      },
+    });
+
+    const result = await new EagleTrackAdapter().syncOrganization(TENANT);
+
+    expect(result.skippedStale).toBe(1);
+    expect(telematicsService.ingestTelematicsData).not.toHaveBeenCalled();
   });
 
   it('reports a no-fix payload separately instead of ingesting a null-island position', async () => {
