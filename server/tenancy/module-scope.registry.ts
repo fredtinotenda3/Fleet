@@ -233,13 +233,40 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
       'tbltelematics_alerts',
       'tbltelematics_geofences',
       'tbltelematics_devices',
+      // Eagle Track provider extensions. All three inherit the vehicle
+      // scope like everything else in this module:
+      //   _links    -- the operator-declared uin -> vehicle mapping.
+      //                Derives its orgUnitId from a scope-checked
+      //                vehicle lookup and NEVER from a request body; a
+      //                caller who could stamp their own scope here could
+      //                redirect another branch's telemetry into their
+      //                own vehicle.
+      //   _triggers -- the vendor's geofence/speed/idle/stop/route
+      //                objects. Scoped from the linked vehicle when the
+      //                trigger names a tracker; an account-wide trigger
+      //                carries no orgUnitId and is read with the same
+      //                "mine OR unassigned" predicate geofences use,
+      //                for the same reason.
+      'tbltelematics_eagletrack_links',
+      'tbltelematics_eagletrack_triggers',
+      // Reverse-geocoding cache. TENANT-scoped but deliberately NOT
+      // org-unit scoped: within a tenant it is derived reference data
+      // about coordinates that tenant already had the right to see, and
+      // partitioning it per unit would multiply upstream calls against a
+      // free service for a boundary the vehicle read itself already
+      // enforces. It is emphatically NOT shared across tenants -- see
+      // geocode-cache.repository.ts for why a global cache would be a
+      // cross-tenant movement-inference channel.
+      'tblgeocode_cache',
     ],
     level: 'org-unit',
     orgUnitSource: 'vehicle',
     rationale:
       'GPS traces, speeding alerts and geofence definitions are per-vehicle and inherit ' +
       'the vehicle scope. This is the most sensitive data in the product: it is a ' +
-      'movement history of identifiable employees.',
+      'movement history of identifiable employees. The Eagle Track provider collections ' +
+      'added alongside them (tracker links, vendor triggers) inherit the same vehicle ' +
+      'scope; the geocode cache is tenant-scoped reference data.',
     confirmed: true,
   },
   {

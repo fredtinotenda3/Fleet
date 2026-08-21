@@ -11,7 +11,16 @@
 import { NextRequest } from 'next/server';
 import { eagletrackConfigRepository } from '../repositories/eagletrack-config.repository';
 import { eagletrackAdapter } from '../adapters/eagletrack/eagletrack.adapter';
-import { eagletrackConfigSchema } from '@/shared/validations/eagletrack.schema';
+import {
+  eagletrackConfigSchema,
+  eagletrackRangeQuerySchema,
+  eagletrackTrackerLinkSchema,
+} from '@/shared/validations/eagletrack.schema';
+import { eagletrackHistoryService } from '../services/eagletrack-history.service';
+import { eagletrackFuelService } from '../services/eagletrack-fuel.service';
+import { eagletrackTrackerLinkService } from '../services/eagletrack-tracker-link.service';
+import { eagletrackTriggerRepository } from '../repositories/eagletrack-trigger.repository';
+import { resolveTenantContext, resolveTenantContextWithUser } from '@/server/utils/tenant-context.utils';
 import { successResponse } from '@/server/utils/response.utils';
 import { ValidationError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
@@ -87,6 +96,119 @@ export class EagleTrackController {
       const tenantId = await getTenantFromRequest(req);
       const result = await eagletrackAdapter.syncOrganization(tenantId);
       return successResponse(result);
+    } catch (error) {
+      return handleTelematicsError('EagleTrackController', error);
+    }
+  }
+
+  /**
+   * GET /api/telematics/eagletrack/history/[vehicleId]?from=&to=
+   *
+   * Ingests the provider's history for the window (idempotently) and
+   * returns the resulting breadcrumb trail, plus the vendor alerts for
+   * the same window.
+   *
+   * Resolves a full TenantContext, not just a tenantId: the vehicle is
+   * scope-checked before a single vendor request is made, and the trail
+   * is read back through the org-unit-scoped query. A tenantId-only
+   * signature is the leak shape server/utils/tenant-context.utils.ts
+   * exists to prevent.
+   */
+  async getHistory(req: NextRequest, vehicleId: string) {
+    try {
+      const context = await resolveTenantContext(req);
+      const parsed = eagletrackRangeQuerySchema.safeParse({
+        from: req.nextUrl.searchParams.get('from'),
+        to: req.nextUrl.searchParams.get('to'),
+        includeAlerts: req.nextUrl.searchParams.get('includeAlerts') ?? undefined,
+      });
+      if (!parsed.success) {
+        throw new ValidationError(
+          'Invalid history window -- `from` and `to` are both required',
+          parsed.error.flatten()
+        );
+      }
+
+      const history = await eagletrackHistoryService.getHistory(vehicleId, context, parsed.data);
+      return successResponse(history);
+    } catch (error) {
+      return handleTelematicsError('EagleTrackController', error);
+    }
+  }
+
+  /** GET /api/telematics/eagletrack/fuel/[vehicleId]?from=&to= -- the provider's fuel report, mapped onto canonical fuel telemetry. */
+  async getFuelReport(req: NextRequest, vehicleId: string) {
+    try {
+      const context = await resolveTenantContext(req);
+      const parsed = eagletrackRangeQuerySchema.safeParse({
+        from: req.nextUrl.searchParams.get('from'),
+        to: req.nextUrl.searchParams.get('to'),
+      });
+      if (!parsed.success) {
+        throw new ValidationError(
+          'Invalid fuel report window -- `from` and `to` are both required',
+          parsed.error.flatten()
+        );
+      }
+
+      const report = await eagletrackFuelService.getFuelReport(vehicleId, context, parsed.data);
+      return successResponse(report);
+    } catch (error) {
+      return handleTelematicsError('EagleTrackController', error);
+    }
+  }
+
+  /**
+   * GET /api/telematics/eagletrack/triggers
+   *
+   * The provider's trigger objects as last synced. Reads from our own
+   * store rather than calling the vendor: this backs a settings screen
+   * that a user may open repeatedly, and the trigger list changes on a
+   * human timescale. The sync (see eagletrack-trigger-sync.service.ts)
+   * is what refreshes it.
+   */
+  async listTriggers(req: NextRequest) {
+    try {
+      const context = await resolveTenantContext(req);
+      const triggers = await eagletrackTriggerRepository.listInScope(context);
+      return successResponse({ triggers });
+    } catch (error) {
+      return handleTelematicsError('EagleTrackController', error);
+    }
+  }
+
+  /** GET /api/telematics/eagletrack/tracker-links -- unmatched trackers from the last sync, plus existing links. */
+  async getTrackerMapping(req: NextRequest) {
+    try {
+      const context = await resolveTenantContext(req);
+      return successResponse(await eagletrackTrackerLinkService.getOverview(context));
+    } catch (error) {
+      return handleTelematicsError('EagleTrackController', error);
+    }
+  }
+
+  /** POST /api/telematics/eagletrack/tracker-links -- links a uin to a vehicle the caller may see. */
+  async createTrackerLink(req: NextRequest) {
+    try {
+      const { context, userId } = await resolveTenantContextWithUser(req);
+      const parsed = eagletrackTrackerLinkSchema.safeParse(await req.json());
+      if (!parsed.success) {
+        throw new ValidationError('Invalid tracker link', parsed.error.flatten());
+      }
+
+      const link = await eagletrackTrackerLinkService.createLink(parsed.data, context, userId);
+      return successResponse(link);
+    } catch (error) {
+      return handleTelematicsError('EagleTrackController', error);
+    }
+  }
+
+  /** DELETE /api/telematics/eagletrack/tracker-links/[uin] */
+  async deleteTrackerLink(req: NextRequest, uin: string) {
+    try {
+      const { context, userId } = await resolveTenantContextWithUser(req);
+      await eagletrackTrackerLinkService.removeLink(uin, context, userId);
+      return successResponse({ uin, removed: true });
     } catch (error) {
       return handleTelematicsError('EagleTrackController', error);
     }

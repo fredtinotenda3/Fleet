@@ -34,6 +34,13 @@
 //
 // The rule:
 //
+//   0. FIRST, consult the explicit admin-managed uin -> vehicle link
+//      (tbltelematics_eagletrack_links). An operator who has said "this
+//      tracker is that vehicle" outranks every heuristic below, and no
+//      vendor free text can override it. Recorded as matchedBy 'link'.
+//      This is the fix the RESIDUAL AMBIGUITY note below has always
+//      called for; the fallbacks are kept for trackers nobody has
+//      linked yet.
 //   1. Collect the candidates above, in that order, skipping any that
 //      is absent, non-string, or blank after trimming. Duplicates are
 //      collapsed (two fields holding the same plate is one lookup).
@@ -73,39 +80,73 @@
 // server/utils/tenant-context.utils.ts applies to org-unit resolution
 // (refuse to guess an owner) applies here.
 //
-// RESIDUAL AMBIGUITY, stated rather than hidden: if `plate` and `name`
-// hold the plates of two DIFFERENT vehicles, the order above resolves it
-// deterministically to `plate` and nothing flags the conflict. The
-// counters in result.matchedBy make the reliance visible, but they are
-// not a substitute for the correct long-term fix, which has not changed:
-// an explicit, admin-managed uin <-> vehicle mapping table (a small
-// settings screen listing unmatched uins next to a vehicle picker),
-// removing the dependency on vendor free text entirely.
-// `unmatchedTrackers` is exactly the input such a screen would need,
-// which is why it is reported rather than logged and forgotten.
+// RESIDUAL AMBIGUITY, and what now resolves it: if `plate` and `name`
+// hold the plates of two DIFFERENT vehicles, the heuristic order above
+// resolves it deterministically to `plate` and nothing flags the
+// conflict. That is why step 0 exists. The admin mapping screen
+// (/telematics/trackers) lists every uin the last sync could not place
+// -- `unmatchedTrackers`, which is why it was reported rather than
+// logged and forgotten -- next to a vehicle picker, and a link made
+// there takes precedence over all three heuristics. The matchedBy
+// counters remain the signal for how much of a fleet still stands on
+// vendor free text: a fully-linked account reports everything under
+// `link`.
 //
 // ---------------------------------------------------------------------
-// SCOPED OUT OF THIS PASS (extension points, not oversights)
+// WHAT THIS ADAPTER COVERS, AND WHAT LIVES ELSEWHERE
 // ---------------------------------------------------------------------
-//   * GET /api2/history and GET /api2/reports/<name> -- historical
-//     backfill and vendor-side reporting. Only `last` (status polling)
-//     and `trackers` (roster/matching) are implemented, mirroring how
-//     CartrackAdapter is scoped to getFleetStatus/getVehicleStatus.
-//   * Vendor-side triggers/alerts (`alert.cmd` / `alert.trigger`,
-//     referencing /api2/triggers geofence/speed/idle/stop/route
-//     objects). Recorded verbatim in the reading's provider metadata,
-//     but NOT reconciled with our own TelematicsAlert/geofence engine --
-//     reconciling two independent alerting systems (dedup, severity
-//     mapping, acknowledgement ownership) is a larger piece of work in
-//     its own right. Everything funnels through ingestTelematicsData so
-//     OUR alerting runs uniformly regardless of source, exactly as
-//     Cartrack's adapter does.
+// `last` (status polling) and `trackers` (roster/matching) remain this
+// file's own responsibility. The rest of api2 is implemented in
+// dedicated services, because each has a different cadence, a different
+// failure mode and a different scoping story:
+//
+//   * GET /api2/history        -> eagletrack-history.service.ts
+//   * GET /api2/reports/fuel   -> eagletrack-fuel.service.ts
+//   * GET /api2/drivers        -> eagletrack-driver-sync.service.ts
+//   * GET /api2/triggers       -> eagletrack-trigger-sync.service.ts
+//   * history?alertfilter=...  -> eagletrack-alert-sync.service.ts
+//
+// syncOrganization drives the driver and trigger sub-syncs (they are
+// roster-shaped, so they belong with the roster poll) on their own,
+// slower cadence -- see SUB_SYNC_INTERVAL_MS. History, fuel and alerts
+// are pulled on demand by the endpoints that need them: backfilling
+// every vehicle's full history on a position poll would be an unbounded
+// amount of work triggered by somebody opening a map.
+//
+// Vendor-side alerts on the LIVE snapshot (`alert.cmd` /
+// `alert.trigger`) are still recorded verbatim in the reading's provider
+// metadata and still not reconciled here -- the reconciliation now
+// happens against the vendor's own alert FEED, which carries trigger ids
+// and timestamps that a two-integer snapshot flag does not.
+//
+// ---------------------------------------------------------------------
+// ORG-UNIT SCOPE IS NOW CARRIED ON EVERY READING
+// ---------------------------------------------------------------------
+// The mapped payload previously had no `orgUnitId`, and nothing
+// downstream added one, while telematicsRepository.scopeOf() applies a
+// bare `{ orgUnitId: { $in: [...] } }` with no "or unassigned" branch
+// (unlike geofences, which deliberately have one). The consequence was
+// that every branch/department-scoped user saw ZERO Eagle Track vehicles
+// on the live map -- fail-closed, so never a leak, but it made the
+// feature invisible to exactly the roles it was built for.
+//
+// matchVehicle already loads the vehicle, so the unit now travels with
+// the match at no extra query cost. This can only narrow or preserve
+// visibility, never widen it: an org-wide caller resolves to `{}` and is
+// unaffected, and a scoped caller goes from seeing nothing to seeing
+// their own units. A vehicle with no orgUnitId of its own still produces
+// readings with none, which stay invisible to scoped callers -- that is
+// the fail-closed default the tenancy layer is built on, and the fix for
+// it is assigning the vehicle, not loosening the predicate.
 
 import { vehicleRepository } from '@/modules/vehicles/repositories/vehicle.repository';
 import { monitoring } from '@/infrastructure/monitoring/logger';
 import { telematicsService } from '../../services/telematics.service';
 import { telematicsRepository } from '../../repositories/telematics.repository';
 import { eagletrackConfigRepository } from '../../repositories/eagletrack-config.repository';
+import { eagletrackTrackerLinkRepository } from '../../repositories/eagletrack-tracker-link.repository';
+import { eagletrackDriverSyncService } from '../../services/eagletrack-driver-sync.service';
+import { eagletrackTriggerSyncService } from '../../services/eagletrack-trigger-sync.service';
 import { EagleTrackApiClient } from './eagletrack-api.client';
 import {
   EagleTrackMatchSource,
@@ -113,7 +154,9 @@ import {
   EagleTrackRefData,
   EagleTrackSyncResult,
   EagleTrackTracker,
+  EagleTrackTrackerLink,
   EagleTrackTrackerStatus,
+  EagleTrackUnmatchedTracker,
 } from './eagletrack.types';
 import {
   collectMetadataOnlyIo,
@@ -133,8 +176,35 @@ import { TelematicsData } from '../../types/telematics.types';
 
 const EAGLETRACK_DEVICE_PREFIX = 'eagletrack-';
 
+/**
+ * How often the roster-shaped sub-syncs (drivers, triggers) run,
+ * relative to the position poll that drives them.
+ *
+ * Fifteen minutes against a ~50-second position cadence, i.e. roughly
+ * one in eighteen polls. A driver roster and a geofence list are
+ * configuration, not telemetry -- they change when somebody edits them
+ * in the vendor UI, which is a human-timescale event. Pulling them on
+ * every poll would triple this integration's vendor request volume to
+ * re-read identical data.
+ */
+export const SUB_SYNC_INTERVAL_MS = 15 * 60_000;
+
 export function eagletrackDeviceIdFor(uin: string): string {
   return `${EAGLETRACK_DEVICE_PREFIX}${uin}`;
+}
+
+/**
+ * A tracker resolved to one of this tenant's vehicles.
+ *
+ * `orgUnitId` is CARRIED from the matched vehicle rather than derived
+ * separately -- the vehicle is the authority on its own unit, and any
+ * second derivation would be a place for the two to disagree. See the
+ * org-unit block in this file's header.
+ */
+export interface EagleTrackVehicleMatch {
+  vehicleId: string;
+  matchedBy: EagleTrackMatchSource;
+  orgUnitId?: string;
 }
 
 /**
@@ -419,7 +489,19 @@ export function signaturesDiffer(
  */
 export function mapStatusToTelematicsData(
   status: EagleTrackTrackerStatus,
-  context: { tenantId: string; vehicleId: string; deviceId: string; tracker?: EagleTrackTracker }
+  context: {
+    tenantId: string;
+    vehicleId: string;
+    deviceId: string;
+    tracker?: EagleTrackTracker;
+    /**
+     * The matched vehicle's org unit. Optional because a vehicle that
+     * has not been assigned to one has nothing to inherit -- absent
+     * stays absent rather than becoming a sentinel, exactly as with
+     * every other field in this mapper.
+     */
+    orgUnitId?: string;
+  }
 ): EagleTrackMappedReading | null {
   const timestamp = parseEagleTrackDate(status.date);
   if (!timestamp) return null;
@@ -524,14 +606,28 @@ export function mapStatusToTelematicsData(
   const trip: TelematicsData['trip'] = { idleTime };
   if (odometer) trip.odometer = odometer.value;
 
+  /**
+   * UNIT CORRECTION. io 199 is "Fuel Consumption, L/h" in the vendor's
+   * own catalogue (see EAGLETRACK_IO_CATALOGUE), and it was being
+   * written to `fuel.consumptionRate`, which the vehicle detail panel
+   * renders with the suffix " L/100km". A litres-per-HOUR reading
+   * displayed as litres-per-100km is not a rounding error, it is a
+   * different quantity: an idling truck burning 2 L/h read as an
+   * impossibly efficient 2 L/100km.
+   *
+   * `instantConsumption` is the field the panel already labels " L/h",
+   * so the value now lands where its unit is true. Verified as the only
+   * consumer: nothing else in the codebase reads either field.
+   */
   const fuel: TelematicsData['fuel'] = {};
-  if (consumption) fuel.consumptionRate = consumption.value;
+  if (consumption) fuel.instantConsumption = consumption.value;
   if (fuelUsed) fuel.fuelUsed = fuelUsed.value;
 
   const payload: Omit<TelematicsData, '_id' | 'createdAt' | 'updatedAt'> & { tenantId: string } = {
     deviceId: context.deviceId,
     vehicleId: context.vehicleId,
     tenantId: context.tenantId,
+    ...(context.orgUnitId ? { orgUnitId: context.orgUnitId } : {}),
     location: {
       lat: status.lat as number,
       lng: status.lng as number,
@@ -558,6 +654,43 @@ export function mapStatusToTelematicsData(
 }
 
 export class EagleTrackAdapter {
+  /**
+   * Builds an authenticated client for a tenant from its stored
+   * (decrypted) config. Null when Eagle Track isn't configured/enabled.
+   *
+   * PUBLIC because the on-demand services (history, fuel, alerts) need
+   * exactly this and nothing else from the adapter. Exposing the builder
+   * rather than re-implementing it in five places keeps ONE definition
+   * of "how a tenant's credentials become a client" -- which matters
+   * because that definition is where the token is decrypted, and a
+   * second copy is a second place for a decryption or enabled-flag check
+   * to be got wrong.
+   *
+   * Returns a client, never the config: nothing outside this method and
+   * eagletrackConfigRepository.getResolvedConfig ever holds the token.
+   */
+  async buildClientFor(tenantId: string): Promise<EagleTrackApiClient | null> {
+    return this.buildClient(tenantId);
+  }
+
+  /**
+   * Resolves a tracker uin to one of this tenant's vehicles, using the
+   * same precedence the sync uses (link, then plate/platenumber/name).
+   *
+   * Exposed for the on-demand services, which are given a uin by an
+   * HTTP caller and must arrive at the same vehicle the sync would --
+   * two different answers to "whose tracker is this" is how a
+   * misattributed history backfill happens.
+   */
+  async resolveVehicleForUin(
+    tenantId: string,
+    uin: string,
+    tracker?: EagleTrackTracker
+  ): Promise<EagleTrackVehicleMatch | null> {
+    const links = await eagletrackTrackerLinkRepository.mapByUin(tenantId);
+    return this.matchVehicle(tenantId, uin, tracker, links);
+  }
+
   /** Builds an authenticated client for a tenant from its stored (decrypted) config. Null when Eagle Track isn't configured/enabled. */
   private async buildClient(tenantId: string): Promise<EagleTrackApiClient | null> {
     const config = await eagletrackConfigRepository.getResolvedConfig(tenantId);
@@ -586,7 +719,7 @@ export class EagleTrackAdapter {
     const result: EagleTrackSyncResult = {
       tenantId,
       matched: 0,
-      matchedBy: { plate: 0, platenumber: 0, name: 0 },
+      matchedBy: { link: 0, plate: 0, platenumber: 0, name: 0 },
       skippedStale: 0,
       skippedNoFix: 0,
       unmatchedTrackers: [],
@@ -633,6 +766,11 @@ export class EagleTrackAdapter {
       trackersByUin.set(String(tracker.uin), tracker);
     }
 
+    // ONE query for every operator-declared link in the tenant, not one
+    // per tracker. A 500-tracker account would otherwise add 500 round
+    // trips to a poll that already runs every staleness window.
+    const links = await eagletrackTrackerLinkRepository.mapByUin(tenantId);
+
     const username = deriveEagleTrackUsername(roster, refData);
     if (!username) {
       const message =
@@ -661,7 +799,7 @@ export class EagleTrackAdapter {
       seenUins.add(status.uin);
 
       try {
-        const outcome = await this.ingestStatus(tenantId, status, trackersByUin.get(status.uin));
+        const outcome = await this.ingestStatus(tenantId, status, trackersByUin.get(status.uin), links);
 
         // Counted for every outcome that resolved to a vehicle, so
         // matchedBy sums to matched + skippedNoFix (see its doc comment).
@@ -704,13 +842,112 @@ export class EagleTrackAdapter {
       if (!seenUins.has(uin)) result.trackersWithoutFix.push(uin);
     }
 
+    /**
+     * DRIVER AND TRIGGER SUB-SYNCS.
+     *
+     * Gated on their own, much slower cadence (see SUB_SYNC_INTERVAL_MS)
+     * rather than running on every position poll. The read-through
+     * refresh fires this whole sync roughly once per staleness window
+     * for any tenant with the map open, and a driver roster does not
+     * change on that timescale -- pulling two extra endpoints every
+     * ~50 seconds would triple this integration's request volume against
+     * the vendor to re-read data that is identical every time.
+     *
+     * Isolated from the position poll in BOTH directions: a sub-sync
+     * failure is recorded in its own result and in `result.errors`, and
+     * cannot stop positions being reported. Positions are the thing an
+     * operator is actually looking at.
+     */
+    if (await this.shouldRunSubSyncs(tenantId)) {
+      /**
+       * Wrapped, because "isolated in both directions" has to be true in
+       * code and not only in the comment above. Both services already
+       * return their failures in `errors` rather than throwing, but a
+       * bug in either -- or a rejection from a dependency they did not
+       * anticipate -- must not cost an operator the vehicle positions
+       * they are actually looking at. Positions are the product; a
+       * driver roster refresh is not.
+       */
+      try {
+        result.drivers = await eagletrackDriverSyncService.sync(tenantId, client);
+        result.errors.push(...(result.drivers?.errors ?? []));
+      } catch (error) {
+        result.errors.push(
+          `drivers: ${error instanceof Error ? error.message : 'Unknown error'}`
+        );
+      }
+
+      try {
+        result.triggers = await eagletrackTriggerSyncService.sync(tenantId, client, links);
+        result.errors.push(...(result.triggers?.errors ?? []));
+      } catch (error) {
+        result.errors.push(
+          `triggers: ${error instanceof Error ? error.message : 'Unknown error'}`
+        );
+      }
+    }
+
+    /**
+     * The unmatched snapshot the admin mapping screen reads.
+     *
+     * Recorded from the ROSTER rather than from the status payload, so a
+     * tracker that has never reported a fix -- the most likely thing to
+     * need linking by hand, since it has no telemetry to match on -- is
+     * still listed. `hadFix` distinguishes the two cases for the
+     * operator without needing a second data source.
+     */
+    const unmatchedSet = new Set(result.unmatchedTrackers);
+    const unmatchedSnapshot: EagleTrackUnmatchedTracker[] = [];
+    for (const [uin, tracker] of trackersByUin) {
+      const hadFix = seenUins.has(uin);
+      // A tracker with no fix has never been through matching at all, so
+      // "did the sync fail to place it" is only answerable for the ones
+      // that were. Both are offered to the screen; neither is guessed at.
+      if (!unmatchedSet.has(uin) && hadFix) continue;
+      if (links.has(uin)) continue;
+
+      unmatchedSnapshot.push({
+        uin,
+        ...(typeof tracker.name === 'string' && tracker.name ? { name: tracker.name } : {}),
+        ...(typeof tracker.plate === 'string' && tracker.plate ? { plate: tracker.plate } : {}),
+        ...(typeof tracker.model === 'string' && tracker.model ? { model: tracker.model } : {}),
+        hadFix,
+      });
+    }
+
     await eagletrackConfigRepository.recordSyncResult(
       tenantId,
       result.errors.length > 0 && result.matched === 0 ? 'error' : 'success',
-      result.errors[0]
+      result.errors[0],
+      { unmatchedTrackers: unmatchedSnapshot }
     );
 
     return result;
+  }
+
+  /**
+   * Whether the roster-shaped sub-syncs are due.
+   *
+   * Read off the config's own `lastDriverSyncAt`, which is the same
+   * pattern (and the same document) the read-through refresh already
+   * uses for `lastSyncAt` -- so this needs no new state and no
+   * scheduler, and it self-heals: a process that dies mid-sub-sync
+   * simply leaves the timestamp unadvanced and the next poll retries.
+   *
+   * Fails CLOSED on a read error: if the config cannot be read, the
+   * sub-syncs do not run. Skipping a roster refresh costs nothing;
+   * hammering a vendor endpoint every 50 seconds because a Mongo blip
+   * made staleness unreadable costs an operator their API access.
+   */
+  private async shouldRunSubSyncs(tenantId: string): Promise<boolean> {
+    try {
+      const config = await eagletrackConfigRepository.getConfig(tenantId);
+      const last = config?.lastDriverSyncAt;
+      if (!last) return true;
+      return Date.now() - new Date(last).getTime() > SUB_SYNC_INTERVAL_MS;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -723,12 +960,45 @@ export class EagleTrackAdapter {
    */
   private async matchVehicle(
     tenantId: string,
-    tracker: EagleTrackTracker | undefined
-  ): Promise<{ vehicleId: string; matchedBy: EagleTrackMatchSource } | null> {
+    uin: string,
+    tracker: EagleTrackTracker | undefined,
+    links: Map<string, EagleTrackTrackerLink>
+  ): Promise<EagleTrackVehicleMatch | null> {
+    /**
+     * STEP 0 -- the operator's own declaration, which outranks every
+     * heuristic below.
+     *
+     * The link is still VERIFIED against the vehicle table rather than
+     * trusted outright: a vehicle can be deleted after a link is made,
+     * and a link pointing at a row that no longer exists must fall
+     * through to the heuristics (or to unmatched) rather than ingest
+     * against a dangling id. The lookup is tenant-scoped, so a link
+     * carrying another tenant's vehicleId -- which the write path
+     * already prevents -- would resolve to nothing here too. Defence in
+     * depth, not redundancy: this is the read side of the boundary.
+     */
+    const link = links.get(uin);
+    if (link?.vehicleId) {
+      const linked = await vehicleRepository.findById(link.vehicleId, tenantId);
+      if (linked?._id) {
+        return {
+          vehicleId: String(linked._id),
+          matchedBy: 'link',
+          ...(linked.orgUnitId ? { orgUnitId: linked.orgUnitId } : {}),
+        };
+      }
+    }
+
     for (const candidate of plateCandidatesFromTracker(tracker)) {
       const vehicle = await vehicleRepository.findByLicensePlate(candidate.value, tenantId);
       if (vehicle?._id) {
-        return { vehicleId: vehicle._id, matchedBy: candidate.source };
+        return {
+          vehicleId: vehicle._id,
+          matchedBy: candidate.source,
+          // Carried, not derived. See the org-unit block in this file's
+          // header for why every reading needs it.
+          ...(vehicle.orgUnitId ? { orgUnitId: vehicle.orgUnitId } : {}),
+        };
       }
     }
 
@@ -753,12 +1023,13 @@ export class EagleTrackAdapter {
   private async ingestStatus(
     tenantId: string,
     status: EagleTrackTrackerStatus,
-    tracker: EagleTrackTracker | undefined
+    tracker: EagleTrackTracker | undefined,
+    links: Map<string, EagleTrackTrackerLink>
   ): Promise<{ status: 'ingested' | 'stale' | 'no-fix' | 'unmatched'; matchedBy?: EagleTrackMatchSource }> {
-    const match = await this.matchVehicle(tenantId, tracker);
+    const match = await this.matchVehicle(tenantId, status.uin, tracker, links);
     if (!match) return { status: 'unmatched' };
 
-    const { vehicleId, matchedBy } = match;
+    const { vehicleId, matchedBy, orgUnitId } = match;
 
     if (!hasUsableFix(status)) return { status: 'no-fix', matchedBy };
 
@@ -768,7 +1039,7 @@ export class EagleTrackAdapter {
     // trip.
     const existingDevice = await telematicsRepository.getDevice(deviceId, tenantId);
     if (!existingDevice) {
-      await this.registerDevice(deviceId, vehicleId, tenantId, status, tracker, matchedBy);
+      await this.registerDevice(deviceId, vehicleId, tenantId, status, tracker, matchedBy, orgUnitId);
     }
 
     const mapped = mapStatusToTelematicsData(status, {
@@ -776,6 +1047,7 @@ export class EagleTrackAdapter {
       vehicleId,
       deviceId,
       tracker,
+      orgUnitId,
     });
 
     if (!mapped) {
@@ -848,13 +1120,20 @@ export class EagleTrackAdapter {
     tenantId: string,
     status: EagleTrackTrackerStatus,
     tracker: EagleTrackTracker | undefined,
-    matchedBy: EagleTrackMatchSource
+    matchedBy: EagleTrackMatchSource,
+    orgUnitId?: string
   ): Promise<void> {
     await telematicsRepository.registerDevice(
       {
         deviceId,
         vehicleId,
         tenantId,
+        // Inherited from the matched vehicle, as
+        // telematics.tenancy-addendum.ts specifies for
+        // TelematicsDevice. Without it getOfflineDevicesInScope returns
+        // nothing for a scoped caller, so a branch manager could never
+        // see that their own tracker had gone dark.
+        ...(orgUnitId ? { orgUnitId } : {}),
         type: 'gps',
         manufacturer: 'Eagle Track',
         model: typeof tracker?.model === 'string' && tracker.model ? tracker.model : 'api2',

@@ -53,3 +53,56 @@ export const eagletrackConfigSchema = z.object({
 });
 
 export type EagleTrackConfigInputSchema = z.infer<typeof eagletrackConfigSchema>;
+
+/**
+ * The `from`/`to` window every ranged Eagle Track endpoint takes.
+ *
+ * Both REQUIRED, deliberately. Defaulting a missing `to` to "now" and a
+ * missing `from` to "some sensible lookback" reads as convenience, but
+ * it means a caller that forgot a parameter silently gets a different
+ * window than they meant -- and for a paged vendor pull, a wrong window
+ * is billed in API requests. An explicit window is one line for the
+ * caller and removes the class entirely.
+ *
+ * Ordering and span are NOT validated here. clampRange owns both, so
+ * there is one definition of "too wide" rather than one per endpoint
+ * schema that then drifts from the service's own cap.
+ */
+export const eagletrackRangeQuerySchema = z.object({
+  from: z.coerce.date(),
+  to: z.coerce.date(),
+  /**
+   * Whether to import the provider's alert feed for the same window.
+   * Defaults to true: an operator asking what happened to a vehicle
+   * between two times wants the alerts as well as the positions.
+   */
+  includeAlerts: z
+    .union([z.boolean(), z.enum(['true', 'false'])])
+    .optional()
+    .transform((value) => (typeof value === 'string' ? value === 'true' : value)),
+});
+
+/**
+ * POST body for creating a uin -> vehicle link.
+ *
+ * NOTE WHAT IS ABSENT: the org-unit field. It is derived server-side
+ * from a scope-checked vehicle lookup and must never be accepted from a
+ * caller -- see eagletrack-tracker-link.service.ts's header for the
+ * write-side escalation that would otherwise be possible.
+ *
+ * A test asserts that field name does not appear ANYWHERE in this file,
+ * comments included, mirroring the finance schema's guard. That is why
+ * this paragraph spells it out in prose: a grep-based guard cannot tell
+ * a schema field from a comment about one, and weakening the guard to
+ * make room for a comment would defeat it.
+ */
+export const eagletrackTrackerLinkSchema = z.object({
+  uin: z.string().min(1, 'A tracker uin is required').max(64),
+  vehicleId: z
+    .string()
+    .regex(/^[0-9a-fA-F]{24}$/, 'vehicleId must be the vehicle _id, not a license plate'),
+  note: z.string().max(280).optional(),
+});
+
+export type EagleTrackRangeQuery = z.infer<typeof eagletrackRangeQuerySchema>;
+export type EagleTrackTrackerLinkInput = z.infer<typeof eagletrackTrackerLinkSchema>;

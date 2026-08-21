@@ -58,11 +58,34 @@
 
 import { monitoring } from '@/infrastructure/monitoring/logger';
 import {
+  EagleTrackDriversResponse,
+  EagleTrackFuelReportResponse,
+  EagleTrackHistoryResponse,
   EagleTrackLastResponse,
   EagleTrackTracker,
   EagleTrackTrackerStatus,
   EagleTrackTrackersResponse,
+  EagleTrackTriggersResponse,
 } from './eagletrack.types';
+import {
+  EAGLETRACK_DATE_RANGE_ENCODINGS,
+  EagleTrackDateRangeEncoding,
+  EagleTrackRangeQuery,
+  encodeEagleTrackDateRange,
+} from './eagletrack-date-range';
+
+/**
+ * Reads `global.pageCount` / `global.recCount`, which the vendor sends
+ * as a number on some endpoints and a string on others (its own envelope
+ * type already declares `recCount` as `number | string`). Null rather
+ * than 0 for an unreadable value: 0 pages and "the vendor did not say"
+ * lead to opposite pagination decisions.
+ */
+function readCounter(raw: unknown): number | null {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const value = typeof raw === 'number' ? raw : Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
 
 /**
  * The query parameter api2 authenticates on. Named here rather than
@@ -215,6 +238,14 @@ export class EagleTrackApiClient {
   private readonly baseUrl: string;
   private readonly token: string;
   private readonly timeoutMs: number;
+  /**
+   * The dateRange encoding this deployment was observed to accept, once
+   * one has been. Instance-scoped: a client is built per sync, so the
+   * discovery cost is at most one extra request per sync rather than per
+   * call, and nothing is cached across tenants (two tenants can be two
+   * different deployments of this white-labelled platform).
+   */
+  private resolvedDateRangeEncoding: EagleTrackDateRangeEncoding | null = null;
 
   constructor(config: EagleTrackApiClientConfig) {
     this.baseUrl = normaliseEagleTrackBaseUrl(config.domain);
@@ -274,6 +305,149 @@ export class EagleTrackApiClient {
       : [];
 
     return { trackers, refData: envelope.refData };
+  }
+
+  /**
+   * One page of GET /api2/history for a single tracker.
+   *
+   * PAGINATION IS THE CALLER'S JOB, deliberately. This returns exactly
+   * the page asked for, together with the envelope's own `global`
+   * counters, so the caller decides how many pages are worth pulling.
+   * Looping in here would let a single wide window (a year of
+   * second-resolution fixes) issue unbounded requests inside one
+   * serverless invocation with no way for the caller to cap it -- see
+   * eagletrack-history.service.ts, which caps both pages and points.
+   *
+   * `alertFilter`, when supplied, is the vendor's `alertfilter`
+   * parameter. `__allalert` turns this same endpoint into the vendor's
+   * alert feed, which is why the alert import shares this method rather
+   * than duplicating the date-range and pagination handling.
+   */
+  async getHistory(options: {
+    uin: string;
+    from: Date;
+    to: Date;
+    pageSize: number;
+    pageIndex: number;
+    alertFilter?: string;
+  }): Promise<{ rows: unknown; pageCount: number | null; recordCount: number | null; range: EagleTrackRangeQuery }> {
+    const params: Record<string, string> = {
+      uin: options.uin,
+      pageSize: String(options.pageSize),
+      pageIndex: String(options.pageIndex),
+    };
+    if (options.alertFilter) params.alertfilter = options.alertFilter;
+
+    const { envelope, range } = await this.requestWithDateRange<EagleTrackHistoryResponse>(
+      '/api2/history',
+      params,
+      options.from,
+      options.to
+    );
+
+    return {
+      rows: envelope.data,
+      pageCount: readCounter(envelope.global?.pageCount),
+      recordCount: readCounter(envelope.global?.recCount),
+      range,
+    };
+  }
+
+  /**
+   * GET /api2/reports/fuel for one tracker over one window.
+   *
+   * Returns the envelope's `data` untouched: the row shape is not
+   * confirmed against a live deployment, so narrowing it here would just
+   * move the guess one layer down. eagletrack-fuel.service.ts maps it
+   * through the candidate aliases in eagletrack-field-map.ts and reports
+   * whatever it could not place.
+   */
+  async getFuelReport(options: {
+    uin: string;
+    from: Date;
+    to: Date;
+  }): Promise<{ rows: unknown; range: EagleTrackRangeQuery }> {
+    const { envelope, range } = await this.requestWithDateRange<EagleTrackFuelReportResponse>(
+      '/api2/reports/fuel',
+      { uin: options.uin },
+      options.from,
+      options.to
+    );
+
+    return { rows: envelope.data, range };
+  }
+
+  /** GET /api2/drivers -- the account's driver roster. Row shape unconfirmed; see the types file. */
+  async getDrivers(): Promise<unknown> {
+    const envelope = await this.request<EagleTrackDriversResponse>('/api2/drivers');
+    return envelope.data;
+  }
+
+  /** GET /api2/triggers -- the account's geofence/speed/idle/stop/route/custom trigger objects. */
+  async getTriggers(): Promise<unknown> {
+    const envelope = await this.request<EagleTrackTriggersResponse>('/api2/triggers');
+    return envelope.data;
+  }
+
+  /**
+   * Issues a dateRange-bearing request, retrying with the next encoding
+   * ONLY when the vendor rejects the one used.
+   *
+   * See eagletrack-date-range.ts for why the encoding is not simply
+   * hardcoded. Two properties matter here:
+   *
+   *   * an EMPTY result never triggers a retry. An empty history window
+   *     is a legitimate answer for a parked vehicle, and retrying it
+   *     would multiply every such request by the number of encodings.
+   *   * only a VENDOR ERROR ENVELOPE retries. A timeout, a DNS failure,
+   *     a 5xx or a login page is not evidence that the separator is
+   *     wrong, and retrying those would turn one outage into three.
+   *
+   * The first encoding that works is remembered for the lifetime of this
+   * client, so a sync that makes several ranged calls pays the discovery
+   * cost at most once.
+   */
+  private async requestWithDateRange<T extends { error: number | string; msg?: string }>(
+    path: string,
+    params: Record<string, string>,
+    from: Date,
+    to: Date
+  ): Promise<{ envelope: T; range: EagleTrackRangeQuery }> {
+    const candidates = this.resolvedDateRangeEncoding
+      ? [this.resolvedDateRangeEncoding]
+      : EAGLETRACK_DATE_RANGE_ENCODINGS;
+
+    let lastError: unknown;
+
+    for (const encoding of candidates) {
+      const encoded = encodeEagleTrackDateRange(from, to, encoding);
+      try {
+        const envelope = await this.request<T>(path, { ...params, dateRange: encoded });
+        this.resolvedDateRangeEncoding = encoding;
+        return {
+          envelope,
+          range: { from: from.toISOString(), to: to.toISOString(), encoding, encoded },
+        };
+      } catch (error) {
+        lastError = error;
+
+        const isVendorEnvelopeError =
+          error instanceof EagleTrackApiError && error.vendorErrorCode !== undefined;
+        if (!isVendorEnvelopeError) throw error;
+
+        monitoring.logWarn('[EagleTrackApiClient] dateRange encoding rejected, trying the next', {
+          endpoint: this.describeEndpoint(path),
+          encoding,
+          vendorErrorCode: (error as EagleTrackApiError).vendorErrorCode,
+        });
+      }
+    }
+
+    throw lastError instanceof Error
+      ? lastError
+      : new EagleTrackApiError(
+          `Eagle Track rejected every known dateRange encoding for ${this.describeEndpoint(path)}`
+        );
   }
 
   /**

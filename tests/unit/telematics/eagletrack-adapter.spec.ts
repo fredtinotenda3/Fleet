@@ -418,10 +418,40 @@ jest.mock('../../../modules/telematics/repositories/eagletrack-config.repository
   eagletrackConfigRepository: {
     getResolvedConfig: jest.fn(),
     recordSyncResult: jest.fn(),
+    // Read by shouldRunSubSyncs, which fails CLOSED on a rejection --
+    // returning null here means "never synced", so the sub-syncs would
+    // be due. The sub-sync services are themselves mocked above.
+    getConfig: jest.fn().mockResolvedValue(null),
+    recordSubSyncAt: jest.fn(),
   },
 }));
+/**
+ * The sync now consults the operator-declared uin -> vehicle link map
+ * before any plate/name heuristic, and drives the driver/trigger
+ * sub-syncs. All three are mocked out here: this file is about MATCHING
+ * ORDER and staleness, and an unmocked repository would reach
+ * connectToDatabase() and fail every test for reasons unrelated to what
+ * they assert.
+ *
+ * `mapByUin` returns an EMPTY map by default, which is deliberate --
+ * with no links present, every existing assertion in this file continues
+ * to exercise the plate -> __platenumber -> name fallbacks exactly as
+ * before. Tests that care about links populate it explicitly.
+ */
+jest.mock('../../../modules/telematics/repositories/eagletrack-tracker-link.repository', () => ({
+  eagletrackTrackerLinkRepository: {
+    mapByUin: jest.fn().mockResolvedValue(new Map()),
+    findByUin: jest.fn().mockResolvedValue(null),
+  },
+}));
+jest.mock('../../../modules/telematics/services/eagletrack-driver-sync.service', () => ({
+  eagletrackDriverSyncService: { sync: jest.fn() },
+}));
+jest.mock('../../../modules/telematics/services/eagletrack-trigger-sync.service', () => ({
+  eagletrackTriggerSyncService: { sync: jest.fn() },
+}));
 jest.mock('../../../modules/vehicles/repositories/vehicle.repository', () => ({
-  vehicleRepository: { findByLicensePlate: jest.fn() },
+  vehicleRepository: { findByLicensePlate: jest.fn(), findById: jest.fn() },
 }));
 jest.mock('../../../modules/telematics/services/telematics.service', () => ({
   telematicsService: { ingestTelematicsData: jest.fn() },
@@ -910,7 +940,7 @@ describe('EagleTrackAdapter vehicle matching order', () => {
 
     expect(result.matched).toBe(3);
     expect(result.unmatchedTrackers).toEqual([]);
-    expect(result.matchedBy).toEqual({ plate: 0, platenumber: 0, name: 3 });
+    expect(result.matchedBy).toEqual({ link: 0, plate: 0, platenumber: 0, name: 3 });
     expect(telematicsService.ingestTelematicsData).toHaveBeenCalledTimes(3);
   });
 
@@ -922,7 +952,7 @@ describe('EagleTrackAdapter vehicle matching order', () => {
 
     const result = await new EagleTrackAdapter().syncOrganization(TENANT);
 
-    expect(result.matchedBy).toEqual({ plate: 1, platenumber: 0, name: 0 });
+    expect(result.matchedBy).toEqual({ link: 0, plate: 1, platenumber: 0, name: 0 });
     // `name` must not even be queried once `plate` has resolved.
     expect(vehicleRepository.findByLicensePlate).toHaveBeenCalledTimes(1);
     expect(vehicleRepository.findByLicensePlate).toHaveBeenCalledWith('AAA111', TENANT);
@@ -945,7 +975,7 @@ describe('EagleTrackAdapter vehicle matching order', () => {
     const result = await new EagleTrackAdapter().syncOrganization(TENANT);
 
     expect(result.matched).toBe(1);
-    expect(result.matchedBy).toEqual({ plate: 0, platenumber: 0, name: 1 });
+    expect(result.matchedBy).toEqual({ link: 0, plate: 0, platenumber: 0, name: 1 });
     expect(vehicleRepository.findByLicensePlate.mock.calls.map((c: unknown[]) => c[0])).toEqual([
       'GONE01',
       'abc',
@@ -964,7 +994,7 @@ describe('EagleTrackAdapter vehicle matching order', () => {
     const result = await new EagleTrackAdapter().syncOrganization(TENANT);
 
     expect(result.matched).toBe(1);
-    expect(result.matchedBy).toEqual({ plate: 0, platenumber: 1, name: 0 });
+    expect(result.matchedBy).toEqual({ link: 0, plate: 0, platenumber: 1, name: 0 });
   });
 
   it('issues ONE lookup when two fields carry the same plate in different casing', async () => {
@@ -987,7 +1017,7 @@ describe('EagleTrackAdapter vehicle matching order', () => {
     const result = await new EagleTrackAdapter().syncOrganization(TENANT);
 
     expect(result.unmatchedTrackers).toEqual(['1']);
-    expect(result.matchedBy).toEqual({ plate: 0, platenumber: 0, name: 0 });
+    expect(result.matchedBy).toEqual({ link: 0, plate: 0, platenumber: 0, name: 0 });
     expect(telematicsService.ingestTelematicsData).not.toHaveBeenCalled();
     expect(telematicsRepository.registerDevice).not.toHaveBeenCalled();
   });

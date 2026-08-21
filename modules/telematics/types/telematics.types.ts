@@ -158,7 +158,34 @@ export interface TelematicsData extends BaseEntity {
 }
 
 export interface TelematicsAlert {
-  type: 'speeding' | 'hard_brake' | 'hard_accel' | 'idle' | 'geofence' | 'engine' | 'maintenance';
+  /**
+   * `'vendor'` is for a provider-side alert whose category has no
+   * honest counterpart in the vocabulary above.
+   *
+   * Added for Eagle Track's trigger types 4 (Stop Alert) and 6 (Custom
+   * Alert). Stop is NOT `'idle'`: idle means engine-running-while-
+   * stationary everywhere else in this codebase (see the Eagle Track
+   * adapter's `ignitionOn && speed === 0` derivation), so filing stops
+   * as idle would inflate the idle metric with parked vehicles and
+   * misattribute idle fuel burn once the finance module posts
+   * telemetry-driven costs. Custom is operator-defined free text with no
+   * category at all.
+   *
+   * The alternative was dropping both, which loses events the provider
+   * genuinely sent. Safe to add: nothing in the codebase switches
+   * exhaustively on this union, and its only reader interpolates it into
+   * a notification title. See eagletrack-triggers.map.ts for the full
+   * type-by-type mapping.
+   */
+  type:
+    | 'speeding'
+    | 'hard_brake'
+    | 'hard_accel'
+    | 'idle'
+    | 'geofence'
+    | 'engine'
+    | 'maintenance'
+    | 'vendor';
   severity: 'low' | 'medium' | 'high' | 'critical';
   message: string;
   value?: number;
@@ -166,11 +193,49 @@ export interface TelematicsAlert {
   timestamp: Date;
   acknowledgedAt?: Date;
   acknowledgedBy?: string;
+
+  // ── Provider reconciliation (imported vendor alerts only) ──────────
+  // All optional and absent on every alert our own engine derives, so
+  // nothing existing changes shape. See
+  // telematicsRepository.upsertVendorAlerts.
+
+  /**
+   * Stable identity of an IMPORTED provider alert -- the vendor's own
+   * alert id where it supplies one, otherwise the uin+time+trigger tuple
+   * that makes two rows the same event. The duplicate-prevention key for
+   * re-running an import over an overlapping window.
+   */
+  providerAlertKey?: string;
+  /** The vendor trigger object this alert fired from, for joining back to tbltelematics_eagletrack_triggers. */
+  providerTriggerId?: string;
+  /** The vendor's own numeric type, kept raw even when undocumented. */
+  providerTypeCode?: number | null;
+  /** The vendor's own label for that type, or null when the code is outside the documented range. */
+  providerTypeLabel?: string | null;
+  /** The provider row exactly as sent. Opaque, like TelematicsData.providerMetadata -- nothing branches on it. */
+  providerMetadata?: Record<string, unknown>;
 }
 
 export interface Geofence extends BaseEntity {
   name: string;
   vehicleId?: string;
+  /**
+   * Set when this boundary was imported from a provider rather than
+   * drawn by an operator. `provider` + `providerTriggerId` together are
+   * the reconciliation key: a second sync matches on them and REFRESHES
+   * the boundary instead of creating a duplicate.
+   *
+   * Matching on `name` instead would duplicate the geofence the moment
+   * somebody renamed it in the vendor UI, and the orphaned copy would
+   * keep firing entry/exit alerts nobody could find the source of.
+   *
+   * Absent on every operator-created geofence, so nothing existing
+   * changes shape. See telematicsRepository.upsertProviderGeofence for
+   * which fields a re-sync is allowed to overwrite and which are treated
+   * as local operational choices.
+   */
+  provider?: string;
+  providerTriggerId?: string;
   type: 'circle' | 'polygon' | 'route';
   coordinates: CircleCoordinates | PolygonCoordinates | RouteCoordinates;
   active: boolean;

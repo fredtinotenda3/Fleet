@@ -136,6 +136,21 @@ const NAV_SECTIONS: NavSection[] = [
         href: '/telematics/map',
         icon: MapPin,
         permissions: [Permission.VEHICLE_VIEW],
+        children: [
+          // The Eagle Track tracker mapping worklist. Gated on
+          // VEHICLE_VIEW to MATCH ITS GET ROUTE, not on VEHICLE_EDIT:
+          // the page is readable by anyone who can see the fleet, and
+          // the link/unlink controls are what require edit. Gating the
+          // nav entry on the write permission would hide a page a viewer
+          // is entitled to open -- the same nav/API mismatch the drivers
+          // entry above was added to fix.
+          {
+            key: 'tracker-mapping',
+            label: 'Tracker Mapping',
+            href: '/telematics/trackers',
+            permissions: [Permission.VEHICLE_VIEW],
+          },
+        ],
       },
       // FIX: /drivers existed as a backend module and two API routes but
       // had no page and no nav entry, so drivers were unreachable in the UI.

@@ -72,6 +72,36 @@ const STATUS_COLOR_VAR: Record<LiveMapVehicle['status'], string> = {
 /** An alerting vehicle is drawn red whatever its motion state -- see LiveMapVehicleStatus's doc comment for why alert is not a status. */
 const ALERT_COLOR_VAR = 'var(--map-marker-alert, #b3261e)';
 
+/**
+ * MARKER GEOMETRY, in one place.
+ *
+ * The direction wedge was previously a 13px-tall triangle on a 30px
+ * icon, which at typical fleet zoom levels read as a slight bulge on a
+ * dot rather than as a heading -- the information was technically drawn
+ * and practically unreadable.
+ *
+ * These proportions make the ARROW the dominant shape: a 17px reach and
+ * a notched tail against a 7px disc, on a 44px icon. The notch (a
+ * concave rear edge rather than a flat one) is what makes the shape read
+ * as a chevron pointing somewhere rather than as a generic triangle,
+ * which matters most when several vehicles sit close together.
+ *
+ * `iconSize` grows with the marker so Leaflet's own hit box matches what
+ * is drawn -- a wedge painted outside the icon box would be visible but
+ * not clickable.
+ */
+const MARKER_SIZE = 44;
+/** Distance from centre to the arrow tip. The number to change to resize the arrow. */
+const WEDGE_REACH = 17;
+/** Half-width at the arrow's widest point. */
+const WEDGE_HALF_WIDTH = 10;
+/** How far the trailing corners sit behind the centre. */
+const WEDGE_TAIL = 9;
+/** How far the concave notch cuts back in, between the trailing corners. */
+const WEDGE_NOTCH = 3.5;
+/** The status disc at the marker's centre. Deliberately small relative to the wedge. */
+const DISC_RADIUS = 7;
+
 const STATUS_LABEL: Record<LiveMapVehicle['status'], string> = {
   moving: 'Moving',
   idle: 'Idle',
@@ -128,17 +158,43 @@ function buildVehicleIcon(options: {
   label: string;
 }): L.DivIcon {
   const { colorVar, heading, showHeading, active, label } = options;
-  const size = 30;
+  const size = MARKER_SIZE;
   const c = size / 2;
   const hasHeading = showHeading && typeof heading === 'number' && Number.isFinite(heading);
 
   const halo = active
-    ? `<span class="fleet-vehicle-marker__halo" style="position:absolute;inset:-7px;border-radius:9999px;background:currentColor;opacity:0.22;"></span>`
+    ? `<span class="fleet-vehicle-marker__halo" style="position:absolute;inset:-8px;border-radius:9999px;background:currentColor;opacity:0.22;"></span>`
     : '';
 
+  /**
+   * The direction wedge, drawn with its tip at 12 o'clock and rotated to
+   * the vehicle's bearing.
+   *
+   * Sized from the constants above rather than from literals so "make
+   * the arrow bigger" stays a one-number change. The tip now reaches
+   * WEDGE_REACH (17px) from the centre against a 7px disc, so the arrow
+   * -- not the dot -- is the dominant shape: at a glance the map reads
+   * as headings, which is the whole point of showing bearing on a fleet
+   * map.
+   *
+   * TWO THINGS KEEP IT LEGIBLE OVER RASTER TILES:
+   *  - a contrast ring (`--map-marker-ring`, the surface colour) stroked
+   *    around the wedge as well as the disc. Without it a green arrow
+   *    over parkland or an amber one over a sandy area disappears.
+   *  - `stroke-linejoin: round`, so the tip stays a clean point instead
+   *    of growing a spike at this stroke width.
+   *
+   * Colour comes from `currentColor`, which the wrapper sets from a CSS
+   * custom property. NOT an SVG presentation attribute -- see
+   * STATUS_COLOR_VAR for why `fill="var(--success)"` silently fell back
+   * and painted every marker the same grey.
+   */
   const wedge = hasHeading
-    ? `<path d="M ${c} ${c - 13} L ${c + 5.5} ${c - 4.5} L ${c - 5.5} ${c - 4.5} Z"
-             style="fill:currentColor;"
+    ? `<path d="M ${c} ${c - WEDGE_REACH}
+               L ${c + WEDGE_HALF_WIDTH} ${c + WEDGE_TAIL}
+               L ${c} ${c + WEDGE_NOTCH}
+               L ${c - WEDGE_HALF_WIDTH} ${c + WEDGE_TAIL} Z"
+             style="fill:currentColor;stroke:var(--map-marker-ring, #ffffff);stroke-width:1.75;stroke-linejoin:round;"
              transform="rotate(${(heading as number) % 360} ${c} ${c})" />`
     : '';
 
@@ -149,7 +205,7 @@ function buildVehicleIcon(options: {
       <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"
            style="position:absolute;inset:0;overflow:visible;" aria-hidden="true" focusable="false">
         ${wedge}
-        <circle cx="${c}" cy="${c}" r="7.5"
+        <circle cx="${c}" cy="${c}" r="${DISC_RADIUS}"
                 style="fill:currentColor;stroke:var(--map-marker-ring, #ffffff);stroke-width:2.5;" />
       </svg>
     </div>`;

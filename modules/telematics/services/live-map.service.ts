@@ -40,6 +40,7 @@ import {
 } from '../types/live-map.types';
 import { Geofence, TelematicsAlert, TelematicsData } from '../types/telematics.types';
 import { deriveReadingAlerts, maxSeverity } from './reading-alerts';
+import { reverseGeocodeService } from './reverse-geocode.service';
 import { describeIoCode, EAGLETRACK_IO } from '../adapters/eagletrack/eagletrack-io.map';
 
 /**
@@ -506,7 +507,33 @@ export class LiveMapService {
     if (!latest) {
       return null;
     }
-    return this.toVehicleDetail(vehicleId, latest);
+
+    const detail = this.toVehicleDetail(vehicleId, latest);
+
+    /**
+     * ADDRESS RESOLUTION happens here rather than in toVehicleDetail so
+     * that pure function stays pure and testable without a network.
+     *
+     * Only the SELECTED vehicle is ever geocoded -- never the fleet.
+     * getLiveMapData deliberately does not do this: geocoding up to 500
+     * markers on a 10-second poll would stream every vehicle's position
+     * to a third party continuously and exceed the provider's rate limit
+     * within one render.
+     *
+     * Never throws and never blocks the telemetry: resolve() returns
+     * null for every failure path, which the panel renders as "Address
+     * unavailable".
+     */
+    if (detail.location) {
+      const resolved = await reverseGeocodeService.resolve(
+        detail.location.lat,
+        detail.location.lng,
+        context.organizationId
+      );
+      detail.address = resolved ? resolved.address : null;
+    }
+
+    return detail;
   }
 
   private toVehicleDetail(vehicleId: string, latest: TelematicsData): LiveMapVehicleDetail {

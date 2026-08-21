@@ -136,7 +136,65 @@ export interface EagleTrackTracker {
  * answering it from a counter is cheaper than re-deriving it from a
  * vendor payload nobody kept.
  */
-export type EagleTrackMatchSource = 'plate' | 'platenumber' | 'name';
+export type EagleTrackMatchSource = 'link' | 'plate' | 'platenumber' | 'name';
+
+/**
+ * The explicit, admin-managed uin -> vehicle link.
+ *
+ * This is the "correct long-term fix" the adapter header has named since
+ * the integration shipped: it removes the dependency on vendor free
+ * text entirely for the trackers an operator has linked by hand, while
+ * leaving plate/name matching in place for everything else.
+ *
+ * ORG-UNIT SCOPED, sourced from the vehicle. A link is a statement about
+ * one vehicle, so it inherits that vehicle's unit -- which is also what
+ * makes "a branch manager may link a tracker to their own branch's
+ * vehicle, and to nothing else" enforceable rather than advisory.
+ *
+ * `orgUnitId` is DERIVED at write time from a scope-checked vehicle
+ * lookup and is never accepted from a request body -- the same rule the
+ * finance module's allocation postings follow, for the same reason: a
+ * caller who can stamp their own scope onto a row can file records
+ * against another branch's vehicle.
+ */
+export interface EagleTrackTrackerLink {
+  _id?: string;
+  tenantId: string;
+  orgUnitId?: string;
+  /** The vendor tracker id. Unique per tenant -- one tracker cannot be two vehicles. */
+  uin: string;
+  /** Mongo _id of the vehicle, NOT a license plate. Plates are mutable; ids are not. */
+  vehicleId: string;
+  /** Denormalised for the admin list only. Never used for matching -- the vehicleId is authoritative. */
+  licensePlate?: string;
+  /** Free-text `name` the tracker carried when the link was made, so a later vendor-side rename is visible. */
+  trackerName?: string;
+  note?: string;
+  createdAt: Date;
+  updatedAt: Date;
+  createdBy: string;
+  updatedBy: string;
+  isDeleted?: boolean;
+}
+
+/**
+ * A tracker the latest sync could not attribute to a vehicle, recorded
+ * so the admin mapping screen has something to list.
+ *
+ * Held on the tenant's Eagle Track config document rather than in a
+ * collection of its own: it is a snapshot of one sync's outcome, fully
+ * replaced by the next sync, with no history worth keeping and no
+ * independent lifecycle. A collection would need its own scoping
+ * decision, its own retention policy and its own index for no benefit.
+ */
+export interface EagleTrackUnmatchedTracker {
+  uin: string;
+  name?: string;
+  plate?: string;
+  model?: string;
+  /** Whether the fleet poll returned a position for this tracker in the sync that recorded it. */
+  hadFix: boolean;
+}
 
 /**
  * `refData.users` from GET /api2/trackers -- vendor UI lookup metadata,
@@ -185,6 +243,15 @@ export interface EagleTrackConfig {
   lastSyncAt?: Date;
   lastSyncStatus?: 'success' | 'error';
   lastSyncError?: string;
+  /**
+   * Trackers the LAST sync could not attribute to a vehicle -- the input
+   * the admin mapping screen needs. Fully replaced on every sync; see
+   * EagleTrackUnmatchedTracker for why this is not a collection.
+   */
+  lastUnmatchedTrackers?: EagleTrackUnmatchedTracker[];
+  /** When the driver/trigger sub-syncs last completed, so the settings UI can report them independently of the position poll. */
+  lastDriverSyncAt?: Date;
+  lastTriggerSyncAt?: Date;
   createdAt: Date;
   updatedAt: Date;
   updatedBy?: string;
@@ -199,6 +266,60 @@ export interface EagleTrackConfig {
  * tracker the sync saw is accounted for in exactly one of the counters
  * or lists below -- nothing is dropped silently.
  */
+/**
+ * Outcome of one driver sync.
+ *
+ * `linked` counts drivers that resolved to an EXISTING internal driver
+ * record; `created` counts genuinely new ones. The split is the number
+ * that answers "is this sync duplicating my roster" -- a healthy second
+ * run reports created: 0.
+ */
+export interface EagleTrackDriverSyncResult {
+  fetched: number;
+  created: number;
+  linked: number;
+  updated: number;
+  /** Provider rows with no usable provider id -- never imported, see EagleTrackDriver. */
+  skippedNoId: number;
+  /**
+   * Provider drivers whose name/code matched MORE THAN ONE internal
+   * driver. Never resolved by guessing; reported so an operator can
+   * disambiguate. Mirrors findByNameOrCode's "exactly one hit" rule.
+   */
+  ambiguous: string[];
+  errors: string[];
+}
+
+/** Outcome of one trigger sync. */
+export interface EagleTrackTriggerSyncResult {
+  fetched: number;
+  /** Provider triggers stored/refreshed in tbltelematics_eagletrack_triggers. */
+  stored: number;
+  /** Geofences created from spatial triggers that carried readable geometry. */
+  geofencesCreated: number;
+  /** Existing geofences matched by provider trigger id and refreshed rather than duplicated. */
+  geofencesUpdated: number;
+  /** Spatial triggers whose payload yielded no readable geometry -- recorded, never given a default shape. */
+  geofencesSkippedNoGeometry: number;
+  /** Trigger types that describe a threshold rather than a place (1/3/4/6). Stored, never made into geofences. */
+  nonSpatial: number;
+  /** Type codes outside the documented 0-6 range, kept raw. */
+  unknownTypes: number[];
+  errors: string[];
+}
+
+/** Outcome of one vendor-alert import. */
+export interface EagleTrackAlertSyncResult {
+  fetched: number;
+  /** Alerts written for the first time. A repeat run over the same window reports 0. */
+  imported: number;
+  /** Already held, recognised by provider alert id. */
+  duplicates: number;
+  /** Alerts whose uin resolved to no vehicle in this tenant -- never attributed to a guess. */
+  unmatched: string[];
+  errors: string[];
+}
+
 export interface EagleTrackSyncResult {
   tenantId: string;
   /** Trackers whose reading was matched to a vehicle AND ingested. */
@@ -216,6 +337,17 @@ export interface EagleTrackSyncResult {
    * buckets means the vendor-side data changed under us.
    */
   matchedBy: Record<EagleTrackMatchSource, number>;
+  /**
+   * Outcome of the driver and trigger sub-syncs, when they ran.
+   *
+   * Absent rather than zeroed when a sub-sync did not run at all (the
+   * cadence gate below the position poll's, or a failure before it was
+   * reached) -- "did not run" and "ran and found nothing" are different
+   * facts and an operator chasing a missing driver needs to tell them
+   * apart.
+   */
+  drivers?: EagleTrackDriverSyncResult;
+  triggers?: EagleTrackTriggerSyncResult;
   /** Matched, but the fix was not newer than the one already stored -- see the adapter's staleness guard. */
   skippedStale: number;
   /** Matched, but the payload carried no usable GPS fix (missing/out-of-range/null-island coordinates). */
@@ -226,6 +358,153 @@ export interface EagleTrackSyncResult {
   trackersWithoutFix: string[];
   errors: string[];
   syncedAt: Date;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// HISTORY / REPORTS / DRIVERS / TRIGGERS
+//
+// SHAPE CONFIDENCE, stated once here rather than repeated per type:
+// /api2/last and /api2/trackers were corrected against a live
+// deployment. The five endpoints below have NOT been. Their row types
+// are therefore modelled as `EagleTrackVendorRow` -- an opaque bag --
+// and read through eagletrack-field-map.ts's candidate aliases, which
+// report every key they could not place. Declaring optimistic interfaces
+// with invented field names would compile perfectly and read `undefined`
+// forever on a real deployment; see that file's header.
+// ─────────────────────────────────────────────────────────────────────
+
+/** One record from an endpoint whose field names are not yet confirmed. */
+export type EagleTrackVendorRow = Record<string, unknown>;
+
+/**
+ * GET /api2/history. `data` is documented as an array of position rows
+ * shaped like `last`'s entries (that is why flattenLastPayload already
+ * tolerates an array). Modelled as the confirmed status shape so the
+ * existing mapper can be reused, but read defensively -- a row that
+ * carries none of the expected fields is skipped, not mapped to zeros.
+ */
+export type EagleTrackHistoryResponse = EagleTrackEnvelope<
+  EagleTrackTrackerStatus[] | Record<string, EagleTrackTrackerStatus>
+>;
+
+/** GET /api2/reports/fuel. Row shape unconfirmed -- see the block comment above. */
+export type EagleTrackFuelReportResponse = EagleTrackEnvelope<
+  EagleTrackVendorRow[] | Record<string, EagleTrackVendorRow>
+>;
+
+/** GET /api2/drivers. Row shape unconfirmed. */
+export type EagleTrackDriversResponse = EagleTrackEnvelope<
+  EagleTrackVendorRow[] | Record<string, EagleTrackVendorRow>
+>;
+
+/** GET /api2/triggers. Row shape unconfirmed. */
+export type EagleTrackTriggersResponse = EagleTrackEnvelope<
+  EagleTrackVendorRow[] | Record<string, EagleTrackVendorRow>
+>;
+
+/**
+ * A driver as read from /api2/drivers.
+ *
+ * `providerDriverId` is the reconciliation key and the ONLY field that
+ * is required: without a stable provider id there is nothing to
+ * reconcile against on the next sync, and matching purely on name would
+ * re-create a driver every time somebody fixes a typo in the vendor UI.
+ * A row with no usable id is reported as skipped, never imported.
+ */
+export interface EagleTrackDriver {
+  providerDriverId: string;
+  name?: string;
+  /** Short code / badge number, when the deployment carries one. Matched against Driver.driver_code. */
+  code?: string;
+  phone?: string;
+  email?: string;
+  licenseNumber?: string;
+  /** uin of the tracker this driver is currently assigned to, when the payload says. */
+  uin?: string;
+  /** Vendor keys no candidate alias claimed -- the correction list. See eagletrack-field-map.ts. */
+  unmappedFields: string[];
+  /** The row exactly as the provider sent it. */
+  raw: EagleTrackVendorRow;
+}
+
+/**
+ * A trigger as read from /api2/triggers, before any decision about
+ * whether it becomes a Geofence.
+ *
+ * `typeCode` is kept as the vendor's raw number even when it is outside
+ * the documented 0-6 range, so an undocumented future type is visible in
+ * the data rather than being coerced into a documented one.
+ */
+export interface EagleTrackTrigger {
+  providerTriggerId: string;
+  name?: string;
+  typeCode: number | null;
+  /** The vendor's own label for `typeCode`, or null for an undocumented code. */
+  typeLabel: string | null;
+  active?: boolean;
+  /** uin the trigger is bound to, when it is bound to one rather than the whole account. */
+  uin?: string;
+  /** Speed threshold in km/h, for type 1. Absent when the payload does not carry one. */
+  speedLimitKmh?: number;
+  /** Duration threshold in minutes, for types 3/4. Absent when the payload does not carry one. */
+  durationMinutes?: number;
+  /** Geometry, ONLY when the payload actually yielded readable coordinates. Never defaulted. */
+  geometry?:
+    | { kind: 'circle'; center: { lat: number; lng: number }; radiusMeters: number }
+    | { kind: 'polygon'; points: Array<{ lat: number; lng: number }> }
+    | { kind: 'route'; points: Array<{ lat: number; lng: number }>; toleranceMeters: number };
+  unmappedFields: string[];
+  raw: EagleTrackVendorRow;
+}
+
+/**
+ * One period row of the fuel report, mapped onto the vocabulary this
+ * product already uses.
+ *
+ * NOTHING HERE IS DERIVED. Each field is present only when the provider
+ * sent a value a candidate alias matched. In particular
+ * `fuelConsumedLitres` is never computed as initial-minus-final: those
+ * two readings can come from different sensors on different scales, and
+ * a subtraction across them would be our arithmetic presented as the
+ * provider's measurement.
+ */
+export interface EagleTrackFuelReportRow {
+  uin: string;
+  periodStart?: string;
+  periodEnd?: string;
+  initialFuelLitres?: number;
+  finalFuelLitres?: number;
+  fuelConsumedLitres?: number;
+  refuelledLitres?: number;
+  drainedLitres?: number;
+  distanceKm?: number;
+  /** Litres per 100 km, when the provider reports a rate rather than only totals. */
+  consumptionPer100Km?: number;
+  unmappedFields: string[];
+  raw: EagleTrackVendorRow;
+}
+
+/**
+ * A vendor alert read from GET /api2/history?alertfilter=__allalert.
+ *
+ * The provider's own identifiers are preserved verbatim
+ * (`providerAlertId`, `providerTriggerId`, `typeCode`) because they are
+ * the only thing that makes a second sync able to recognise an alert it
+ * already stored -- see TelematicsAlert's provider fields in the
+ * tenancy/provider addendum.
+ */
+export interface EagleTrackVendorAlert {
+  uin: string;
+  /** Deterministic when the provider supplies an id; otherwise derived from uin+timestamp+trigger. See buildVendorAlertKey. */
+  providerAlertId: string;
+  providerTriggerId?: string;
+  typeCode: number | null;
+  typeLabel: string | null;
+  message?: string;
+  occurredAt: Date;
+  position?: { lat: number; lng: number; speed?: number };
+  unmappedFields: string[];
+  raw: EagleTrackVendorRow;
 }
 
 /**

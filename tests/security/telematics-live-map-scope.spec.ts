@@ -55,6 +55,39 @@ jest.mock('../../modules/telematics/repositories/demo-state.repository', () => (
 jest.mock('../../modules/telematics/services/telematics.service', () => ({
   telematicsService: { ingestTelematicsData: jest.fn().mockResolvedValue(undefined) },
 }));
+/**
+ * PRE-EXISTING FAILURE, fixed here.
+ *
+ * The Eagle Track read-through refresh added
+ * `eagletrackConfigRepository.getConfig()` to BOTH getLiveMapData and
+ * getVehicleDetail, but this spec was never given a mock for it -- so
+ * every test in the file reached connectToDatabase() and died on
+ * "MONGODB_URI is not defined". Ten failures, none of them about
+ * scoping, all of them masking the scoping assertions this file exists
+ * to make.
+ *
+ * `getConfig` resolves to null (Eagle Track not configured), which is
+ * the correct default for a scope test: it makes the read-through a
+ * no-op so the assertions below are about the org-unit predicate and
+ * nothing else.
+ */
+jest.mock('../../modules/telematics/repositories/eagletrack-config.repository', () => ({
+  eagletrackConfigRepository: {
+    getConfig: jest.fn().mockResolvedValue(null),
+    recordSyncResult: jest.fn().mockResolvedValue(undefined),
+    recordSubSyncAt: jest.fn().mockResolvedValue(undefined),
+  },
+}));
+/**
+ * Reverse geocoding is a NETWORK call inside getVehicleDetail. Mocked to
+ * null so these tests neither reach Nominatim nor depend on its
+ * availability -- and so the address path is exercised as "could not
+ * determine one", which is what the panel renders as
+ * "Address unavailable".
+ */
+jest.mock('../../modules/telematics/services/reverse-geocode.service', () => ({
+  reverseGeocodeService: { resolve: jest.fn().mockResolvedValue(null) },
+}));
 
 const mockedGetFilteredVehiclesInScope = vehicleRepository.getFilteredVehiclesInScope as jest.Mock;
 const mockedGetLatestTelematicsData = telematicsRepository.getLatestTelematicsData as jest.Mock;

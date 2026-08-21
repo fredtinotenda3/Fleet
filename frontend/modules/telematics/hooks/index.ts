@@ -4,3 +4,13 @@ export { useLiveMap, useVehicleRouteHistory, useVehicleDetail, telematicsKeys } 
 export { useDemoStatus, useSetDemoMode } from './useDemoMode';
 export { useCartrackConfig } from './useCartrackConfig';
 export { useEagleTrackConfig } from './useEagleTrackConfig';
+export {
+  useEagleTrackHistory,
+  useEagleTrackFuelReport,
+  useEagleTrackTriggers,
+  useEagleTrackTrackerMapping,
+  useCreateTrackerLink,
+  useDeleteTrackerLink,
+  hourlyWindow,
+  eagletrackKeys,
+} from './useEagleTrack';

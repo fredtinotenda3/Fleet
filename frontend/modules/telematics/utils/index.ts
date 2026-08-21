@@ -1,3 +1,8 @@
 // frontend/modules/telematics/utils/index.ts
 
-export { canViewLiveMap, canToggleDemoMode } from './telematics-permissions.utils';
+export {
+  canViewLiveMap,
+  canToggleDemoMode,
+  canManageTrackerLinks,
+  canViewFuelTelemetry,
+} from './telematics-permissions.utils';

@@ -21,7 +21,7 @@
 import { Db } from 'mongodb';
 import connectToDatabase from '@/infrastructure/database/mongodb';
 import { encryptionService } from '@/infrastructure/secrets/encryption.service';
-import { EagleTrackConfig } from '../adapters/eagletrack/eagletrack.types';
+import { EagleTrackConfig, EagleTrackUnmatchedTracker } from '../adapters/eagletrack/eagletrack.types';
 
 export type EagleTrackConfigInput = {
   domain: string;
@@ -82,18 +82,59 @@ export class EagleTrackConfigRepository {
     return saved;
   }
 
-  async recordSyncResult(tenantId: string, status: 'success' | 'error', error?: string): Promise<void> {
+  /**
+   * Records the outcome of one sync.
+   *
+   * `extra.unmatchedTrackers` is the snapshot the admin mapping screen
+   * reads -- see EagleTrackUnmatchedTracker for why it lives on this
+   * document rather than in a collection of its own. It is written only
+   * when the caller supplies it, so the error paths that call this
+   * method BEFORE the roster has been walked (a failed credential
+   * check, an underivable username) leave the previous snapshot intact
+   * rather than blanking the operator's worklist because one poll
+   * failed.
+   */
+  async recordSyncResult(
+    tenantId: string,
+    status: 'success' | 'error',
+    error?: string,
+    extra?: { unmatchedTrackers?: EagleTrackUnmatchedTracker[] }
+  ): Promise<void> {
     const collection = await this.collection();
-    await collection.updateOne(
-      { tenantId },
-      {
-        $set: {
-          lastSyncAt: new Date(),
-          lastSyncStatus: status,
-          lastSyncError: error,
-        },
-      }
-    );
+
+    const update: Record<string, unknown> = {
+      lastSyncAt: new Date(),
+      lastSyncStatus: status,
+      lastSyncError: error,
+    };
+
+    if (extra?.unmatchedTrackers) {
+      update.lastUnmatchedTrackers = extra.unmatchedTrackers;
+    }
+
+    await collection.updateOne({ tenantId }, { $set: update });
+  }
+
+  /**
+   * Stamps the roster-shaped sub-syncs' completion time.
+   *
+   * Separate from recordSyncResult because they run on a different
+   * cadence (see SUB_SYNC_INTERVAL_MS) and a position poll must not
+   * advance a driver-sync clock it did not act on -- that would make the
+   * sub-syncs skip forever.
+   */
+  async recordSubSyncAt(
+    tenantId: string,
+    parts: { drivers?: boolean; triggers?: boolean }
+  ): Promise<void> {
+    const collection = await this.collection();
+    const now = new Date();
+    const update: Record<string, unknown> = {};
+    if (parts.drivers) update.lastDriverSyncAt = now;
+    if (parts.triggers) update.lastTriggerSyncAt = now;
+    if (Object.keys(update).length === 0) return;
+
+    await collection.updateOne({ tenantId }, { $set: update });
   }
 
   async setEnabled(tenantId: string, enabled: boolean, userId: string): Promise<boolean> {

@@ -33,6 +33,31 @@ jest.mock('../../modules/telematics/repositories/eagletrack-config.repository', 
 jest.mock('../../modules/telematics/adapters/eagletrack/eagletrack.adapter', () => ({
   eagletrackAdapter: { testConnection: jest.fn(), syncOrganization: jest.fn() },
 }));
+/**
+ * The controller gained history/fuel/trigger/tracker-link endpoints,
+ * which resolve a full TenantContext rather than a bare tenantId. That
+ * module reaches NextAuth and therefore `jose`, which ships as ESM and
+ * cannot be parsed by this project's CommonJS ts-jest transform -- so an
+ * unmocked import fails the whole SUITE at load time, before a single
+ * assertion runs.
+ *
+ * Mocked here rather than by loosening the transform: the config-gating
+ * assertions below are about validation and token redaction, and have no
+ * business depending on how a session is decoded.
+ */
+jest.mock('../../server/utils/tenant-context.utils', () => ({
+  resolveTenantContext: jest.fn().mockResolvedValue({
+    organizationId: 'willsgrove-farm-enterprises-9e80ed',
+    accessibleOrgUnitIds: null,
+  }),
+  resolveTenantContextWithUser: jest.fn().mockResolvedValue({
+    context: {
+      organizationId: 'willsgrove-farm-enterprises-9e80ed',
+      accessibleOrgUnitIds: null,
+    },
+    userId: 'user-1',
+  }),
+}));
 jest.mock('../../server/utils/context.utils', () => ({
   getTenantFromRequest: jest.fn().mockResolvedValue('willsgrove-farm-enterprises-9e80ed'),
   getUserIdFromRequest: jest.fn().mockResolvedValue('user-1'),

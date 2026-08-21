@@ -21,3 +21,22 @@ export function canViewLiveMap(roles: string[]): boolean {
 export function canToggleDemoMode(roles: string[]): boolean {
   return permissionService.hasAnyPermission(roles, [Permission.VEHICLE_EDIT]);
 }
+
+/**
+ * Mirrors POST/DELETE /api/telematics/eagletrack/tracker-links, gated on
+ * Permission.VEHICLE_EDIT.
+ *
+ * NOT ORG_SETTINGS: a tracker link decides which vehicle a device's
+ * telemetry is attributed to, which is fleet data. Gating it on the
+ * organization-settings permission would mean a branch manager could not
+ * fix their own branch's unmatched tracker without also being handed the
+ * screen that holds the Eagle Track API token.
+ */
+export function canManageTrackerLinks(roles: string[]): boolean {
+  return permissionService.hasAnyPermission(roles, [Permission.VEHICLE_EDIT]);
+}
+
+/** Mirrors GET /api/telematics/eagletrack/fuel/[vehicleId], gated on Permission.FUEL_VIEW rather than VEHICLE_VIEW. */
+export function canViewFuelTelemetry(roles: string[]): boolean {
+  return permissionService.hasAnyPermission(roles, [Permission.FUEL_VIEW]);
+}

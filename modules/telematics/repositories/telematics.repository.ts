@@ -576,6 +576,275 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
   }
 
   /**
+   * The Eagle Track tracker id installed in a vehicle, or null.
+   *
+   * Derived from the deviceId prefix the adapter stamps at registration
+   * (`eagletrack-<uin>`) rather than from a provider field, because
+   * TelematicsDevice has no such field -- the same approximation
+   * live-map.service.ts's providerSourceFor documents, and the same
+   * follow-up applies (a first-class `provider` column, which would need
+   * backfilling every existing device row).
+   *
+   * Newest device wins when a vehicle has had more than one tracker
+   * fitted: the current one is the one that matters for "fetch this
+   * vehicle's history", and an old device's uin would pull the history
+   * of whatever vehicle that tracker is in NOW.
+   */
+  async getEagleTrackUinForVehicle(vehicleId: string, tenantId: string): Promise<string | null> {
+    const collection = await this.devicesCollection();
+    const device = await collection.findOne(
+      {
+        tenantId,
+        vehicleId,
+        isDeleted: { $ne: true },
+        deviceId: { $regex: '^eagletrack-' },
+      } as never,
+      { sort: { createdAt: -1 } }
+    );
+
+    if (!device?.deviceId) return null;
+    const uin = device.deviceId.slice('eagletrack-'.length);
+    return uin || null;
+  }
+
+  // ── Provider backfill / reconciliation (Eagle Track history) ────────
+
+  /**
+   * Idempotent bulk write of HISTORICAL readings.
+   *
+   * ---------------------------------------------------------------
+   * WHY THIS DOES NOT GO THROUGH telematicsService.ingestTelematicsData
+   * ---------------------------------------------------------------
+   * Every provider adapter until now has written through that service
+   * deliberately, so its readings get the same alerting, geofence
+   * evaluation and notifications as the generic ingest endpoint. That
+   * is exactly the wrong thing for a BACKFILL. Replaying a month of
+   * history through the live path would, per historical point:
+   * re-evaluate every geofence and emit entry/exit alerts for
+   * boundaries the vehicle crossed weeks ago; re-raise speeding and
+   * low-fuel alerts and push a fleet-manager notification for each of
+   * the high/critical ones; emit a `vehicle:location` websocket frame
+   * moving the live map to a stale position; and enqueue a
+   * REFRESH_ANALYTICS job per point.
+   *
+   * A backfill is an assertion about the PAST. It writes rows and
+   * nothing else. Vendor-side alerts for the same window are imported
+   * separately and explicitly (see eagletrack-alert-sync.service.ts),
+   * which is the honest way to get historical alerting: the provider's
+   * own events, not ours re-derived and re-notified.
+   *
+   * ---------------------------------------------------------------
+   * IDEMPOTENCY
+   * ---------------------------------------------------------------
+   * One upsert per reading keyed on
+   * (tenantId, vehicleId, deviceId, timestamp) with $setOnInsert, so
+   * re-running the same window writes nothing the second time. Keyed on
+   * the PROVIDER'S timestamp rather than an ingest time, for the same
+   * reason the staleness guard compares against `lastFixAt`: two
+   * different clocks make "the same reading" unanswerable.
+   *
+   * RESIDUAL RACE, stated rather than hidden: without a unique index,
+   * two concurrent runs over the same window can both miss and both
+   * insert. Bounded in practice -- history ingestion is triggered per
+   * vehicle by a user action, and the read-through lock already
+   * serialises per tenant -- but the durable fix is a partial unique
+   * index on that key, recorded in the changelog as a follow-up rather
+   * than shipped as an unreviewed migration.
+   */
+  async bulkUpsertHistoricalReadings(
+    readings: Array<Omit<TelematicsData, '_id' | 'createdAt' | 'updatedAt'> & { tenantId: string }>,
+    tenantId: string
+  ): Promise<{ inserted: number; existing: number }> {
+    if (readings.length === 0) return { inserted: 0, existing: 0 };
+
+    const collection = await this.getCollection();
+    const now = new Date();
+
+    // In-batch de-dupe first: a vendor page that repeats a timestamp
+    // would otherwise produce two upserts on the same key inside one
+    // bulkWrite, which Mongo applies in order and which would then
+    // report an insert followed by a no-op update -- inflating the
+    // inserted count for a row that only exists once.
+    const seen = new Set<string>();
+    const operations: object[] = [];
+
+    for (const reading of readings) {
+      const key = `${reading.vehicleId}|${reading.deviceId}|${new Date(reading.timestamp).getTime()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      operations.push({
+        updateOne: {
+          filter: {
+            tenantId,
+            vehicleId: reading.vehicleId,
+            deviceId: reading.deviceId,
+            timestamp: reading.timestamp,
+          },
+          update: {
+            $setOnInsert: {
+              ...reading,
+              tenantId,
+              createdAt: now,
+              updatedAt: now,
+              isDeleted: false,
+            },
+          },
+          upsert: true,
+        },
+      });
+    }
+
+    if (operations.length === 0) return { inserted: 0, existing: 0 };
+
+    const result = await collection.bulkWrite(operations as never[], { ordered: false });
+    const inserted = result.upsertedCount ?? 0;
+
+    return { inserted, existing: operations.length - inserted };
+  }
+
+  /**
+   * Idempotent write of PROVIDER-SIDE alerts.
+   *
+   * `providerAlertKey` is the identity (see buildVendorAlertKey): the
+   * vendor's own alert id where it supplies one, otherwise the
+   * uin+time+trigger tuple that makes two rows the same event. Keyed on
+   * it so a repeat sync over an overlapping window recognises what it
+   * already holds instead of duplicating a month of alerts every time
+   * somebody opens the map.
+   *
+   * STAMPS orgUnitId, unlike createAlert above. reading-alerts.ts
+   * documents why that matters: getActiveAlertsInScope applies the
+   * org-unit predicate, so an alert row written without one matches zero
+   * rows for every scoped caller. Existing rows are untouched -- this
+   * only fixes the rows this path writes, and the backfill for the rest
+   * stays the separate change it has always been.
+   */
+  async upsertVendorAlerts(
+    alerts: Array<{
+      vehicleId: string;
+      orgUnitId?: string;
+      providerAlertKey: string;
+      providerTriggerId?: string;
+      providerTypeCode: number | null;
+      providerTypeLabel: string | null;
+      providerMetadata: Record<string, unknown>;
+      alert: TelematicsAlert;
+    }>,
+    tenantId: string
+  ): Promise<{ imported: number; duplicates: number }> {
+    if (alerts.length === 0) return { imported: 0, duplicates: 0 };
+
+    const collection = await this.alertsCollection();
+    const now = new Date();
+
+    const seen = new Set<string>();
+    const operations: object[] = [];
+
+    for (const entry of alerts) {
+      if (seen.has(entry.providerAlertKey)) continue;
+      seen.add(entry.providerAlertKey);
+
+      operations.push({
+        updateOne: {
+          filter: { tenantId, providerAlertKey: entry.providerAlertKey },
+          update: {
+            $setOnInsert: {
+              ...entry.alert,
+              vehicleId: entry.vehicleId,
+              orgUnitId: entry.orgUnitId,
+              tenantId,
+              providerAlertKey: entry.providerAlertKey,
+              providerTriggerId: entry.providerTriggerId,
+              providerTypeCode: entry.providerTypeCode,
+              providerTypeLabel: entry.providerTypeLabel,
+              providerMetadata: entry.providerMetadata,
+              createdAt: now,
+              isDeleted: false,
+            },
+          },
+          upsert: true,
+        },
+      });
+    }
+
+    if (operations.length === 0) return { imported: 0, duplicates: 0 };
+
+    const result = await collection.bulkWrite(operations as never[], { ordered: false });
+    const imported = result.upsertedCount ?? 0;
+
+    return { imported, duplicates: operations.length - imported };
+  }
+
+  /**
+   * Creates or refreshes the Geofence a spatial provider trigger
+   * projects into, keyed on the PROVIDER'S trigger id.
+   *
+   * That key is the whole duplicate-prevention story: matching on `name`
+   * instead would create a second boundary the moment somebody renames
+   * a geofence in the vendor UI, and the old one would keep firing.
+   *
+   * DELIBERATELY NARROW $set. Only the fields the provider is the
+   * authority on (name, type, coordinates) are overwritten. `alerts`
+   * (entry/exit/inside) and `active` are set on INSERT only, because
+   * they are local operational choices: an operator who has turned off
+   * exit alerts for a noisy depot boundary must not have that decision
+   * silently reverted by the next sync.
+   */
+  async upsertProviderGeofence(
+    input: {
+      provider: string;
+      providerTriggerId: string;
+      name: string;
+      type: Geofence['type'];
+      coordinates: Geofence['coordinates'];
+      orgUnitId?: string;
+      vehicleId?: string;
+    },
+    tenantId: string
+  ): Promise<{ geofenceId: string; outcome: 'created' | 'updated' }> {
+    const collection = await this.geofencesCollection();
+    const now = new Date();
+
+    const filter = {
+      tenantId,
+      provider: input.provider,
+      providerTriggerId: input.providerTriggerId,
+    };
+
+    const result = await collection.findOneAndUpdate(
+      filter as never,
+      {
+        $set: {
+          name: input.name,
+          type: input.type,
+          coordinates: input.coordinates,
+          orgUnitId: input.orgUnitId,
+          vehicleId: input.vehicleId,
+          isDeleted: false,
+          updatedAt: now,
+        },
+        $setOnInsert: {
+          tenantId,
+          provider: input.provider,
+          providerTriggerId: input.providerTriggerId,
+          // Local operational choices -- see the doc comment.
+          active: true,
+          alerts: { entry: true, exit: true, inside: false },
+          createdAt: now,
+        },
+      } as never,
+      { upsert: true, returnDocument: 'after', includeResultMetadata: true }
+    );
+
+    const doc = result?.value as (Geofence & { _id?: unknown }) | null;
+    const geofenceId = doc?._id ? String(doc._id) : '';
+    const outcome = result?.lastErrorObject?.updatedExisting ? 'updated' : 'created';
+
+    return { geofenceId, outcome };
+  }
+
+  /**
    * Daily summary for a vehicle, scoped. Delegates to the scoped history
    * read rather than the unscoped one, so the aggregate cannot become a
    * side channel around the row-level filter.

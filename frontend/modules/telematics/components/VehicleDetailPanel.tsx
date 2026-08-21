@@ -20,7 +20,13 @@ import { AlertTriangle, Clock, Loader2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
 import { Button } from '@/frontend/shared/ui/primitives/button';
-import type { LiveMapVehicle, LiveMapVehicleDetail, LiveMapVehicleStatus, LiveMapDataSource } from '../types';
+import type {
+  LiveMapVehicle,
+  LiveMapVehicleDetail,
+  LiveMapVehicleStatus,
+  LiveMapDataSource,
+  EagleTrackFuelReport,
+} from '../types';
 
 interface VehicleDetailPanelProps {
   vehicle: LiveMapVehicle;
@@ -28,6 +34,18 @@ interface VehicleDetailPanelProps {
   isLoading: boolean;
   onClose: () => void;
   className?: string;
+  /**
+   * The provider's period fuel report, when the caller has FUEL_VIEW and
+   * the vehicle is on a provider that publishes one.
+   *
+   * Passed in rather than fetched here so this component stays a pure
+   * render of what it is given -- the same reason `detail` is a prop.
+   * Undefined means "not requested"; a report with `providerError` set
+   * means "requested and the vendor could not be reached", and the two
+   * render differently.
+   */
+  fuelReport?: EagleTrackFuelReport | null;
+  fuelReportLoading?: boolean;
 }
 
 const STATUS_BADGE: Record<LiveMapVehicleStatus, { label: string; className: string }> = {
@@ -44,6 +62,28 @@ const SOURCE_LABEL: Record<LiveMapDataSource, string> = {
 };
 
 /** A single label/value row. Renders "No data" (muted) when `value` is null/undefined rather than letting a caller accidentally pass a misleading 0. */
+/** Shown when a position was geocoded and no address could be determined. Never a guess. */
+const ADDRESS_UNAVAILABLE = 'Address unavailable';
+
+/**
+ * Totals one numeric column of a fuel report.
+ *
+ * Returns undefined -- not 0 -- when NO row carried the field, so a
+ * column the provider does not report renders "No data" instead of a
+ * confident zero. Rows that carry it are summed; rows that do not are
+ * skipped rather than treated as zeroes, which would understate a total
+ * across a partially-reported window.
+ */
+function sumRows(
+  report: EagleTrackFuelReport,
+  key: 'distanceKm' | 'refuelledLitres' | 'drainedLitres'
+): number | undefined {
+  return report.rows.reduce<number | undefined>(
+    (sum, row) => (typeof row[key] === 'number' ? (sum ?? 0) + (row[key] as number) : sum),
+    undefined
+  );
+}
+
 function Stat({ label, value }: { label: string; value: string | number | null | undefined }) {
   const hasValue = value !== null && value !== undefined && value !== '';
   return (
@@ -92,7 +132,15 @@ function formatFixAge(seconds: number | null): string | null {
   return `${Math.round(seconds / 3600)}h ago`;
 }
 
-export function VehicleDetailPanel({ vehicle, detail, isLoading, onClose, className }: VehicleDetailPanelProps) {
+export function VehicleDetailPanel({
+  vehicle,
+  detail,
+  isLoading,
+  onClose,
+  className,
+  fuelReport,
+  fuelReportLoading,
+}: VehicleDetailPanelProps) {
   const status = STATUS_BADGE[vehicle.status];
 
   return (
@@ -164,6 +212,18 @@ export function VehicleDetailPanel({ vehicle, detail, isLoading, onClose, classN
                   north), which would be a confidently wrong reading. */}
               <Stat label="Heading" value={num(detail.location?.heading, '\u00b0')} />
               <Stat label="Last ping" value={formatFixAge(detail.fixAgeSeconds)} />
+              {/* Three-state, and the distinction matters: a string is a
+                  resolved address, null means we asked and could not
+                  determine one, and absent means the vehicle has no
+                  position to look up. Only the middle case reads
+                  "Address unavailable" -- we never show a nearby-but-
+                  wrong road. See reverse-geocode.service.ts. */}
+              {detail.location ? (
+                <Stat
+                  label="Address"
+                  value={detail.address ? detail.address : ADDRESS_UNAVAILABLE}
+                />
+              ) : null}
             </Section>
 
             <Section title="Odometer & trip">
@@ -192,6 +252,36 @@ export function VehicleDetailPanel({ vehicle, detail, isLoading, onClose, classN
               <Stat label="Instant consumption" value={num(detail.fuel?.instantConsumption, ' L/h', oneDp)} />
               <Stat label="Fuel used" value={num(detail.fuel?.fuelUsed, ' L', oneDp)} />
             </Section>
+
+            {/* The provider's PERIOD fuel report, distinct from the live
+                fuel readings above. Rendered only when it was requested,
+                so a role without FUEL_VIEW simply does not see the
+                section rather than seeing an empty one. */}
+            {fuelReportLoading || fuelReport ? (
+              <Section title="Fuel report (last 7 days)">
+                {fuelReportLoading ? (
+                  <p className="text-xs text-muted-foreground">Loading fuel report...</p>
+                ) : fuelReport?.providerError ? (
+                  // Named as a provider problem rather than shown as
+                  // zeroes: "0 L consumed" and "we could not ask" lead
+                  // to opposite operational conclusions.
+                  <p className="text-xs text-muted-foreground">Fuel report unavailable from provider.</p>
+                ) : !fuelReport?.uin ? (
+                  <p className="text-xs text-muted-foreground">No Eagle Track tracker on this vehicle.</p>
+                ) : (
+                  <>
+                    <Stat label="Fuel consumed" value={num(fuelReport.canonicalFuel.fuelUsed, ' L', oneDp)} />
+                    <Stat
+                      label="Consumption"
+                      value={num(fuelReport.canonicalFuel.consumptionRate, ' L/100km', oneDp)}
+                    />
+                    <Stat label="Distance" value={num(sumRows(fuelReport, 'distanceKm'), ' km', oneDp)} />
+                    <Stat label="Refuelled" value={num(sumRows(fuelReport, 'refuelledLitres'), ' L', oneDp)} />
+                    <Stat label="Drained" value={num(sumRows(fuelReport, 'drainedLitres'), ' L', oneDp)} />
+                  </>
+                )}
+              </Section>
+            ) : null}
 
             <Section title="Device health">
               <Stat label="Battery charge" value={num(detail.deviceHealth?.batteryPercent, '%')} />

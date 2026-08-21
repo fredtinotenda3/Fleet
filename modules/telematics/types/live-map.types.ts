@@ -152,6 +152,22 @@ export interface LiveMapVehicleDetail {
   } | null;
   /** Seconds since this fix was recorded; null when the vehicle has never reported a fix. */
   fixAgeSeconds: number | null;
+  /**
+   * Nearest road/locality for `location`, from reverse geocoding.
+   *
+   * THREE-STATE, and the distinction is the whole point:
+   *   * a string  -- an address was determined, e.g. "Suffolk Road, Harare"
+   *   * `null`    -- we asked and could not determine one (no road near
+   *                  this point, or the geocoder was unreachable). The
+   *                  UI shows "Address unavailable".
+   *   * absent    -- the vehicle has no position at all, so there was
+   *                  nothing to look up.
+   *
+   * Never a guess. See reverse-geocode.service.ts: a confirmed "nothing
+   * here" is cached, a failure to reach the provider is not, and neither
+   * is ever rendered as a nearby-but-wrong address.
+   */
+  address?: string | null;
   odometer?: number;
   trip?: {
     tripDistance?: number;

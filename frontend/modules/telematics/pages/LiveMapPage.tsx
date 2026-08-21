@@ -17,12 +17,19 @@ import { PageLoader } from '@/frontend/shared/loading/PageLoader';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
 import { useSessionStore } from '@/frontend/shared/store/session.store';
-import { useLiveMap, useVehicleRouteHistory, useVehicleDetail } from '../hooks';
+import {
+  useLiveMap,
+  useVehicleRouteHistory,
+  useVehicleDetail,
+  useEagleTrackHistory,
+  useEagleTrackFuelReport,
+  hourlyWindow,
+} from '../hooks';
 import { LiveMapLegend } from '../components/LiveMapLegend';
 import { LiveMapVehicleList } from '../components/LiveMapVehicleList';
 import { VehicleDetailPanel } from '../components/VehicleDetailPanel';
 import { DemoModeToggle } from '../components/DemoModeToggle';
-import { canViewLiveMap, canToggleDemoMode } from '../utils';
+import { canViewLiveMap, canToggleDemoMode, canViewFuelTelemetry } from '../utils';
 import type { LiveMapVehicleStatus } from '../types';
 
 // Leaflet touches `window` at module-eval time, which breaks under
@@ -50,7 +57,47 @@ export function LiveMapPage() {
 
   const vehicles = payload?.vehicles ?? [];
   const geofences = payload?.geofences ?? [];
+
   const selectedVehicle = vehicles.find((v) => v.vehicleId === selectedVehicleId) ?? null;
+
+  /**
+   * The trail drawn on the map.
+   *
+   * Prefers the provider-backed history when present: it covers a week
+   * rather than the live store's short lookback, and it is the same
+   * points read back through the org-unit-scoped query. Falls back to
+   * the existing live trail for Cartrack and demo vehicles, so nothing
+   * regresses for them.
+   */
+
+  /**
+   * Provider-backed history and fuel for the SELECTED vehicle only.
+   *
+   * `hourlyWindow` rounds both ends to the hour so the query key is
+   * stable -- an un-rounded `new Date()` would be a new key on every
+   * render and, behind it, a fresh paged pull against the vendor's API.
+   *
+   * Both are enabled only for Eagle Track vehicles: asking for an Eagle
+   * Track history of a Cartrack vehicle would issue a request that can
+   * only ever come back empty. The fuel report is additionally gated on
+   * FUEL_VIEW, mirroring its route -- without this the panel would fire
+   * a request that returns 403 for every view-only role.
+   */
+  const providerWindow = useMemo(() => hourlyWindow(24 * 7), []);
+  const isEagleTrackVehicle = selectedVehicle?.source === 'eagletrack';
+
+  const { data: eagletrackHistory } = useEagleTrackHistory(
+    selectedVehicleId ?? undefined,
+    providerWindow,
+    { enabled: isEagleTrackVehicle }
+  );
+
+  const { data: fuelReport, isLoading: isFuelReportLoading } = useEagleTrackFuelReport(
+    selectedVehicleId ?? undefined,
+    providerWindow,
+    { enabled: isEagleTrackVehicle && canViewFuelTelemetry(roles) }
+  );
+
 
   // If the selected vehicle drops out of scope/list (deleted, filtered,
   // reassigned to another org unit) between polls, clear the selection
@@ -159,7 +206,11 @@ export function LiveMapPage() {
               <LiveMapLeaflet
                 vehicles={vehicles}
                 geofences={geofences}
-                routePoints={routeHistory?.points ?? []}
+                routePoints={
+                  eagletrackHistory?.points?.length
+                    ? eagletrackHistory.points
+                    : routeHistory?.points ?? []
+                }
                 selectedVehicleId={selectedVehicleId}
                 onSelectVehicle={setSelectedVehicleId}
                 className="rounded-lg"
@@ -169,6 +220,8 @@ export function LiveMapPage() {
 
           {selectedVehicle && (
             <VehicleDetailPanel
+              fuelReport={isEagleTrackVehicle && canViewFuelTelemetry(roles) ? fuelReport ?? null : undefined}
+              fuelReportLoading={isEagleTrackVehicle && canViewFuelTelemetry(roles) ? isFuelReportLoading : false}
               vehicle={selectedVehicle}
               detail={vehicleDetail}
               isLoading={isDetailLoading}
