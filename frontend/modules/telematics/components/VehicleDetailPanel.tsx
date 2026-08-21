@@ -76,12 +76,37 @@ const ADDRESS_UNAVAILABLE = 'Address unavailable';
  */
 function sumRows(
   report: EagleTrackFuelReport,
-  key: 'distanceKm' | 'refuelledLitres' | 'drainedLitres'
+  key: 'distanceKm' | 'refuelledLitres' | 'drainedLitres' | 'refuelEventCount' | 'drainEventCount'
 ): number | undefined {
   return report.rows.reduce<number | undefined>(
     (sum, row) => (typeof row[key] === 'number' ? (sum ?? 0) + (row[key] as number) : sum),
     undefined
   );
+}
+
+/**
+ * The last odometer reading in the report, not a sum.
+ *
+ * Odometers are cumulative, so adding them across period rows produces a
+ * number in the hundreds of thousands that looks entirely plausible and
+ * is meaningless -- the exact shape of mistake sumRows exists for the
+ * OPPOSITE of. Rows are taken in the order the provider returned them.
+ */
+function lastOdometer(report: EagleTrackFuelReport): number | undefined {
+  for (let i = report.rows.length - 1; i >= 0; i -= 1) {
+    const value = report.rows[i].endOdometerKm;
+    if (typeof value === 'number') return value;
+  }
+  return undefined;
+}
+
+/** Formats a fuel-cost total with whatever currency marking the provider actually sent. Never invents one. */
+function formatCost(total: EagleTrackFuelReport['fuelCostTotal']): string | null {
+  if (!total || !Number.isFinite(total.amount)) return null;
+  const amount = total.amount.toFixed(2);
+  if (total.currencyCode) return `${amount} ${total.currencyCode}`;
+  if (total.currencySymbol) return `${total.currencySymbol}${amount}`;
+  return amount;
 }
 
 function Stat({ label, value }: { label: string; value: string | number | null | undefined }) {
@@ -275,9 +300,27 @@ export function VehicleDetailPanel({
                       label="Consumption"
                       value={num(fuelReport.canonicalFuel.consumptionRate, ' L/100km', oneDp)}
                     />
+                    <Stat label="Fuel cost" value={formatCost(fuelReport.fuelCostTotal)} />
                     <Stat label="Distance" value={num(sumRows(fuelReport, 'distanceKm'), ' km', oneDp)} />
+                    <Stat label="Odometer" value={num(lastOdometer(fuelReport), ' km', oneDp)} />
                     <Stat label="Refuelled" value={num(sumRows(fuelReport, 'refuelledLitres'), ' L', oneDp)} />
+                    <Stat label="Refuelling events" value={num(sumRows(fuelReport, 'refuelEventCount'))} />
                     <Stat label="Drained" value={num(sumRows(fuelReport, 'drainedLitres'), ' L', oneDp)} />
+                    <Stat label="Fuel loss events" value={num(sumRows(fuelReport, 'drainEventCount'))} />
+                    {/* Qualifications on the figures above. Shown, not
+                        swallowed: the server flags a report that is a
+                        partial slice, or that contained another
+                        tracker's rows, precisely so the totals are not
+                        read as more complete than they are. */}
+                    {fuelReport.providerWarnings.length > 0 ? (
+                      <ul className="pt-1.5 space-y-1">
+                        {fuelReport.providerWarnings.map((warning) => (
+                          <li key={warning.code} className="text-caption text-muted-foreground">
+                            {warning.detail}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
                   </>
                 )}
               </Section>

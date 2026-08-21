@@ -1,9 +1,8 @@
 // modules/telematics/adapters/eagletrack/eagletrack-payload.parsers.ts
 //
-// Pure parsers for the four Eagle Track payloads whose field names are
-// not confirmed against a live deployment: /api2/reports/fuel,
-// /api2/drivers, /api2/triggers, and the alert-filtered form of
-// /api2/history.
+// Pure parsers for the Eagle Track payloads beyond /api2/last and
+// /api2/trackers: /api2/reports/fuel, /api2/drivers, /api2/triggers, and
+// the alert-filtered form of /api2/history.
 //
 // Every alias array below is the CORRECTION SURFACE. When a real
 // response arrives and a value comes back absent, the fix is to add the
@@ -11,6 +10,31 @@
 // repository or route changes. See eagletrack-field-map.ts's header for
 // why this is data rather than field access, and
 // eagletrack.types.ts's block comment for which endpoints are confirmed.
+//
+// ---------------------------------------------------------------------
+// /api2/reports/fuel IS NOW CONFIRMED, AND IT IS NOT A RECORD LIST
+// ---------------------------------------------------------------------
+// A live response settled the fuel report's shape, and it was neither of
+// the two forms the alias layer was built for. The reports family
+// returns a RENDERED TABLE -- `{ column: [...], body: [[...]],
+// global: {...} }` -- whose cells are display strings: "7.14 km",
+// "34853.05 km", "-" where the provider has no figure, and an entire
+// semicolon-delimited sentence in the `Fuel` column carrying five
+// separate statistics.
+//
+// The alias approach survived that intact, which is the point of it:
+// readColumnarPayload expands the table into keyed rows using the header
+// labels as keys, so "Fuel Used" normalises straight onto the `fuelUsed`
+// alias that was already in the table. What the alias layer could NOT do
+// was read the values -- readNumber("7.14 km") is NaN -- so cell
+// interpretation lives in eagletrack-report-values.ts and this file
+// composes the two.
+//
+// The three sibling endpoints below remain unconfirmed. That the
+// documented row-list shape was wrong for one of them is a reason to
+// expect it may be wrong for the others too, not a reason to assume the
+// table shape everywhere: readColumnarPayload detects rather than
+// presumes, and every parser here goes through it.
 //
 // Pure by construction: no repository, no client, no clock. That is what
 // lets the whole mapping be tested against hand-written payloads without
@@ -20,7 +44,9 @@ import {
   consumed,
   describeUnmapped,
   indexRow,
+  pickRaw,
   readBoolean,
+  readColumnarPayload,
   readLatLng,
   readNumber,
   readString,
@@ -28,11 +54,22 @@ import {
   normaliseKey,
   VendorRow,
 } from './eagletrack-field-map';
+import {
+  CONSUMPTION_PER_100KM_UNITS,
+  DISTANCE_UNITS,
+  isNoDataToken,
+  MeasurementCell,
+  parseFuelSummary,
+  readMeasurement,
+  readMoney,
+  VOLUME_UNITS,
+} from './eagletrack-report-values';
 import { describeTriggerType } from './eagletrack-triggers.map';
 import { parseEagleTrackDate } from './eagletrack.adapter';
 import type {
   EagleTrackDriver,
   EagleTrackFuelReportRow,
+  EagleTrackFuelRowFlag,
   EagleTrackTrigger,
   EagleTrackVendorAlert,
 } from './eagletrack.types';
@@ -51,16 +88,42 @@ const LAT_ALIASES = ['lat', 'latitude', 'y'] as const;
 const LNG_ALIASES = ['lng', 'lon', 'longitude', 'x'] as const;
 const SPEED_ALIASES = ['speed', 'velocity'] as const;
 
+/**
+ * Fuel report aliases.
+ *
+ * The live deployment's column headers (`Name`, `From`, `To`,
+ * `Fuel Used`, `Fuel Cost`, `Fuel`, `Distance`, `Start Odometer`,
+ * `End Odometer`) now lead each list, ahead of the documented spellings.
+ * That ordering is the whole discipline of this file: the observed name
+ * wins, the documented ones stay as fallbacks for other deployments.
+ *
+ * `fuelUsed` is deliberately NOT first in `consumed` even though the
+ * live header is "Fuel Used" -- normaliseKey folds "Fuel Used" and
+ * "fuelUsed" to the same token, so it already matched. Nothing here
+ * needed reordering for the live response; it needed the VALUES read
+ * correctly, which is eagletrack-report-values.ts's job.
+ */
 const FUEL_ALIASES = {
-  periodStart: ['startTime', 'beginTime', 'dateFrom', 'from', 'startDate', 'start'],
-  periodEnd: ['endTime', 'finishTime', 'dateTo', 'to', 'endDate', 'end'],
+  periodStart: ['from', 'startTime', 'beginTime', 'dateFrom', 'startDate', 'start'],
+  periodEnd: ['to', 'endTime', 'finishTime', 'dateTo', 'endDate', 'end'],
   initial: ['startFuel', 'beginFuel', 'initialFuel', 'fuelStart', 'startValue'],
   final: ['endFuel', 'finishFuel', 'finalFuel', 'fuelEnd', 'endValue'],
-  consumed: ['fuelConsumption', 'fuelConsumed', 'fuelUsed', 'consumption', 'usedFuel', 'totalFuel'],
+  consumed: ['fuelUsed', 'fuelConsumption', 'fuelConsumed', 'consumption', 'usedFuel', 'totalFuel'],
   refuelled: ['refuel', 'refuelling', 'refueling', 'fillings', 'fuelFilled', 'fillAmount'],
   drained: ['drain', 'draining', 'fuelDrained', 'theft', 'drainAmount'],
   distance: ['distance', 'mileage', 'totalDistance', 'km', 'route'],
   rate: ['consumptionPer100', 'avgConsumption', 'averageConsumption', 'fuelRate', 'litersPer100km', 'litresPer100km'],
+  cost: ['fuelCost', 'cost', 'fuelExpense', 'fuelPrice', 'totalCost', 'expense', 'amount'],
+  /**
+   * The composite `Fuel` column. Listed last among the fuel-ish aliases
+   * on purpose: `fuel` is a single generic word and must not shadow a
+   * dedicated column. It does not collide with any alias above --
+   * `fuelUsed`, `fuelCost` and `fuelRate` all normalise to longer
+   * tokens -- but the ordering makes the intent explicit.
+   */
+  summary: ['fuel', 'fuelSummary', 'fuelDetail', 'fuelDetails', 'fuelStatistics'],
+  startOdometer: ['startOdometer', 'odometerStart', 'beginOdometer', 'startMileage', 'odoStart', 'initialOdometer'],
+  endOdometer: ['endOdometer', 'odometerEnd', 'finishOdometer', 'endMileage', 'odoEnd', 'finalOdometer'],
 } as const;
 
 const DRIVER_ALIASES = {
@@ -93,52 +156,309 @@ const ALERT_ALIASES = {
 // ─── Fuel report ─────────────────────────────────────────────────────
 
 /**
- * Maps /api2/reports/fuel rows for one tracker.
+ * Tolerance for the distance-vs-odometer cross-check.
  *
- * `fallbackUin` is used when a row carries no uin of its own -- the
- * request was made FOR one tracker, so a row without one is that
- * tracker's row, not an unattributable orphan. Rows that DO carry a uin
- * keep it: a deployment that answers a single-uin request with the whole
- * account's report must not have every row re-attributed to the tracker
- * that was asked about. That is the same "trust the more authoritative
- * identifier" discipline the client applies to /api2/last's object keys.
+ * Loose on purpose. Distance and odometer come from different sources
+ * (GPS track integration vs a CAN/analogue odometer reading) and are
+ * rounded to 2 dp independently, so small disagreement is normal and
+ * flagging it would train an operator to ignore the flag. What this must
+ * catch is a COLUMN SHIFT, where the two figures differ by orders of
+ * magnitude.
+ */
+const ODOMETER_TOLERANCE_KM = 1;
+const ODOMETER_TOLERANCE_FRACTION = 0.05;
+
+/** Bookkeeping for one row's cell outcomes, so the three kinds of "missing" stay separate. */
+interface CellOutcomes {
+  noData: string[];
+  unparsable: string[];
+  keys: string[];
+}
+
+/**
+ * Records a cell's outcome under its CANONICAL field name and returns
+ * the numeric value only when the provider actually sent one.
+ *
+ * The canonical name -- not the vendor's column header -- is what lands
+ * in noDataFields/unparsableFields, so a consumer can branch on
+ * "distanceKm has no data" without knowing whether this deployment
+ * spells the column "Distance", "Mileage" or "route".
+ */
+function takeMeasurement(
+  cell: MeasurementCell | null,
+  field: string,
+  outcomes: CellOutcomes
+): number | undefined {
+  if (!cell) return undefined;
+
+  outcomes.keys.push(cell.key);
+  if (cell.status === 'no-data') outcomes.noData.push(field);
+  else if (cell.status === 'unparsable') outcomes.unparsable.push(field);
+
+  return cell.status === 'value' ? cell.value : undefined;
+}
+
+/**
+ * Everything one /api2/reports/fuel response yielded, including the
+ * facts about the PAYLOAD that individual rows cannot carry.
+ *
+ * Separate from parseFuelReportRows because the counters and the header
+ * are properties of the table, not of a row, and the service needs them
+ * to decide whether the rows it has are the whole report. `recCount` on
+ * the observed response said 1318 while `body` held a single row.
+ */
+export interface EagleTrackFuelReportPayload {
+  rows: EagleTrackFuelReportRow[];
+  /** The header row as the provider sent it, or [] for a non-columnar payload. */
+  columns: string[];
+  counters: { pageCount: number | null; recordCount: number | null };
+  duplicateColumns: string[];
+  rowsWithUnexpectedWidth: number;
+  /** True when the payload was the column/body table form rather than records. */
+  columnar: boolean;
+}
+
+/**
+ * Maps a /api2/reports/fuel response for one tracker.
+ *
+ * ---------------------------------------------------------------------
+ * ATTRIBUTION: WHAT A REPORT ROW DOES AND DOES NOT IDENTIFY
+ * ---------------------------------------------------------------------
+ * A columnar report row carries NO uin -- the closest thing is the
+ * `Name` column, which holds the tracker's name. So `uin` falls back to
+ * the tracker the request was made for, and the name is kept separately
+ * as `providerName` rather than being promoted into `uin`.
+ *
+ * That separation is load-bearing. If a deployment answers a
+ * single-tracker request with the whole account's report (and the
+ * observed `recCount` of 1318 against a single returned row is exactly
+ * the kind of hint that it might), promoting or ignoring the name would
+ * stamp the requested uin onto every other vehicle's row -- writing
+ * another branch's fuel spend and distance into this vehicle's report.
+ * This function reports what it saw; eagletrack-fuel.service.ts, which
+ * knows the vehicle's plate, decides which rows are actually ours.
+ *
+ * Kept as the row-level entry point for callers that only want rows;
+ * parseFuelReportPayload adds the table-level facts.
  */
 export function parseFuelReportRows(data: unknown, fallbackUin: string): EagleTrackFuelReportRow[] {
   return toKeyedRows(data).map(({ key, row }) => {
     const index = indexRow(row);
+    const outcomes: CellOutcomes = { noData: [], unparsable: [], keys: [] };
 
     const uin = readString(index, UIN_ALIASES);
-    const periodStart = readString(index, FUEL_ALIASES.periodStart);
-    const periodEnd = readString(index, FUEL_ALIASES.periodEnd);
-    const initial = readNumber(index, FUEL_ALIASES.initial);
-    const final = readNumber(index, FUEL_ALIASES.final);
-    const consumedFuel = readNumber(index, FUEL_ALIASES.consumed);
-    const refuelled = readNumber(index, FUEL_ALIASES.refuelled);
-    const drained = readNumber(index, FUEL_ALIASES.drained);
-    const distance = readNumber(index, FUEL_ALIASES.distance);
-    const rate = readNumber(index, FUEL_ALIASES.rate);
+    const providerName = readString(index, NAME_ALIASES);
+
+    // Dates stay STRINGS on the row (their timezone is unconfirmed --
+    // see parseEagleTrackDate) and are additionally offered as parsed
+    // instants. A "-" here is the provider stating it has no period
+    // bound, which is different from a column we failed to find.
+    const periodStartCell = pickRaw(index, FUEL_ALIASES.periodStart);
+    const periodEndCell = pickRaw(index, FUEL_ALIASES.periodEnd);
+    const periodStart = takeDate(periodStartCell, 'periodStart', outcomes);
+    const periodEnd = takeDate(periodEndCell, 'periodEnd', outcomes);
+
+    const initial = takeMeasurement(readMeasurement(index, FUEL_ALIASES.initial, VOLUME_UNITS), 'initialFuelLitres', outcomes);
+    const final = takeMeasurement(readMeasurement(index, FUEL_ALIASES.final, VOLUME_UNITS), 'finalFuelLitres', outcomes);
+    const consumedFuel = takeMeasurement(readMeasurement(index, FUEL_ALIASES.consumed, VOLUME_UNITS), 'fuelConsumedLitres', outcomes);
+    const columnRefuelled = takeMeasurement(readMeasurement(index, FUEL_ALIASES.refuelled, VOLUME_UNITS), 'refuelledLitres', outcomes);
+    const columnDrained = takeMeasurement(readMeasurement(index, FUEL_ALIASES.drained, VOLUME_UNITS), 'drainedLitres', outcomes);
+    const distance = takeMeasurement(readMeasurement(index, FUEL_ALIASES.distance, DISTANCE_UNITS), 'distanceKm', outcomes);
+    const columnRate = takeMeasurement(
+      readMeasurement(index, FUEL_ALIASES.rate, CONSUMPTION_PER_100KM_UNITS),
+      'consumptionPer100Km',
+      outcomes
+    );
+    const startOdometer = takeMeasurement(
+      readMeasurement(index, FUEL_ALIASES.startOdometer, DISTANCE_UNITS),
+      'startOdometerKm',
+      outcomes
+    );
+    const endOdometer = takeMeasurement(
+      readMeasurement(index, FUEL_ALIASES.endOdometer, DISTANCE_UNITS),
+      'endOdometerKm',
+      outcomes
+    );
+
+    const cost = readMoney(index, FUEL_ALIASES.cost);
+    if (cost) {
+      outcomes.keys.push(cost.key);
+      if (cost.status === 'no-data') outcomes.noData.push('fuelCost');
+      else if (cost.status === 'unparsable') outcomes.unparsable.push('fuelCost');
+    }
+
+    // The composite `Fuel` cell. Its figures fill only the fields no
+    // dedicated column supplied: a first-class column is a more direct
+    // statement than a value extracted from rendered prose.
+    const summaryHit = pickRaw(index, FUEL_ALIASES.summary);
+    const summary = summaryHit ? parseFuelSummary(summaryHit.value) : null;
+    if (summaryHit) outcomes.keys.push(summaryHit.key);
+
+    const refuelled = columnRefuelled ?? takeMeasurement(summary?.refuelledLitres ?? null, 'refuelledLitres', outcomes);
+    const drained = columnDrained ?? takeMeasurement(summary?.drainedLitres ?? null, 'drainedLitres', outcomes);
+    const rate = columnRate ?? takeMeasurement(summary?.consumptionPer100Km ?? null, 'consumptionPer100Km', outcomes);
+    const refuelEventCount = takeMeasurement(summary?.refuelEventCount ?? null, 'refuelEventCount', outcomes);
+    const drainEventCount = takeMeasurement(summary?.drainEventCount ?? null, 'drainEventCount', outcomes);
 
     return {
       // Precedence: the row's own uin, then the object key (which
       // /api2/last established is authoritative when present), then the
-      // tracker the request was for.
+      // tracker the request was for. A columnar row supplies neither of
+      // the first two -- see the header on why `providerName` is not a
+      // substitute for them.
       uin: uin?.value ?? key ?? fallbackUin,
-      ...(periodStart ? { periodStart: periodStart.value } : {}),
-      ...(periodEnd ? { periodEnd: periodEnd.value } : {}),
-      ...(initial ? { initialFuelLitres: initial.value } : {}),
-      ...(final ? { finalFuelLitres: final.value } : {}),
-      ...(consumedFuel ? { fuelConsumedLitres: consumedFuel.value } : {}),
-      ...(refuelled ? { refuelledLitres: refuelled.value } : {}),
-      ...(drained ? { drainedLitres: drained.value } : {}),
-      ...(distance ? { distanceKm: distance.value } : {}),
-      ...(rate ? { consumptionPer100Km: rate.value } : {}),
-      unmappedFields: describeUnmapped(
-        row,
-        consumed(uin, periodStart, periodEnd, initial, final, consumedFuel, refuelled, drained, distance, rate)
-      ),
+      ...(providerName ? { providerName: providerName.value } : {}),
+      ...(periodStart.raw !== undefined ? { periodStart: periodStart.raw } : {}),
+      ...(periodEnd.raw !== undefined ? { periodEnd: periodEnd.raw } : {}),
+      ...(periodStart.iso ? { periodStartIso: periodStart.iso } : {}),
+      ...(periodEnd.iso ? { periodEndIso: periodEnd.iso } : {}),
+      ...(initial !== undefined ? { initialFuelLitres: initial } : {}),
+      ...(final !== undefined ? { finalFuelLitres: final } : {}),
+      ...(consumedFuel !== undefined ? { fuelConsumedLitres: consumedFuel } : {}),
+      ...(refuelled !== undefined ? { refuelledLitres: refuelled } : {}),
+      ...(drained !== undefined ? { drainedLitres: drained } : {}),
+      ...(refuelEventCount !== undefined ? { refuelEventCount } : {}),
+      ...(drainEventCount !== undefined ? { drainEventCount } : {}),
+      ...(distance !== undefined ? { distanceKm: distance } : {}),
+      ...(startOdometer !== undefined ? { startOdometerKm: startOdometer } : {}),
+      ...(endOdometer !== undefined ? { endOdometerKm: endOdometer } : {}),
+      ...(rate !== undefined ? { consumptionPer100Km: rate } : {}),
+      ...(cost?.status === 'value' && cost.amount !== undefined ? { fuelCost: cost.amount } : {}),
+      ...(cost?.currencyCode ? { fuelCostCurrencyCode: cost.currencyCode } : {}),
+      ...(cost?.currencySymbol ? { fuelCostCurrencySymbol: cost.currencySymbol } : {}),
+      noDataFields: dedupeSorted(outcomes.noData),
+      unparsableFields: dedupeSorted(outcomes.unparsable),
+      flags: deriveRowFlags({
+        fuelConsumedLitres: consumedFuel,
+        fuelConsumedIsNoData: outcomes.noData.includes('fuelConsumedLitres'),
+        consumptionPer100Km: rate,
+        distanceKm: distance,
+        startOdometerKm: startOdometer,
+        endOdometerKm: endOdometer,
+      }),
+      unmappedFields: describeUnmapped(row, [...consumed(uin, providerName), ...outcomes.keys]),
+      unmappedFuelSummaryLabels: summary ? summary.unmappedLabels : [],
       raw: row,
     };
   });
+}
+
+/**
+ * The whole response: rows plus the facts about the table itself.
+ *
+ * The counters matter for correctness, not diagnostics. If `recCount`
+ * exceeds the number of rows returned, then either the report is
+ * paginated and we are summing a slice, or the counter means something
+ * else entirely (records SCANNED rather than rows produced). This
+ * integration cannot tell which from one sample and does not guess --
+ * it hands both numbers up so the service can say so plainly.
+ */
+export function parseFuelReportPayload(data: unknown, fallbackUin: string): EagleTrackFuelReportPayload {
+  const columnar = readColumnarPayload(data);
+
+  return {
+    rows: parseFuelReportRows(data, fallbackUin),
+    columns: columnar ? columnar.columns : [],
+    counters: columnar ? columnar.counters : { pageCount: null, recordCount: null },
+    duplicateColumns: columnar ? columnar.duplicateColumns : [],
+    rowsWithUnexpectedWidth: columnar ? columnar.rowsWithUnexpectedWidth : 0,
+    columnar: columnar !== null,
+  };
+}
+
+/**
+ * Reads a period bound, keeping the provider's own string AND an ISO
+ * instant when it parsed.
+ *
+ * The raw string is never discarded in favour of the parsed value: the
+ * vendor sends "2026-08-20 00:04:07" with no offset, parseEagleTrackDate
+ * reads that as UTC, and that assumption is documented as unconfirmed.
+ * Keeping both means a later timezone correction re-derives the instant
+ * from data we still hold rather than from data we threw away.
+ */
+function takeDate(
+  hit: { key: string; value: unknown } | null,
+  field: string,
+  outcomes: CellOutcomes
+): { raw?: string; iso?: string } {
+  if (!hit) return {};
+
+  outcomes.keys.push(hit.key);
+
+  if (typeof hit.value !== 'string') {
+    const parsed = parseEagleTrackDate(hit.value);
+    if (!parsed) {
+      outcomes.unparsable.push(field);
+      return {};
+    }
+    return { raw: parsed.toISOString(), iso: parsed.toISOString() };
+  }
+
+  const text = hit.value.trim();
+  if (!text) {
+    outcomes.unparsable.push(field);
+    return {};
+  }
+  if (isNoDataToken(text)) {
+    outcomes.noData.push(field);
+    return {};
+  }
+
+  const parsed = parseEagleTrackDate(text);
+  if (!parsed) {
+    // The string is kept even when it does not parse -- an operator can
+    // read "20/08/2026 00:04" perfectly well, and discarding it would
+    // hide the format that needs supporting.
+    outcomes.unparsable.push(field);
+    return { raw: text };
+  }
+
+  return { raw: text, iso: parsed.toISOString() };
+}
+
+function dedupeSorted(values: string[]): string[] {
+  return Array.from(new Set(values)).sort();
+}
+
+/**
+ * Cross-field self-checks. See EagleTrackFuelRowFlag for why a
+ * positionally-mapped table needs them.
+ *
+ * Nothing here alters a value. A flagged row keeps every figure the
+ * provider sent; the flag travels alongside so the service can decline
+ * to promote a contradictory figure into a headline total, and so an
+ * operator can see WHY a number looks wrong instead of only that it
+ * does.
+ */
+function deriveRowFlags(input: {
+  fuelConsumedLitres?: number;
+  fuelConsumedIsNoData: boolean;
+  consumptionPer100Km?: number;
+  distanceKm?: number;
+  startOdometerKm?: number;
+  endOdometerKm?: number;
+}): EagleTrackFuelRowFlag[] {
+  const flags: EagleTrackFuelRowFlag[] = [];
+
+  if (
+    input.consumptionPer100Km === 0 &&
+    input.fuelConsumedLitres === undefined &&
+    input.fuelConsumedIsNoData
+  ) {
+    flags.push('zero-consumption-rate-without-fuel-used');
+  }
+
+  if (input.startOdometerKm !== undefined && input.endOdometerKm !== undefined) {
+    const delta = input.endOdometerKm - input.startOdometerKm;
+    if (delta < 0) flags.push('odometer-decreased');
+
+    if (input.distanceKm !== undefined && delta >= 0) {
+      const tolerance = Math.max(ODOMETER_TOLERANCE_KM, ODOMETER_TOLERANCE_FRACTION * Math.max(delta, input.distanceKm));
+      if (Math.abs(delta - input.distanceKm) > tolerance) flags.push('distance-odometer-mismatch');
+    }
+  }
+
+  return flags;
 }
 
 // ─── Drivers ─────────────────────────────────────────────────────────

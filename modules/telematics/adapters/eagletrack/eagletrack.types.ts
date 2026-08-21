@@ -364,13 +364,19 @@ export interface EagleTrackSyncResult {
 // HISTORY / REPORTS / DRIVERS / TRIGGERS
 //
 // SHAPE CONFIDENCE, stated once here rather than repeated per type:
-// /api2/last and /api2/trackers were corrected against a live
-// deployment. The five endpoints below have NOT been. Their row types
-// are therefore modelled as `EagleTrackVendorRow` -- an opaque bag --
-// and read through eagletrack-field-map.ts's candidate aliases, which
-// report every key they could not place. Declaring optimistic interfaces
-// with invented field names would compile perfectly and read `undefined`
+// /api2/last, /api2/trackers and /api2/reports/fuel were corrected
+// against a live deployment. The rest have NOT been. Their row types are
+// therefore modelled as `EagleTrackVendorRow` -- an opaque bag -- and
+// read through eagletrack-field-map.ts's candidate aliases, which report
+// every key they could not place. Declaring optimistic interfaces with
+// invented field names would compile perfectly and read `undefined`
 // forever on a real deployment; see that file's header.
+//
+// The fuel report is worth studying before trusting the documentation
+// on the others. It came back as a rendered TABLE of display strings
+// (see EagleTrackColumnarData) rather than the documented record list,
+// which is the third documented-contract failure this integration has
+// found on this platform, after the `token` header and `__platenumber`.
 // ─────────────────────────────────────────────────────────────────────
 
 /** One record from an endpoint whose field names are not yet confirmed. */
@@ -387,9 +393,45 @@ export type EagleTrackHistoryResponse = EagleTrackEnvelope<
   EagleTrackTrackerStatus[] | Record<string, EagleTrackTrackerStatus>
 >;
 
-/** GET /api2/reports/fuel. Row shape unconfirmed -- see the block comment above. */
+/**
+ * A rendered-table payload: a header array plus positional cell rows,
+ * with the vendor's counter block NESTED INSIDE `data` rather than
+ * beside it in the envelope.
+ *
+ * CONFIRMED against a live deployment. This is what /api2/reports/fuel
+ * actually returns, and it is a different shape from every other api2
+ * endpoint -- the reports family renders a table rather than serialising
+ * records:
+ *
+ *   { "error": 0, "data": { "column": ["Name", "From", ...],
+ *                           "body": [["AFU0078", "2026-08-20 00:04:07", ...]],
+ *                           "global": { "pageCount": 0, "recCount": "1318" } } }
+ *
+ * Note what the cells are: display STRINGS. "7.14 km", "34853.05 km",
+ * "-" for a figure the provider does not have, and a whole
+ * semicolon-delimited sentence in the `Fuel` column. See
+ * eagletrack-report-values.ts.
+ */
+export interface EagleTrackColumnarData {
+  column?: string[];
+  body?: Array<Array<string | number | null> | EagleTrackVendorRow>;
+  global?: {
+    pageCount?: number | string;
+    recCount?: number | string;
+  };
+}
+
+/**
+ * GET /api2/reports/fuel.
+ *
+ * The columnar form is confirmed. The union keeps the record forms
+ * because the alias/reader layer handles all three at no cost, and
+ * narrowing to the one shape observed on one deployment is the
+ * assumption this integration has been burned by repeatedly
+ * (`__platenumber`, the `token` header, `uin=__all_sub`).
+ */
 export type EagleTrackFuelReportResponse = EagleTrackEnvelope<
-  EagleTrackVendorRow[] | Record<string, EagleTrackVendorRow>
+  EagleTrackColumnarData | EagleTrackVendorRow[] | Record<string, EagleTrackVendorRow>
 >;
 
 /** GET /api2/drivers. Row shape unconfirmed. */
@@ -458,6 +500,32 @@ export interface EagleTrackTrigger {
 }
 
 /**
+ * A cross-field inconsistency found on one report row.
+ *
+ * These are not vendor errors and not our own arithmetic replacing the
+ * vendor's -- they are SELF-CHECKS on a positionally-mapped table. The
+ * fuel report arrives as `{ column, body }`, so every value's meaning
+ * depends entirely on its index, and the cheapest way to detect a shift
+ * (a column added upstream, a short body row) is to notice that figures
+ * which must agree no longer do. Each flag is reported alongside the
+ * values, never instead of them.
+ */
+export type EagleTrackFuelRowFlag =
+  /**
+   * A consumption rate of exactly 0 on a row whose fuel-used figure the
+   * provider explicitly marked "-". A vehicle cannot both have covered
+   * distance on precisely zero litres and have no fuel measurement, so
+   * this 0 is a rendering placeholder, not a reading. The value stays on
+   * the row; summariseCanonicalFuel refuses to promote it to a headline
+   * figure.
+   */
+  | 'zero-consumption-rate-without-fuel-used'
+  /** Reported distance disagrees with end-minus-start odometer beyond tolerance -- the strongest available signal of a column shift. */
+  | 'distance-odometer-mismatch'
+  /** End odometer below start odometer: a device reset, a replaced unit, or misaligned columns. */
+  | 'odometer-decreased';
+
+/**
  * One period row of the fuel report, mapped onto the vocabulary this
  * product already uses.
  *
@@ -466,21 +534,71 @@ export interface EagleTrackTrigger {
  * `fuelConsumedLitres` is never computed as initial-minus-final: those
  * two readings can come from different sensors on different scales, and
  * a subtraction across them would be our arithmetic presented as the
- * provider's measurement.
+ * provider's measurement. The same rule blocks the tempting
+ * end-odometer-minus-start-odometer shortcut for `distanceKm`.
+ *
+ * THREE WAYS A FIGURE CAN BE MISSING, kept distinct because they lead to
+ * different operator actions:
+ *   * the field is simply absent      -> the device may not report it,
+ *                                        or we may have the wrong alias;
+ *                                        `unmappedFields` disambiguates.
+ *   * listed in `noDataFields`        -> the provider explicitly said it
+ *                                        has none ("-"). Definitive.
+ *   * listed in `unparsableFields`    -> a value arrived and could not be
+ *                                        read (unknown unit, ambiguous
+ *                                        separator). A bug to fix, not a
+ *                                        gap in the data.
  */
 export interface EagleTrackFuelReportRow {
   uin: string;
+  /**
+   * The identifier the report itself carries for the row -- the `Name`
+   * column on the live deployment, which holds the tracker name (and on
+   * this tenant, the plate).
+   *
+   * Kept SEPARATE from `uin` and never promoted into it. A report row
+   * has no uin at all, so if this were folded into `uin` a deployment
+   * that answers a single-tracker request with the whole account's
+   * report would have every other vehicle's fuel silently attributed to
+   * the one that was asked about. eagletrack-fuel.service.ts uses this
+   * to decide attribution.
+   */
+  providerName?: string;
+  /** The provider's period start, verbatim (its timezone is unconfirmed -- see parseEagleTrackDate). */
   periodStart?: string;
   periodEnd?: string;
+  /** `periodStart` parsed to an ISO instant, present only when it parsed. The raw string is kept regardless. */
+  periodStartIso?: string;
+  periodEndIso?: string;
   initialFuelLitres?: number;
   finalFuelLitres?: number;
   fuelConsumedLitres?: number;
   refuelledLitres?: number;
   drainedLitres?: number;
+  /** Number of refuelling events in the period, from the `Fuel` summary. A reported 0 is real and kept. */
+  refuelEventCount?: number;
+  /** Number of fuel-loss ("leakage") events in the period, from the `Fuel` summary. */
+  drainEventCount?: number;
   distanceKm?: number;
+  startOdometerKm?: number;
+  endOdometerKm?: number;
   /** Litres per 100 km, when the provider reports a rate rather than only totals. */
   consumptionPer100Km?: number;
+  /** Cost of fuel for the period. Currency is reported as sent, never inferred from a symbol. */
+  fuelCost?: number;
+  /** Three-letter code, only when the provider wrote one explicitly. */
+  fuelCostCurrencyCode?: string;
+  /** The symbol the provider wrote, verbatim and uninterpreted. "$" identifies no single currency. */
+  fuelCostCurrencySymbol?: string;
+  /** Canonical field names the provider explicitly reported as "no data". */
+  noDataFields: string[];
+  /** Canonical field names whose cell was present but unreadable. Always a bug in the unit or alias table, never a data gap. */
+  unparsableFields: string[];
+  /** Cross-field inconsistencies detected on this row. See EagleTrackFuelRowFlag. */
+  flags: EagleTrackFuelRowFlag[];
   unmappedFields: string[];
+  /** Labels inside the `Fuel` summary cell that no alias claimed. The correction surface for that column. */
+  unmappedFuelSummaryLabels: string[];
   raw: EagleTrackVendorRow;
 }
 

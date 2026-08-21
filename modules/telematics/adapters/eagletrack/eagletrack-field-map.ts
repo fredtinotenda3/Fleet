@@ -95,8 +95,14 @@ export function indexRow(row: VendorRow): Map<string, { key: string; value: unkn
  *
  * Order within `aliases` is priority order: put the spelling a live
  * deployment was observed to use first, documented spellings after it.
+ *
+ * Exported as `pickRaw` for eagletrack-report-values.ts, which needs the
+ * UNINTERPRETED cell in order to tell "-" (the provider stating it has
+ * no figure) apart from an absent key. Every reader in this file and
+ * that one resolves aliases through this single function, so priority
+ * order cannot diverge between them.
  */
-function pick(
+export function pickRaw(
   index: Map<string, { key: string; value: unknown }>,
   aliases: readonly string[]
 ): { key: string; value: unknown } | null {
@@ -119,7 +125,7 @@ export function readNumber(
   index: Map<string, { key: string; value: unknown }>,
   aliases: readonly string[]
 ): FieldHit<number> | null {
-  const hit = pick(index, aliases);
+  const hit = pickRaw(index, aliases);
   if (!hit || typeof hit.value === 'boolean') return null;
 
   const value = typeof hit.value === 'number' ? hit.value : Number(hit.value);
@@ -140,7 +146,7 @@ export function readString(
   index: Map<string, { key: string; value: unknown }>,
   aliases: readonly string[]
 ): FieldHit<string> | null {
-  const hit = pick(index, aliases);
+  const hit = pickRaw(index, aliases);
   if (!hit) return null;
 
   if (typeof hit.value === 'string') {
@@ -162,7 +168,7 @@ export function readBoolean(
   index: Map<string, { key: string; value: unknown }>,
   aliases: readonly string[]
 ): FieldHit<boolean> | null {
-  const hit = pick(index, aliases);
+  const hit = pickRaw(index, aliases);
   if (!hit) return null;
 
   if (typeof hit.value === 'boolean') return { key: hit.key, value: hit.value };
@@ -242,17 +248,154 @@ export function consumed(...hits: Array<FieldHit<unknown> | { keys: string[] } |
 }
 
 /**
+ * A vendor counter (`pageCount`, `recCount`) as a number, or null.
+ *
+ * White-labelled deployments stringify these inconsistently -- the live
+ * fuel report sends `pageCount` as a number and `recCount` as the string
+ * "1318" in the SAME object. One reader, so a counter cannot be trusted
+ * in one code path and dropped in another.
+ */
+export function readCounter(raw: unknown): number | null {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const value = typeof raw === 'number' ? raw : Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+/**
+ * A `{ column: [...], body: [[...]] }` payload, expanded into rows.
+ *
+ * ---------------------------------------------------------------------
+ * WHY THIS SHAPE NEEDS ITS OWN READER
+ * ---------------------------------------------------------------------
+ * The /api2/reports/* endpoints do not return records. They return a
+ * rendered TABLE: a header array and an array of positional cell arrays,
+ * alongside a nested `global` counter block. Neither toRows nor
+ * toKeyedRows could see rows in that, and toKeyedRows did something
+ * worse than see nothing -- `column` and `body` are arrays so both were
+ * filtered out, `global` is an object so it survived, and the whole
+ * report parsed as exactly one row whose fields were `pageCount` and
+ * `recCount`, attributed to a tracker named "global". A confident,
+ * entirely fictional row.
+ *
+ * Expanding to keyed rows here rather than writing a separate columnar
+ * parser is what lets the alias tables, indexRow, describeUnmapped and
+ * every reader keep working unchanged: a header of "Fuel Used" becomes
+ * the key "Fuel Used", which normalises to the alias `fuelUsed` that was
+ * already in the table.
+ *
+ * ---------------------------------------------------------------------
+ * POSITIONAL MAPPING IS ONLY AS GOOD AS THE WIDTHS
+ * ---------------------------------------------------------------------
+ * Every cell is placed by INDEX, so a body row of a different length
+ * than the header is the one failure mode that silently shifts values
+ * into neighbouring fields -- an odometer landing in a distance column.
+ * The overlap is still mapped (partial data is data), but the row count
+ * is reported so a caller can warn instead of quietly presenting
+ * misaligned figures. Cells beyond the header get the synthetic key
+ * `column[N]`, which no alias matches, so they surface in
+ * `unmappedFields` rather than vanishing.
+ *
+ * Returns null -- meaning "not this shape, carry on" -- unless `column`
+ * is an array of strings AND `body` is an array. The guard is strict on
+ * purpose: a keyed payload that happens to contain a `body` field must
+ * not be reinterpreted as a table.
+ */
+export interface ColumnarPayload {
+  /** Header labels, in order, after blank/duplicate disambiguation. */
+  columns: string[];
+  rows: VendorRow[];
+  /** The nested `global` block, which sits INSIDE `data` on this endpoint rather than beside it. */
+  counters: { pageCount: number | null; recordCount: number | null };
+  /** Headers that repeat. The first wins for alias matching; the rest are suffixed and reported. */
+  duplicateColumns: string[];
+  /** Body rows whose cell count differed from the header count. See above. */
+  rowsWithUnexpectedWidth: number;
+}
+
+export function readColumnarPayload(data: unknown): ColumnarPayload | null {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+
+  const record = data as Record<string, unknown>;
+  const rawColumns = record.column ?? record.columns;
+  const rawBody = record.body;
+
+  if (!Array.isArray(rawColumns) || !Array.isArray(rawBody)) return null;
+  if (!rawColumns.every((entry) => typeof entry === 'string')) return null;
+
+  const columns: string[] = [];
+  const duplicateColumns: string[] = [];
+  const seen = new Set<string>();
+
+  rawColumns.forEach((entry, position) => {
+    // A blank header cannot be an object key that any alias matches, and
+    // an empty string would collide with the next blank one.
+    const label = (entry as string).trim() || `column[${position}]`;
+    const normalised = normaliseKey(label);
+
+    if (seen.has(normalised)) {
+      duplicateColumns.push(label);
+      // Suffixed so both copies reach the row. The first still wins for
+      // alias matching (indexRow keeps the first); the loser shows up in
+      // unmappedFields instead of overwriting the winner.
+      columns.push(`${label} [${position}]`);
+      return;
+    }
+
+    seen.add(normalised);
+    columns.push(label);
+  });
+
+  const rows: VendorRow[] = [];
+  let rowsWithUnexpectedWidth = 0;
+
+  for (const entry of rawBody) {
+    if (Array.isArray(entry)) {
+      if (entry.length !== columns.length) rowsWithUnexpectedWidth += 1;
+
+      const row: VendorRow = {};
+      entry.forEach((cell, position) => {
+        row[columns[position] ?? `column[${position}]`] = cell;
+      });
+      rows.push(row);
+      continue;
+    }
+
+    // A deployment that returns already-keyed objects inside `body` is
+    // handled rather than rejected; scalars are dropped, exactly as
+    // toRows drops them.
+    if (entry && typeof entry === 'object') rows.push(entry as VendorRow);
+  }
+
+  const global = (record.global ?? {}) as Record<string, unknown>;
+
+  return {
+    columns,
+    rows,
+    counters: {
+      pageCount: readCounter(global.pageCount),
+      recordCount: readCounter(global.recCount ?? global.recordCount),
+    },
+    duplicateColumns,
+    rowsWithUnexpectedWidth,
+  };
+}
+
+/**
  * Coerces an envelope's `data` into an array of plain objects.
  *
  * Every endpoint added in this pass returns a LIST, but the platform is
- * inconsistent about how: `/api2/last` returns an object keyed by uin
- * while `/api2/history` returns an array (see flattenLastPayload's
- * comment). Rather than assume per endpoint, this accepts either and
- * discards anything that is not an object -- a string or a number in a
- * list of records is malformed, and mapping it would produce a row of
- * pure absences that looks like real but empty data.
+ * inconsistent about how: `/api2/last` returns an object keyed by uin,
+ * `/api2/history` returns an array (see flattenLastPayload's comment),
+ * and `/api2/reports/*` returns a column/body TABLE. Rather than assume
+ * per endpoint, this accepts all three and discards anything that is not
+ * an object -- a string or a number in a list of records is malformed,
+ * and mapping it would produce a row of pure absences that looks like
+ * real but empty data.
  */
 export function toRows(data: unknown): VendorRow[] {
+  const columnar = readColumnarPayload(data);
+  if (columnar) return columnar.rows;
+
   if (!data) return [];
   if (Array.isArray(data)) {
     return data.filter((entry): entry is VendorRow => Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry));
@@ -273,8 +416,16 @@ export function toRows(data: unknown): VendorRow[] {
  * field inside the entry (the client stamps `uin` from the key so a
  * vendor-side inconsistency between the two cannot re-attribute a fix).
  * Endpoints whose payload may be keyed by uin get the same treatment.
+ *
+ * A column/body table yields key `null` for every row, and that is not a
+ * shortcut: a report row carries no identifier in its position in the
+ * table, so there is nothing authoritative to stamp. Callers must decide
+ * attribution from a column, never from the row's index.
  */
 export function toKeyedRows(data: unknown): Array<{ key: string | null; row: VendorRow }> {
+  const columnar = readColumnarPayload(data);
+  if (columnar) return columnar.rows.map((row) => ({ key: null, row }));
+
   if (!data) return [];
   if (Array.isArray(data)) {
     return toRows(data).map((row) => ({ key: null, row }));

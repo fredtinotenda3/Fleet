@@ -160,26 +160,75 @@ export interface EagleTrackHistoryResult {
   providerError?: string;
 }
 
+/** Cross-field inconsistencies the server detected on one row. Mirrors EagleTrackFuelRowFlag. */
+export type EagleTrackFuelRowFlag =
+  | 'zero-consumption-rate-without-fuel-used'
+  | 'distance-odometer-mismatch'
+  | 'odometer-decreased';
+
 /**
  * One period row of the provider's fuel report.
  *
  * Every member except `uin` is optional because the provider may not
- * report it AND because the field names are not yet confirmed -- see
+ * report it AND because the field names are not all confirmed -- see
  * `unmappedFields`, which lists the vendor keys no candidate alias
  * claimed. An absent figure is never rendered as 0.
+ *
+ * `noDataFields` is the stronger statement: those are fields the
+ * provider EXPLICITLY marked "-". "We could not find the column" and
+ * "the provider says it has no figure" both render as "No data", but
+ * only the second is a fact about the vehicle.
  */
 export interface EagleTrackFuelReportRow {
   uin: string;
+  /** The tracker name the report row carries. NOT an identifier we attribute on -- the server decides that. */
+  providerName?: string;
   periodStart?: string;
   periodEnd?: string;
+  periodStartIso?: string;
+  periodEndIso?: string;
   initialFuelLitres?: number;
   finalFuelLitres?: number;
   fuelConsumedLitres?: number;
   refuelledLitres?: number;
   drainedLitres?: number;
+  refuelEventCount?: number;
+  drainEventCount?: number;
   distanceKm?: number;
+  startOdometerKm?: number;
+  endOdometerKm?: number;
   consumptionPer100Km?: number;
+  fuelCost?: number;
+  fuelCostCurrencyCode?: string;
+  fuelCostCurrencySymbol?: string;
+  noDataFields: string[];
+  unparsableFields: string[];
+  flags: EagleTrackFuelRowFlag[];
   unmappedFields: string[];
+  unmappedFuelSummaryLabels: string[];
+}
+
+export type EagleTrackFuelWarningCode =
+  | 'rows-excluded-for-other-trackers'
+  | 'no-row-matches-vehicle'
+  | 'record-count-exceeds-returned-rows'
+  | 'row-width-mismatch'
+  | 'duplicate-columns'
+  | 'provider-name-differs-from-plate'
+  | 'mixed-fuel-cost-currencies'
+  | 'row-consistency-flags';
+
+/**
+ * A qualification on the provider's answer.
+ *
+ * Rendered rather than swallowed. A total drawn from a partial or
+ * partly-misattributed report is not wrong enough to withhold and not
+ * right enough to present bare, and the whole reason the server returns
+ * these is so the UI does not have to choose between the two.
+ */
+export interface EagleTrackFuelWarning {
+  code: EagleTrackFuelWarningCode;
+  detail: string;
 }
 
 export interface EagleTrackFuelReport {
@@ -188,7 +237,15 @@ export interface EagleTrackFuelReport {
   uin: string | null;
   rows: EagleTrackFuelReportRow[];
   canonicalFuel: { fuelUsed?: number; consumptionRate?: number };
+  fuelCostTotal?: { amount: number; currencyCode?: string; currencySymbol?: string };
   unmappedFields: string[];
+  unmappedFuelSummaryLabels: string[];
+  noDataFields: string[];
+  unparsableFields: string[];
+  providerColumns: string[];
+  providerCounters: { pageCount: number | null; recordCount: number | null };
+  excludedRowCount: number;
+  providerWarnings: EagleTrackFuelWarning[];
   providerQuery: { from: string; to: string; encoding: string; encoded: string } | null;
   providerError?: string;
 }

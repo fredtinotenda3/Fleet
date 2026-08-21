@@ -73,19 +73,13 @@ import {
   EagleTrackRangeQuery,
   encodeEagleTrackDateRange,
 } from './eagletrack-date-range';
-
-/**
- * Reads `global.pageCount` / `global.recCount`, which the vendor sends
- * as a number on some endpoints and a string on others (its own envelope
- * type already declares `recCount` as `number | string`). Null rather
- * than 0 for an unreadable value: 0 pages and "the vendor did not say"
- * lead to opposite pagination decisions.
- */
-function readCounter(raw: unknown): number | null {
-  if (raw === undefined || raw === null || raw === '') return null;
-  const value = typeof raw === 'number' ? raw : Number(raw);
-  return Number.isFinite(value) ? value : null;
-}
+// readCounter reads `global.pageCount` / `global.recCount`, which the
+// vendor sends as a number on some endpoints and a string on others (its
+// own envelope type already declares `recCount` as `number | string`).
+// It lives in the field map because the fuel report carries the same
+// block NESTED INSIDE `data`, and one counter must not be trusted here
+// and dropped there.
+import { readCounter } from './eagletrack-field-map';
 
 /**
  * The query parameter api2 authenticates on. Named here rather than
