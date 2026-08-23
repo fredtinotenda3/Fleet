@@ -27,14 +27,21 @@ export class TelematicsService {
     }
 
     if (data.location) {
-      webSocketManager.emitToTenant(data.tenantId, 'vehicle:location', {
+      // PHASE 0, F-7: scoped to the owning org unit rather than
+      // broadcast tenant-wide. `orgUnitId` is inherited from the
+      // vehicle at write time (see telematics.tenancy-addendum.ts), so
+      // it is the entity's own authoritative owner, not a request
+      // context. A reading with no org unit reaches org-wide
+      // subscribers only -- the same fail-closed treatment
+      // assertVehicleInScope gives an unassigned vehicle.
+      webSocketManager.emitToOrgUnit(data.tenantId, data.orgUnitId, 'vehicle:location', {
         vehicleId: data.vehicleId,
         location: data.location,
         timestamp: data.timestamp,
       });
 
       // Geofence evaluation runs on every location ping.
-      await this.checkGeofence(data.vehicleId, data.location, data.tenantId);
+      await this.checkGeofence(data.vehicleId, data.location, data.tenantId, data.orgUnitId);
     }
 
     await queueService.addJob(JobType.REFRESH_ANALYTICS, {
@@ -68,7 +75,7 @@ export class TelematicsService {
         await this.processAlerts(alerts, item);
       }
       if (item.location) {
-        await this.checkGeofence(item.vehicleId, item.location, item.tenantId);
+        await this.checkGeofence(item.vehicleId, item.location, item.tenantId, item.orgUnitId);
       }
     }
   }
@@ -97,7 +104,10 @@ export class TelematicsService {
     for (const alert of alerts) {
       await telematicsRepository.createAlert(data.vehicleId, alert, data.tenantId);
 
-      webSocketManager.emitToTenant(data.tenantId, 'vehicle:alert', {
+      // PHASE 0, F-7: an alert names the vehicle and the behaviour
+      // (speeding, harsh braking), so it is at least as sensitive as
+      // the position that produced it.
+      webSocketManager.emitToOrgUnit(data.tenantId, data.orgUnitId, 'vehicle:alert', {
         vehicleId: data.vehicleId,
         alert,
       });
@@ -185,10 +195,24 @@ export class TelematicsService {
    * batched read and writing all changes in one batched write â€” rather
    * than one DB round trip per geofence as in the original implementation.
    */
+  /**
+   * PHASE 0, F-7: takes the vehicle's `orgUnitId` so the geofence
+   * events it emits can be scoped to the unit that owns the vehicle.
+   *
+   * Optional, and passed by the caller rather than looked up here: both
+   * call sites already hold the reading, which carries the org unit
+   * inherited from the vehicle at write time. Re-reading the vehicle
+   * inside this method would add a Mongo round trip to a path that
+   * already runs on EVERY location ping for EVERY vehicle.
+   *
+   * Absent orgUnitId reaches org-wide subscribers only -- fail closed,
+   * matching emitToOrgUnit's documented contract.
+   */
   async checkGeofence(
     vehicleId: string,
     location: { lat: number; lng: number },
-    tenantId: string
+    tenantId: string,
+    orgUnitId?: string
   ): Promise<void> {
     const geofences = await telematicsRepository.getActiveGeofences(vehicleId, tenantId);
     if (geofences.length === 0) return;
@@ -211,14 +235,14 @@ export class TelematicsService {
         stateUpdates.push({ geofenceId: geofence._id!, isInside });
 
         if (isInside && geofence.alerts.entry) {
-          await this.triggerGeofenceAlert(vehicleId, geofence, 'entry', tenantId);
+          await this.triggerGeofenceAlert(vehicleId, geofence, 'entry', tenantId, orgUnitId);
         } else if (!isInside && geofence.alerts.exit) {
-          await this.triggerGeofenceAlert(vehicleId, geofence, 'exit', tenantId);
+          await this.triggerGeofenceAlert(vehicleId, geofence, 'exit', tenantId, orgUnitId);
         }
       } else if (isInside && geofence.alerts.inside) {
         // Vehicle remains inside on a schedule-restricted geofence â€”
         // emit a lightweight live update without a full alert record.
-        webSocketManager.emitToTenant(tenantId, 'vehicle:geofence_inside', {
+        webSocketManager.emitToOrgUnit(tenantId, orgUnitId, 'vehicle:geofence_inside', {
           vehicleId,
           geofence: geofence.name,
           timestamp: new Date(),
@@ -276,9 +300,13 @@ export class TelematicsService {
     vehicleId: string,
     geofence: Geofence,
     event: 'entry' | 'exit',
-    tenantId: string
+    tenantId: string,
+    orgUnitId?: string
   ): Promise<void> {
-    webSocketManager.emitToTenant(tenantId, 'vehicle:geofence', {
+    // PHASE 0, F-7: a geofence crossing reveals BOTH a vehicle's
+    // movement and a customer site or depot boundary, so it is scoped
+    // to the vehicle's owning unit like every other entity event.
+    webSocketManager.emitToOrgUnit(tenantId, orgUnitId, 'vehicle:geofence', {
       vehicleId,
       geofence: geofence.name,
       event,

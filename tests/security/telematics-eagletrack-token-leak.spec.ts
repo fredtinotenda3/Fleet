@@ -47,7 +47,12 @@ jest.mock('../../infrastructure/monitoring/logger', () => ({
 }));
 
 /** Shaped like a real api2 token (26 lowercase alphanumerics) so a substring search is meaningful. */
-const TOKEN = '1c44f7jet12nhb4rb6ilnides3';
+// PHASE 0, F-6: was the REAL production Eagle Track token, committed
+// verbatim as a test fixture. A synthetic value exercises this suite
+// identically -- every assertion here is about whether the token STRING
+// appears in a log line or an error message, which is a property of the
+// redaction code and not of the token's value.
+const TOKEN = 'TEST_EAGLETRACK_TOKEN_synthetic_do_not_use';
 const DOMAIN = 'https://gps.example.com';
 const ENDPOINT = `${DOMAIN}/api2/trackers`;
 

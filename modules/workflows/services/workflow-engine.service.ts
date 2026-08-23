@@ -5,6 +5,62 @@ import { workflowRepository } from '../repositories/workflow.repository';
 import { notificationService } from '@/modules/notifications/services/notification.service';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
 import { AppError, ConflictError, NotFoundError, ValidationError } from '@/server/errors/app.errors';
+import { Role } from '@/server/permissions/roles';
+
+/**
+ * PHASE 0, F-4: who is acting, as the engine sees them.
+ *
+ * The engine previously took only a bare `userId`, which is why it could
+ * not evaluate a role-assigned step and fell through to `return true`.
+ * Roles travel WITH the identity rather than being looked up here so the
+ * engine stays free of a user-directory dependency, and so the caller's
+ * already-authenticated context is the single source of truth about who
+ * this is -- the same discipline getAuthContext() enforces everywhere
+ * else.
+ *
+ * Passed as one object rather than two positional strings deliberately:
+ * a `(userId: string, actorRoles: string[])` pair is easy to transpose
+ * silently at a call site, and this is an authorization input.
+ */
+export interface WorkflowActor {
+  userId: string;
+  roles: string[];
+}
+
+/**
+ * Organization-wide administrators satisfy any role-assigned step.
+ *
+ * Kept as an explicit list rather than a permission check because the
+ * question here is role MEMBERSHIP ("is this actor a fleet_manager"),
+ * not capability -- and every one of these three holds every permission
+ * by construction in rolePermissions, so a permission-based test would
+ * return true for a role-assigned step regardless of which role the step
+ * named, defeating the point of naming one.
+ */
+const WORKFLOW_ADMIN_ROLES: string[] = [
+  Role.SUPER_ADMIN,
+  Role.ORGANIZATION_OWNER,
+  Role.ORGANIZATION_ADMIN,
+];
+
+/**
+ * Whether the actor holds the role a step requires.
+ *
+ * Compared case-insensitively after trimming, because step.role is
+ * free text authored in the workflow builder while actor roles come
+ * from the Role enum -- a step naming "Fleet_Manager" is describing
+ * Role.FLEET_MANAGER and should not fail on capitalisation. No other
+ * normalisation: this is an equality test, not a fuzzy match.
+ */
+function actorHoldsWorkflowRole(actorRoles: string[], requiredRole: string): boolean {
+  const required = requiredRole.trim().toLowerCase();
+  if (!required) return false;
+
+  const held = actorRoles.map((r) => String(r).trim().toLowerCase());
+  if (held.includes(required)) return true;
+
+  return WORKFLOW_ADMIN_ROLES.some((adminRole) => held.includes(adminRole.toLowerCase()));
+}
 
 export class WorkflowEngine {
   async startWorkflow(
@@ -64,7 +120,7 @@ export class WorkflowEngine {
   async approveStep(
     instanceId: string,
     stepId: string,
-    userId: string,
+    actor: WorkflowActor,
     comment: string,
     tenantId: string
   ): Promise<WorkflowInstance> {
@@ -97,14 +153,14 @@ export class WorkflowEngine {
       throw new ConflictError('This step has already been approved');
     }
 
-    if (!this.isAuthorizedForStep(step, stepInstance, userId, workflow)) {
+    if (!this.isAuthorizedForStep(step, stepInstance, actor, workflow, instance)) {
       throw new AppError('You are not authorized to approve this step', 'FORBIDDEN', 403);
     }
 
     const updatedStepInstance: WorkflowStepInstance = {
       ...stepInstance,
       status: 'approved',
-      approvedBy: userId,
+      approvedBy: actor.userId,
       approvedAt: new Date(),
       comments: comment,
       completedAt: new Date(),
@@ -115,7 +171,7 @@ export class WorkflowEngine {
     // still needs to sign off before actually advancing.
     const requiresAllApprovals = workflow.config?.requireAllApprovals;
     const remainingApprovers = requiresAllApprovals
-      ? (step.assignee || []).filter((a) => a !== userId)
+      ? (step.assignee || []).filter((a) => a !== actor.userId)
       : [];
 
     const stepFullyApproved = remainingApprovers.length === 0;
@@ -159,7 +215,7 @@ export class WorkflowEngine {
 
     await auditLog.log({
       action: 'WORKFLOW_STEP_APPROVED',
-      userId,
+      userId: actor.userId,
       tenantId,
       entityType: 'workflow_instance',
       entityId: instanceId,
@@ -192,7 +248,7 @@ export class WorkflowEngine {
   async rejectStep(
     instanceId: string,
     stepId: string,
-    userId: string,
+    actor: WorkflowActor,
     reason: string,
     tenantId: string
   ): Promise<WorkflowInstance> {
@@ -210,6 +266,40 @@ export class WorkflowEngine {
     const stepInstance = instance.steps.find((s) => s.stepId === stepId);
     if (!stepInstance) {
       throw new NotFoundError('Step instance not found');
+    }
+
+    /**
+     * PHASE 0, F-4 -- SECOND, INDEPENDENT HOLE.
+     *
+     * rejectStep called isAuthorizedForStep NOWHERE. approveStep at
+     * least attempted a check (which then fell through to `return
+     * true`); reject had no authorization of any kind, so any
+     * authenticated caller could terminate any in-flight approval in
+     * the tenant -- killing a purchase request, a compliance sign-off,
+     * or a maintenance authorisation raised by someone else. Rejection
+     * is not the "safe" direction of an approval gate: it is a denial
+     * of service against the business process, and it writes a
+     * permanent audited decision attributed to this actor.
+     *
+     * Gated identically to approve, deliberately -- the population
+     * entitled to decide a step is the same population either way, and
+     * two different answers to "whose step is this" is how an
+     * inconsistency becomes an exploit.
+     */
+    const workflowDefinition = await workflowRepository.getWorkflow(instance.workflowId, tenantId);
+    if (!workflowDefinition) {
+      throw new NotFoundError('Workflow definition not found');
+    }
+
+    const stepDefinition = workflowDefinition.steps.find((s) => s.id === stepId);
+    if (!stepDefinition) {
+      throw new NotFoundError('Step definition not found');
+    }
+
+    if (
+      !this.isAuthorizedForStep(stepDefinition, stepInstance, actor, workflowDefinition, instance)
+    ) {
+      throw new AppError('You are not authorized to reject this step', 'FORBIDDEN', 403);
     }
 
     const updatedStepInstance: WorkflowStepInstance = {
@@ -236,7 +326,7 @@ export class WorkflowEngine {
 
     await auditLog.log({
       action: 'WORKFLOW_STEP_REJECTED',
-      userId,
+      userId: actor.userId,
       tenantId,
       entityType: 'workflow_instance',
       entityId: instanceId,
@@ -257,9 +347,23 @@ export class WorkflowEngine {
     return result;
   }
 
+  /**
+   * PHASE 0, F-4: cancellation previously had NO authorization check at
+   * all -- any authenticated caller could terminate any in-flight
+   * instance in the tenant.
+   *
+   * The rule is narrower than approve/reject on purpose. Cancelling is
+   * not a step decision, so step assignment does not apply; it is
+   * withdrawing the whole request. Two populations legitimately do
+   * that: the person who raised it, and an organization-wide
+   * administrator cleaning up. A branch manager who merely holds
+   * WORKFLOW_CANCEL must not be able to kill another branch's
+   * in-flight approval, which is why the route permission alone is not
+   * the whole gate.
+   */
   async cancelInstance(
     instanceId: string,
-    userId: string,
+    actor: WorkflowActor,
     tenantId: string,
     reason?: string
   ): Promise<void> {
@@ -271,11 +375,20 @@ export class WorkflowEngine {
       throw new ConflictError(`Cannot cancel a workflow that is already ${instance.status}`);
     }
 
+    const isOriginator = instance.createdBy === actor.userId;
+    const isAdministrator = actor.roles
+      .map((r) => String(r).trim().toLowerCase())
+      .some((r) => WORKFLOW_ADMIN_ROLES.some((admin) => admin.toLowerCase() === r));
+
+    if (!isOriginator && !isAdministrator) {
+      throw new AppError('You are not authorized to cancel this workflow', 'FORBIDDEN', 403);
+    }
+
     await workflowRepository.updateInstanceStatus(instanceId, 'cancelled', tenantId);
 
     await auditLog.log({
       action: 'WORKFLOW_CANCELLED',
-      userId,
+      userId: actor.userId,
       tenantId,
       entityType: 'workflow_instance',
       entityId: instanceId,
@@ -330,24 +443,99 @@ export class WorkflowEngine {
     return escalated;
   }
 
+  /**
+   * PHASE 0, F-4 -- the step-level authorization decision.
+   *
+   * WHAT THIS REPLACES, AND WHY IT WAS A PRIVILEGE ESCALATION
+   * ---------------------------------------------------------
+   * The previous implementation ended in a bare `return true` for any
+   * step that had no explicit `assignee` array, with a comment saying
+   * role resolution "happens at the API layer / permission middleware".
+   * It did not: every workflow route was wrapped in withSession()
+   * (authenticated only, no permission), and no WORKFLOW_* permission
+   * existed in the Permission enum at all. So the deferral was to a
+   * check that was never written, and the practical effect was that ANY
+   * authenticated user in the tenant -- a driver, a viewer -- could
+   * approve or reject any role-assigned step. Where a workflow gates
+   * spend or compliance sign-off, that is unbounded escalation inside
+   * the tenant.
+   *
+   * It also contained an inverted predicate:
+   *
+   *   const isSelfApproval = stepInstance.assignedTo?.includes(userId) === false;
+   *
+   * which is true when the actor is NOT among the resolved assignees --
+   * the opposite of self-approval. With `allowSelfApproval: false` set,
+   * that denied exactly the wrong population: it blocked non-assignees
+   * (already blocked on the next line) and let the instance's own
+   * creator through. Self-approval is now measured against
+   * `instance.createdBy`, which is what the phrase actually means.
+   *
+   * THE MODEL
+   * ---------
+   * Three ordered cases, and the last one is the fix:
+   *
+   *   1. EXPLICIT ASSIGNMENT. If the step instance resolved a concrete
+   *      assignee list (or the definition names one), the actor must be
+   *      in it. `stepInstance.assignedTo` wins over `step.assignee`
+   *      when present, because it is the list that was resolved when
+   *      this instance actually started -- the definition may have been
+   *      edited since, and an in-flight approval must not silently
+   *      change hands because somebody rewrote the template.
+   *
+   *   2. ROLE ASSIGNMENT. If the step names a role, the actor must hold
+   *      that role. Organization-wide administrators
+   *      (SUPER_ADMIN / ORGANIZATION_OWNER / ORGANIZATION_ADMIN) also
+   *      satisfy this, matching how every other authorization check in
+   *      this codebase treats them -- they hold every permission by
+   *      construction in rolePermissions.
+   *
+   *   3. NEITHER. DENY. A step with no assignee list and no role is a
+   *      misconfigured approval gate, not an open one. Refusing is the
+   *      fail-closed reading and it is consistent with the rest of the
+   *      tenancy layer (see server/tenancy/tenant-scope.ts, which raises
+   *      rather than widening a query when scope cannot be resolved).
+   *      An operator who genuinely wants "anyone may approve" must say
+   *      so by naming a role on the step.
+   *
+   * WHY THE ENGINE AND NOT ONLY THE ROUTE
+   * The route now requires Permission.WORKFLOW_APPROVE, but a permission
+   * answers "may this role approve steps at all", never "is this the
+   * right person for THIS step". Only the engine holds the step, the
+   * instance and the actor together, so only the engine can answer the
+   * second question -- and it must keep answering it for callers that
+   * do not arrive over HTTP (rule actions, workers, future services).
+   */
   private isAuthorizedForStep(
     step: WorkflowStep,
     stepInstance: WorkflowStepInstance,
-    userId: string,
-    workflow: Workflow
+    actor: WorkflowActor,
+    workflow: Workflow,
+    instance: WorkflowInstance
   ): boolean {
-    if (step.assignee && step.assignee.length > 0) {
-      const isAssignee = step.assignee.includes(userId);
-      const isSelfApproval = stepInstance.assignedTo?.includes(userId) === false;
-      if (workflow.config?.allowSelfApproval === false && isSelfApproval) {
-        return false;
-      }
-      return isAssignee;
+    // Self-approval, measured correctly: the actor raised the thing they
+    // are now signing off on. Checked BEFORE the assignment cases so an
+    // explicitly-assigned creator is still blocked when the workflow
+    // forbids it.
+    if (workflow.config?.allowSelfApproval === false && instance.createdBy === actor.userId) {
+      return false;
     }
-    // Role-based assignment without an explicit assignee list is permitted
-    // through (role resolution against the live user directory happens at
-    // the API layer / permission middleware, not inside the engine).
-    return true;
+
+    const explicitAssignees =
+      stepInstance.assignedTo && stepInstance.assignedTo.length > 0
+        ? stepInstance.assignedTo
+        : step.assignee ?? [];
+
+    if (explicitAssignees.length > 0) {
+      return explicitAssignees.includes(actor.userId);
+    }
+
+    if (step.role) {
+      return actorHoldsWorkflowRole(actor.roles, step.role);
+    }
+
+    // Case 3 -- fail closed.
+    return false;
   }
 
   private async notifyStepAssignees(

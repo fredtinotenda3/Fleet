@@ -250,6 +250,64 @@ export enum Permission {
    * modules/notifications/authorization/notification-broadcast.authorization.ts.
    */
   NOTIFICATION_BROADCAST = 'notification:broadcast',
+
+  // -- Workflows / Approvals (PHASE 0, F-4) --
+  //
+  // modules/workflows previously had NO dedicated permission at all.
+  // Every workflow route was wrapped in withSession() -- authenticated
+  // only -- and workflowEngine.isAuthorizedForStep() returned `true`
+  // for any step without an explicit assignee list, deferring to
+  // "the API layer / permission middleware" that did not exist. The
+  // combined effect was that any authenticated user in a tenant,
+  // including a DRIVER, could approve or reject any role-assigned
+  // workflow step and could create or delete workflow definitions.
+  //
+  // Split five ways rather than a single WORKFLOW_MANAGE because the
+  // operations have genuinely different blast radii: authoring a
+  // definition changes policy for the whole organization, whereas
+  // approving a step acts on one instance. A supervisor who should
+  // approve their own team's requests must not thereby gain the
+  // ability to rewrite the approval chain itself.
+  //
+  // START and APPROVE/REJECT are separated from CANCEL because
+  // cancelling terminates an in-flight instance somebody else may be
+  // waiting on, which is closer to an administrative act than to
+  // participating in the chain.
+  WORKFLOW_VIEW = 'workflow:view',
+  WORKFLOW_MANAGE = 'workflow:manage',
+  WORKFLOW_START = 'workflow:start',
+  WORKFLOW_APPROVE = 'workflow:approve',
+  WORKFLOW_REJECT = 'workflow:reject',
+  WORKFLOW_CANCEL = 'workflow:cancel',
+
+  // -- Telematics ingestion (PHASE 0, F-5) --
+  //
+  // POST /api/telematics/ingest previously required only an
+  // authenticated session: no permission, no check that the target
+  // vehicle belonged to the caller's org unit, and no orgUnitId on the
+  // written row. Any authenticated user -- a driver, a viewer -- could
+  // fabricate position, speed, odometer and fuel level against ANY
+  // vehicle in the tenant. That corrupts the digital twin, fires
+  // geofence and speeding alerts, writes a false GPS trace into a
+  // vehicle's history, and (once finance posts telemetry-driven costs)
+  // corrupts the ledger. Writing with no orgUnitId also made the
+  // corruption INVISIBLE to every scoped reader, i.e. harder to spot
+  // than legitimate data.
+  //
+  // Deliberately its own permission rather than reusing VEHICLE_EDIT.
+  // Editing a vehicle record is an administrative act a fleet manager
+  // performs; asserting a measurement into the telemetry stream is a
+  // MACHINE act, and the two populations are not the same. Reusing
+  // VEHICLE_EDIT would have handed telemetry-write to every role that
+  // can rename a vehicle.
+  //
+  // Granted to NO ordinary role below organization level. The intended
+  // credential is a service identity (API key -- see
+  // server/auth/auth-context.ts, which resolves API-key auth through
+  // the same context as a session), not a human login. An operator who
+  // needs a device to post here issues a key rather than widening a
+  // human role.
+  TELEMATICS_INGEST = 'telematics:ingest',
 }
 
 /**
@@ -307,6 +365,18 @@ export const rolePermissions: Record<Role, Permission[]> = {
    * closed) rather than the whole organization.
    */
   [Role.BRANCH_MANAGER]: [
+    // PHASE 0, F-4. WORKFLOW_MANAGE (authoring/deleting definitions) is
+    // deliberately NOT granted below organization level: a definition is
+    // organization-wide policy, and a manager who can approve within their
+    // own scope must not be able to rewrite the approval chain itself.
+    // Holding WORKFLOW_APPROVE is necessary but NOT sufficient to approve a
+    // given step -- workflowEngine.isAuthorizedForStep still requires the
+    // actor to be the step's assignee or to hold its required role.
+    Permission.WORKFLOW_VIEW,
+    Permission.WORKFLOW_START,
+    Permission.WORKFLOW_APPROVE,
+    Permission.WORKFLOW_REJECT,
+    Permission.WORKFLOW_CANCEL,
     Permission.ORG_VIEW,
     Permission.VEHICLE_VIEW,
     Permission.VEHICLE_CREATE,
@@ -376,6 +446,18 @@ export const rolePermissions: Record<Role, Permission[]> = {
    * provided in the source spec).
    */
   [Role.DEPARTMENT_MANAGER]: [
+    // PHASE 0, F-4. WORKFLOW_MANAGE (authoring/deleting definitions) is
+    // deliberately NOT granted below organization level: a definition is
+    // organization-wide policy, and a manager who can approve within their
+    // own scope must not be able to rewrite the approval chain itself.
+    // Holding WORKFLOW_APPROVE is necessary but NOT sufficient to approve a
+    // given step -- workflowEngine.isAuthorizedForStep still requires the
+    // actor to be the step's assignee or to hold its required role.
+    Permission.WORKFLOW_VIEW,
+    Permission.WORKFLOW_START,
+    Permission.WORKFLOW_APPROVE,
+    Permission.WORKFLOW_REJECT,
+    Permission.WORKFLOW_CANCEL,
     Permission.ORG_VIEW,
     Permission.VEHICLE_VIEW,
     Permission.TRIP_VIEW,
@@ -405,6 +487,18 @@ export const rolePermissions: Record<Role, Permission[]> = {
   ],
 
   [Role.FLEET_MANAGER]: [
+    // PHASE 0, F-4. WORKFLOW_MANAGE (authoring/deleting definitions) is
+    // deliberately NOT granted below organization level: a definition is
+    // organization-wide policy, and a manager who can approve within their
+    // own scope must not be able to rewrite the approval chain itself.
+    // Holding WORKFLOW_APPROVE is necessary but NOT sufficient to approve a
+    // given step -- workflowEngine.isAuthorizedForStep still requires the
+    // actor to be the step's assignee or to hold its required role.
+    Permission.WORKFLOW_VIEW,
+    Permission.WORKFLOW_START,
+    Permission.WORKFLOW_APPROVE,
+    Permission.WORKFLOW_REJECT,
+    Permission.WORKFLOW_CANCEL,
     // Organization
     Permission.ORG_VIEW,
     // Vehicles
@@ -490,6 +584,17 @@ export const rolePermissions: Record<Role, Permission[]> = {
    * that workshop.
    */
   [Role.WORKSHOP_MANAGER]: [
+    // PHASE 0, F-4. WORKFLOW_MANAGE (authoring/deleting definitions) is
+    // deliberately NOT granted below organization level: a definition is
+    // organization-wide policy, and a manager who can approve within their
+    // own scope must not be able to rewrite the approval chain itself.
+    // Holding WORKFLOW_APPROVE is necessary but NOT sufficient to approve a
+    // given step -- workflowEngine.isAuthorizedForStep still requires the
+    // actor to be the step's assignee or to hold its required role.
+    Permission.WORKFLOW_VIEW,
+    Permission.WORKFLOW_START,
+    Permission.WORKFLOW_APPROVE,
+    Permission.WORKFLOW_REJECT,
     Permission.ORG_VIEW,
     Permission.VEHICLE_VIEW,
     Permission.MAINTENANCE_VIEW,
@@ -531,6 +636,17 @@ export const rolePermissions: Record<Role, Permission[]> = {
    * manager's write authority over expenses or vehicles.
    */
   [Role.SUPERVISOR]: [
+    // PHASE 0, F-4. WORKFLOW_MANAGE (authoring/deleting definitions) is
+    // deliberately NOT granted below organization level: a definition is
+    // organization-wide policy, and a manager who can approve within their
+    // own scope must not be able to rewrite the approval chain itself.
+    // Holding WORKFLOW_APPROVE is necessary but NOT sufficient to approve a
+    // given step -- workflowEngine.isAuthorizedForStep still requires the
+    // actor to be the step's assignee or to hold its required role.
+    Permission.WORKFLOW_VIEW,
+    Permission.WORKFLOW_START,
+    Permission.WORKFLOW_APPROVE,
+    Permission.WORKFLOW_REJECT,
     Permission.ORG_VIEW,
     Permission.VEHICLE_VIEW,
     Permission.TRIP_VIEW,
@@ -551,6 +667,16 @@ export const rolePermissions: Record<Role, Permission[]> = {
   ],
 
   [Role.ACCOUNTANT]: [
+    // PHASE 0, F-4. WORKFLOW_MANAGE (authoring/deleting definitions) is
+    // deliberately NOT granted below organization level: a definition is
+    // organization-wide policy, and a manager who can approve within their
+    // own scope must not be able to rewrite the approval chain itself.
+    // Holding WORKFLOW_APPROVE is necessary but NOT sufficient to approve a
+    // given step -- workflowEngine.isAuthorizedForStep still requires the
+    // actor to be the step's assignee or to hold its required role.
+    Permission.WORKFLOW_VIEW,
+    Permission.WORKFLOW_APPROVE,
+    Permission.WORKFLOW_REJECT,
     Permission.ORG_VIEW,
     Permission.VEHICLE_VIEW,
     Permission.EXPENSE_VIEW,
@@ -582,6 +708,15 @@ export const rolePermissions: Record<Role, Permission[]> = {
   ],
 
   [Role.DISPATCHER]: [
+    // PHASE 0, F-4. WORKFLOW_MANAGE (authoring/deleting definitions) is
+    // deliberately NOT granted below organization level: a definition is
+    // organization-wide policy, and a manager who can approve within their
+    // own scope must not be able to rewrite the approval chain itself.
+    // Holding WORKFLOW_APPROVE is necessary but NOT sufficient to approve a
+    // given step -- workflowEngine.isAuthorizedForStep still requires the
+    // actor to be the step's assignee or to hold its required role.
+    Permission.WORKFLOW_VIEW,
+    Permission.WORKFLOW_START,
     Permission.ORG_VIEW,
     Permission.VEHICLE_VIEW,
     Permission.TRIP_VIEW,
@@ -637,6 +772,14 @@ export const rolePermissions: Record<Role, Permission[]> = {
   ],
 
   [Role.AUDITOR]: [
+    // PHASE 0, F-4. WORKFLOW_MANAGE (authoring/deleting definitions) is
+    // deliberately NOT granted below organization level: a definition is
+    // organization-wide policy, and a manager who can approve within their
+    // own scope must not be able to rewrite the approval chain itself.
+    // Holding WORKFLOW_APPROVE is necessary but NOT sufficient to approve a
+    // given step -- workflowEngine.isAuthorizedForStep still requires the
+    // actor to be the step's assignee or to hold its required role.
+    Permission.WORKFLOW_VIEW,
     Permission.ORG_VIEW,
     Permission.VEHICLE_VIEW,
     Permission.EXPENSE_VIEW,
@@ -665,6 +808,14 @@ export const rolePermissions: Record<Role, Permission[]> = {
   ],
 
   [Role.VIEWER]: [
+    // PHASE 0, F-4. WORKFLOW_MANAGE (authoring/deleting definitions) is
+    // deliberately NOT granted below organization level: a definition is
+    // organization-wide policy, and a manager who can approve within their
+    // own scope must not be able to rewrite the approval chain itself.
+    // Holding WORKFLOW_APPROVE is necessary but NOT sufficient to approve a
+    // given step -- workflowEngine.isAuthorizedForStep still requires the
+    // actor to be the step's assignee or to hold its required role.
+    Permission.WORKFLOW_VIEW,
     Permission.ORG_VIEW,
     Permission.VEHICLE_VIEW,
     Permission.EXPENSE_VIEW,

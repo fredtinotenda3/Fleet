@@ -1,4 +1,4 @@
-import { workflowEngine } from '@/modules/workflows/services/workflow-engine.service';
+import { workflowEngine, WorkflowActor } from '@/modules/workflows/services/workflow-engine.service';
 import { WorkflowInstance } from '@/modules/workflows/types/workflow.types';
 import { metricsRegistry } from './metrics.registry';
 import { withSpan } from './tracer';
@@ -32,7 +32,12 @@ class ObservableWorkflowEngine {
   async approveStep(
     instanceId: string,
     stepId: string,
-    userId: string,
+    // PHASE 0, F-4: carries the actor's ROLES through the observability
+    // layer unchanged. A decorator that narrowed this back to a bare
+    // userId would silently disarm the engine's role-assigned-step check
+    // for every caller that goes through the wrapper -- which is every
+    // HTTP caller, since the controller imports this and not the engine.
+    actor: WorkflowActor,
     comment: string,
     tenantId: string
   ): Promise<WorkflowInstance> {
@@ -40,7 +45,7 @@ class ObservableWorkflowEngine {
     return withSpan(
       'workflow.approve_step',
       async () => {
-        const result = await workflowEngine.approveStep(instanceId, stepId, userId, comment, tenantId);
+        const result = await workflowEngine.approveStep(instanceId, stepId, actor, comment, tenantId);
         metricsRegistry.workflowStepDuration.observe(
           { workflowId: result.workflowId, action: 'approve' },
           (Date.now() - start) / 1000
@@ -58,7 +63,7 @@ class ObservableWorkflowEngine {
   async rejectStep(
     instanceId: string,
     stepId: string,
-    userId: string,
+    actor: WorkflowActor,
     reason: string,
     tenantId: string
   ): Promise<WorkflowInstance> {
@@ -66,7 +71,7 @@ class ObservableWorkflowEngine {
     return withSpan(
       'workflow.reject_step',
       async () => {
-        const result = await workflowEngine.rejectStep(instanceId, stepId, userId, reason, tenantId);
+        const result = await workflowEngine.rejectStep(instanceId, stepId, actor, reason, tenantId);
         metricsRegistry.workflowStepDuration.observe(
           { workflowId: result.workflowId, action: 'reject' },
           (Date.now() - start) / 1000
@@ -79,11 +84,11 @@ class ObservableWorkflowEngine {
     );
   }
 
-  async cancelInstance(instanceId: string, userId: string, tenantId: string, reason?: string): Promise<void> {
+  async cancelInstance(instanceId: string, actor: WorkflowActor, tenantId: string, reason?: string): Promise<void> {
     return withSpan(
       'workflow.cancel',
       async () => {
-        await workflowEngine.cancelInstance(instanceId, userId, tenantId, reason);
+        await workflowEngine.cancelInstance(instanceId, actor, tenantId, reason);
       },
       { 'workflow.instance_id': instanceId }
     );

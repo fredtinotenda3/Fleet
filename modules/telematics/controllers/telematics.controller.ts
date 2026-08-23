@@ -18,11 +18,59 @@ import {
   getUserIdFromRequest,
 } from '@/server/utils/context.utils';
 import { Geofence } from '../types/telematics.types';
+import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
+import { assertVehicleInScope } from '../services/telematics-scope.utils';
+import { telematicsRepository } from '../repositories/telematics.repository';
 
 export class TelematicsController {
+  /**
+   * PHASE 0, F-5 -- authorized, scoped telemetry ingestion.
+   *
+   * WHAT THIS REPLACED
+   * ------------------
+   * The previous body was four lines: resolve tenantId from the
+   * session, Zod-parse, spread, write. It enforced authentication and
+   * nothing else. No permission. No check that `vehicleId` belonged to
+   * the caller's org unit -- or to any vehicle at all. No `orgUnitId`
+   * on the row. Any authenticated user in the tenant could assert
+   * arbitrary position, speed, odometer and fuel level against ANY
+   * vehicle, and the resulting row, having no org unit, was invisible
+   * to every scoped reader -- so fabricated data was harder to find
+   * than real data.
+   *
+   * THE FOUR GATES NOW APPLIED, IN ORDER
+   * ------------------------------------
+   *   1. Permission.TELEMATICS_INGEST at the route (see the route file).
+   *      Answers "may this identity write telemetry at all".
+   *   2. assertVehicleInScope -- the SAME helper the Eagle Track
+   *      endpoints use. Resolves the vehicle inside the caller's tenant
+   *      AND accessible org units, 404s (never 403) on a miss so the
+   *      endpoint cannot be used to probe which vehicle ids exist in
+   *      another branch, and refuses a vehicle with no org unit rather
+   *      than treating unassigned as shared.
+   *   3. Device/vehicle binding. If this deviceId is already registered
+   *      to a DIFFERENT vehicle, the write is refused. Without this a
+   *      caller authorised for vehicle A could post under vehicle A's
+   *      id while carrying vehicle B's deviceId, corrupting B's device
+   *      record via updateDeviceLastPing on a later path and breaking
+   *      the one-device-one-vehicle assumption the staleness guard
+   *      depends on.
+   *   4. Authoritative ownership. tenantId and orgUnitId are taken from
+   *      the resolved VEHICLE record, never from the request. The
+   *      schema is `.strict()`, so a body carrying either key is
+   *      rejected outright rather than silently ignored -- ignoring is
+   *      correct today but depends on spread order staying right
+   *      forever, and this is an ownership field.
+   *
+   * WHAT IS DELIBERATELY NOT DONE HERE
+   * Absent measurements stay absent. Nothing in this path substitutes a
+   * zero for a field the caller omitted; see the schema's own comment
+   * for why a fabricated `fuelLevel: 0` manufactures a high-severity
+   * alert on every post.
+   */
   async ingest(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const context = await resolveTenantContext(req);
       const body = await req.json();
 
       const parsed = telematicsIngestSchema.safeParse(body);
@@ -30,7 +78,32 @@ export class TelematicsController {
         throw new ValidationError('Invalid telematics payload', parsed.error.flatten());
       }
 
-      await telematicsService.ingestTelematicsData({ ...parsed.data, tenantId });
+      // Gate 2 -- throws NotFoundError for a vehicle outside this
+      // tenant, outside the caller's accessible org units, soft-deleted,
+      // or unassigned.
+      const vehicle = await assertVehicleInScope(parsed.data.vehicleId, context);
+
+      // Gate 3 -- device must not already belong to a different vehicle.
+      const existingDevice = await telematicsRepository.getDevice(
+        parsed.data.deviceId,
+        vehicle.tenantId
+      );
+      if (existingDevice && String(existingDevice.vehicleId) !== vehicle.vehicleId) {
+        throw new AppError(
+          'This device is registered to a different vehicle.',
+          'DEVICE_VEHICLE_MISMATCH',
+          409
+        );
+      }
+
+      // Gate 4 -- ownership is resolved, never accepted.
+      await telematicsService.ingestTelematicsData({
+        ...parsed.data,
+        vehicleId: vehicle.vehicleId,
+        tenantId: vehicle.tenantId,
+        ...(vehicle.orgUnitId ? { orgUnitId: vehicle.orgUnitId } : {}),
+      });
+
       return successResponse({ message: 'Telematics data ingested' });
     } catch (error) {
       return this.handleError(error);

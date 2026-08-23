@@ -1,13 +1,15 @@
 // app/api/workflows/instances/my-tasks/route.ts
 //
-// FIX (🔴 Critical -- no authentication at all): this one is
-// particularly bad on its own -- "my tasks" with no session means the
-// controller has no reliable notion of "my" at all without an
-// authenticated identity to key off of.
+// PHASE 0, F-4: gated on WORKFLOW_VIEW. The controller keys "my" off
+// the authenticated identity, so this cannot return another user's
+// queue -- but a user with no workflow involvement at all has no
+// business enumerating the surface either.
 import { NextRequest } from 'next/server';
 import { workflowController } from '@/modules/workflows/controllers/workflow.controller';
-import { withSession } from '@/server/middleware/with-auth';
+import { withAuth } from '@/server/middleware/with-auth';
+import { Permission } from '@/server/permissions/roles';
 
-export const GET = withSession(
-  async (req: NextRequest) => workflowController.getMyTasks(req)
+export const GET = withAuth(
+  (req: NextRequest) => workflowController.getMyTasks(req),
+  { permission: Permission.WORKFLOW_VIEW }
 );

@@ -67,7 +67,11 @@ const mockedGetConfig = eagletrackConfigRepository.getConfig as jest.Mock;
 const mockedUpsertConfig = eagletrackConfigRepository.upsertConfig as jest.Mock;
 
 const TENANT = 'willsgrove-farm-enterprises-9e80ed';
-const PLAINTEXT_TOKEN = 'imfgik6sq1otqbdvh45r6ta4oe';
+// PHASE 0, F-6: was a 26-character literal in exactly the shape of the
+// real Eagle Track production token. Replaced with an obviously
+// synthetic value -- this suite asserts config GATING, so the token's
+// content is irrelevant to every assertion in it.
+const PLAINTEXT_TOKEN = 'TEST_EAGLETRACK_TOKEN_synthetic';
 const CIPHERTEXT = 'v1:aXY=:dGFn:Y2lwaGVydGV4dA==';
 
 function makeRequest(body: unknown): NextRequest {

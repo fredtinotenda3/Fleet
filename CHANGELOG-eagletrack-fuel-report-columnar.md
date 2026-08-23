@@ -268,7 +268,7 @@ matching, the staleness guard, Cartrack, and the manual sync route.
 
 ## Still open from previous rounds
 
-- Token `1c44f7jet12nhb4rb6ilnides3` **still needs rotating** — it's in a transcript and in the vendor's nginx access log
+- Token `REDACTED_ROTATE_THIS_TOKEN` **still needs rotating** — it's in a transcript and in the vendor's nginx access log
 - `npm ci` fails on the lockfile desync
 - Partial unique indexes recommended on `{tenantId,uin}` and `{tenantId,vehicleId,deviceId,timestamp}`
 - `BaseRepository` `_id` type lie (20 `updateOne` call sites)

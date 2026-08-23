@@ -264,7 +264,7 @@ rotatable.
 
 ## ROTATE THE TOKEN
 
-`1c44f7jet12nhb4rb6ilnides3` was pasted into a chat transcript and, with
+`REDACTED_ROTATE_THIS_TOKEN` was pasted into a chat transcript and, with
 query-parameter auth, is also in `eaglegps.gtrack.co`'s access log.
 Rotate it in the Eagle Track UI and re-save it via Organization Settings
 → Integrations before anything else.

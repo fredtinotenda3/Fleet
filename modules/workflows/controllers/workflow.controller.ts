@@ -19,6 +19,7 @@ import { AppError, ValidationError, NotFoundError, isAppError, describeError } f
 import {
   getTenantFromRequest,
   getUserIdFromRequest,
+  getUserRolesFromRequest,
 } from '@/server/utils/context.utils';
 import { Workflow } from '../types/workflow.types';
 
@@ -198,10 +199,15 @@ export class WorkflowController {
         throw new ValidationError('Invalid request', parsed.error.flatten());
       }
 
+      // PHASE 0, F-4: the engine now needs roles as well as identity to
+      // evaluate a role-assigned step. Taken from the authenticated
+      // context, never from the request body.
+      const roles = await getUserRolesFromRequest(req);
+
       const instance = await workflowEngine.approveStep(
         instanceId,
         stepId,
-        userId,
+        { userId, roles },
         parsed.data.comment,
         tenantId
       );
@@ -222,10 +228,12 @@ export class WorkflowController {
         throw new ValidationError('Invalid request', parsed.error.flatten());
       }
 
+      const roles = await getUserRolesFromRequest(req);
+
       const instance = await workflowEngine.rejectStep(
         instanceId,
         stepId,
-        userId,
+        { userId, roles },
         parsed.data.reason,
         tenantId
       );
@@ -241,7 +249,9 @@ export class WorkflowController {
       const userId = await getUserIdFromRequest(req);
       const body = await req.json().catch(() => ({}));
 
-      await workflowEngine.cancelInstance(instanceId, userId, tenantId, body?.reason);
+      const roles = await getUserRolesFromRequest(req);
+
+      await workflowEngine.cancelInstance(instanceId, { userId, roles }, tenantId, body?.reason);
       return successResponse({ message: 'Workflow cancelled' });
     } catch (error) {
       return this.handleError(error);

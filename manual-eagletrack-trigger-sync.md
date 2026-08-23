@@ -7,4 +7,4 @@ fetch('/api/telematics/eagletrack/sync', { method: 'POST' })
   ###################
   cmd curl
   >
-  curl -v "https://eaglegps.gtrack.co/api2/last?user=Willsgrove&token=1c44f7jet12nhb4rb6ilnides3"
+  curl -v "https://eaglegps.gtrack.co/api2/last?user=Willsgrove&token=REDACTED_ROTATE_THIS_TOKEN"

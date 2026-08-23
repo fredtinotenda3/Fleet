@@ -22,7 +22,11 @@ import { eagletrackConfigSchema } from '../../../shared/validations/eagletrack.s
 const VALID = {
   enabled: true,
   domain: 'https://gps.example.com',
-  token: 'imfgik6sq1otqbdvh45r6ta4oe',
+  // PHASE 0, F-6: replaced a real-looking 26-char vendor token literal
+  // (same shape as the production Eagle Track credential) with an
+  // obviously-synthetic value. The schema under test only checks length
+  // and character class, so nothing about this suite depends on the value.
+  token: 'TEST_EAGLETRACK_TOKEN_synthetic',
 };
 
 describe('eagletrackConfigFormSchema', () => {

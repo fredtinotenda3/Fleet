@@ -17,14 +17,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { workflowEngine } from '@/modules/workflows/services/workflow-engine.service';
 import { organizationRepository } from '@/modules/organizations/repositories/organization.repository';
+import { denyCronRequest } from '@/server/middleware/cron-auth';
 
-const CRON_SECRET = process.env.CRON_SECRET;
 
 export async function GET(req: NextRequest) {
-  const authHeader = req.headers.get('authorization');
-  if (CRON_SECRET && authHeader !== `Bearer ${CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  // PHASE 0, F-1: fail-CLOSED. An absent CRON_SECRET now refuses
+  // the request (500) instead of skipping authentication.
+  const denied = denyCronRequest(req, '/api/workflows/process-timeouts');
+  if (denied) return denied;
 
   try {
     const explicitTenantId = req.nextUrl.searchParams.get('tenantId');
@@ -79,3 +79,24 @@ export async function GET(req: NextRequest) {
     );
   }
 }
+
+/**
+ * PHASE 0, F-1 -- HTTP METHOD DECISION.
+ *
+ * This operation mutates state, so POST is the semantically correct
+ * method. GET is RETAINED as the primary entry point because Vercel Cron
+ * (see vercel.json) issues GET and cannot be configured to issue POST --
+ * removing the GET handler would silently stop the schedule.
+ *
+ * Retaining a mutating GET is safe here specifically because the
+ * credential is a Bearer header, which a browser never attaches
+ * automatically: there is no ambient-authority (CSRF) path to this
+ * route, unlike a cookie-authenticated one. The fail-closed guard above
+ * applies identically to both methods.
+ *
+ * POST is exported so operators running a scheduler that CAN issue it
+ * (GitHub Actions, Cloud Scheduler, k8s CronJob, curl) can use the
+ * correct method today, and so GET can be retired without a code change
+ * once Vercel Cron is no longer the driver.
+ */
+export const POST = GET;
