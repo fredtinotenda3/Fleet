@@ -448,28 +448,73 @@ export const INDEXES = {
 export async function ensureIndexes(): Promise<void> {
   const db = await connectToDatabase();
 
+  /**
+   * PHASE 1, F-3: failures are collected and re-reported at the end
+   * rather than only console.error'd inline.
+   *
+   * The unique index on tbltelematics cannot be created while duplicate
+   * readings exist (E11000), and that is exactly the case an operator
+   * must not miss: the whole point of the index is that the upsert is
+   * not actually idempotent without it, so a run that "finished" with
+   * the constraint quietly absent leaves the defect in place while
+   * looking successful. Collected here and surfaced as a non-zero
+   * summary with the remedy named.
+   */
+  const failures: Array<{ collection: string; index: string; reason: string }> = [];
+
   for (const [collectionName, indexes] of Object.entries(INDEXES)) {
     const collection = db.collection(collectionName);
     for (const indexDef of indexes as unknown as any[]) {
       try {
         const options: any = {
           name: indexDef.name,
-          unique: !!indexDef.unique,
           background: true,
         };
+
+        // Only set `unique` when actually requested. Passing
+        // `unique: false` explicitly conflicts (code 85) with an
+        // existing index created without the option.
+        if (indexDef.unique) options.unique = true;
 
         if (indexDef.partialFilterExpression) {
           options.partialFilterExpression = indexDef.partialFilterExpression;
         }
 
+        /**
+         * PHASE 1, F-3: TTL support.
+         *
+         * This option was NOT passed through before, so a TTL index
+         * declared in an addendum would have been created as an
+         * ordinary index -- present, correct-looking, and expiring
+         * nothing. The geocode cache TTL depends on this line.
+         */
+        if (typeof indexDef.expireAfterSeconds === 'number') {
+          options.expireAfterSeconds = indexDef.expireAfterSeconds;
+        }
+
         await collection.createIndex(indexDef.key, options);
       } catch (err: any) {
-        // 85: IndexOptionsConflict, 86: IndexKeySpecsConflict
+        // 85: IndexOptionsConflict, 86: IndexKeySpecsConflict.
+        // Both mean "an index with this name already exists with
+        // different options" and are safe to ignore on re-runs.
         if (err?.code !== 85 && err?.code !== 86) {
-          console.error(`[Indexes] Failed to create ${indexDef.name}:`, err.message);
+          const reason =
+            err?.code === 11000
+              ? `duplicate keys present -- run \`npx tsx scripts/dedupe-telemetry-readings.ts --apply\` (or the equivalent cleanup for this collection) before retrying`
+              : err?.message || String(err);
+          failures.push({ collection: collectionName, index: indexDef.name, reason });
+          console.error(`[Indexes] Failed to create ${indexDef.name}: ${reason}`);
         }
       }
     }
+  }
+
+  if (failures.length > 0) {
+    console.error(
+      `\n[Indexes] ${failures.length} index(es) were NOT created:\n` +
+        failures.map((f) => `  - ${f.collection}.${f.index}: ${f.reason}`).join('\n') +
+        `\n\nThese constraints are absent until the cause is resolved and this script is re-run.\n`
+    );
   }
 
   await ensureDigitalTwinIndexes(db);

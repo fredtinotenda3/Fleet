@@ -11,6 +11,7 @@ import {
 } from '../types/digital-twin.types';
 import { vehicleRepository } from '@/modules/vehicles/repositories/vehicle.repository';
 import { telematicsRepository } from '@/modules/telematics/repositories/telematics.repository';
+import { resolveOdometer } from '@/modules/telematics/services/odometer-reconciliation';
 import { fuelRepository } from '@/modules/fuel/repositories/fuel.repository';
 import { tripRepository } from '@/modules/trips/repositories/trip.repository';
 import { maintenanceRepository } from '@/modules/maintenance/repositories/maintenance.repository';
@@ -214,13 +215,61 @@ export class DigitalTwinService {
       });
     }
 
+    /**
+     * PHASE 1 -- ODOMETER OVERWRITE GUARD.
+     *
+     * This was `latestTelemetry?.trip?.odometer ?? vehicle.odometer ?? 0`.
+     * `??` only falls through on null/undefined, so ANY telemetry value
+     * beat the vehicle record: a fabricated 0 (the F-2 bug), a
+     * rolled-back reading from a replaced head unit, a garbled value
+     * with an extra digit, or a month-old fix replayed by a device that
+     * had been buffering offline.
+     *
+     * Fixing F-2 removes the fabricated zeros but not this: the
+     * precedence itself was wrong. resolveOdometer treats telemetry as a
+     * candidate that must be plausibly a LATER reading of the same
+     * odometer before it supersedes the stored value. See
+     * modules/telematics/services/odometer-reconciliation.ts for the
+     * rule and why each threshold is what it is.
+     *
+     * A refusal raises a twin alert rather than being swallowed:
+     * "the odometer stopped moving" and "we are refusing this device's
+     * readings" are different operational situations, and an operator
+     * needs to be able to tell them apart.
+     */
+    const odometerResolution = resolveOdometer(
+      latestTelemetry?.trip?.odometer,
+      vehicle.odometer
+    );
+
+    if (odometerResolution.rejected) {
+      twinAlerts.push({
+        id: randomUUID(),
+        source: 'telematics',
+        type: 'odometer_rejected',
+        // Not critical: the platform is still using a known-good value,
+        // so nothing downstream is currently wrong. It is 'medium'
+        // because a persistently-refused device silently stops
+        // contributing distance, which quietly degrades cost-per-km.
+        severity: 'medium',
+        message: odometerResolution.rejected.detail,
+        raisedAt: new Date(),
+        acknowledged: false,
+      });
+    }
+
     const twin: VehicleDigitalTwin = {
       tenantId,
       vehicleId,
       license_plate: vehicle.license_plate,
       currentState: {
         status: vehicle.status,
-        odometer: latestTelemetry?.trip?.odometer ?? vehicle.odometer ?? 0,
+        odometer: odometerResolution.value ?? 0,
+        // Carries WHICH system supplied the number above. Without this a
+        // downstream consumer cannot distinguish a device reading from
+        // the vehicle record from "no odometer known at all" -- all three
+        // arrived as a bare number, and the third arrived as 0.
+        odometerSource: odometerResolution.source,
         healthScore,
         lastUpdated: new Date(),
       },

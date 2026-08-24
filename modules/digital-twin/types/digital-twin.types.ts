@@ -97,6 +97,20 @@ export interface TwinInspectionStatus {
 export interface TwinCurrentState {
   status: string;
   odometer: number;
+  /**
+   * PHASE 1: which system the `odometer` above actually came from.
+   *
+   * Previously the field was resolved as `latestTelemetry?.trip?.odometer
+   * ?? vehicle.odometer ?? 0` and the answer was unknowable downstream --
+   * a consumer could not tell a device-reported reading from the
+   * vehicle record from a fabricated placeholder. Once cost-per-km
+   * divides by a distance derived from this number, "where did it come
+   * from" stops being a debugging nicety.
+   *
+   * 'none' means no odometer is known for this vehicle at all, which is
+   * distinct from 0 km.
+   */
+  odometerSource: 'telemetry' | 'vehicle' | 'none';
   healthScore: number; // 0-100 heuristic
   lastUpdated: Date;
 }

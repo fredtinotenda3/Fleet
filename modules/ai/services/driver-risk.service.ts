@@ -17,6 +17,14 @@ import { telematicsRepository } from '@/modules/telematics/repositories/telemati
 import { resolveOrganization } from '@/server/tenancy/organization-resolver';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
+import { SPEEDING_THRESHOLD_KMH } from '@/modules/telematics/services/reading-alerts';
+
+/**
+ * PHASE 1, F-18: km/h over SPEEDING_THRESHOLD_KMH at which a speeding
+ * incident is classified 'High' rather than 'Medium'. See
+ * DriverRiskService.speedingSeverity for the reasoning.
+ */
+const HIGH_SEVERITY_MARGIN_KMH = 20;
 
 export class DriverRiskService extends BaseAIService {
   protected readonly serviceName = 'DriverRisk';
@@ -453,16 +461,76 @@ export class DriverRiskService extends BaseAIService {
     return recommendations;
   }
 
+  /**
+   * PHASE 1, F-18 -- how severe is a speeding incident?
+   *
+   * WHAT THIS REPLACES
+   * ------------------
+   *   severity: Math.random() > 0.7 ? 'High' : 'Medium',
+   *
+   * A driver's incident severity -- an input to a risk score that may
+   * inform employment decisions -- was a coin flip. The same query
+   * returned different severities on each call, so nothing about a
+   * driver-risk report was reproducible: two managers reading the same
+   * driver on the same data saw different answers, and neither could be
+   * audited. Most of the fabricated data in this module was removed and
+   * documented in an earlier round; this line survived.
+   *
+   * THE RULE
+   * --------
+   * Severity is the margin over the speeding threshold that raised the
+   * incident in the first place:
+   *
+   *   speed >= SPEEDING_THRESHOLD_KMH + HIGH_SEVERITY_MARGIN_KMH -> 'High'
+   *   otherwise                                                  -> 'Medium'
+   *
+   * Deliberately the simplest rule the data model supports. The only
+   * evidence a TelematicsEntity carries about a speeding event is the
+   * road speed on the reading (`t.location.speed`) -- there is no speed
+   * limit for the road, no duration, no road class, and no repeat
+   * count, because readings are point-in-time fixes with no event
+   * aggregation. Any rule richer than "how far over" would need inputs
+   * this codebase does not have, and inventing them is what produced
+   * the defect being fixed.
+   *
+   * WHY 20 km/h
+   * -----------
+   * SPEEDING_THRESHOLD_KMH (120) is imported from
+   * telematics/services/reading-alerts.ts rather than restated, so the
+   * severity band cannot drift away from the threshold that decides
+   * whether an incident exists at all -- a duplicated literal here
+   * would silently produce incidents that are 'High' by definition, or
+   * none that are, the first time the alert threshold moved.
+   *
+   * 20 km/h over is the point at which the reading stops being
+   * explicable as flow-of-traffic or speedometer tolerance on a
+   * motorway and becomes a deliberate choice. It also keeps the output
+   * domain to exactly the two values the previous code emitted
+   * ('High' | 'Medium'), so nothing downstream that switches on them
+   * changes behaviour.
+   *
+   * The consequence worth stating plainly: incidents that were
+   * previously 'High' 30% of the time at random are now 'High' if and
+   * only if the vehicle was doing 140 km/h or more. Existing stored
+   * risk scores computed under the random rule are not comparable with
+   * new ones.
+   */
+  private speedingSeverity(speedKmh: number): 'High' | 'Medium' {
+    return speedKmh >= SPEEDING_THRESHOLD_KMH + HIGH_SEVERITY_MARGIN_KMH
+      ? 'High'
+      : 'Medium';
+  }
+
   private collectIncidents(trips: TripEntity[], telematics: TelematicsEntity[]): DriverRiskScore['incidents'] {
     const incidents: DriverRiskScore['incidents'] = [];
 
     // Add speeding incidents
     telematics.forEach((t: TelematicsEntity) => {
-      if (t.location?.speed && t.location.speed > 120) {
+      if (t.location?.speed && t.location.speed > SPEEDING_THRESHOLD_KMH) {
         incidents.push({
           date: new Date(t.timestamp),
           type: 'Speeding',
-          severity: Math.random() > 0.7 ? 'High' : 'Medium',
+          severity: this.speedingSeverity(t.location.speed),
           location: `${t.location.lat}, ${t.location.lng}`,
         });
       }

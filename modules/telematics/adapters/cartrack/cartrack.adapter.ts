@@ -23,7 +23,7 @@ import { telematicsRepository } from '../../repositories/telematics.repository';
 import { cartrackConfigRepository } from '../../repositories/cartrack-config.repository';
 import { CartrackApiClient } from './cartrack-api.client';
 import { CartrackVehicleStatus, CartrackSyncResult } from './cartrack.types';
-import { TelematicsData } from '../../types/telematics.types';
+import { TelematicsData, TelematicsLocation } from '../../types/telematics.types';
 import { monitoring } from '@/infrastructure/monitoring/logger';
 
 const CARTRACK_DEVICE_PREFIX = 'cartrack-';
@@ -115,39 +115,96 @@ export class CartrackAdapter {
 
     const timestamp = new Date(status.position.position_date);
 
+    /**
+     * PHASE 1, F-2 -- MISSING IS NOT ZERO.
+     *
+     * This block previously mapped every field Cartrack does not supply
+     * to 0:
+     *
+     *   engine: { rpm: 0, coolantTemp: 0, fuelLevel: status.fuel_level_percent ?? 0,
+     *             throttlePosition: 0, engineLoad: 0 },
+     *   trip:   { odometer: status.odometer_km ?? 0, tripDistance: 0, tripDuration: 0,
+     *             averageSpeed: status.position.speed, maxSpeed: status.position.speed, ... },
+     *   fuel:   { consumptionRate: 0, instantConsumption: 0, fuelUsed: 0 },
+     *   location: { altitude: status.position.altitude ?? 0, accuracy: 0 }
+     *
+     * telematics.types.ts was widened to make all of these optional
+     * PRECISELY to stop this, and its doc comments name the
+     * consequences. Eagle Track's adapter was updated; this one was
+     * not, so the two providers disagreed about what "no data" means
+     * while writing into the same collection.
+     *
+     * The two that were not merely cosmetic:
+     *
+     *   * `fuelLevel: 0` satisfies checkForAlerts' `< 10` branch, so
+     *     every Cartrack vehicle that does not report fuel raised a
+     *     HIGH-SEVERITY "Low fuel level" alert plus a fleet-manager
+     *     notification ON EVERY POLL. That is an alert-fatigue engine:
+     *     it trains operators to ignore the channel.
+     *   * `odometer: 0` WINS over the vehicle's own recorded odometer in
+     *     digital-twin's `latestTelemetry?.trip?.odometer ??
+     *     vehicle.odometer ?? 0` chain, so a real recorded reading was
+     *     replaced by a placeholder on every poll.
+     *
+     * WHAT CARTRACK ACTUALLY SUPPLIES (see cartrack.types.ts):
+     * latitude, longitude, speed, heading, position_date, ignition_on,
+     * and OPTIONALLY altitude, odometer_km, fuel_level_percent. Nothing
+     * else. Everything else is now omitted rather than invented.
+     *
+     * averageSpeed / maxSpeed: DELIBERATELY OMITTED, not mapped from
+     * `speed`. Cartrack's status payload is a point-in-time fix with no
+     * trip aggregation at all, so the previous mapping presented an
+     * INSTANTANEOUS reading as two trip statistics. A vehicle sampled
+     * once while stationary reported a maximum speed of 0 for the trip;
+     * one sampled at a red light reported an average of 0. Both are
+     * fabrications with the shape of a measurement. This matches the
+     * decision already made for Eagle Track's /api2/last, which has the
+     * same limitation.
+     *
+     * idleTime: ALSO OMITTED. The old expression
+     * (`ignition_on && speed === 0 ? 1 : 0`) is a boolean state --
+     * "idling right now" -- written into a field the rest of the
+     * codebase reads as a DURATION. Emitting 1 per poll means the
+     * accumulated figure measures how often we happened to sample, not
+     * how long the vehicle idled. The underlying fact is still
+     * recoverable from ignition + speed on the reading itself.
+     */
+    const engine: TelematicsData['engine'] = {};
+    if (status.fuel_level_percent !== undefined && status.fuel_level_percent !== null) {
+      engine.fuelLevel = status.fuel_level_percent;
+    }
+
+    const trip: TelematicsData['trip'] = {};
+    if (status.odometer_km !== undefined && status.odometer_km !== null) {
+      trip.odometer = status.odometer_km;
+    }
+
+    const location: TelematicsLocation = {
+      lat: status.position.latitude,
+      lng: status.position.longitude,
+      // A genuine 0 IS preserved: a stationary vehicle really is doing
+      // 0 km/h, and Cartrack always supplies this field.
+      speed: status.position.speed,
+      heading: status.position.heading,
+      timestamp,
+    };
+    if (status.position.altitude !== undefined && status.position.altitude !== null) {
+      location.altitude = status.position.altitude;
+    }
+    // `accuracy` is never omitted-vs-supplied: Cartrack's status payload
+    // has no horizontal-accuracy field at all, so it is always absent.
+
     const payload: Omit<TelematicsData, '_id' | 'createdAt' | 'updatedAt'> & { tenantId: string } = {
       deviceId,
       vehicleId: vehicle._id,
       tenantId,
-      location: {
-        lat: status.position.latitude,
-        lng: status.position.longitude,
-        speed: status.position.speed,
-        heading: status.position.heading,
-        altitude: status.position.altitude ?? 0,
-        accuracy: 0,
-        timestamp,
-      },
-      engine: {
-        rpm: 0,
-        coolantTemp: 0,
-        fuelLevel: status.fuel_level_percent ?? 0,
-        throttlePosition: 0,
-        engineLoad: 0,
-      },
-      trip: {
-        odometer: status.odometer_km ?? 0,
-        tripDistance: 0,
-        tripDuration: 0,
-        averageSpeed: status.position.speed,
-        maxSpeed: status.position.speed,
-        idleTime: status.ignition_on && status.position.speed === 0 ? 1 : 0,
-      },
-      fuel: {
-        consumptionRate: 0,
-        instantConsumption: 0,
-        fuelUsed: 0,
-      },
+      location,
+      engine,
+      trip,
+      // Cartrack's fleet status API reports no fuel-flow signals
+      // whatsoever -- no consumption rate, no instantaneous
+      // consumption, no fuel used. An empty object says exactly that.
+      fuel: {},
       timestamp,
     };
 

@@ -633,14 +633,20 @@ export function mapStatusToTelematicsData(
       lng: status.lng as number,
       speed,
       ...(heading !== undefined ? { heading } : {}),
-      // api2 reports neither altitude nor horizontal accuracy; 0 matches
-      // what the Cartrack adapter records for the same absence. Left as
-      // 0 rather than widened with the rest: neither is surfaced in any
-      // UI today, so neither can mislead an operator, and both are
-      // required by TelematicsLocation. Flagged in the changelog as the
-      // remaining instance of this pattern rather than silently changed.
-      altitude: 0,
-      accuracy: 0,
+      // PHASE 1 (F-2): api2 reports neither altitude nor horizontal
+      // accuracy, and both are now simply OMITTED.
+      //
+      // They previously wrote 0 here, matching what Cartrack did for the
+      // same absence, justified on the grounds that neither is surfaced
+      // in any UI so neither could mislead an operator. That argument
+      // was about display and does not survive analytics: a stored 0 is
+      // a real value to anything that averages or thresholds it. An
+      // accuracy of 0 is worse than merely wrong -- it reads as a
+      // PERFECT fix, so any future quality filter would preferentially
+      // keep exactly the readings whose quality is unknown.
+      //
+      // TelematicsLocation.altitude/accuracy were widened to optional in
+      // Phase 1 to make this expressible.
       timestamp,
     },
     engine,

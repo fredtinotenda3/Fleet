@@ -67,8 +67,39 @@ export interface TelematicsLocation {
    * can omit it.
    */
   heading?: number;
-  altitude: number;
-  accuracy: number;
+  /**
+   * Metres above sea level.
+   *
+   * PHASE 1 (F-2): widened required -> optional. Both adapters
+   * previously wrote `altitude: 0` for an absence -- Cartrack via
+   * `?? 0`, Eagle Track unconditionally, with a comment noting it was
+   * "the remaining instance of this pattern". The justification at the
+   * time was that neither field is surfaced in any UI, so neither can
+   * mislead an operator.
+   *
+   * That reasoning was about DISPLAY, and it does not survive contact
+   * with analytics: a stored 0 is a real value to any consumer that
+   * averages, min/maxes, or thresholds it, and "every vehicle in the
+   * fleet is at sea level" is a confidently-wrong answer rather than an
+   * absent one. Sea level is also a legitimate reading for a coastal
+   * fleet, so 0 is not even a reliably-detectable sentinel.
+   *
+   * Both current readers (digital-twin.service.ts,
+   * DigitalTwinProjectionHandler) already type their own accuracy field
+   * as optional, so widening is source-compatible.
+   */
+  altitude?: number;
+  /**
+   * Horizontal GPS accuracy in metres (lower is better).
+   *
+   * PHASE 1 (F-2): widened for the same reason as `altitude`, with one
+   * extra consequence. An accuracy of 0 does not read as "unknown", it
+   * reads as a PERFECT fix -- the most precise value the field can
+   * express. Any future consumer that filters low-quality fixes
+   * (`accuracy < threshold`) would preferentially keep exactly the
+   * readings whose quality is unknown.
+   */
+  accuracy?: number;
   timestamp: Date;
 }
 

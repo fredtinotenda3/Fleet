@@ -53,7 +53,8 @@
     "test:performance": "echo \"no performance suite yet\" && exit 0",
     "test:security": "jest tests/security",
     "test:unit": "jest tests/security tests/unit --passWithNoTests",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "db:dedupe-telemetry": "tsx scripts/dedupe-telemetry-readings.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1079.0",
