@@ -18,6 +18,7 @@ import { bootstrapReporting } from '@/modules/reporting/registry/bootstrap-repor
 import { monitoring } from '@/infrastructure/monitoring/logger';
 import { initObservability } from '@/infrastructure/observability/otel';
 import { startQueueGaugePoller } from '@/infrastructure/observability/queue-gauge-poller';
+import { startOutboxProcessor } from '@/server/events/outbox/outbox-runner';
 
 declare global {
   // eslint-disable-next-line no-var
@@ -53,6 +54,24 @@ export async function bootstrapWorkers(): Promise<void> {
   // and start periodic queue-depth gauge collection before workers start
   await initObservability();
   startQueueGaugePoller();
+
+  /**
+   * PHASE 3 -- outbox processor.
+   *
+   * Started HERE, in the dedicated worker process, because this is the
+   * one place in the platform guaranteed to be long-lived: the function
+   * has already returned above if REDIS_URL is unset, which is exactly
+   * the serverless case where a poll loop cannot be relied on.
+   *
+   * Ordered AFTER bootstrapEvents() below would be wrong -- the
+   * processor must dispatch into a bus that already has handlers
+   * registered, or it would claim rows, deliver them to nobody, and mark
+   * them processed. bootstrapEvents() runs at module load via
+   * instrumentation.ts before this function is reached, so handlers are
+   * in place; startOutboxProcessor() additionally no-ops unless outbox
+   * mode is configured.
+   */
+  startOutboxProcessor();
 
   global._workersBootstrapped = true;
 

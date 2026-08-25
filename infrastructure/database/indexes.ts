@@ -36,6 +36,7 @@ import { FUEL_ANALYTICS_INDEXES } from './indexes.fuel-analytics-addendum';
 import { REPORTING_INDEXES } from './indexes.reporting-addendum';
 import { RULES_INDEXES } from './indexes.rules-addendum';
 import { TELEMATICS_INDEXES } from './indexes.telematics-addendum';
+import { OUTBOX_INDEXES } from './indexes.outbox-addendum';
 import { WORKFLOWS_INDEXES } from './indexes.workflows-addendum';
 import { ANOMALY_INDEXES } from './indexes.anomaly-addendum'
 import { ATTENTION_INDEXES } from './indexes.attention-addendum'
@@ -423,6 +424,7 @@ export const INDEXES = {
   ...REPORTING_INDEXES,
   ...RULES_INDEXES,
   ...TELEMATICS_INDEXES,
+  ...OUTBOX_INDEXES,
   ...WORKFLOWS_INDEXES,
   ...ANOMALY_INDEXES,
   ...ATTENTION_INDEXES,

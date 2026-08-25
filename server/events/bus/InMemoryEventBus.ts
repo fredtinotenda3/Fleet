@@ -39,6 +39,60 @@ export class InMemoryEventBus implements IEventBus {
     this.middleware.push(middleware);
   }
 
+  /**
+   * PHASE 3 -- dispatch that PROPAGATES failure.
+   *
+   * `publish()` below deliberately never rejects. That is correct for
+   * its callers: they invoke it fire-and-forget after a database write
+   * has already succeeded, so a throw would report a successful
+   * operation as failed (see the incident note inside publish()).
+   *
+   * That reasoning does NOT extend to the outbox processor, whose entire
+   * job is to know whether delivery succeeded. If the processor
+   * dispatched through `publish()`, a handler failure would be swallowed,
+   * the processor would see success, and the row would be marked
+   * processed -- so retry, backoff and dead-letter could never fire and
+   * the whole durability machinery would be an expensive no-op that
+   * loses exactly the events it was built to protect.
+   *
+   * So the processor uses this method instead. Handler failures still go
+   * through executeHandler's isolation (one bad handler does not stop
+   * its siblings), but the aggregate outcome is reported to the caller
+   * rather than absorbed.
+   */
+  public async publishOrThrow(event: DomainEvent): Promise<void> {
+    const failures: Error[] = [];
+
+    const handlers = this.handlers.get(event.eventName) || new Set();
+    if (handlers.size === 0) {
+      monitoring.logDebug(`No handlers for event ${event.eventName}`, {
+        eventId: event.eventId,
+      });
+      return;
+    }
+
+    await Promise.all(
+      Array.from(handlers).map(async (handler) => {
+        try {
+          await handler.handle(event as never);
+        } catch (error) {
+          failures.push(error as Error);
+        }
+      })
+    );
+
+    if (failures.length > 0) {
+      // Only the first message is surfaced; the outbox row stores a
+      // truncated message and must not become a place stack traces or
+      // payload values accumulate.
+      throw new Error(
+        failures.length === 1
+          ? failures[0].message
+          : `${failures.length} handlers failed; first: ${failures[0].message}`
+      );
+    }
+  }
+
   public async publish(event: DomainEvent): Promise<void> {
     const start = Date.now();
     const eventName = event.eventName;
