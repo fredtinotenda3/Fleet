@@ -173,6 +173,7 @@ import {
   RPM_CODES,
 } from './eagletrack-io.map';
 import { TelematicsData } from '../../types/telematics.types';
+import { PROVIDER_EAGLETRACK } from '../../providers/provider.types';
 
 const EAGLETRACK_DEVICE_PREFIX = 'eagletrack-';
 
@@ -1132,6 +1133,12 @@ export class EagleTrackAdapter {
     await telematicsRepository.registerDevice(
       {
         deviceId,
+        // PHASE 2: provider identity is now a first-class field, set at
+        // registration rather than inferred from the deviceId prefix.
+        // `externalDeviceId` is the vendor's own uin, verbatim -- so a
+        // consumer never has to slice a prefix off a composite string.
+        providerId: PROVIDER_EAGLETRACK,
+        externalDeviceId: status.uin,
         vehicleId,
         tenantId,
         // Inherited from the matched vehicle, as

@@ -54,12 +54,27 @@ const STATUS_BADGE: Record<LiveMapVehicleStatus, { label: string; className: str
   offline: { label: 'Offline', className: 'bg-muted text-muted-foreground' },
 };
 
-const SOURCE_LABEL: Record<LiveMapDataSource, string> = {
+/**
+ * Display labels for known sources.
+ *
+ * PHASE 2: LiveMapDataSource is no longer a closed union of two vendor
+ * names, so this is a partial lookup with a fallback rather than an
+ * exhaustive Record. A provider added to the registry renders its own id
+ * (e.g. "geotab") until someone adds a nicer label here -- degraded, but
+ * honest and non-breaking, which is the point of the widening.
+ */
+const SOURCE_LABEL: Record<string, string> = {
   cartrack: 'Cartrack',
   eagletrack: 'Eagle Track',
   demo: 'Demo',
+  unknown: 'Unknown source',
   unavailable: 'Unavailable',
 };
+
+/** Never blank: an unlabelled provider shows its id rather than nothing. */
+function sourceLabel(source: LiveMapDataSource): string {
+  return SOURCE_LABEL[source] ?? source;
+}
 
 /** A single label/value row. Renders "No data" (muted) when `value` is null/undefined rather than letting a caller accidentally pass a misleading 0. */
 /** Shown when a position was geocoded and no address could be determined. Never a guess. */
@@ -190,7 +205,7 @@ export function VehicleDetailPanel({
                 Stale fix
               </Badge>
             )}
-            <Badge variant="outline">{SOURCE_LABEL[vehicle.source]}</Badge>
+            <Badge variant="outline">{sourceLabel(vehicle.source)}</Badge>
           </div>
           <p className="text-body-sm text-muted-foreground truncate">
             {vehicle.make} {vehicle.model}

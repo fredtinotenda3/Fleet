@@ -6,6 +6,8 @@
 // records, latest telematics fix or demo simulation, geofences) rather
 // than a persisted entity.
 
+import { TelematicsProviderId } from '../providers/provider.types';
+
 /**
  * MOTION / CONNECTIVITY state only.
  *
@@ -44,7 +46,23 @@ export interface LiveMapAlertState {
  * how the label is derived (device-id prefix) and why it is currently
  * approximate.
  */
-export type LiveMapDataSource = 'cartrack' | 'eagletrack' | 'demo' | 'unavailable';
+/**
+ * Which system produced a marker's data.
+ *
+ * PHASE 2: widened from a CLOSED union of two vendor names to
+ * `TelematicsProviderId` (a string) plus the two non-provider sources.
+ *
+ * The closed union was itself a leak: every new provider was a type
+ * change rippling into the frontend, so the type system actively
+ * resisted the extensibility the platform needs. The registry -- not
+ * this union -- is now the authority on which providers exist, and
+ * `'unknown'` is representable so an unattributable reading can say so
+ * instead of defaulting to a vendor.
+ *
+ * The frontend renders this through a label lookup with a fallback, so
+ * an unrecognised value degrades to the raw id rather than blank.
+ */
+export type LiveMapDataSource = TelematicsProviderId | 'demo' | 'unknown' | 'unavailable';
 
 export interface LiveMapVehicle {
   vehicleId: string;

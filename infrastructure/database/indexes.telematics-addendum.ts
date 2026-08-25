@@ -116,6 +116,19 @@ export const TELEMATICS_INDEXES = {
       key: { tenantId: 1, status: 1, lastPingAt: 1 },
       name: 'idx_device_tenant_status_ping',
     },
+    {
+      // PHASE 2: provider identity is now a first-class field, and
+      // getEagleTrackUinForVehicle filters {tenantId, vehicleId,
+      // providerId} then sorts by createdAt to take the newest tracker
+      // fitted to a vehicle. Previously that query was a $regex on
+      // deviceId, which no index could serve.
+      //
+      // NOT unique: a vehicle may legitimately have carried several
+      // devices from the same provider over time, and the query's whole
+      // purpose is to pick the newest of them.
+      key: { tenantId: 1, vehicleId: 1, providerId: 1, createdAt: -1 },
+      name: 'idx_device_tenant_vehicle_provider_created',
+    },
   ],
 
   // ─── PHASE 1, F-3: previously unindexed collections ────────────────

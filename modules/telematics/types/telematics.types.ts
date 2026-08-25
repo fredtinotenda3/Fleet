@@ -3,7 +3,44 @@
 import { BaseEntity } from '@/shared/types/common.types';
 
 export interface TelematicsDevice extends BaseEntity {
+  /**
+   * Our storage key for this device: `<providerId>-<externalDeviceId>`.
+   *
+   * PHASE 2: the composition is now a documented STORAGE detail with a
+   * single producer (composeStoredDeviceId), not an identity scheme.
+   * Nothing outside modules/telematics/providers/ may parse it -- use
+   * `providerId` and `externalDeviceId` below, which are first-class.
+   *
+   * Retained in this shape so existing rows, the {tenantId, deviceId}
+   * unique index and every stored reading keep working: Phase 2 adds
+   * fields, it does not perform a destructive rename.
+   */
   deviceId: string;
+  /**
+   * PHASE 2: which telematics provider owns this device.
+   *
+   * Previously ABSENT, which is why provider identity was inferred from
+   * a device-id prefix -- and why `providerSourceFor` ended in
+   * `return 'cartrack'`, silently labelling every unrecognised device
+   * Cartrack, including devices posted through the generic ingest
+   * endpoint and including any provider added later.
+   *
+   * Optional ONLY for rows written before Phase 2. New registrations
+   * always set it; `scripts/backfill-device-provider.ts` fills the rest.
+   * Once that has run everywhere the transitional prefix fallback in
+   * provider.resolve.ts can be deleted.
+   */
+  providerId?: string;
+  /**
+   * PHASE 2: the PROVIDER'S own identifier -- Eagle Track's `uin`,
+   * Cartrack's `terminal_serial`. Verbatim, unprefixed.
+   *
+   * Distinct from `deviceId` (our storage key) and from `vehicleId`
+   * (our canonical entity). Collapsing the three into one string is
+   * what made `deviceId.slice('eagletrack-'.length)` necessary, and
+   * that parse breaks for any provider whose ids contain a hyphen.
+   */
+  externalDeviceId?: string;
   vehicleId: string;
   type: 'gps' | 'obd2' | 'dashcam' | 'combined';
   manufacturer: string;

@@ -2,12 +2,13 @@
 
 import { NextRequest } from 'next/server';
 import { cartrackConfigRepository } from '../repositories/cartrack-config.repository';
-import { cartrackAdapter } from '../adapters/cartrack/cartrack.adapter';
 import { cartrackConfigSchema } from '@/shared/validations/cartrack.schema';
 import { successResponse } from '@/server/utils/response.utils';
 import { ValidationError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
 import { handleTelematicsError } from './telematics-error.utils';
+import { getTelematicsProvider } from '../providers/provider.resolve';
+import { PROVIDER_CARTRACK } from '../providers/provider.types';
 
 export class CartrackController {
   /** GET /api/telematics/cartrack/config -- never returns the secret, only whether one is set. */
@@ -65,7 +66,12 @@ export class CartrackController {
   async testConnection(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const ok = await cartrackAdapter.testConnection(tenantId);
+      // PHASE 2 (cron/worker migration): the manual trigger and
+      // connection test resolve through the registry like every other
+      // polling path. The ROUTE stays vendor-named -- a credential form
+      // is inherently vendor-specific and the brief permits that -- but
+      // what it drives is the contract, not a direct adapter import.
+      const ok = await getTelematicsProvider(PROVIDER_CARTRACK).testConnection(tenantId);
       return successResponse({ connected: ok });
     } catch (error) {
       return handleTelematicsError('CartrackController', error);
@@ -81,7 +87,7 @@ export class CartrackController {
   async syncNow(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const result = await cartrackAdapter.syncOrganization(tenantId);
+      const result = await getTelematicsProvider(PROVIDER_CARTRACK).syncTenant(tenantId);
       return successResponse(result);
     } catch (error) {
       return handleTelematicsError('CartrackController', error);

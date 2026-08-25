@@ -54,7 +54,8 @@
     "test:security": "jest tests/security",
     "test:unit": "jest tests/security tests/unit --passWithNoTests",
     "type-check": "tsc --noEmit",
-    "db:dedupe-telemetry": "tsx scripts/dedupe-telemetry-readings.ts"
+    "db:dedupe-telemetry": "tsx scripts/dedupe-telemetry-readings.ts",
+    "db:backfill-device-provider": "tsx scripts/backfill-device-provider.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1079.0",

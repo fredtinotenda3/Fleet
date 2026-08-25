@@ -14,6 +14,8 @@ import {
   TelematicsLocation,
 } from '../types/telematics.types';
 import { Filter, ObjectId } from 'mongodb';
+import { PROVIDER_EAGLETRACK } from '../providers/provider.types';
+import { resolveExternalDeviceId } from '../providers/provider.resolve';
 
 /**
  * SCOPED (Phase F).
@@ -578,17 +580,24 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
   /**
    * The Eagle Track tracker id installed in a vehicle, or null.
    *
-   * Derived from the deviceId prefix the adapter stamps at registration
-   * (`eagletrack-<uin>`) rather than from a provider field, because
-   * TelematicsDevice has no such field -- the same approximation
-   * live-map.service.ts's providerSourceFor documents, and the same
-   * follow-up applies (a first-class `provider` column, which would need
-   * backfilling every existing device row).
+   * PHASE 2: matches on the first-class `providerId` field, falling back
+   * to the historical `^eagletrack-` device-id prefix for rows written
+   * before Phase 2 (until scripts/backfill-device-provider.ts has run).
+   * The provider's own id is read from `externalDeviceId` when present,
+   * and only stripped from the prefix otherwise -- so a provider whose
+   * ids contain a hyphen no longer breaks the parse.
+   *
+   * Kept Eagle-Track-specific ON PURPOSE. It exists for one caller (the
+   * Eagle Track history/fuel endpoints, which need a uin to query the
+   * vendor), so making it generic would be a speculative abstraction of
+   * a vendor-specific need. The provider-neutral path for "give me this
+   * vehicle's readings" is getTelematicsHistory, which knows nothing
+   * about providers at all.
    *
    * Newest device wins when a vehicle has had more than one tracker
-   * fitted: the current one is the one that matters for "fetch this
-   * vehicle's history", and an old device's uin would pull the history
-   * of whatever vehicle that tracker is in NOW.
+   * fitted: the current one is what matters for "fetch this vehicle's
+   * history", and an old device's uin would pull the history of whatever
+   * vehicle that tracker is in NOW.
    */
   async getEagleTrackUinForVehicle(vehicleId: string, tenantId: string): Promise<string | null> {
     const collection = await this.devicesCollection();
@@ -597,13 +606,21 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
         tenantId,
         vehicleId,
         isDeleted: { $ne: true },
-        deviceId: { $regex: '^eagletrack-' },
+        $or: [
+          { providerId: PROVIDER_EAGLETRACK },
+          // Transitional: rows written before Phase 2 carry no
+          // providerId. Removable once the backfill has run everywhere.
+          { providerId: { $exists: false }, deviceId: { $regex: `^${PROVIDER_EAGLETRACK}-` } },
+        ],
       } as never,
       { sort: { createdAt: -1 } }
     );
 
-    if (!device?.deviceId) return null;
-    const uin = device.deviceId.slice('eagletrack-'.length);
+    if (!device) return null;
+
+    const uin = resolveExternalDeviceId(
+      device as { externalDeviceId?: string; providerId?: string; deviceId?: string }
+    );
     return uin || null;
   }
 

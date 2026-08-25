@@ -42,38 +42,46 @@ import { Geofence, TelematicsAlert, TelematicsData } from '../types/telematics.t
 import { deriveReadingAlerts, maxSeverity } from './reading-alerts';
 import { reverseGeocodeService } from './reverse-geocode.service';
 import { describeIoCode, EAGLETRACK_IO } from '../adapters/eagletrack/eagletrack-io.map';
+import { resolveProviderSource } from '../providers/provider.resolve';
 
 /**
  * Labels a real fix with the provider that produced it.
  *
- * Derived from the device-id prefix each provider adapter stamps
- * (`eagletrack-<uin>`, `cartrack-<terminal_serial>`) rather than from a
- * stored provider field, because TelematicsDevice has no such field
- * today and adding one would require backfilling every existing device.
+ * PHASE 2: delegates to the single provider-identity resolver rather
+ * than parsing a device-id prefix here.
  *
- * APPROXIMATE BY CONSTRUCTION: 'cartrack' remains the fallback for any
- * device that is not identifiably Eagle Track, which includes devices
- * that post to the generic ingest endpoint and have nothing to do with
- * Cartrack. That was already the behaviour before Eagle Track existed
- * (the label was hardcoded), so this is strictly an improvement rather
- * than a new inaccuracy -- but the correct fix is a first-class
- * `provider` field on TelematicsDevice, set at registration and
- * backfilled from the prefix. Noted as a follow-up rather than done
- * here, since it touches every existing device row.
+ * WHAT CHANGED, AND WHY IT MATTERS
+ * The previous implementation was:
  *
- * The `demo-` branch is additive, for getVehicleDetail below: demo
- * fixes are persisted through the SAME ingestTelematicsData pipeline as
- * real ones (see maybePersistDemoSample), with deviceId `demo-<vehicleId>`,
- * so a raw TelematicsData row read back for the detail panel needs this
- * to label a demo fix as 'demo' rather than falling into the 'cartrack'
- * default. resolveDemoVehicle below never calls this function -- it
- * already knows its own source without inspecting the device id -- so
- * this branch cannot change that path's behaviour.
+ *   if (deviceId.startsWith('eagletrack-')) return 'eagletrack';
+ *   if (deviceId.startsWith('demo-'))       return 'demo';
+ *   return 'cartrack';
+ *
+ * -- and its own comment admitted the default was "APPROXIMATE BY
+ * CONSTRUCTION", covering devices with nothing to do with Cartrack, with
+ * a first-class provider field named as the correct fix. Phase 2 does
+ * that: TelematicsDevice.providerId is set at registration, backfilled
+ * by scripts/backfill-device-provider.ts, and an unrecognised device now
+ * reports 'unknown' instead of being silently attributed to a vendor.
+ *
+ * Kept as a named export because call sites and tests use it; it is now
+ * a thin wrapper so the transitional prefix parsing has exactly one home.
  */
 export function providerSourceFor(deviceId: string | undefined): LiveMapDataSource {
-  if (typeof deviceId === 'string' && deviceId.startsWith('eagletrack-')) return 'eagletrack';
-  if (typeof deviceId === 'string' && deviceId.startsWith('demo-')) return 'demo';
-  return 'cartrack';
+  return resolveProviderSource(undefined, deviceId) as LiveMapDataSource;
+}
+
+/**
+ * Labels a fix from its stored DEVICE, which is the accurate path.
+ *
+ * Prefer this wherever the device row is already loaded: it reads the
+ * first-class `providerId` and only falls back to prefix parsing for
+ * rows written before Phase 2.
+ */
+export function providerSourceForDevice(
+  device: { providerId?: string; deviceId?: string } | undefined
+): LiveMapDataSource {
+  return resolveProviderSource(device) as LiveMapDataSource;
 }
 
 /**

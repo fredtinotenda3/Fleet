@@ -75,11 +75,12 @@
 //      writing duplicate points.
 
 import { NextRequest, NextResponse } from 'next/server';
-import { eagletrackAdapter } from '@/modules/telematics/adapters/eagletrack/eagletrack.adapter';
 import { eagletrackConfigRepository } from '@/modules/telematics/repositories/eagletrack-config.repository';
 import { redisConnection } from '@/infrastructure/queue/queue.service';
 import { monitoring } from '@/infrastructure/monitoring/logger';
 import { denyCronRequest } from '@/server/middleware/cron-auth';
+import { getTelematicsProvider } from '@/modules/telematics/providers/provider.resolve';
+import { PROVIDER_EAGLETRACK } from '@/modules/telematics/providers/provider.types';
 
 
 const LOCK_KEY = 'cron:eagletrack-sync:lock';
@@ -167,7 +168,11 @@ export async function GET(req: NextRequest) {
           continue;
         }
 
-        const result = await eagletrackAdapter.syncOrganization(tenantId);
+        // PHASE 2 (cron/worker migration): resolved through the
+        // registry rather than importing the adapter. The route stays
+        // Eagle-Track-named because its SCHEDULE is vendor-specific
+        // (vercel.json), but what it drives is now the contract.
+        const result = await getTelematicsProvider(PROVIDER_EAGLETRACK).syncTenant(tenantId);
         totalMatched += result.matched;
         perTenant[tenantId] = { matched: result.matched, errors: result.errors };
 
@@ -179,8 +184,7 @@ export async function GET(req: NextRequest) {
             {
               tenantId,
               matched: result.matched,
-              unmatched: result.unmatchedTrackers.length,
-              withoutFix: result.trackersWithoutFix.length,
+              unmatched: result.unmatchedCount,
             }
           );
         } else {

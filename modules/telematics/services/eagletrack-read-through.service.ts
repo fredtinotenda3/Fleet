@@ -40,11 +40,12 @@
 // it always syncs immediately regardless of staleness, and does not go
 // through this module.
 
-import { eagletrackAdapter } from '../adapters/eagletrack/eagletrack.adapter';
 import { eagletrackConfigRepository } from '../repositories/eagletrack-config.repository';
 import { EagleTrackConfig } from '../adapters/eagletrack/eagletrack.types';
 import { redisConnection } from '@/infrastructure/queue/queue.service';
 import { monitoring } from '@/infrastructure/monitoring/logger';
+import { getTelematicsProvider } from '../providers/provider.resolve';
+import { PROVIDER_EAGLETRACK } from '../providers/provider.types';
 
 /**
  * A fix/config older than this triggers a refresh. Inside the 45-60s
@@ -123,7 +124,11 @@ function isStale(config: EagleTrackConfig | null): boolean {
 
 async function runSync(tenantId: string): Promise<void> {
   try {
-    await eagletrackAdapter.syncOrganization(tenantId);
+    // PHASE 2 (cron/worker migration): the read-through refresh drives
+    // the provider through the registry too, so all three polling paths
+    // (worker sweep, cron route, read-through) converge on one
+    // implementation instead of three direct adapter imports.
+    await getTelematicsProvider(PROVIDER_EAGLETRACK).syncTenant(tenantId);
   } catch (error) {
     // syncOrganization already catches and records its own known
     // failure modes via recordSyncResult; this only guards against

@@ -4,12 +4,13 @@ import { BaseWorker } from '@/infrastructure/queue/worker-base.service';
 import { telematicsService } from '@/modules/telematics/services/telematics.service';
 import { notificationService } from '@/modules/notifications/services/notification.service';
 import { backgroundJobScopeService } from '@/server/scheduler/background-job-scope.service';
-import { cartrackAdapter } from '@/modules/telematics/adapters/cartrack/cartrack.adapter';
-import { cartrackConfigRepository } from '@/modules/telematics/repositories/cartrack-config.repository';
-import { eagletrackAdapter } from '@/modules/telematics/adapters/eagletrack/eagletrack.adapter';
-import { eagletrackConfigRepository } from '@/modules/telematics/repositories/eagletrack-config.repository';
 import { monitoring } from '@/infrastructure/monitoring/logger';
 import type { TelematicsDevice } from '@/modules/telematics/types/telematics.types';
+import {
+  getTelematicsProvider,
+  isKnownProvider,
+} from '@/modules/telematics/providers/provider.resolve';
+import { ProviderError } from '@/modules/telematics/providers/provider.errors';
 
 interface IngestBatchPayload {
   records: Array<Record<string, unknown>>;
@@ -67,78 +68,91 @@ export class TelemetryWorker extends BaseWorker<IngestBatchPayload | Record<stri
       return;
     }
 
-    if (jobName === 'cartrack-sync') {
-      /**
-       * Periodic pull of every tenant that has Cartrack enabled. Only
-       * enumerates tenants with a saved, enabled config (via
-       * cartrackConfigRepository.listEnabledTenantIds) rather than every
-       * organization on the platform -- most tenants won't have Cartrack
-       * configured at all, and cartrackAdapter.syncOrganization() already
-       * no-ops safely for those that don't, but there's no reason to pay
-       * for the no-op on every org on every run.
-       *
-       * A manual trigger also exists (POST /api/telematics/cartrack/sync)
-       * for right after saving credentials, without waiting for the next
-       * scheduled run.
-       */
-      const tenantIds = await cartrackConfigRepository.listEnabledTenantIds();
-      for (const tenantId of tenantIds) {
-        try {
-          const result = await cartrackAdapter.syncOrganization(tenantId);
-          if (result.errors.length > 0) {
-            monitoring.logError(
-              '[TelemetryWorker] Cartrack sync completed with errors',
-              new Error(result.errors.join('; ')),
-              { tenantId, matched: result.matched, unmatched: result.unmatchedRegistrations.length }
-            );
-          }
-        } catch (error) {
-          monitoring.logError('[TelemetryWorker] Cartrack sync failed', error as Error, { tenantId });
-        }
-      }
-      return;
-    }
+    /**
+     * PHASE 2 (cron/worker migration) -- ONE generic provider sweep.
+     *
+     * WHAT THIS REPLACES
+     * Two near-identical branches, `jobName === 'cartrack-sync'` and
+     * `jobName === 'eagletrack-sync'`, each importing a vendor's config
+     * repository BY NAME to enumerate tenants and a vendor's adapter BY
+     * NAME to poll them. Adding a third provider meant editing this
+     * worker -- generic scheduling code -- which is exactly the coupling
+     * Phase 2 exists to remove.
+     *
+     * Job names are already `<providerId>-sync` (see JobType in
+     * queue.service.ts), so the provider id is derived from the job name
+     * and RESOLVED THROUGH THE REGISTRY. Existing schedules keep working
+     * unchanged: `telemetry-cartrack-sync` and `telemetry-eagletrack-sync`
+     * already dispatch these exact job names, so no migration of stored
+     * schedules is required.
+     *
+     * An unregistered provider id THROWS rather than silently doing
+     * nothing: a schedule that quietly stops ingesting is
+     * indistinguishable from a fleet that stopped moving. It never falls
+     * back to a default provider.
+     */
+    const providerSyncMatch = /^(.+)-sync$/.exec(jobName);
+    if (providerSyncMatch) {
+      const providerId = providerSyncMatch[1];
 
-    if (jobName === 'eagletrack-sync') {
+      if (!isKnownProvider(providerId)) {
+        throw new Error(
+          `[TelemetryWorker] Job '${jobName}' names an unregistered telematics provider '${providerId}'.`
+        );
+      }
+
+      const provider = getTelematicsProvider(providerId);
+
       /**
-       * Structurally identical to the Cartrack branch above: enumerate
-       * only the tenants that actually have Eagle Track enabled (via
-       * eagletrackConfigRepository.listEnabledTenantIds) rather than
-       * every organization on the platform, and isolate failures per
-       * tenant.
+       * Only tenants with this provider enabled -- via the contract
+       * rather than a vendor config repository. Most tenants have no
+       * integration configured at all, and there is no reason to pay for
+       * a no-op on every org on every run.
        *
-       * The per-tenant try/catch is load-bearing, not defensive
+       * The per-tenant try/catch below is load-bearing, not defensive
        * decoration. Eagle Track is deployed per customer, so each tenant
-       * points at a DIFFERENT host that we do not operate: one tenant's
-       * expired token, DNS failure, or unreachable box must not stop the
-       * sweep for every other tenant. eagletrackAdapter.syncOrganization
-       * already converts API failures into a result with `errors` and
-       * records them via recordSyncResult, so the catch here only covers
-       * genuinely unexpected throws.
-       *
-       * A manual trigger also exists (POST /api/telematics/eagletrack/sync)
-       * for right after saving credentials.
+       * points at a DIFFERENT host we do not operate: one tenant's
+       * expired token, DNS failure or unreachable box must not stop the
+       * sweep for every other tenant.
        */
-      const tenantIds = await eagletrackConfigRepository.listEnabledTenantIds();
+      const tenantIds = await provider.listEnabledTenants();
+
       for (const tenantId of tenantIds) {
         try {
-          const result = await eagletrackAdapter.syncOrganization(tenantId);
+          const result = await provider.syncTenant(tenantId);
+
+          // A non-empty `errors` does NOT mean the sync failed: both
+          // adapters convert per-vehicle API failures into entries here
+          // and continue, so a sweep can be partially successful.
           if (result.errors.length > 0) {
             monitoring.logError(
-              '[TelemetryWorker] Eagle Track sync completed with errors',
+              '[TelemetryWorker] Provider sync completed with errors',
               new Error(result.errors.join('; ')),
               {
+                providerId,
                 tenantId,
                 matched: result.matched,
-                unmatched: result.unmatchedTrackers.length,
-                withoutFix: result.trackersWithoutFix.length,
+                unmatched: result.unmatchedCount,
               }
             );
           }
         } catch (error) {
-          monitoring.logError('[TelemetryWorker] Eagle Track sync failed', error as Error, { tenantId });
+          // ProviderError carries a neutral category and an
+          // already-redacted detail, so this log line cannot contain a
+          // vendor token.
+          const context =
+            error instanceof ProviderError
+              ? { providerId, tenantId, ...error.toLogContext() }
+              : { providerId, tenantId };
+
+          monitoring.logError(
+            '[TelemetryWorker] Provider sync failed',
+            error as Error,
+            context
+          );
         }
       }
+      return;
     }
   }
 

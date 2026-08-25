@@ -25,6 +25,7 @@ import { CartrackApiClient } from './cartrack-api.client';
 import { CartrackVehicleStatus, CartrackSyncResult } from './cartrack.types';
 import { TelematicsData, TelematicsLocation } from '../../types/telematics.types';
 import { monitoring } from '@/infrastructure/monitoring/logger';
+import { PROVIDER_CARTRACK } from '../../providers/provider.types';
 
 const CARTRACK_DEVICE_PREFIX = 'cartrack-';
 
@@ -111,7 +112,7 @@ export class CartrackAdapter {
     if (!vehicle || !vehicle._id) return false;
 
     const deviceId = deviceIdFor(status.terminal_serial);
-    await this.ensureDeviceRegistered(deviceId, vehicle._id, tenantId);
+    await this.ensureDeviceRegistered(deviceId, status.terminal_serial, vehicle._id, tenantId);
 
     const timestamp = new Date(status.position.position_date);
 
@@ -214,13 +215,22 @@ export class CartrackAdapter {
     return true;
   }
 
-  private async ensureDeviceRegistered(deviceId: string, vehicleId: string, tenantId: string): Promise<void> {
+  private async ensureDeviceRegistered(
+    deviceId: string,
+    externalDeviceId: string,
+    vehicleId: string,
+    tenantId: string
+  ): Promise<void> {
     const existing = await telematicsRepository.getDevice(deviceId, tenantId);
     if (existing) return;
 
     await telematicsRepository.registerDevice(
       {
         deviceId,
+        // PHASE 2: see the Eagle Track adapter for the reasoning. The
+        // terminal serial is Cartrack's own device identifier.
+        providerId: PROVIDER_CARTRACK,
+        externalDeviceId,
         vehicleId,
         tenantId,
         type: 'gps',

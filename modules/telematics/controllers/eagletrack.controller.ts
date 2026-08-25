@@ -10,7 +10,6 @@
 
 import { NextRequest } from 'next/server';
 import { eagletrackConfigRepository } from '../repositories/eagletrack-config.repository';
-import { eagletrackAdapter } from '../adapters/eagletrack/eagletrack.adapter';
 import {
   eagletrackConfigSchema,
   eagletrackRangeQuerySchema,
@@ -25,6 +24,8 @@ import { successResponse } from '@/server/utils/response.utils';
 import { ValidationError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
 import { handleTelematicsError } from './telematics-error.utils';
+import { getTelematicsProvider } from '../providers/provider.resolve';
+import { PROVIDER_EAGLETRACK } from '../providers/provider.types';
 
 export class EagleTrackController {
   /** GET /api/telematics/eagletrack/config -- never returns the token, only whether one is set. */
@@ -78,7 +79,12 @@ export class EagleTrackController {
   async testConnection(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const ok = await eagletrackAdapter.testConnection(tenantId);
+      // PHASE 2 (cron/worker migration): the manual trigger and
+      // connection test resolve through the registry like every other
+      // polling path. The ROUTE stays vendor-named -- a credential form
+      // is inherently vendor-specific and the brief permits that -- but
+      // what it drives is the contract, not a direct adapter import.
+      const ok = await getTelematicsProvider(PROVIDER_EAGLETRACK).testConnection(tenantId);
       return successResponse({ connected: ok });
     } catch (error) {
       return handleTelematicsError('EagleTrackController', error);
@@ -94,7 +100,7 @@ export class EagleTrackController {
   async syncNow(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);
-      const result = await eagletrackAdapter.syncOrganization(tenantId);
+      const result = await getTelematicsProvider(PROVIDER_EAGLETRACK).syncTenant(tenantId);
       return successResponse(result);
     } catch (error) {
       return handleTelematicsError('EagleTrackController', error);
