@@ -16,6 +16,7 @@ import {
 import { Filter, ObjectId } from 'mongodb';
 import { PROVIDER_EAGLETRACK } from '../providers/provider.types';
 import { resolveExternalDeviceId } from '../providers/provider.resolve';
+import { invalidateTenantGeofences } from '../services/geofence-evaluation';
 
 /**
  * SCOPED (Phase F).
@@ -247,6 +248,14 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
       isDeleted: false,
     };
 
+    // PHASE 4, F-13: drop the tenant's cached geofence list so an
+    // operator's edit applies on the next ping rather than up to
+    // GEOFENCE_CACHE_TTL_MS later. Invalidated at the REPOSITORY because
+    // it is the single choke point every geofence write passes through --
+    // doing it in the service would miss the Eagle Track trigger sync,
+    // which writes boundaries directly via upsertProviderGeofence.
+    invalidateTenantGeofences(tenantId);
+
     const result = await collection.insertOne(geofenceData as any);
     return { ...geofenceData, _id: result.insertedId.toString() } as Geofence;
   }
@@ -302,6 +311,7 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
       { returnDocument: 'after' }
     );
 
+    invalidateTenantGeofences(tenantId);
     return (result as Geofence) || null;
   }
 
@@ -314,6 +324,7 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
       { $set: { isDeleted: true, deletedAt: new Date() } }
     );
 
+    invalidateTenantGeofences(tenantId);
     return result.modifiedCount > 0;
   }
 
@@ -668,6 +679,76 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
    * index on that key, recorded in the changelog as a follow-up rather
    * than shipped as an unreviewed migration.
    */
+  /**
+   * PHASE 4, F-12 -- streams one day's readings for the rollup job.
+   *
+   * CROSS-TENANT BY DESIGN, like the outbox processor and the schedulers:
+   * the rollup is a platform job that must summarise every tenant's day,
+   * and passing it a single tenant id would silently stop rolling up for
+   * everyone else. Isolation is preserved where it belongs -- each
+   * reading carries its own tenantId and orgUnitId, and
+   * `aggregateReadings` groups strictly by (vehicle, day) within the
+   * rows it is given, so a rollup can never merge two tenants.
+   *
+   * Returns a CURSOR, not an array. A day of fixes for a 1,000-vehicle
+   * fleet is ~1.7M documents; materialising that is the same defect
+   * Phase 4 is removing from the backup worker.
+   */
+  async streamReadingsForDay(day: Date): Promise<import('mongodb').FindCursor<TelematicsData>> {
+    const collection = await this.getCollection();
+
+    const start = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate()));
+    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+
+    return collection.find(
+      { timestamp: { $gte: start, $lt: end } } as never,
+      // Sorted by tenant+vehicle so the caller can accumulate one
+      // vehicle at a time and flush, rather than holding the whole day.
+      { sort: { tenantId: 1, vehicleId: 1, timestamp: 1 } }
+    ) as unknown as import('mongodb').FindCursor<TelematicsData>;
+  }
+
+  /**
+   * Upserts daily rollups.
+   *
+   * Keyed on {tenantId, vehicleId, day} -- the unique index -- so
+   * re-running a day (a retry, a corrected window) overwrites rather
+   * than duplicating. Without that, two concurrent runs over the same
+   * day both insert and every downstream aggregate doubles.
+   */
+  async upsertDailyRollups(
+    rollups: Array<Record<string, unknown> & { tenantId: string; vehicleId: string; day: Date }>
+  ): Promise<number> {
+    if (rollups.length === 0) return 0;
+
+    const db = await this.getDb();
+    const collection = db.collection('tbltelematics_daily_rollup');
+    const now = new Date();
+
+    const result = await collection.bulkWrite(
+      rollups.map((rollup) => ({
+        updateOne: {
+          filter: {
+            tenantId: rollup.tenantId,
+            vehicleId: rollup.vehicleId,
+            day: rollup.day,
+          },
+          update: {
+            $set: { ...rollup, updatedAt: now },
+            // createdAt drives the rollup TTL, so it must NOT be reset
+            // by a re-run -- otherwise a corrected day silently restarts
+            // its retention clock and outlives the policy.
+            $setOnInsert: { createdAt: now, isDeleted: false },
+          },
+          upsert: true,
+        },
+      })),
+      { ordered: false }
+    );
+
+    return (result.upsertedCount ?? 0) + (result.modifiedCount ?? 0);
+  }
+
   async bulkUpsertHistoricalReadings(
     readings: Array<Omit<TelematicsData, '_id' | 'createdAt' | 'updatedAt'> & { tenantId: string }>,
     tenantId: string
@@ -857,6 +938,12 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
     const doc = result?.value as (Geofence & { _id?: unknown }) | null;
     const geofenceId = doc?._id ? String(doc._id) : '';
     const outcome = result?.lastErrorObject?.updatedExisting ? 'updated' : 'created';
+
+    // PHASE 4, F-13: the provider trigger sync writes boundaries
+    // directly, bypassing the service layer -- so it must invalidate too,
+    // or a newly-synced vendor geofence would not be evaluated until the
+    // cache expired.
+    invalidateTenantGeofences(tenantId);
 
     return { geofenceId, outcome };
   }

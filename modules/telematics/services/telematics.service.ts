@@ -14,6 +14,10 @@ import { notificationService } from '@/modules/notifications/services/notificati
 import { organizationRepository } from '@/modules/organizations/repositories/organization.repository';
 import { resolveOrganization } from '@/server/tenancy/organization-resolver';
 import { deriveReadingAlerts } from './reading-alerts';
+import {
+  getCachedGeofences,
+  candidatesFor,
+} from './geofence-evaluation';
 
 export class TelematicsService {
   async ingestTelematicsData(
@@ -214,7 +218,34 @@ export class TelematicsService {
     tenantId: string,
     orgUnitId?: string
   ): Promise<void> {
-    const geofences = await telematicsRepository.getActiveGeofences(vehicleId, tenantId);
+    /**
+     * PHASE 4, F-13 -- three cheap layers before any expensive work.
+     *
+     * This block used to be two unconditional Mongo queries, paid on
+     * EVERY location fix by every vehicle -- ~2,400 queries/minute at
+     * 1,000 vehicles, including for tenants that have never drawn a
+     * geofence.
+     *
+     * Now:
+     *   1. the tenant's active geofences come from a 30s cache, so a
+     *      tenant with none costs zero queries per ping after the first;
+     *   2. a bounding-box prefilter (four float comparisons per
+     *      geofence, boxes precomputed at cache-fill) drops everything
+     *      the vehicle is nowhere near;
+     *   3. the state query runs ONLY if a box matched, and asks about
+     *      the candidates rather than every geofence.
+     *
+     * The prefilter fails towards evaluating: a shape that cannot be
+     * bounded returns a null box and always proceeds. A prefilter that
+     * skips is a missed alert; one that over-includes costs a single
+     * geometry call.
+     */
+    const cached = await getCachedGeofences(tenantId, () =>
+      telematicsRepository.getActiveGeofences(vehicleId, tenantId)
+    );
+    if (cached.length === 0) return;
+
+    const geofences = candidatesFor(cached, location);
     if (geofences.length === 0) return;
 
     const geofenceIds = geofences.map((g) => g._id!).filter(Boolean);

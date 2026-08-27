@@ -91,6 +91,11 @@ export class TelemetryWorker extends BaseWorker<IngestBatchPayload | Record<stri
      * indistinguishable from a fleet that stopped moving. It never falls
      * back to a default provider.
      */
+    if (jobName === 'telemetry-rollup') {
+      await this.rollupPreviousDay();
+      return;
+    }
+
     const providerSyncMatch = /^(.+)-sync$/.exec(jobName);
     if (providerSyncMatch) {
       const providerId = providerSyncMatch[1];
@@ -265,4 +270,62 @@ export class TelemetryWorker extends BaseWorker<IngestBatchPayload | Record<stri
     }
     await notifyGroup(unassigned, null);
   }
+  /**
+   * PHASE 4, F-12 -- rolls yesterday into daily per-vehicle aggregates.
+   *
+   * Runs BEFORE the TTL would remove the raw fixes (retention is 90 days
+   * by default; this runs at 01:00 the next morning), so a failed run has
+   * roughly the whole window to be retried before the source data is
+   * gone.
+   *
+   * STREAMED AND FLUSHED PER VEHICLE. The cursor is sorted by
+   * tenant+vehicle, so readings for one vehicle arrive contiguously and
+   * can be aggregated and discarded before the next vehicle starts.
+   * Peak memory is one vehicle-day (~1,700 readings), not one
+   * fleet-day (~1.7M) -- which is the same defect being removed from the
+   * backup worker, and it would have been easy to reintroduce here by
+   * calling .toArray().
+   */
+  private async rollupPreviousDay(): Promise<void> {
+    const { telematicsRepository } = await import(
+      '@/modules/telematics/repositories/telematics.repository'
+    );
+    const { aggregateReadings } = await import(
+      '@/modules/telematics/services/telemetry-rollup.service'
+    );
+
+    const now = new Date();
+    const yesterday = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1)
+    );
+
+    const cursor = await telematicsRepository.streamReadingsForDay(yesterday);
+
+    let batch: any[] = [];
+    let currentKey: string | null = null;
+    let written = 0;
+
+    const flush = async () => {
+      if (batch.length === 0) return;
+      const rollups = aggregateReadings(batch);
+      written += await telematicsRepository.upsertDailyRollups(rollups as never);
+      batch = [];
+    };
+
+    for await (const reading of cursor) {
+      const key = `${reading.tenantId}:${reading.vehicleId}`;
+      if (currentKey !== null && key !== currentKey) {
+        await flush();
+      }
+      currentKey = key;
+      batch.push(reading);
+    }
+    await flush();
+
+    monitoring.logInfo('[TelemetryWorker] Daily rollup complete', {
+      day: yesterday.toISOString().slice(0, 10),
+      rollupsWritten: written,
+    });
+  }
+
 }

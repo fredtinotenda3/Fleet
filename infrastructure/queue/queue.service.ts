@@ -39,6 +39,8 @@ export enum JobType {
   CARTRACK_SYNC = 'cartrack-sync',
   /** Periodic pull of every enabled tenant's Eagle Track fleet status -- see workers/telemetry.worker.ts. */
   EAGLETRACK_SYNC = 'eagletrack-sync',
+  /** PHASE 4, F-12: daily telemetry rollup, so reporting outlives raw retention. */
+  TELEMETRY_ROLLUP = 'telemetry-rollup',
 
   // Cleanup
   CLEANUP_LOGS = 'cleanup-logs',
@@ -146,6 +148,8 @@ const JOB_TYPE_QUEUE_MAP: Record<JobType, QueueName> = {
   [JobType.DETECT_OFFLINE_DEVICES]: 'telemetry-jobs',
   [JobType.CARTRACK_SYNC]: 'telemetry-jobs',
   [JobType.EAGLETRACK_SYNC]: 'telemetry-jobs',
+  // PHASE 4: shares the telemetry queue so its concurrency tier applies.
+  [JobType.TELEMETRY_ROLLUP]: 'telemetry-jobs',
   [JobType.CLEANUP_LOGS]: 'cleanup-jobs',
   [JobType.CLEANUP_SESSIONS]: 'cleanup-jobs',
   [JobType.CLEANUP_NOTIFICATIONS]: 'cleanup-jobs',

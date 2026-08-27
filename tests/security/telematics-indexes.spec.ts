@@ -220,6 +220,11 @@ describe('F-3: structural soundness of the telematics index set', () => {
     //                    PHASE_1_REMAINING_FINDINGS.md.
     const EXEMPT = new Set([
       'ttl_geocode_cache_resolved_at',
+      // PHASE 4: a TTL index MUST be single-field on the date, so it
+      // cannot be tenant-prefixed. Both are expiry mechanisms, never
+      // query paths -- no read is ever served by them.
+      'ttl_telematics_created_at',
+      'ttl_telematics_rollup_created_at',
       'idx_eagletrack_config_enabled',
       'idx_cartrack_config_enabled',
       'idx_geofence_state_vehicle_geofence',

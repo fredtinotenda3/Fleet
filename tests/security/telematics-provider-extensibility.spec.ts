@@ -315,10 +315,23 @@ describe('Phase 2: polling callers go through the registry, not adapters', () =>
   const POLLING_CALLERS = [
     'workers/telemetry.worker.ts',
     'app/api/cron/eagletrack-sync/route.ts',
-    'modules/telematics/services/eagletrack-read-through.service.ts',
     'modules/telematics/controllers/cartrack.controller.ts',
     'modules/telematics/controllers/eagletrack.controller.ts',
   ];
+
+  /**
+   * PHASE 4, F-16 -- the read-through service moved OUT of this list.
+   *
+   * It used to be a polling caller: it resolved the provider through the
+   * registry and ran a full sync inline on the live-map read path. Phase
+   * 4 removed the sync entirely, so it no longer resolves a provider
+   * because it no longer calls one.
+   *
+   * The Phase 2 invariant it was here to protect (never import an
+   * adapter singleton) is still asserted below, alongside the STRONGER
+   * Phase 4 property: it performs no provider call whatsoever.
+   */
+  const READ_PATH_FILES = ['modules/telematics/services/eagletrack-read-through.service.ts'];
 
   it.each(POLLING_CALLERS)('%s imports no adapter singleton', (rel) => {
     const code = codeOf(rel);
@@ -397,5 +410,52 @@ describe('Phase 2: polling callers go through the registry, not adapters', () =>
       'unmatchedCount',
       'unmatchedSample',
     ]);
+  });
+});
+
+describe('Phase 4: the read path performs no provider work', () => {
+  const READ_PATH_FILES = [
+    'modules/telematics/services/eagletrack-read-through.service.ts',
+    'modules/telematics/services/live-map.service.ts',
+  ];
+
+  it.each(READ_PATH_FILES)('%s imports no adapter singleton', (rel) => {
+    const code = codeOf(rel);
+    expect(code).not.toContain('cartrackAdapter');
+    expect(code).not.toContain('eagletrackAdapter');
+  });
+
+  it('the read-through service never calls a provider', () => {
+    // THE F-16 REGRESSION. A GET on the live map could previously
+    // trigger a roster fetch, a status fetch, sub-syncs, device
+    // registration and N telemetry inserts -- so p99 map latency was
+    // bounded by vendor latency, and a fleet nobody was watching
+    // ingested nothing at all.
+    const code = codeOf('modules/telematics/services/eagletrack-read-through.service.ts');
+
+    expect(code).not.toContain('syncTenant');
+    expect(code).not.toContain('getTelematicsProvider');
+    expect(code).not.toContain('getLiveTelemetry');
+  });
+
+  it('the read-through service enqueues instead of syncing', () => {
+    const code = codeOf('modules/telematics/services/eagletrack-read-through.service.ts');
+    expect(code).toContain('queueService.addJob');
+    expect(code).toContain('JobType.EAGLETRACK_SYNC');
+  });
+
+  it('does not fall back to an in-process lock when the queue is unreachable', () => {
+    // The old fallback ran the sync anyway with only in-process
+    // de-duping, so N serverless instances made N concurrent vendor
+    // calls. It now skips the refresh and reports stale.
+    const code = codeOf('modules/telematics/services/eagletrack-read-through.service.ts');
+    expect(code).not.toContain('inFlightByTenant');
+    expect(code).not.toContain('acquireLock');
+  });
+
+  it('the live map reports staleness instead of blocking to remove it', () => {
+    const code = codeOf('modules/telematics/services/live-map.service.ts');
+    expect(code).toContain('checkEagleTrackStaleness');
+    expect(code).toContain('dataStale');
   });
 });

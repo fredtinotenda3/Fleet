@@ -26,7 +26,7 @@ import { telematicsRepository } from '../repositories/telematics.repository';
 import { telematicsService } from './telematics.service';
 import { demoStateRepository } from '../repositories/demo-state.repository';
 import { eagletrackConfigRepository } from '../repositories/eagletrack-config.repository';
-import { refreshEagleTrackIfStale } from './eagletrack-read-through.service';
+import { checkEagleTrackStaleness } from './eagletrack-read-through.service';
 import { simulateVehicleState, SimulatedVehicleState } from '../demo/demo-simulator.service';
 import {
   LiveMapPayload,
@@ -402,9 +402,25 @@ export class LiveMapService {
     // for this tenant, or its last sync is still within the staleness
     // window, or demo mode is on (nothing here reads real telemetry in
     // that case, so there's nothing to refresh for).
-    const refreshedEagletrackConfig = demoEnabled
-      ? eagletrackConfig
-      : await refreshEagleTrackIfStale(context.organizationId, eagletrackConfig);
+    /**
+     * PHASE 4, F-16: this is now a CHECK, not a refresh.
+     *
+     * It previously ran a full Eagle Track sync inline -- roster fetch,
+     * status fetch, sub-syncs, device registration and N telemetry
+     * inserts -- before the map could respond, so p99 map latency was
+     * bounded by vendor latency and read load amplified into vendor
+     * load. It now reads the stored config, decides whether it is
+     * stale, and at most enqueues a background refresh.
+     *
+     * The data returned is whatever is already stored. When it is
+     * stale, the response says so rather than blocking to make it
+     * fresh -- see `dataStale` on the payload.
+     */
+    const staleness = demoEnabled
+      ? { config: eagletrackConfig, stale: false, refreshRequested: false }
+      : await checkEagleTrackStaleness(context.organizationId, eagletrackConfig);
+
+    const refreshedEagletrackConfig = staleness.config;
 
     const [vehiclesPage, geofences] = await Promise.all([
       vehicleRepository.getFilteredVehiclesInScope(
@@ -432,6 +448,10 @@ export class LiveMapService {
         ? new Date(refreshedEagletrackConfig.lastSyncAt).toISOString()
         : null,
       eagletrackLastSyncStatus: refreshedEagletrackConfig?.lastSyncStatus,
+      // PHASE 4, F-16: the read returns what is stored and reports its
+      // age, instead of blocking on the vendor to make it fresh.
+      dataStale: staleness.stale,
+      refreshRequested: staleness.refreshRequested,
     };
   }
 
@@ -509,7 +529,12 @@ export class LiveMapService {
     // refreshEagleTrackIfStale is what keeps the two polls landing in
     // the same ~10s tick from triggering two syncs.
     const eagletrackConfig = await eagletrackConfigRepository.getConfig(context.organizationId);
-    await refreshEagleTrackIfStale(context.organizationId, eagletrackConfig);
+    // PHASE 4, F-16: check-and-enqueue only. The detail panel polls
+    // independently of the map, so it does its own staleness check --
+    // but neither poll may call the vendor on the read path. Job-id
+    // de-duplication in the queue is what stops the two polls landing
+    // in the same tick from requesting two refreshes.
+    await checkEagleTrackStaleness(context.organizationId, eagletrackConfig);
 
     const latest = await telematicsRepository.getLatestTelematicsDataInScope(vehicleId, context);
     if (!latest) {

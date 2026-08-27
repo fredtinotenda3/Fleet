@@ -50,6 +50,23 @@
 // soft-deleted, so its uniqueness is unconditional. Making it partial
 // would leave every row that actually exists unconstrained.
 
+import {
+  getTelemetryRetentionConfig,
+  SECONDS_PER_DAY,
+} from '@/modules/telematics/services/telemetry-retention.config';
+
+/**
+ * Retention windows, resolved once at module load.
+ *
+ * Read here rather than inside the object literal so a misconfigured
+ * TELEMETRY_RETENTION_DAYS throws at import time -- when an operator is
+ * running `npm run db:indexes` and watching -- rather than halfway
+ * through creating indexes.
+ */
+const retention = getTelemetryRetentionConfig();
+const TELEMETRY_RAW_TTL_SECONDS = retention.rawDays * SECONDS_PER_DAY;
+const TELEMETRY_ROLLUP_TTL_SECONDS = retention.rollupDays * SECONDS_PER_DAY;
+
 export const TELEMATICS_INDEXES = {
   tbltelematics: [
     {
@@ -77,6 +94,38 @@ export const TELEMATICS_INDEXES = {
       key: { tenantId: 1, vehicleId: 1, deviceId: 1, timestamp: 1 },
       name: 'uniq_telematics_tenant_vehicle_device_ts',
       unique: true,
+    },
+    {
+      // PHASE 4, F-12 -- RETENTION.
+      //
+      // tbltelematics had no ceiling of any kind. At ~50s cadence one
+      // vehicle produces ~1,700 rows/day and ~620k/year; at 1,000
+      // vehicles that is ~620M documents a year across three compound
+      // indexes, growing forever.
+      //
+      // KEYED ON createdAt (server ingest), NOT timestamp (provider fix).
+      // This is the decision that matters. Eagle Track's history service
+      // deliberately backfills OLD readings, whose `timestamp` is
+      // already outside the window's tail -- a TTL on `timestamp` would
+      // have Mongo's monitor delete them within a minute of them
+      // landing. The backfill would report rows written and leave
+      // nothing behind, silently, for exactly the oldest and most
+      // valuable part of the range. `createdAt` measures what retention
+      // actually asks: how long we keep what we have stored.
+      //
+      // expireAfterSeconds is resolved from TELEMETRY_RETENTION_DAYS at
+      // index-creation time. It is a property of the INDEX, so retention
+      // is platform-wide and cannot vary per tenant -- see
+      // telemetry-retention.config.ts.
+      //
+      // CHANGING THE VALUE LATER requires collMod, not createIndex:
+      // createIndex with different options on the same name raises
+      // IndexOptionsConflict (85), which ensureIndexes swallows. That is
+      // handled explicitly in indexes.ts, which detects a TTL change and
+      // applies it rather than silently ignoring it.
+      key: { createdAt: 1 },
+      name: 'ttl_telematics_created_at',
+      expireAfterSeconds: TELEMETRY_RAW_TTL_SECONDS,
     },
   ],
   tbltelematics_alerts: [
@@ -217,6 +266,37 @@ export const TELEMATICS_INDEXES = {
       key: { tenantId: 1 },
       name: 'uniq_demo_state_tenant',
       unique: true,
+    },
+  ],
+
+  // PHASE 4, F-12 -- daily rollups, so trend reporting outlives the raw
+  // fixes. See telemetry-rollup.service.ts for what a row contains.
+  tbltelematics_daily_rollup: [
+    {
+      // The idempotency key. The rollup job upserts on exactly this
+      // tuple, so re-running a day (a retry, a backfill, a corrected
+      // window) overwrites rather than duplicating. Without uniqueness
+      // two concurrent runs over the same day both insert and every
+      // aggregate downstream doubles.
+      key: { tenantId: 1, vehicleId: 1, day: 1 },
+      name: 'uniq_telematics_rollup_tenant_vehicle_day',
+      unique: true,
+    },
+    {
+      // The reporting read: a tenant's rollups for a date range, scoped
+      // to the caller's org units. orgUnitId is carried on the rollup so
+      // this read stays scoped exactly like the raw telemetry read it
+      // replaces past the retention horizon.
+      key: { tenantId: 1, orgUnitId: 1, day: -1 },
+      name: 'idx_telematics_rollup_tenant_unit_day',
+    },
+    {
+      // Rollups expire too, just far later than raw fixes -- a rollup row
+      // is ~1/1700th the size of the day it summarises, so years of them
+      // cost less than a week of raw telemetry.
+      key: { createdAt: 1 },
+      name: 'ttl_telematics_rollup_created_at',
+      expireAfterSeconds: TELEMETRY_ROLLUP_TTL_SECONDS,
     },
   ],
 

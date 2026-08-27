@@ -496,6 +496,46 @@ export async function ensureIndexes(): Promise<void> {
 
         await collection.createIndex(indexDef.key, options);
       } catch (err: any) {
+        /**
+         * PHASE 4 -- a TTL change must not be swallowed.
+         *
+         * 85 (IndexOptionsConflict) is raised when an index of this name
+         * exists with DIFFERENT options. For most indexes that is a
+         * harmless re-run. For a TTL index it is the opposite: it is
+         * exactly what happens when an operator changes
+         * TELEMETRY_RETENTION_DAYS and re-runs `npm run db:indexes`.
+         * Swallowing it means the new retention silently never applies
+         * and the old one keeps deleting data on the old schedule --
+         * with the command reporting success.
+         *
+         * `expireAfterSeconds` is the one index option Mongo lets you
+         * change in place, via collMod. So a TTL conflict is REPAIRED
+         * here rather than ignored.
+         */
+        if (err?.code === 85 && typeof indexDef.expireAfterSeconds === 'number') {
+          try {
+            await db.command({
+              collMod: collectionName,
+              index: {
+                name: indexDef.name,
+                expireAfterSeconds: indexDef.expireAfterSeconds,
+              },
+            });
+            console.log(
+              `[Indexes] Updated TTL on ${indexDef.name} -> ${indexDef.expireAfterSeconds}s`
+            );
+            continue;
+          } catch (modErr: any) {
+            failures.push({
+              collection: collectionName,
+              index: indexDef.name,
+              reason: `TTL update failed: ${modErr?.message || String(modErr)}`,
+            });
+            console.error(`[Indexes] Failed to update TTL on ${indexDef.name}`);
+            continue;
+          }
+        }
+
         // 85: IndexOptionsConflict, 86: IndexKeySpecsConflict.
         // Both mean "an index with this name already exists with
         // different options" and are safe to ignore on re-runs.

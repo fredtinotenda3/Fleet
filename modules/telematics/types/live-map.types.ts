@@ -120,6 +120,30 @@ export interface LiveMapPayload {
    */
   eagletrackLastSyncAt?: string | null;
   eagletrackLastSyncStatus?: 'success' | 'error';
+  /**
+   * PHASE 4, F-16: true when the stored data is older than the staleness
+   * threshold.
+   *
+   * The read path no longer blocks to make data fresh -- it returns what
+   * it has and says so. Previously the map could not be stale by
+   * construction, because the read synchronously ran a vendor sync
+   * first; the cost was that map latency was bounded by vendor latency,
+   * and that a fleet nobody was watching ingested nothing at all.
+   *
+   * The UI should surface this as an indicator, not an error: stale data
+   * is still real data, and a background refresh has usually already
+   * been requested (`refreshRequested`).
+   */
+  dataStale?: boolean;
+  /**
+   * Whether a background refresh was successfully queued.
+   *
+   * `false` alongside `dataStale: true` is the honest signal that we
+   * could NOT arrange a refresh -- the queue was unreachable. Worth
+   * distinguishing: "old data, help is coming" and "old data, nothing is
+   * coming" call for different operator responses.
+   */
+  refreshRequested?: boolean;
 }
 
 export interface DemoModeStatus {

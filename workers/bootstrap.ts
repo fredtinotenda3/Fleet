@@ -44,9 +44,34 @@ export async function bootstrapWorkers(): Promise<void> {
   if (global._workersBootstrapped) return;
 
   if (!process.env.REDIS_URL) {
-    monitoring.logWarn(
-      '[Workers] REDIS_URL not configured â€” background workers disabled'
-    );
+    /**
+     * PHASE 4 -- silence here is not acceptable in production.
+     *
+     * This was a logWarn in every environment. In development that is
+     * right: a developer running `npm run dev` should not need Redis.
+     *
+     * In PRODUCTION it means telemetry sync, the outbox processor, the
+     * nightly backup, the daily rollup and every retention job are all
+     * silently not running, while the application serves traffic and
+     * looks healthy. The failures are invisible in exactly the way that
+     * matters: no telemetry ingested, no backups taken, and nobody told.
+     *
+     * Escalated to logError so it reaches whatever the deployment
+     * monitors. Deliberately NOT a throw: the same bootstrap module is
+     * imported by the web process, and killing the web tier because a
+     * worker dependency is missing would convert a degraded background
+     * tier into a total outage.
+     */
+    const message = '[Workers] REDIS_URL not configured — background workers disabled';
+
+    if (process.env.NODE_ENV === 'production') {
+      monitoring.logError(message, new Error('WORKERS_DISABLED_NO_REDIS'), {
+        impact:
+          'telemetry sync, outbox processing, backups, rollups and retention jobs are NOT running',
+      });
+    } else {
+      monitoring.logWarn(message);
+    }
     return;
   }
 
