@@ -14,9 +14,21 @@ import { TenantContext } from '@/modules/tenancy/services/tenant-context.service
 import { ResolveAttentionItemInput } from '@/shared/validations/attention.schema';
 import { NotFoundError, ConflictError, ValidationError } from '@/server/errors/app.errors';
 
+/**
+ * PHASE 6: widened to include the maintenance sources, because an
+ * action dispatched from one of those items completes with a REAL,
+ * sourced cost -- see value-ledger.types.ts for why fleet_health,
+ * driver_risk and compliance remain excluded.
+ *
+ * The guard below is unchanged and still load-bearing: an ineligible
+ * source resolves the item and writes NO ledger entry, rather than
+ * writing one with a fabricated zero.
+ */
 const LEDGER_ELIGIBLE_SOURCES: ReadonlySet<string> = new Set<LedgerEligibleSource>([
   'fuel_fraud',
   'expense_anomaly',
+  'maintenance',
+  'predictive_maintenance',
 ]);
 
 function isLedgerEligible(source: string): source is LedgerEligibleSource {

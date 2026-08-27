@@ -90,6 +90,22 @@ export interface AllocationPosting extends OrgUnitScopedEntity {
   /** Optional mapping to the customer's chart of accounts, used by the GL reconciliation report. */
   glAccountCode?: string;
 
+  /**
+   * PHASE 6 -- deterministic de-duplication key for auto-posted rows.
+   *
+   * Postings are triggered from domain events, and Phase 3 made
+   * delivery AT-LEAST-ONCE. A redelivered ExpenseCreated would post the
+   * same amount twice -- and because this ledger is APPEND-ONLY there is
+   * no update to correct it. The only remedy is a reversing posting,
+   * which needs a human to notice a number that looks plausible.
+   *
+   * Derived from {tenantId, sourceCollection, sourceId, costCategory}
+   * and backed by a partial unique index. Absent on manually-created
+   * postings, which are a deliberate human act and may legitimately
+   * repeat.
+   */
+  idempotencyKey?: string;
+
   postedBy: string;
   postedAt: Date;
 
@@ -126,6 +142,8 @@ export interface AllocationPostingInput {
   fxRateDate?: Date | string;
   fxSource?: FxSource;
   glAccountCode?: string;
+  /** PHASE 6: supplied by the auto-posting service; omitted for manual postings. */
+  idempotencyKey?: string;
 }
 
 /** One row of a cost-per-km breakdown: net (post-reversal) totals for one category over the requested period. */

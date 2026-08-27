@@ -41,6 +41,25 @@ export class AllocationLedgerRepository extends TenantScopedRepository<Allocatio
   }
 
   /** Every posting (original and reversal) attributed to one vehicle within the caller's scope, most recent first. */
+  /**
+   * PHASE 6 -- looks a posting up by its idempotency key.
+   *
+   * Used before auto-posting so a redelivered event finds the posting
+   * its first delivery already wrote. Tenant-scoped like every other
+   * read here; the key alone is not trusted as globally unique.
+   */
+  async findByIdempotencyKey(
+    idempotencyKey: string,
+    tenantId: string
+  ): Promise<AllocationPosting | null> {
+    const collection = await this.getCollection();
+    return collection.findOne({
+      tenantId,
+      idempotencyKey,
+      isDeleted: { $ne: true },
+    } as never) as Promise<AllocationPosting | null>;
+  }
+
   async findByVehicleInScope(
     vehicleId: string,
     context: TenantContext,

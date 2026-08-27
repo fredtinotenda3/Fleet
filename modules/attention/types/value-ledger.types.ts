@@ -36,7 +36,44 @@ import type { OrgUnitScopedEntity } from '@/server/repositories/tenant-scoped.re
 export type BaselineTier = 'T1' | 'T2' | 'T3';
 
 /** The two NeedsAttentionSource values that produce a ledger posting on resolve. */
-export type LedgerEligibleSource = 'fuel_fraud' | 'expense_anomaly';
+/**
+ * Sources whose resolution can produce a monetary value-ledger entry.
+ *
+ * PHASE 6 -- widened from {fuel_fraud, expense_anomaly} to include the
+ * two maintenance sources, and ONLY those.
+ *
+ * The original restriction was correct and its reasoning still holds:
+ * an entry needs a defensible monetary amount, and most attention
+ * sources do not have one. What changed is that Phase 6 lets an item
+ * dispatch an operational ACTION -- a work order, a scheduled
+ * maintenance task -- and a completed work order carries a real, sourced
+ * cost. That is a monetary outcome, so it belongs in the ledger.
+ *
+ * STILL DELIBERATELY EXCLUDED:
+ *
+ *   fleet_health   Multi-vehicle recommendations with no single owning
+ *                  entity and no attributable amount. The Phase 0
+ *                  ownership resolver returns null for these for the
+ *                  same reason.
+ *   driver_risk    A risk score about a person. There is no honest way
+ *                  to price "this driver became less risky", and
+ *                  inventing one would put a fabricated number into the
+ *                  one collection whose credibility depends on every
+ *                  figure being confirmed by a human.
+ *   compliance     Avoiding a fine is a counterfactual, not a
+ *                  measurement. The ledger records what happened, not
+ *                  what was averted.
+ *
+ * The rule that governs all of it: NEVER FABRICATE A ZERO. A source
+ * with no determinable amount produces no entry at all, rather than an
+ * entry claiming savings of nothing -- which would be indistinguishable
+ * from a genuine break-even in every aggregate downstream.
+ */
+export type LedgerEligibleSource =
+  | 'fuel_fraud'
+  | 'expense_anomaly'
+  | 'maintenance'
+  | 'predictive_maintenance';
 
 export interface ValueLedgerEntry extends OrgUnitScopedEntity {
   /** Declared explicitly for the module-scope conformance suite; see attention-item.types.ts for the same note. */

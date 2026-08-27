@@ -172,6 +172,10 @@ export class AllocationService {
         reportingCurrency: settings.reportingCurrency,
         reportingAmount: fx.reportingAmount,
         glAccountCode: input.glAccountCode,
+        // PHASE 6: present only for auto-posted rows. A manual posting
+        // carries no key and is exempted by the partial unique index --
+        // a human raising two similar postings is a deliberate act.
+        ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
         postedBy: userId,
         postedAt: new Date(),
       },

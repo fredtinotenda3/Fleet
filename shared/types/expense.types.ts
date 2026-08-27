@@ -20,6 +20,26 @@ export interface Expense extends BaseEntity {
   notes?: string;
   expense_type_id?: string;
   expense_type?: ExpenseType;
+  /**
+   * PHASE 6 -- the transaction's own currency.
+   *
+   * Added because the allocation ledger models currency and FX properly
+   * (currency, fxRate, fxRateDate, fxSource, reportingAmount) while the
+   * transactions feeding it carried none -- so every posting was
+   * implicitly the reporting currency, and a ZWL expense and a USD
+   * expense of the same magnitude became the same cost.
+   *
+   * Optional, and absent means "the tenant's reporting currency". That
+   * is the only safe default: it is what every existing record
+   * implicitly is today, so assuming anything else would retroactively
+   * misstate the entire history. FuelLog already had this field; this
+   * brings expenses into line.
+   *
+   * A foreign currency with no resolvable rate is REFUSED at posting
+   * time rather than converted at 1:1 -- see
+   * allocation-posting.service.ts.
+   */
+  currency?: string;
   /** Inherited from the referenced vehicle's orgUnitId at write time -- see
    *  CreateExpenseHandler/UpdateExpenseHandler. Not user-submitted. */
   orgUnitId?: string;

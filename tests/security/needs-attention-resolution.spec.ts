@@ -241,7 +241,23 @@ describe('AttentionResolutionService.resolve', () => {
       ).rejects.toThrow(ValidationError);
     });
 
-    it.each(['driver_risk', 'maintenance', 'compliance', 'fleet_health'] as const)(
+    /**
+     * PHASE 6: 'maintenance' was removed from this list because it is
+     * now LEDGER-ELIGIBLE.
+     *
+     * A maintenance item can dispatch a work order (Phase 6's
+     * attention-to-action loop), and a completed work order carries a
+     * real, sourced cost -- which is a monetary outcome and belongs in
+     * the ledger.
+     *
+     * The three that remain are still excluded for the reasons recorded
+     * in value-ledger.types.ts: fleet_health has no single owning entity
+     * or attributable amount; driver_risk cannot be honestly priced; and
+     * compliance is a counterfactual (a fine avoided), not a
+     * measurement. The rule underneath all three is the same one this
+     * test protects -- never fabricate a zero.
+     */
+    it.each(['driver_risk', 'compliance', 'fleet_health'] as const)(
       'does NOT require baselineTier or evidenceRefs for a non-eligible source (%s)',
       async (source) => {
         mockedFindByItemKey.mockResolvedValue(makeAttentionItem({ source, itemKey: `${source}:x-1` }));

@@ -53,6 +53,25 @@ export const FINANCE_INDEXES = {
       name: 'idx_allocationledger_tenant_glaccount_periodstart',
       sparse: true,
     },
+    {
+      // PHASE 6 -- THE AUTO-POSTING IDEMPOTENCY CONSTRAINT.
+      //
+      // Postings are triggered from domain events under Phase 3's
+      // at-least-once delivery. Without this, a redelivered event posts
+      // the same amount twice -- and because this ledger is APPEND-ONLY
+      // there is no update to correct it; the only remedy is a reversing
+      // posting, which needs a human to notice a plausible-looking
+      // number.
+      //
+      // PARTIAL, because manually-created postings carry no key and are
+      // a deliberate human act that may legitimately repeat. A plain
+      // unique index would collapse every manual posting in a tenant
+      // into one.
+      key: { tenantId: 1, idempotencyKey: 1 },
+      name: 'uniq_allocationledger_tenant_idempotency',
+      unique: true,
+      partialFilterExpression: { idempotencyKey: { $exists: true } },
+    },
   ],
   tbldepreciationprofiles: [
     {

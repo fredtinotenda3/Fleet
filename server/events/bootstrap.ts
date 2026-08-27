@@ -79,6 +79,7 @@ import {
   TRIP_COMPLETED,
 } from './event-names';
 import { OBSERVABILITY_ALERT_TRIGGERED } from '@/infrastructure/observability/event-names';
+import { allocationPostingHandler } from './handlers/finance/AllocationPostingHandler';
 
 // ── FleetOps event handlers ────────────────────────────────────────
 import {
@@ -149,6 +150,22 @@ export function bootstrapEvents(): void {
     bus.subscribe(name, websocketHandler);
     bus.subscribe(name, auditHandler);
     bus.subscribe(name, webhookDispatchHandler);
+    /**
+     * PHASE 6 -- auto-posts financial transactions into the allocation
+     * ledger, which was complete, correct, indexed and reading an empty
+     * collection because nothing wrote to it.
+     *
+     * Subscribed to every event and filtering internally on an explicit
+     * map (POSTING_EVENTS), rather than subscribed to a hand-picked
+     * list here: "which events move money" is a finance question and
+     * belongs beside the posting logic, not in the bootstrap wiring
+     * where it would drift out of step with the handler.
+     *
+     * Idempotent by construction -- see the handler. Phase 3's delivery
+     * is at-least-once, and this ledger is append-only, so a double
+     * posting cannot be edited away.
+     */
+    bus.subscribe(name, allocationPostingHandler);
   }
 
   // AI Prediction Triggers — subscribe to domain events that warrant
