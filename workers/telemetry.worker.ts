@@ -11,6 +11,7 @@ import {
   isKnownProvider,
 } from '@/modules/telematics/providers/provider.resolve';
 import { ProviderError } from '@/modules/telematics/providers/provider.errors';
+import { telematicsObservability } from '@/modules/telematics/services/telematics-observability.service';
 
 interface IngestBatchPayload {
   records: Array<Record<string, unknown>>;
@@ -123,8 +124,26 @@ export class TelemetryWorker extends BaseWorker<IngestBatchPayload | Record<stri
       const tenantIds = await provider.listEnabledTenants();
 
       for (const tenantId of tenantIds) {
+        // PHASE 7: measured around the VENDOR call, not around the loop,
+        // so the histogram reports what an operator is diagnosing -- how
+        // long the provider took -- rather than how long our sweep took.
+        const startedAt = Date.now();
+
         try {
           const result = await provider.syncTenant(tenantId);
+
+          telematicsObservability.recordSync({
+            providerId,
+            tenantId,
+            durationMs: Date.now() - startedAt,
+            // A sweep with per-vehicle errors is a PARTIAL success, and
+            // is recorded as success: the provider responded and we
+            // ingested. Counting it as a failure would make
+            // provider_available flap to 0 on one bad vehicle and train
+            // an operator to ignore the signal.
+            success: true,
+            ingested: result.ingested,
+          });
 
           // A non-empty `errors` does NOT mean the sync failed: both
           // adapters convert per-vehicle API failures into entries here
@@ -142,6 +161,14 @@ export class TelemetryWorker extends BaseWorker<IngestBatchPayload | Record<stri
             );
           }
         } catch (error) {
+          telematicsObservability.recordSync({
+            providerId,
+            tenantId,
+            durationMs: Date.now() - startedAt,
+            success: false,
+            error,
+          });
+
           // ProviderError carries a neutral category and an
           // already-redacted detail, so this log line cannot contain a
           // vendor token.
@@ -157,6 +184,13 @@ export class TelemetryWorker extends BaseWorker<IngestBatchPayload | Record<stri
           );
         }
       }
+
+      // PHASE 7 -- CRON HEARTBEAT. Records that this sweep completed, so
+      // "the schedule stopped running" becomes detectable. Nothing else
+      // in the platform could distinguish a job that stopped from one
+      // that never started -- which is exactly how the Phase 4 daily-cron
+      // finding stayed invisible.
+      telematicsObservability.recordScheduledRun(jobName, true);
       return;
     }
   }
