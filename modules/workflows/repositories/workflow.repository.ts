@@ -4,6 +4,8 @@ import { Db, Filter, ObjectId } from 'mongodb';
 import { BaseRepository } from '@/server/repositories/base.repository';
 import connectToDatabase from '@/infrastructure/database/mongodb';
 import { Workflow, WorkflowInstance, WorkflowStepInstance } from '../types/workflow.types';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
+import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 
 export class WorkflowRepository extends BaseRepository<Workflow> {
   protected collectionName = 'tblworkflows';
@@ -65,6 +67,90 @@ export class WorkflowRepository extends BaseRepository<Workflow> {
     return collection.findOne({
       _id: new ObjectId(instanceId) as any,
       tenantId,
+      isDeleted: { $ne: true },
+    } as Filter<WorkflowInstance>);
+  }
+
+  /**
+   * PHASE 5 -- looks an instance up by its idempotency key.
+   *
+   * Used before creating one, so a redelivered event finds the instance
+   * its first delivery already started instead of starting another. The
+   * partial unique index on {tenantId, idempotencyKey} is the real
+   * guarantee -- this read is the fast path, the index is what makes it
+   * correct under concurrency.
+   */
+  /**
+   * PHASE 5, F-14 -- org-unit scoped instance reads.
+   *
+   * The `*InScope` variants below are the read-side counterpart to the
+   * engine's write-side scope guard. Both are needed: the engine stops a
+   * Bulawayo manager ACTING on a Harare instance, and these stop them
+   * SEEING it in a list.
+   *
+   * `buildFilter` is spread LAST, after the caller's own filter, so a
+   * caller-supplied `orgUnitId` cannot widen the predicate. This is the
+   * same discipline base.repository.ts and report-query.engine.ts apply,
+   * and it is load-bearing rather than stylistic -- orgUnitId is a
+   * user-filterable field on several of these reads.
+   *
+   * NOTE THE ASYMMETRY WITH DEFINITIONS: there is deliberately no
+   * `getWorkflowsInScope`. Definitions are organization-wide approval
+   * policy and every branch must see the same set; scoping them would
+   * mean a branch could not see the policy it is being held to.
+   */
+  async getInstancesInScope(
+    filter: Filter<WorkflowInstance>,
+    context: TenantContext,
+    limit = 100
+  ): Promise<WorkflowInstance[]> {
+    const collection = await this.instancesCollection();
+    const scopeFilter = tenantScopeService.buildFilter<WorkflowInstance>(context, 'orgUnitId');
+
+    return collection
+      .find({
+        ...filter,
+        tenantId: context.organizationId,
+        isDeleted: { $ne: true },
+        ...scopeFilter,
+      } as Filter<WorkflowInstance>)
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .toArray();
+  }
+
+  /**
+   * A single instance, or null when it is outside the caller's scope.
+   *
+   * Returns null rather than throwing so callers render "not found"
+   * uniformly -- and deliberately does NOT distinguish "does not exist"
+   * from "exists in another branch", because that distinction is itself
+   * information about another branch's operations.
+   */
+  async getInstanceInScope(
+    instanceId: string,
+    context: TenantContext
+  ): Promise<WorkflowInstance | null> {
+    if (!ObjectId.isValid(instanceId)) return null;
+    const collection = await this.instancesCollection();
+    const scopeFilter = tenantScopeService.buildFilter<WorkflowInstance>(context, 'orgUnitId');
+
+    return collection.findOne({
+      _id: new ObjectId(instanceId) as never,
+      tenantId: context.organizationId,
+      isDeleted: { $ne: true },
+      ...scopeFilter,
+    } as Filter<WorkflowInstance>);
+  }
+
+  async findInstanceByIdempotencyKey(
+    idempotencyKey: string,
+    tenantId: string
+  ): Promise<WorkflowInstance | null> {
+    const collection = await this.instancesCollection();
+    return collection.findOne({
+      tenantId,
+      idempotencyKey,
       isDeleted: { $ne: true },
     } as Filter<WorkflowInstance>);
   }

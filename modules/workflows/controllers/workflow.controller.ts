@@ -22,6 +22,42 @@ import {
   getUserRolesFromRequest,
 } from '@/server/utils/context.utils';
 import { Workflow } from '../types/workflow.types';
+import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
+import { permissionService } from '@/server/permissions/roles';
+
+
+/**
+ * PHASE 5 -- builds the engine actor from the AUTHENTICATED context.
+ *
+ * Identity, roles, permissions and org-unit scope all come from
+ * resolveTenantContext and the auth layer -- never from the request
+ * body. The engine re-checks all of it (see assertPermission and
+ * isInstanceInScope), so this is the honest supply of facts rather than
+ * a claim the engine trusts blindly.
+ */
+async function buildActor(req: NextRequest) {
+  const [userId, roles, context] = await Promise.all([
+    getUserIdFromRequest(req),
+    getUserRolesFromRequest(req),
+    resolveTenantContext(req),
+  ]);
+
+  return {
+    userId,
+    roles,
+    accessibleOrgUnitIds: context.accessibleOrgUnitIds,
+    // Union across the actor's roles. getPermissionsForRole takes ONE
+    // role; a user may hold several, and taking only the first would
+    // silently under-grant.
+    permissions: [
+      ...new Set(
+        (roles as string[]).flatMap((role) =>
+          permissionService.getPermissionsForRole(role as never).map(String)
+        )
+      ),
+    ],
+  };
+}
 
 export class WorkflowController {
   // ── Definitions ──────────────────────────────────────────────────────
@@ -199,15 +235,16 @@ export class WorkflowController {
         throw new ValidationError('Invalid request', parsed.error.flatten());
       }
 
-      // PHASE 0, F-4: the engine now needs roles as well as identity to
-      // evaluate a role-assigned step. Taken from the authenticated
-      // context, never from the request body.
-      const roles = await getUserRolesFromRequest(req);
+      // PHASE 0, F-4 / PHASE 5: the engine needs roles (to evaluate a
+      // role-assigned step), permissions (to gate the operation) and
+      // org-unit scope (to reject another branch's instance). All from
+      // the authenticated context, never from the request body.
+      const actor = await buildActor(req);
 
       const instance = await workflowEngine.approveStep(
         instanceId,
         stepId,
-        { userId, roles },
+        actor,
         parsed.data.comment,
         tenantId
       );
@@ -228,12 +265,12 @@ export class WorkflowController {
         throw new ValidationError('Invalid request', parsed.error.flatten());
       }
 
-      const roles = await getUserRolesFromRequest(req);
+      const actor = await buildActor(req);
 
       const instance = await workflowEngine.rejectStep(
         instanceId,
         stepId,
-        { userId, roles },
+        actor,
         parsed.data.reason,
         tenantId
       );
@@ -249,9 +286,9 @@ export class WorkflowController {
       const userId = await getUserIdFromRequest(req);
       const body = await req.json().catch(() => ({}));
 
-      const roles = await getUserRolesFromRequest(req);
+      const actor = await buildActor(req);
 
-      await workflowEngine.cancelInstance(instanceId, { userId, roles }, tenantId, body?.reason);
+      await workflowEngine.cancelInstance(instanceId, actor, tenantId, body?.reason);
       return successResponse({ message: 'Workflow cancelled' });
     } catch (error) {
       return this.handleError(error);

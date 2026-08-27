@@ -3,6 +3,7 @@
 import { workflowRepository } from '../repositories/workflow.repository';
 import { workflowEngine } from './workflow-engine.service';
 import { monitoring } from '@/infrastructure/monitoring/logger';
+import { buildWorkflowIdempotencyKey } from './workflow-idempotency';
 
 /**
  * Looks up active workflows configured to trigger on `event`, evaluates
@@ -20,7 +21,22 @@ export class WorkflowTriggerService {
     entityType: string,
     context: Record<string, unknown>,
     userId: string,
-    tenantId: string
+    tenantId: string,
+    /**
+     * PHASE 5 -- the stable id of the CAUSE, used to build the workflow
+     * idempotency key.
+     *
+     * For an event-driven trigger this is the DomainEvent's `eventId`,
+     * which Phase 3 guarantees survives redelivery unchanged: the outbox
+     * rehydrates a stored event with its ORIGINAL id rather than
+     * generating a new one. That property is what makes de-duplication
+     * possible at all -- a fresh id per delivery would dedupe nothing.
+     *
+     * Optional so a caller with no stable cause (a manual fire) gets no
+     * key, and therefore no de-duplication, which is correct for a
+     * deliberate repeat.
+     */
+    causeId?: string
   ): Promise<void> {
     let workflows;
     try {
@@ -42,7 +58,27 @@ export class WorkflowTriggerService {
       }
 
       try {
-        await workflowEngine.startWorkflow(workflow._id!, entityId, entityType, userId, tenantId);
+        // PHASE 5: the same event redelivered computes the SAME key, so
+        // startWorkflow returns the instance the first delivery created
+        // instead of raising a second approval for one expense.
+        const idempotencyKey = causeId
+          ? buildWorkflowIdempotencyKey({
+              source: 'event',
+              workflowId: workflow._id!,
+              entityId,
+              entityType,
+              causeId,
+            })
+          : null;
+
+        await workflowEngine.startWorkflow(
+          workflow._id!,
+          entityId,
+          entityType,
+          userId,
+          tenantId,
+          idempotencyKey
+        );
       } catch (error) {
         monitoring.logError('Failed to start triggered workflow', error as Error, {
           workflowId: workflow._id,

@@ -7,6 +7,7 @@ import { DomainEvent } from '@/server/events/base/DomainEvent';
 import { notificationService } from '@/modules/notifications/services/notification.service';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
 import { workflowEngine } from '@/modules/workflows/services/workflow-engine.service';
+import { buildWorkflowIdempotencyKey } from '@/modules/workflows/services/workflow-idempotency';
 
 /**
  * Publishes an arbitrary domain event onto the existing event bus. This is
@@ -93,7 +94,34 @@ class StartWorkflowAction implements IRuleActionExecutor {
     const entityId = String(action.params.entityId || context.entityId || '');
     const entityType = String(action.params.entityType || context.entityType || 'rule_context');
 
-    await workflowEngine.startWorkflow(workflowId, entityId, entityType, userId || 'system', tenantId);
+    /**
+     * PHASE 5 -- rule-driven starts are de-duplicated too.
+     *
+     * RuleEngineService.fireTrigger re-evaluates on every matching
+     * event, so without a key the same rule firing twice for one entity
+     * started two approval instances. Keyed on the RULE's id: a repeat
+     * firing for the same entity is the duplicate being collapsed, and
+     * two DIFFERENT rules starting the same workflow for the same entity
+     * remain two legitimate instances.
+     */
+    const idempotencyKey = context.ruleId
+      ? buildWorkflowIdempotencyKey({
+          source: 'rule',
+          workflowId,
+          entityId,
+          entityType,
+          causeId: String(context.ruleId),
+        })
+      : null;
+
+    await workflowEngine.startWorkflow(
+      workflowId,
+      entityId,
+      entityType,
+      userId || 'system',
+      tenantId,
+      idempotencyKey
+    );
   }
 }
 

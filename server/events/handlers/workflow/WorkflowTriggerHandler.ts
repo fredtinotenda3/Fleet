@@ -22,6 +22,11 @@ export class WorkflowTriggerHandler implements IEventHandler<DomainEvent> {
       { ...payload, eventName: event.eventName },
       userId,
       tenantId,
+      // PHASE 5 / Phase 3 P3-N1: the event's own id is the dedupe cause.
+      // Phase 3's StoredDomainEvent preserves it across redelivery, so a
+      // redelivered event resolves to the instance the first delivery
+      // already started rather than a second one.
+      event.eventId,
     );
   }
 

@@ -466,9 +466,35 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
   },
   {
     module: 'workflows',
-    collections: ['tblworkflows', 'tblworkflowruns'],
-    level: 'organization',
-    rationale: 'Automation definitions are organization-level configuration.',
+    collections: ['tblworkflows', 'tblworkflow_instances'],
+    // PHASE 5, F-14: raised from 'organization' to 'org-unit'.
+    //
+    // The module holds BOTH kinds of data, and the level records the
+    // stricter one because that is the safety-relevant fact:
+    //
+    //   tblworkflows           DEFINITIONS -- organization-level
+    //                          approval POLICY. "Purchases over $5,000
+    //                          need a manager" applies company-wide, and
+    //                          scoping definitions per branch would mean
+    //                          maintaining copies that drift. These stay
+    //                          visible organization-wide BY DESIGN.
+    //   tblworkflow_instances  INSTANCES -- one branch's actual request.
+    //                          Org-unit scoped.
+    //
+    // Before Phase 5 every WorkflowEngine method took a bare tenantId,
+    // so the caller's accessible org units were discarded at the door
+    // and a Bulawayo manager holding WORKFLOW_APPROVE could approve
+    // Harare's requests.
+    level: 'org-unit',
+    // Derived from the TARGET ENTITY (the expense/work order/vehicle the
+    // workflow is about), not from the request context -- instances are
+    // frequently started by background handlers that have no context at
+    // all. See modules/workflows/services/workflow-ownership.resolver.ts.
+    orgUnitSource: 'explicit',
+    rationale:
+      'Workflow INSTANCES are one org unit\'s operational requests and are scoped ' +
+      'accordingly; workflow DEFINITIONS remain organization-wide approval policy ' +
+      'and are deliberately not scoped.',
     confirmed: true,
   },
   {

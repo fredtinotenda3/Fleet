@@ -102,6 +102,35 @@ function arrange(workflow: unknown, instance: unknown) {
   mockRepo.updateInstanceStatus.mockResolvedValue(instance);
 }
 
+/**
+ * PHASE 5 -- builds an actor with the full context the engine now needs.
+ *
+ * Before Phase 5 the engine took only {userId, roles}; it now also
+ * requires PERMISSIONS (checked in the engine, not just at the route)
+ * and ORG-UNIT SCOPE (so one branch cannot act on another's instance).
+ * Both fail closed on absence, which is why every ALLOW case here has to
+ * supply them — the DENY cases below were already passing without.
+ *
+ * Defaults to organization-wide scope and the three workflow action
+ * permissions, so these tests keep testing what they were written to
+ * test: STEP-LEVEL authorization (assignee / role / self-approval).
+ * The new outer gates get their own tests in
+ * tests/security/workflow-org-unit-scope.spec.ts.
+ */
+function actor(
+  userId: string,
+  roles: string[] = [],
+  overrides: Record<string, unknown> = {}
+) {
+  return {
+    userId,
+    roles,
+    accessibleOrgUnitIds: null as string[] | null,
+    permissions: ['workflow:approve', 'workflow:reject', 'workflow:cancel'],
+    ...overrides,
+  };
+}
+
 async function expectForbidden(promise: Promise<unknown>) {
   await expect(promise).rejects.toMatchObject({ statusCode: 403 });
 }
@@ -119,7 +148,7 @@ describe('F-4: workflow step authorization (domain layer)', () => {
         workflowEngine.approveStep(
           'inst-1',
           'step-1',
-          { userId: 'random-user', roles: [Role.DRIVER] },
+          actor('random-user', [Role.DRIVER]),
           'lgtm',
           TENANT
         )
@@ -133,7 +162,7 @@ describe('F-4: workflow step authorization (domain layer)', () => {
         workflowEngine.approveStep(
           'inst-1',
           'step-1',
-          { userId: 'driver-1', roles: [Role.DRIVER] },
+          actor('driver-1', [Role.DRIVER]),
           'lgtm',
           TENANT
         )
@@ -149,7 +178,7 @@ describe('F-4: workflow step authorization (domain layer)', () => {
         workflowEngine.approveStep(
           'inst-1',
           'step-1',
-          { userId: 'approver-1', roles: [Role.SUPERVISOR] },
+          actor('approver-1', [Role.SUPERVISOR]),
           'ok',
           TENANT
         )
@@ -165,7 +194,7 @@ describe('F-4: workflow step authorization (domain layer)', () => {
         workflowEngine.approveStep(
           'inst-1',
           'step-1',
-          { userId: 'approver-2', roles: [Role.BRANCH_MANAGER] },
+          actor('approver-2', [Role.BRANCH_MANAGER]),
           'ok',
           TENANT
         )
@@ -185,7 +214,7 @@ describe('F-4: workflow step authorization (domain layer)', () => {
         workflowEngine.approveStep(
           'inst-1',
           'step-1',
-          { userId: 'definition-user', roles: [] },
+          actor('definition-user', []),
           'ok',
           TENANT
         )
@@ -195,7 +224,7 @@ describe('F-4: workflow step authorization (domain layer)', () => {
         workflowEngine.approveStep(
           'inst-1',
           'step-1',
-          { userId: 'instance-user', roles: [] },
+          actor('instance-user', []),
           'ok',
           TENANT
         )
@@ -211,7 +240,7 @@ describe('F-4: workflow step authorization (domain layer)', () => {
         workflowEngine.approveStep(
           'inst-1',
           'step-1',
-          { userId: 'fm-1', roles: [Role.FLEET_MANAGER] },
+          actor('fm-1', [Role.FLEET_MANAGER]),
           'ok',
           TENANT
         )
@@ -228,7 +257,7 @@ describe('F-4: workflow step authorization (domain layer)', () => {
         workflowEngine.approveStep(
           'inst-1',
           'step-1',
-          { userId: 'fm-1', roles: [Role.FLEET_MANAGER] },
+          actor('fm-1', [Role.FLEET_MANAGER]),
           'ok',
           TENANT
         )
@@ -242,7 +271,7 @@ describe('F-4: workflow step authorization (domain layer)', () => {
         workflowEngine.approveStep(
           'inst-1',
           'step-1',
-          { userId: 'owner-1', roles: [Role.ORGANIZATION_OWNER] },
+          actor('owner-1', [Role.ORGANIZATION_OWNER]),
           'ok',
           TENANT
         )
@@ -256,7 +285,7 @@ describe('F-4: workflow step authorization (domain layer)', () => {
         workflowEngine.approveStep(
           'inst-1',
           'step-1',
-          { userId: 'nobody', roles: [] },
+          actor('nobody', []),
           'ok',
           TENANT
         )
@@ -279,7 +308,7 @@ describe('F-4: workflow step authorization (domain layer)', () => {
         workflowEngine.approveStep(
           'inst-1',
           'step-1',
-          { userId: 'originator', roles: [Role.BRANCH_MANAGER] },
+          actor('originator', [Role.BRANCH_MANAGER]),
           'ok',
           TENANT
         )
@@ -293,7 +322,7 @@ describe('F-4: workflow step authorization (domain layer)', () => {
         workflowEngine.approveStep(
           'inst-1',
           'step-1',
-          { userId: 'originator', roles: [] },
+          actor('originator', []),
           'ok',
           TENANT
         )
@@ -309,7 +338,7 @@ describe('F-4: workflow step authorization (domain layer)', () => {
         workflowEngine.rejectStep(
           'inst-1',
           'step-1',
-          { userId: 'saboteur', roles: [Role.DRIVER] },
+          actor('saboteur', [Role.DRIVER]),
           'because I said so',
           TENANT
         )
@@ -323,7 +352,7 @@ describe('F-4: workflow step authorization (domain layer)', () => {
         workflowEngine.rejectStep(
           'inst-1',
           'step-1',
-          { userId: 'anyone', roles: [Role.VIEWER] },
+          actor('anyone', [Role.VIEWER]),
           'no reason given at all',
           TENANT
         )
@@ -337,7 +366,7 @@ describe('F-4: workflow step authorization (domain layer)', () => {
         workflowEngine.rejectStep(
           'inst-1',
           'step-1',
-          { userId: 'approver-1', roles: [] },
+          actor('approver-1', []),
           'insufficient justification',
           TENANT
         )
@@ -352,7 +381,7 @@ describe('F-4: workflow step authorization (domain layer)', () => {
       await expectForbidden(
         workflowEngine.cancelInstance(
           'inst-1',
-          { userId: 'random-user', roles: [Role.DRIVER] },
+          actor('random-user', [Role.DRIVER]),
           TENANT
         )
       );
@@ -366,7 +395,7 @@ describe('F-4: workflow step authorization (domain layer)', () => {
       await expectForbidden(
         workflowEngine.cancelInstance(
           'inst-1',
-          { userId: 'bm-1', roles: [Role.BRANCH_MANAGER] },
+          actor('bm-1', [Role.BRANCH_MANAGER]),
           TENANT
         )
       );
@@ -378,7 +407,7 @@ describe('F-4: workflow step authorization (domain layer)', () => {
       await expect(
         workflowEngine.cancelInstance(
           'inst-1',
-          { userId: 'originator', roles: [] },
+          actor('originator', []),
           TENANT
         )
       ).resolves.toBeUndefined();
@@ -390,7 +419,7 @@ describe('F-4: workflow step authorization (domain layer)', () => {
       await expect(
         workflowEngine.cancelInstance(
           'inst-1',
-          { userId: 'owner-1', roles: [Role.ORGANIZATION_OWNER] },
+          actor('owner-1', [Role.ORGANIZATION_OWNER]),
           TENANT
         )
       ).resolves.toBeUndefined();
@@ -407,7 +436,7 @@ describe('F-4: workflow step authorization (domain layer)', () => {
         workflowEngine.approveStep(
           'inst-in-tenant-b',
           'step-1',
-          { userId: 'owner-1', roles: [Role.ORGANIZATION_OWNER] },
+          actor('owner-1', [Role.ORGANIZATION_OWNER]),
           'ok',
           TENANT
         )

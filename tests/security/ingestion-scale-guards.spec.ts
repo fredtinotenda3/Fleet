@@ -147,18 +147,49 @@ describe('F-21: ingestion does not depend on somebody watching the map', () => {
     expect(src).toContain('telemetry-eagletrack-sync');
   });
 
-  it('the Vercel cron is no longer daily', () => {
-    // It was '0 0 * * *' -- once a day -- while the read-through service
-    // said per-minute was needed.
+  it('the HTTP cron endpoint still exists as a trigger', () => {
+    /**
+     * ASSERTION CORRECTED IN PHASE 5.
+     *
+     * This previously required vercel.json's schedule NOT to be
+     * '0 0 * * *', i.e. it asserted a specific cron cadence. That was
+     * the wrong invariant to pin: VERCEL HOBBY PERMITS ONLY DAILY CRONS,
+     * so a deployment on Hobby must set exactly that value and this test
+     * failed for a correct configuration.
+     *
+     * The cadence in vercel.json is a DEPLOYMENT-PLAN decision, not a
+     * code property, and a test that hard-codes one makes the repository
+     * un-deployable on the other plan.
+     *
+     * The property F-21 actually cares about is asserted by the sibling
+     * test above and the one below: ingestion is driven by the WORKER
+     * SCHEDULE (every 2 minutes, independent of HTTP), so a fleet nobody
+     * is watching still ingests. The cron endpoint is a trigger for
+     * deployments without a worker, never the only path.
+     *
+     * See docs/INGESTION_AND_RETENTION.md for the per-plan topology.
+     */
     const vercel = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8'));
     const cron = vercel.crons.find((c: { path: string }) =>
       c.path.includes('eagletrack-sync')
     );
 
     expect(cron).toBeDefined();
-    expect(cron.schedule).not.toBe('0 0 * * *');
-    // Sub-hourly: the minute field must carry a step or a list.
-    expect(cron.schedule.split(' ')[0]).toMatch(/[*/,-]/);
+    expect(typeof cron.schedule).toBe('string');
+  });
+
+  it('the worker schedule — not the HTTP cron — is the sub-hourly path', () => {
+    // This is the real F-21 guarantee. It must hold on every deployment
+    // plan, including Hobby where the cron can only run daily.
+    const src = codeOf('server/scheduler/bootstrap-schedules.ts');
+
+    const eagletrack = src
+      .split('\n')
+      .find((line) => line.includes('telemetry-eagletrack-sync'));
+
+    expect(eagletrack).toBeDefined();
+    // Minute field carries a step/list, i.e. runs more often than hourly.
+    expect(eagletrack).toMatch(/cron:\s*'\*\/\d+ \* \* \* \*'/);
   });
 
   it('a daily rollup is scheduled inside the retention window', () => {
