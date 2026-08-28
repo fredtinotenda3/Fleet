@@ -94,7 +94,7 @@ const BEARER_PREFIX = 'Bearer ';
  * constant time, so total time is independent of both the length and
  * the content of the presented value.
  */
-function timingSafeEquals(presented: string, expected: string): boolean {
+export function timingSafeEquals(presented: string, expected: string): boolean {
   const presentedDigest = crypto.createHash('sha256').update(presented, 'utf8').digest();
   const expectedDigest = crypto.createHash('sha256').update(expected, 'utf8').digest();
   return crypto.timingSafeEqual(presentedDigest, expectedDigest);

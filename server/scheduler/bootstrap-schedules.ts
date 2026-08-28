@@ -24,6 +24,10 @@ const DEFAULT_SCHEDULES: Array<{ name: string; description: string; jobType: Job
   { name: 'billing-expire-invoices', description: 'Expire stale pending invoices', jobType: JobType.EXPIRE_INVOICES, cron: '0 * * * *' },
   { name: 'security-expire-grants', description: 'Soft-delete expired ResourcePermission grants', jobType: JobType.EXPIRE_RESOURCE_GRANTS, cron: '*/15 * * * *' },
   { name: 'telemetry-offline-devices', description: 'Detect and alert on offline telematics devices', jobType: JobType.DETECT_OFFLINE_DEVICES, cron: '*/10 * * * *' },
+  // PHASE 7 FOLLOW-UP: publishes fleet_telematics_stale_vehicles{provider}
+  // every 15 minutes, per registered provider. Horizon is
+  // STALE_VEHICLE_HORIZON_MINUTES (default 60) -- see stale-vehicle.config.ts.
+  { name: 'telemetry-stale-vehicles', description: 'Compute and publish stale vehicle counts per telematics provider', jobType: JobType.DETECT_STALE_VEHICLES, cron: '*/15 * * * *' },
   { name: 'telemetry-cartrack-sync', description: 'Pull current fleet status from Cartrack for every tenant with the integration enabled', jobType: JobType.CARTRACK_SYNC, cron: '*/2 * * * *' },
   { name: 'telemetry-eagletrack-sync', description: 'Pull current fleet status from Eagle Track for every tenant with the integration enabled', jobType: JobType.EAGLETRACK_SYNC, cron: '*/2 * * * *' },
   // PHASE 4, F-12: rolls up yesterday's fixes into daily aggregates

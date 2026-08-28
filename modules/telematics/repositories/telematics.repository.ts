@@ -471,6 +471,31 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
       .toArray() as Promise<TelematicsDevice[]>;
   }
 
+  /**
+   * Counts devices for one provider whose `lastFixAt` (the PROVIDER'S
+   * own reported fix time, never `lastPingAt` -- see telematics.types.ts)
+   * is older than `cutoff`.
+   *
+   * PLATFORM-WIDE, not tenant-scoped, and deliberately returns a COUNT
+   * rather than the devices themselves: this backs
+   * fleet_telematics_stale_vehicles{provider}, a Prometheus gauge, and a
+   * gauge labelled by tenantId or vehicleId would grow a scrape target
+   * without bound as a fleet churns vehicles -- the same cardinality
+   * rule metrics.registry.ts documents for every other telematics
+   * metric. Devices with no `lastFixAt` at all (never ingested a fix)
+   * are not counted here: `$lt` against a missing field matches nothing
+   * in MongoDB, so an unprovisioned device is silently excluded rather
+   * than counted as maximally stale.
+   */
+  async countStaleDevicesByProvider(providerId: string, cutoff: Date): Promise<number> {
+    const collection = await this.devicesCollection();
+    return collection.countDocuments({
+      providerId,
+      isDeleted: { $ne: true },
+      lastFixAt: { $lt: cutoff },
+    } as any);
+  }
+
   // ── Org-unit-scoped read variants (Phase F) ─────────────────────────
 
   /** Latest fix for a vehicle, or null when the vehicle is outside the caller's scope. */

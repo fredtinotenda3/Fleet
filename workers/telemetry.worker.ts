@@ -97,6 +97,19 @@ export class TelemetryWorker extends BaseWorker<IngestBatchPayload | Record<stri
       return;
     }
 
+    if (jobName === 'detect-stale-vehicles') {
+      /**
+       * PHASE 7 FOLLOW-UP: publishes fleet_telematics_stale_vehicles
+       * {provider}. All the cardinality/isolation reasoning lives in
+       * stale-vehicle-detection.service.ts -- this branch is just
+       * dispatch plus the same cron-heartbeat convention every other
+       * scheduled sweep in this worker follows.
+       */
+      await this.detectStaleVehicles();
+      telematicsObservability.recordScheduledRun(jobName, true);
+      return;
+    }
+
     const providerSyncMatch = /^(.+)-sync$/.exec(jobName);
     if (providerSyncMatch) {
       const providerId = providerSyncMatch[1];
@@ -304,6 +317,21 @@ export class TelemetryWorker extends BaseWorker<IngestBatchPayload | Record<stri
     }
     await notifyGroup(unassigned, null);
   }
+  /**
+   * PHASE 7 FOLLOW-UP -- computes and publishes the per-provider stale
+   * vehicle count. Thin dispatch to the pure, independently-testable
+   * stale-vehicle-detection.service.ts; lazy-imported for the same
+   * reason rollupPreviousDay below imports its dependencies lazily --
+   * this keeps the worker file itself free of a hard, module-load-time
+   * dependency on the repository.
+   */
+  private async detectStaleVehicles(): Promise<void> {
+    const { detectStaleVehicles } = await import(
+      '@/modules/telematics/services/stale-vehicle-detection.service'
+    );
+    await detectStaleVehicles();
+  }
+
   /**
    * PHASE 4, F-12 -- rolls yesterday into daily per-vehicle aggregates.
    *

@@ -35,6 +35,8 @@ export enum JobType {
   // Telemetry
   INGEST_TELEMETRY_BATCH = 'ingest-telemetry-batch',
   DETECT_OFFLINE_DEVICES = 'detect-offline-devices',
+  /** PHASE 7 FOLLOW-UP: periodic per-provider stale-vehicle count -- populates fleet_telematics_stale_vehicles{provider}. See workers/telemetry.worker.ts. */
+  DETECT_STALE_VEHICLES = 'detect-stale-vehicles',
   /** Periodic pull of every enabled tenant's Cartrack fleet status -- see workers/telemetry.worker.ts. */
   CARTRACK_SYNC = 'cartrack-sync',
   /** Periodic pull of every enabled tenant's Eagle Track fleet status -- see workers/telemetry.worker.ts. */
@@ -146,6 +148,7 @@ const JOB_TYPE_QUEUE_MAP: Record<JobType, QueueName> = {
   [JobType.POLL_PENDING_PAYMENTS]: 'billing-jobs',
   [JobType.INGEST_TELEMETRY_BATCH]: 'telemetry-jobs',
   [JobType.DETECT_OFFLINE_DEVICES]: 'telemetry-jobs',
+  [JobType.DETECT_STALE_VEHICLES]: 'telemetry-jobs',
   [JobType.CARTRACK_SYNC]: 'telemetry-jobs',
   [JobType.EAGLETRACK_SYNC]: 'telemetry-jobs',
   // PHASE 4: shares the telemetry queue so its concurrency tier applies.
