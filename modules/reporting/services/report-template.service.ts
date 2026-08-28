@@ -8,6 +8,7 @@ import { NotFoundError, ValidationError } from '@/server/errors/app.errors';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { ReportTemplateCreatedEvent, ReportTemplateDeletedEvent } from '../events/report-template.events';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
+import { PLATFORM_OWNER_TENANT_ID } from '@/server/tenancy/tenant-scope';
 
 const SYSTEM_TEMPLATE_SEEDS: ReportTemplateCreateDTO[] = [
   {
@@ -157,7 +158,12 @@ export class ReportTemplateService {
 
   /** Idempotently seeds the built-in system template catalogue. Safe to call on every boot. */
   async seedSystemTemplates(): Promise<void> {
-    const existing = await this.repo.findVisibleTo('system');
+    // FIX (legacy sentinel): 'system' is a rejected value now that writes
+    // go through assertUsableAsTenantId(); see report-template.repository.ts.
+    // Query with the same PLATFORM_OWNER_TENANT_ID that createSystemTemplate()
+    // now persists, so re-running seed on boot correctly detects existing
+    // system templates instead of re-creating (and erroring on) them every time.
+    const existing = await this.repo.findVisibleTo(PLATFORM_OWNER_TENANT_ID);
     const existingNames = new Set(existing.map((t) => t.name));
 
     for (const seed of SYSTEM_TEMPLATE_SEEDS) {

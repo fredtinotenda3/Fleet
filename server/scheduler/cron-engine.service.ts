@@ -1,6 +1,7 @@
 import { PLATFORM_OWNER_TENANT_ID } from '@/server/tenancy/tenant-scope';
 // server/scheduler/cron-engine.service.ts
 
+import { CronExpressionParser } from 'cron-parser';
 import { queueService, JobType } from '@/infrastructure/queue/queue.service';
 import { queueNameForJobType } from '@/infrastructure/queue/queue.service';
 import { scheduledJobRepository } from './scheduled-job.repository';
@@ -9,7 +10,38 @@ import { AppError, ConflictError, NotFoundError, ValidationError } from '@/serve
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
 import { monitoring } from '@/infrastructure/monitoring/logger';
 
-const CRON_PATTERN = /^(\*|[0-9,\-/]+)(\s+(\*|[0-9,\-/]+)){4}$/;
+/**
+ * Validates a standard 5-field ("m h dom mon dow") or 6-field
+ * ("s m h dom mon dow") cron expression, including step values
+ * (e.g. "*\/6", "*\/15").
+ *
+ * FIX: this used to be a hand-rolled regex (`CRON_PATTERN`) that only
+ * matched bare `*` or digit/comma/dash/slash runs -- it never accepted
+ * a literal `*` immediately followed by `/N`, so every step-value cron
+ * ("0 *\/6 * * *", "*\/15 * * * *", etc.) was rejected as invalid even
+ * though it's completely standard cron syntax. Delegates to the
+ * `cron-parser` package instead of re-implementing cron grammar.
+ *
+ * `cron-parser`'s own parser is more permissive than we want on field
+ * count (it silently accepts 4-field and empty-string input), so the
+ * field-count check below is enforced explicitly before handing the
+ * expression to the library.
+ */
+function isValidCron(expression: string): boolean {
+  if (typeof expression !== 'string') return false;
+  const trimmed = expression.trim();
+  if (!trimmed) return false;
+
+  const fieldCount = trimmed.split(/\s+/).length;
+  if (fieldCount !== 5 && fieldCount !== 6) return false;
+
+  try {
+    CronExpressionParser.parse(trimmed);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * The "cron engine": owns the mapping between a human-authored
@@ -21,7 +53,7 @@ const CRON_PATTERN = /^(\*|[0-9,\-/]+)(\s+(\*|[0-9,\-/]+)){4}$/;
  */
 export class CronEngineService {
   async create(data: ScheduledJobCreateDTO, userId: string): Promise<ScheduledJob> {
-    if (!CRON_PATTERN.test(data.cron)) {
+    if (!isValidCron(data.cron)) {
       throw new ValidationError(`Invalid cron expression: "${data.cron}"`);
     }
     const existing = await scheduledJobRepository.findByName(data.name);
@@ -51,7 +83,7 @@ export class CronEngineService {
   async update(id: string, data: ScheduledJobUpdateDTO, userId: string): Promise<ScheduledJob> {
     const existing = await scheduledJobRepository.findById(id, PLATFORM_OWNER_TENANT_ID, false, true);
     if (!existing) throw new NotFoundError('Scheduled job not found');
-    if (data.cron && !CRON_PATTERN.test(data.cron)) {
+    if (data.cron && !isValidCron(data.cron)) {
       throw new ValidationError(`Invalid cron expression: "${data.cron}"`);
     }
 

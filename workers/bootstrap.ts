@@ -15,6 +15,7 @@ import { analyticsRefreshWorker } from './analytics-refresh.worker';
 import { slaComplianceWorker } from '@/infrastructure/queue/workers/sla-compliance.worker';
 import { bootstrapDefaultSchedules } from '@/server/scheduler/bootstrap-schedules';
 import { bootstrapReporting } from '@/modules/reporting/registry/bootstrap-reporting';
+import { bootstrapCqrs } from '@/server/cqrs/cqrs.module';
 import { monitoring } from '@/infrastructure/monitoring/logger';
 import { initObservability } from '@/infrastructure/observability/otel';
 import { startQueueGaugePoller } from '@/infrastructure/observability/queue-gauge-poller';
@@ -42,6 +43,26 @@ declare global {
  */
 export async function bootstrapWorkers(): Promise<void> {
   if (global._workersBootstrapped) return;
+
+  /**
+   * FIX (worker process never registers CQRS handlers): scripts/worker.js
+   * is a standalone entry point (`import('../workers/bootstrap.ts')`) that
+   * runs as its own Node process per docker-compose.yml's `worker` service.
+   * It does NOT go through Next.js's request pipeline, so `instrumentation.ts`
+   * -- which is what calls bootstrapCqrs() for the web process -- never
+   * runs here. The result: commandBus/queryBus in this process have zero
+   * handlers registered, so anything dispatched via commandBus.execute()
+   * (e.g. MaintenanceWorker's 'check-overdue' job calling
+   * maintenanceCommandService.bulkUpdateOverdue(), which executes
+   * BulkUpdateOverdueCommand) fails with "[CommandBus] No handler
+   * registered for command ...".
+   *
+   * bootstrapCqrs() also calls bootstrapEvents() and is guarded by
+   * `global._cqrsBootstrapped`, so calling it here is idempotent and safe
+   * even if this process is later changed to also load instrumentation.ts.
+   * Must run before any worker below starts processing jobs.
+   */
+  bootstrapCqrs();
 
   if (!process.env.REDIS_URL) {
     /**
@@ -88,13 +109,13 @@ export async function bootstrapWorkers(): Promise<void> {
    * has already returned above if REDIS_URL is unset, which is exactly
    * the serverless case where a poll loop cannot be relied on.
    *
-   * Ordered AFTER bootstrapEvents() below would be wrong -- the
+   * Ordered AFTER the bootstrapCqrs() call above would be wrong -- the
    * processor must dispatch into a bus that already has handlers
    * registered, or it would claim rows, deliver them to nobody, and mark
-   * them processed. bootstrapEvents() runs at module load via
-   * instrumentation.ts before this function is reached, so handlers are
-   * in place; startOutboxProcessor() additionally no-ops unless outbox
-   * mode is configured.
+   * them processed. bootstrapCqrs() (which also calls bootstrapEvents())
+   * now runs explicitly at the top of this function, so handlers are in
+   * place by the time we get here; startOutboxProcessor() additionally
+   * no-ops unless outbox mode is configured.
    */
   startOutboxProcessor();
 
