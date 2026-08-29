@@ -62,7 +62,7 @@ export async function bootstrapWorkers(): Promise<void> {
    * even if this process is later changed to also load instrumentation.ts.
    * Must run before any worker below starts processing jobs.
    */
-  bootstrapCqrs();
+  await bootstrapCqrs();
 
   if (!process.env.REDIS_URL) {
     /**
@@ -169,4 +169,26 @@ export async function bootstrapWorkers(): Promise<void> {
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
+
+  /**
+   * FIX (worker process exits immediately): bootstrapWorkers() previously
+   * returned as soon as every worker's start() resolved and the SIGTERM/
+   * SIGINT handlers were registered. That's correct when this module is
+   * imported from a long-lived host (e.g. scripts/worker.js's `main()`
+   * keeps the event loop alive via its own pending work), but when this
+   * file is run directly -- `node --import tsx workers/bootstrap.ts` with
+   * WORKER_RUNTIME=true -- there is nothing else keeping the Node process
+   * alive once this async function's promise settles, so it exits right
+   * after logging "worker(s) started" with no jobs ever processed. This
+   * promise deliberately never resolves; the process now stays alive
+   * until the SIGTERM/SIGINT handlers above call process.exit().
+   */
+  await new Promise<void>(() => {});
+}
+
+if (process.env.WORKER_RUNTIME === 'true') {
+  bootstrapWorkers().catch((error) => {
+    monitoring.logError('[Workers] Fatal bootstrap error', error);
+    process.exit(1);
+  });
 }
