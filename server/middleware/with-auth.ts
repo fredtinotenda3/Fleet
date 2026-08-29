@@ -190,6 +190,23 @@ export function withAuth<P = unknown>(handler: Handler<P>, options: WithAuthOpti
           await monitoring.trackApiLatency(route, durationMs, response.status);
 
           if (response.status >= 500) {
+            /**
+             * HARDENING (item 6) -- the error counter was decorative.
+             *
+             * `fleet_unhandled_errors_total` was registered in Phase 7
+             * and `recordUnhandledError()` existed, but NOTHING in
+             * production code called either -- so the counter read zero
+             * forever and an operator watching it would have concluded
+             * the platform never errored.
+             *
+             * This is the one place every API 5xx passes through, so it
+             * is where the count becomes real. `source: 'api'` is a
+             * coarse label by design: a route or a message would be
+             * unbounded cardinality and would put error text into a
+             * label where it cannot be redacted.
+             */
+            metricsRegistry.unhandledErrorsTotal.inc({ source: 'api' });
+
             void triggerAlert({
               metric: 'http_5xx',
               value: 1,
