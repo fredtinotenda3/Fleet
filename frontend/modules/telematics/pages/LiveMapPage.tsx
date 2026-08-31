@@ -26,6 +26,7 @@ import {
   hourlyWindow,
 } from '../hooks';
 import { LiveMapLegend } from '../components/LiveMapLegend';
+import { LiveMapFreshnessIndicator } from '../components/LiveMapFreshnessIndicator';
 import { LiveMapVehicleList } from '../components/LiveMapVehicleList';
 import { VehicleDetailPanel } from '../components/VehicleDetailPanel';
 import { DemoModeToggle } from '../components/DemoModeToggle';
@@ -174,6 +175,7 @@ export function LiveMapPage() {
           <div className="flex flex-wrap items-center justify-between gap-3 px-1">
             <LiveMapLegend counts={statusCounts} alertCount={alertCount} staleCount={staleCount} />
             <div className="flex items-center gap-2">
+              <LiveMapFreshnessIndicator dataStale={payload?.dataStale} refreshRequested={payload?.refreshRequested} />
               {eagletrackLastSyncAt && (
                 <Badge
                   variant={payload?.eagletrackLastSyncStatus === 'error' ? 'destructive' : 'outline'}
