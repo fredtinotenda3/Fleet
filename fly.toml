@@ -1,0 +1,16 @@
+app = "fleet-worker"
+primary_region = "jnb"
+
+[build]
+  dockerfile = "Dockerfile.worker"
+
+[env]
+  NODE_ENV = "production"
+  WORKER_RUNTIME = "true"
+
+[processes]
+  worker = "node --import tsx workers/bootstrap.ts"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
