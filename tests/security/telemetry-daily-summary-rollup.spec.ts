@@ -211,3 +211,88 @@ describe('getDailySummaryInScope', () => {
     expect(summary).toBeNull();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// REGRESSION GUARD -- the defect this suite did not originally catch.
+//
+// `getDailySummaryInScope` computed its day boundary with
+// `new Date(date).setHours(0,0,0,0)`, which is the SERVER'S LOCAL
+// midnight. Rollup rows are keyed by UTC midnight (`dayBucket`, "Rollup
+// days are UTC everywhere"), so on any server east of UTC the lookup
+// asked for the PREVIOUS day, found nothing, and returned null --
+// indistinguishable from "that vehicle did not report", which is the
+// exact confusion the rollup fallback exists to remove.
+//
+// It passed in a UTC CI and failed in production. The tests above are
+// correct and were correct then; they simply could not see it, because
+// in UTC the local boundary and the UTC boundary coincide.
+//
+// So this block FORCES a non-UTC zone rather than trusting the one the
+// suite happens to run in. Node honours a runtime `process.env.TZ`
+// reassignment, and it is restored afterwards.
+describe('day boundaries are UTC regardless of the server timezone', () => {
+  const originalTz = process.env.TZ;
+
+  afterAll(() => {
+    if (originalTz === undefined) delete process.env.TZ;
+    else process.env.TZ = originalTz;
+  });
+
+  // UTC+2 (Harare, where this platform's tenants are) and UTC-8, so the
+  // assertion fails for a boundary computed in local time in EITHER
+  // direction rather than only for eastern offsets.
+  for (const tz of ['Africa/Harare', 'America/Los_Angeles', 'Pacific/Kiritimati']) {
+    it(`finds the rollup for the requested UTC day under TZ=${tz}`, async () => {
+      process.env.TZ = tz;
+
+      const summary = await telematicsRepository.getDailySummaryInScope(
+        'v-harare',
+        OLD_DAY,
+        context([HARARE]),
+        NOW
+      );
+
+      expect(summary).not.toBeNull();
+      expect(summary!.source).toBe('rollup');
+      // The seeded row for 2026-03-15, not a neighbouring day.
+      expect(summary!.totalDistance).toBe(142.5);
+    });
+
+    it(`queries the requested UTC day, not the local one, under TZ=${tz}`, async () => {
+      process.env.TZ = tz;
+
+      await telematicsRepository.getDailySummaryInScope(
+        'v-harare',
+        OLD_DAY,
+        context([HARARE]),
+        NOW
+      );
+
+      const filter = rollups.seenFilters[rollups.seenFilters.length - 1] as Record<string, unknown>;
+      expect(filter.day).toEqual({
+        $gte: new Date('2026-03-15T00:00:00Z'),
+        $lt: new Date('2026-03-16T00:00:00Z'),
+      });
+    });
+  }
+
+  it('asks the raw read for the same UTC window it would ask the rollup for', async () => {
+    process.env.TZ = 'Africa/Harare';
+
+    await telematicsRepository.getDailySummaryInScope(
+      'v-harare',
+      RECENT_DAY,
+      context([HARARE]),
+      NOW
+    );
+
+    const [, from, to] = historyCalls[historyCalls.length - 1] as [unknown, Date, Date];
+    // Raw and rollup must cover the same 24 hours, or the same `date`
+    // would summarise different spans either side of the retention
+    // horizon -- a step change produced by the boundary, not the fleet.
+    expect(from).toEqual(new Date('2026-08-20T00:00:00Z'));
+    // Inclusive end: getTelematicsHistoryInScope filters `$lte`, so the
+    // last instant of the day, not the next day's midnight.
+    expect((to as Date).toISOString()).toBe('2026-08-20T23:59:59.999Z');
+  });
+});

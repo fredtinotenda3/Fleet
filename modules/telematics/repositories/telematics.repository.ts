@@ -33,6 +33,50 @@ function dayBucketUtc(timestamp: Date): Date {
     Date.UTC(timestamp.getUTCFullYear(), timestamp.getUTCMonth(), timestamp.getUTCDate())
   );
 }
+
+/**
+ * The half-open UTC bounds of the day a timestamp falls in.
+ *
+ * ---------------------------------------------------------------------
+ * WHY UTC, AND WHY THIS IS A SHARED HELPER
+ * ---------------------------------------------------------------------
+ * Both daily-summary methods used to compute their window with
+ *
+ *     const startOfDay = new Date(date); startOfDay.setHours(0,0,0,0);
+ *
+ * `setHours` operates in the SERVER'S LOCAL TIME. Every other day
+ * boundary in the telemetry path is UTC: `dayBucket` in
+ * telemetry-rollup.service.ts ("Rollup days are UTC everywhere"),
+ * `streamReadingsForDay`'s `Date.UTC` bounds, and `planTelemetryWindow`.
+ * These two methods were the only local-time exceptions.
+ *
+ * THE BUG THAT CAUSED, in a deployment running east of UTC (this
+ * platform's own tenants are UTC+2): for a `date` of 2026-03-15T00:00Z,
+ * `setHours(0,0,0,0)` yields 2026-03-14T22:00Z, whose UTC day bucket is
+ * 2026-03-**14**. The rollup lookup then asks for the wrong day, finds
+ * nothing, and returns `null` -- indistinguishable from "that vehicle
+ * did not report", which is the exact confusion the rollup fallback was
+ * added to remove. It passes in a UTC CI and fails in production.
+ *
+ * The quieter half, which would have outlived the null: with a
+ * local-time raw window and a UTC-keyed rollup window, the SAME `date`
+ * summarised two different 24-hour spans depending only on whether it
+ * was inside retention. A report crossing the horizon would show a step
+ * change produced by the boundary rather than by the fleet.
+ *
+ * One helper, used by both branches of both methods, so raw and rollup
+ * answers are always over the same 24 hours and the two siblings cannot
+ * drift apart.
+ *
+ * Returns `[start, end)` -- half-open, matching `getDailyRollupsInScope`
+ * and `streamReadingsForDay`. `endInclusive` is provided for
+ * `getTelematicsHistoryInScope`, whose filter is `$lte`.
+ */
+function utcDayBounds(date: Date): { start: Date; end: Date; endInclusive: Date } {
+  const start = dayBucketUtc(date);
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  return { start, end, endInclusive: new Date(end.getTime() - 1) };
+}
 import { invalidateTenantGeofences } from '../services/geofence-evaluation';
 
 /**
@@ -179,12 +223,13 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
     alertCount: number;
     dataPoints: number;
   } | null> {
-    const startOfDay = new Date(date);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(date);
-    endOfDay.setHours(23, 59, 59, 999);
+    // UTC, via the same helper its scoped twin uses. This method had the
+    // identical local-time `setHours` boundary; fixing only the scoped
+    // one would leave two methods disagreeing about what "a day" is,
+    // which is the divergence this codebase has repeatedly paid for.
+    const { start: startOfDay, endInclusive } = utcDayBounds(date);
 
-    const data = await this.getTelematicsHistory(vehicleId, startOfDay, endOfDay, tenantId);
+    const data = await this.getTelematicsHistory(vehicleId, startOfDay, endInclusive, tenantId);
     if (data.length === 0) return null;
 
     const first = data[data.length - 1];
@@ -1097,10 +1142,9 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
     alertCount: number;
     dataPoints: number;
   } | null> {
-    const startOfDay = new Date(date);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(date);
-    endOfDay.setHours(23, 59, 59, 999);
+    // UTC, via the shared helper -- see utcDayBounds for the local-time
+    // bug this replaced and why raw and rollup must share one window.
+    const { start: startOfDay, end: endOfDay, endInclusive } = utcDayBounds(date);
 
     // Lazy import: the repository must not take a module-load-time
     // dependency on a service that imports it back.
@@ -1109,8 +1153,8 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
     if (windowPredatesRawRetention(startOfDay, now)) {
       const rollup = await this.getDailyRollupsInScope(
         vehicleId,
-        dayBucketUtc(startOfDay),
-        new Date(dayBucketUtc(startOfDay).getTime() + 24 * 60 * 60 * 1000),
+        startOfDay,
+        endOfDay,
         context
       );
       const row = rollup[0];
@@ -1133,7 +1177,11 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
     const data = await this.getTelematicsHistoryInScope(
       vehicleId,
       startOfDay,
-      endOfDay,
+      // `getTelematicsHistoryInScope` filters `$lte`, so the INCLUSIVE
+      // end is what it needs -- passing the half-open `end` would pull
+      // in a fix stamped at exactly the next UTC midnight, which belongs
+      // to the following day and would be counted in both.
+      endInclusive,
       context
     );
     if (data.length === 0) return null;
