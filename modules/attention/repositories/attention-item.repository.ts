@@ -75,6 +75,12 @@ export class AttentionItemRepository extends TenantScopedRepository<AttentionIte
             entityLabel: item.entityLabel ?? null,
             href: item.href ?? null,
             orgUnitId: orgUnitId ?? null,
+            // BACKLOG ITEM 7 -- what the item's score rested on, so a
+            // dispatched action can be explained after the fact. `null`
+            // (not an empty array) when the source cited nothing: an
+            // empty array reads as "we checked and found nothing",
+            // which is a different claim.
+            evidence: item.evidence?.length ? item.evidence : null,
             lastSeenAt: now,
             updatedAt: now,
             isDeleted: false,

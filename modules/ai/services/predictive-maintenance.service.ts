@@ -13,6 +13,7 @@ import { maintenanceRepository } from '@/modules/maintenance/repositories/mainte
 import { tripRepository } from '@/modules/trips/repositories/trip.repository';
 import { fuelRepository } from '@/modules/fuel/repositories/fuel.repository';
 import { telematicsRepository } from '@/modules/telematics/repositories/telematics.repository';
+import { evidenceFromRows, evidenceFromRow, mergeEvidence } from './ai-evidence.builders';
 import { monitoring } from '@/infrastructure/monitoring/logger';
 import { randomUUID } from 'crypto';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
@@ -288,6 +289,35 @@ export class PredictiveMaintenanceService extends BaseAIService {
 
     const predictionId = randomUUID();
     const prediction = this.buildPrediction(vehicle, criticalComponent, componentHealth, predictionId);
+
+    /**
+     * BACKLOG ITEM 7 -- the rows this prediction rests on.
+     *
+     * Ordered by what actually drives `calculateComponentHealth`:
+     *
+     *   * the MAINTENANCE history, which supplies every component's
+     *     historical failure rate and time-since-service;
+     *   * the LATEST TELEMETRY reading, cited individually because its
+     *     coolant temperature and RPM feed the engine assessment
+     *     directly -- a single value that can flip a component's health;
+     *   * the VEHICLE, whose odometer and age are inputs to every
+     *     component;
+     *   * TRIPS, which contribute only through the distance total.
+     *
+     * Fuel logs are omitted: they reach the prediction solely as
+     * `avgFuelEfficiency`, a scalar derived from every log, so citing
+     * twenty of them would point a reader at rows that individually
+     * changed nothing.
+     */
+    const evidence = mergeEvidence([
+      evidenceFromRows('tblreminders', maintenance as never, { observedAtField: 'due_date' }),
+      evidenceFromRow('tbltelematics', telematics as never, { observedAtField: 'timestamp' }),
+      evidenceFromRow('tblvehicles', vehicle as never),
+      evidenceFromRows('tbltrips', trips as never, { observedAtField: 'date' }),
+    ]);
+    if (evidence.length > 0) {
+      prediction.evidence = evidence;
+    }
 
     this.logPrediction({
       vehicleId: vehicle._id!,

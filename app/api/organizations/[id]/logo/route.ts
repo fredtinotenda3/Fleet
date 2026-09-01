@@ -20,7 +20,7 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export const POST = withAuth<Ctx>(
   async (req: NextRequest, _context, { params }) => {
-    const { allowed } = rateLimiter.checkLimit(req, { windowMs: 60_000, maxRequests: 10 });
+    const { allowed } = await rateLimiter.checkLimit(req, { windowMs: 60_000, maxRequests: 10 });
     if (!allowed) {
       return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
     }

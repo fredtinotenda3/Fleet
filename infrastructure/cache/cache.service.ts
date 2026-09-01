@@ -82,6 +82,41 @@ function getRedisPromise(): Promise<any> {
   return _redisPromise;
 }
 
+/**
+ * The shared Redis client, or `null` when Redis is not configured or has
+ * been confirmed unreachable.
+ *
+ * BACKLOG ITEM 3 -- exported so the rate-limit store uses THIS
+ * connection rather than opening a second one with its own retry policy.
+ * Two independent connection managers would mean two different answers
+ * to "is Redis up", two retry storms on an outage, and a second copy of
+ * the failure handling that took a production incident to get right the
+ * first time (see the header of this file).
+ *
+ * Callers must treat `null` as "no Redis" and degrade, never as an error
+ * to retry: the disabled flag is deliberately sticky for the life of the
+ * process.
+ */
+export async function getSharedRedisClient(): Promise<any | null> {
+  return getRedisPromise();
+}
+
+/** True when a REDIS_URL is configured at all. Says nothing about reachability. */
+export function isRedisConfigured(): boolean {
+  return Boolean(process.env.REDIS_URL);
+}
+
+/**
+ * Marks the shared connection dead so subsequent calls degrade to the
+ * in-memory path instead of paying a connect timeout each time.
+ * Exported for the rate-limit store, which discovers a dead connection
+ * on a command rather than on connect.
+ */
+export function markRedisUnavailable(): void {
+  _redisDisabled = true;
+  _redisPromise = null;
+}
+
 // Exported so health check can use it
 export const cacheConnection = new Proxy(
   {} as any,

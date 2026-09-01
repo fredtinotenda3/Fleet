@@ -14,6 +14,7 @@ import { notificationService } from '@/modules/notifications/services/notificati
 import { organizationRepository } from '@/modules/organizations/repositories/organization.repository';
 import { resolveOrganization } from '@/server/tenancy/organization-resolver';
 import { deriveReadingAlerts } from './reading-alerts';
+import { resolveAlertOwnership } from './alert-ownership.resolver';
 import {
   getCachedGeofences,
   candidatesFor,
@@ -105,8 +106,24 @@ export class TelematicsService {
   ): Promise<void> {
     const fleetManagerIds = await this.getFleetManagerIds(data.tenantId);
 
+    /**
+     * BACKLOG ITEM 2 (finding N-3). Resolved ONCE for the whole batch:
+     * every alert here comes from the same reading, so it is the same
+     * vehicle, and the resolver's own memo would answer the rest from
+     * cache anyway -- hoisting it makes that explicit rather than
+     * incidental.
+     *
+     * Deliberately NOT `data.orgUnitId`, even though ingestion stamps
+     * the reading from a scope-checked vehicle lookup today. See
+     * alert-ownership.resolver.ts: taking the reading's copy makes an
+     * alert's visibility depend on which ingestion path produced it,
+     * and a future adapter that forgets to stamp would silently
+     * reintroduce this exact finding.
+     */
+    const ownership = await resolveAlertOwnership(data.vehicleId, data.tenantId);
+
     for (const alert of alerts) {
-      await telematicsRepository.createAlert(data.vehicleId, alert, data.tenantId);
+      await telematicsRepository.createAlert(data.vehicleId, alert, data.tenantId, ownership);
 
       // PHASE 0, F-7: an alert names the vehicle and the behaviour
       // (speeding, harsh braking), so it is at least as sensitive as
@@ -344,6 +361,18 @@ export class TelematicsService {
       timestamp: new Date(),
     });
 
+    /**
+     * BACKLOG ITEM 2. The `orgUnitId` parameter this method already
+     * takes is the VEHICLE's unit as the caller observed it on the
+     * reading, and is used for the websocket fan-out above. The stored
+     * row's ownership is resolved from the vehicle record instead, so
+     * that both alert write paths file rows the same way and a stale
+     * reading cannot misfile one. The resolver memoises per vehicle, so
+     * on the geofence path -- which only reaches here on an actual
+     * boundary crossing -- this is not a per-ping cost.
+     */
+    const ownership = await resolveAlertOwnership(vehicleId, tenantId);
+
     await telematicsRepository.createAlert(
       vehicleId,
       {
@@ -352,7 +381,8 @@ export class TelematicsService {
         message: `Vehicle ${event === 'entry' ? 'entered' : 'exited'} ${geofence.name}`,
         timestamp: new Date(),
       },
-      tenantId
+      tenantId,
+      ownership
     );
 
     const fleetManagerIds = await this.getFleetManagerIds(tenantId);

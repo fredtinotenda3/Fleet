@@ -56,6 +56,7 @@
     "type-check": "tsc --noEmit",
     "db:dedupe-telemetry": "tsx scripts/dedupe-telemetry-readings.ts",
     "db:backfill-device-provider": "tsx scripts/backfill-device-provider.ts",
+    "db:backfill-alert-orgunits": "tsx scripts/backfill-alert-org-units.ts",
     "events:process": "tsx scripts/process-outbox.ts",
     "events:worker": "tsx scripts/process-outbox.ts --loop"
   },

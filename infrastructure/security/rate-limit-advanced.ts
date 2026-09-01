@@ -1,36 +1,30 @@
 // infrastructure/security/rate-limit-advanced.ts
-// Advanced sliding-window rate limiter backed by an in-memory store.
-// Swap the store implementation to Redis for production multi-instance
-// deployments (see infrastructure/cache/cache.service.ts).
+//
+// Tier-aware sliding-window rate limiter.
+//
+// BACKLOG ITEM 3: its file header used to say "backed by an in-memory
+// store -- swap the store implementation to Redis for production". That
+// swap is now done, and it is the SAME store the primary limiter uses
+// (rate-limit-store.ts) rather than a second private one: two limiters
+// with two stores would give two different answers about the same
+// client, and only one of them would be the one anybody looked at.
+//
+// The client-IP extraction that used to live here (`x-forwarded-for`,
+// first entry, `x-real-ip` fallback) has moved to client-ip.ts for the
+// reason documented there -- the first entry is client-supplied.
 
 import { NextRequest } from 'next/server';
 
+import { getClientIp } from './client-ip';
+import { getRateLimitStore } from './rate-limit-store';
+
 type Tier = 'free' | 'professional' | 'enterprise';
-
-interface WindowStore {
-  get(key: string): number[];
-  set(key: string, timestamps: number[]): void;
-}
-
-class InMemoryWindowStore implements WindowStore {
-  private store = new Map<string, number[]>();
-
-  get(key: string): number[] {
-    return this.store.get(key) || [];
-  }
-
-  set(key: string, timestamps: number[]): void {
-    this.store.set(key, timestamps);
-  }
-}
-
-const store: WindowStore = new InMemoryWindowStore();
 
 export class AdvancedRateLimiter {
   private readonly windowMs = 60_000;
   private readonly defaultLimit = 60;
 
-  checkLimit(
+  async checkLimit(
     req: NextRequest,
     options: {
       limit?: number;
@@ -38,40 +32,25 @@ export class AdvancedRateLimiter {
       key?: string;
       tier?: Tier;
     } = {}
-  ): {
+  ): Promise<{
     allowed: boolean;
     remaining: number;
     reset: number;
     limit: number;
-  } {
+    store: 'redis' | 'memory';
+  }> {
     const limit = this.getLimitForTier(options.tier || 'free', options.limit);
     const windowMs = options.windowMs || this.windowMs;
     const key = options.key || this.getKey(req);
 
-    const now = Date.now();
-    const windowStart = now - windowMs;
-
-    const requests = store
-      .get(key)
-      .filter((t) => t > windowStart);
-
-    if (requests.length >= limit) {
-      return {
-        allowed: false,
-        remaining: 0,
-        reset: (requests[0] || now) + windowMs,
-        limit,
-      };
-    }
-
-    requests.push(now);
-    store.set(key, requests);
+    const hit = await getRateLimitStore().hit(key, windowMs, limit);
 
     return {
-      allowed: true,
-      remaining: limit - requests.length,
-      reset: now + windowMs,
+      allowed: hit.allowed,
+      remaining: hit.remaining,
+      reset: hit.reset,
       limit,
+      store: hit.store,
     };
   }
 
@@ -90,26 +69,14 @@ export class AdvancedRateLimiter {
   }
 
   /**
-   * NextRequest in Next.js 15 no longer surfaces a typed top-level `.ip`
-   * property (that was an Edge-runtime-only convenience that got
-   * removed from the public type). Client IP now has to come from
-   * proxy headers explicitly — `x-forwarded-for` (may contain a
-   * comma-separated chain; the first entry is the original client) with
-   * `x-real-ip` as a fallback for proxies that set that instead.
+   * Method is part of the key here (and not in the primary limiter) so a
+   * read budget and a write budget on the same path stay separate.
    */
-  private getClientIp(req: NextRequest): string {
-    const forwardedFor = req.headers.get('x-forwarded-for');
-    if (forwardedFor) {
-      return forwardedFor.split(',')[0]?.trim() || 'unknown';
-    }
-    return req.headers.get('x-real-ip') || 'unknown';
-  }
-
   private getKey(req: NextRequest): string {
-    const ip = this.getClientIp(req);
+    const ip = getClientIp(req);
     const path = req.nextUrl.pathname;
     const method = req.method;
-    return `rate-limit:${ip}:${method}:${path}`;
+    return `adv:${ip}:${method}:${path}`;
   }
 }
 

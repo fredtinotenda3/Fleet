@@ -16,6 +16,23 @@ import {
 import { Filter, ObjectId } from 'mongodb';
 import { PROVIDER_EAGLETRACK } from '../providers/provider.types';
 import { resolveExternalDeviceId } from '../providers/provider.resolve';
+import type { ResolvedAlertOwnership } from '../services/alert-ownership.resolver';
+
+/**
+ * UTC midnight for a date -- the key rollup rows are stored under.
+ *
+ * Restated here rather than imported from telemetry-rollup.service.ts
+ * so the repository keeps no module-load-time dependency on a service
+ * that imports it back. One line, and the rollup service's `dayBucket`
+ * is the definition it must agree with; the rollup read is tested
+ * against rows written by that service, so a divergence fails a test
+ * rather than silently missing every row.
+ */
+function dayBucketUtc(timestamp: Date): Date {
+  return new Date(
+    Date.UTC(timestamp.getUTCFullYear(), timestamp.getUTCMonth(), timestamp.getUTCDate())
+  );
+}
 import { invalidateTenantGeofences } from '../services/geofence-evaluation';
 
 /**
@@ -189,16 +206,43 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
 
   // ── Alerts ───────────────────────────────────────────────────────────
 
+  /**
+   * BACKLOG ITEM 2 (finding N-3) -- alerts now carry their owning org
+   * unit.
+   *
+   * `ownership` is a REQUIRED parameter, and its type can only be
+   * produced by `resolveAlertOwnership`. That is the point: the original
+   * defect was a call site that simply did not pass an org unit, and an
+   * optional parameter would let the next call site make the same
+   * omission while still type-checking. Making it required means a new
+   * writer has to go and find out who owns the alert before it can
+   * compile.
+   *
+   * `orgUnitId` is written only when it was actually resolved. An
+   * unresolvable owner leaves the field unset -- invisible to
+   * org-unit-scoped reads, the same fail-closed treatment every other
+   * unbackfilled row gets -- and `orgUnitResolution` records WHY, so an
+   * operator investigating an alert nobody can see is not left to infer
+   * it. Existing rows are untouched; `npm run db:backfill-alert-orgunits`
+   * is the separate, audited migration for those.
+   */
   async createAlert(
     vehicleId: string,
     alert: TelematicsAlert,
-    tenantId: string
+    tenantId: string,
+    ownership: ResolvedAlertOwnership
   ): Promise<void> {
     const collection = await this.alertsCollection();
     await collection.insertOne({
       vehicleId,
       ...alert,
       tenantId,
+      // Spread order matters: ownership is authoritative and must own
+      // the key, so a TelematicsAlert that somehow carried an orgUnitId
+      // of its own cannot override the resolved one. Same rule as the
+      // scope predicate being spread last in every scoped filter.
+      ...(ownership.orgUnitId ? { orgUnitId: ownership.orgUnitId } : {}),
+      orgUnitResolution: ownership.resolution,
       createdAt: new Date(),
       isDeleted: false,
     } as any);
@@ -734,6 +778,49 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
   }
 
   /**
+   * BACKLOG ITEM 5 -- daily rollups for one vehicle and window, scoped.
+   *
+   * Reads `[from, to)` half-open on `day`, so a caller passing a UTC
+   * midnight as `to` does not silently pick up that whole day: rollup
+   * days ARE UTC midnights, and an inclusive `$lte` would include the
+   * boundary day in both halves of a mixed window and double-count it.
+   *
+   * SCOPED like every other read in this module. Rollups carry the
+   * `orgUnitId` of the readings they summarise (see
+   * telemetry-rollup.service.ts), so `scopeOf` applies unchanged and an
+   * aggregate over expired telemetry cannot become the side channel the
+   * row-level filter closed -- which is precisely the trap Phase G
+   * found in the anomaly severity counts and Phase H in the report
+   * engine's `$match`.
+   *
+   * Hits `idx_telematics_rollup_tenant_unit_day`, which was declared for
+   * this read in Phase 4 and until now had no caller.
+   */
+  async getDailyRollupsInScope(
+    vehicleId: string,
+    from: Date,
+    to: Date,
+    context: TenantContext
+  ): Promise<Array<Record<string, unknown>>> {
+    const db = await this.getDb();
+    const collection = db.collection('tbltelematics_daily_rollup');
+
+    const filter = {
+      tenantId: context.organizationId,
+      isDeleted: { $ne: true },
+      vehicleId,
+      day: { $gte: from, $lt: to },
+      // Spread LAST so scope owns the orgUnitId key -- the rule Phase H
+      // established after the report engine let a caller filter over it.
+      ...this.scopeOf(context),
+    };
+
+    return collection
+      .find(filter as never, { sort: { day: 1 } })
+      .toArray() as unknown as Promise<Array<Record<string, unknown>>>;
+  }
+
+  /**
    * Upserts daily rollups.
    *
    * Keyed on {tenantId, vehicleId, day} -- the unique index -- so
@@ -977,18 +1064,35 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
    * Daily summary for a vehicle, scoped. Delegates to the scoped history
    * read rather than the unscoped one, so the aggregate cannot become a
    * side channel around the row-level filter.
+   *
+   * BACKLOG ITEM 5: falls back to the day's ROLLUP row once the raw
+   * fixes for that day have aged out. Before this, any day older than
+   * TELEMETRY_RETENTION_DAYS returned `null` -- which a caller cannot
+   * distinguish from "that vehicle did not report that day".
+   *
+   * `source` is on the returned object precisely so the substitution is
+   * never silent: 'raw' means per-fix detail, 'rollup' means the stored
+   * per-day aggregate. `dataPoints` on a rollup answer is the fix count
+   * the rollup RECORDED at the time, not rows read now.
+   *
+   * `totalDuration` is absent from a rollup answer rather than zeroed:
+   * a rollup carries no trip duration, and a fabricated 0 hours for a
+   * day the vehicle actually drove is the class of defect Phase 1
+   * removed from the adapters.
    */
   async getDailySummaryInScope(
     vehicleId: string,
     date: Date,
-    context: TenantContext
+    context: TenantContext,
+    now: Date = new Date()
   ): Promise<{
     vehicleId: string;
     date: Date;
+    source: 'raw' | 'rollup';
     totalDistance: number;
     maxSpeed: number;
     avgSpeed: number;
-    totalDuration: number;
+    totalDuration?: number;
     fuelUsed: number;
     alertCount: number;
     dataPoints: number;
@@ -997,6 +1101,34 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
     startOfDay.setHours(0, 0, 0, 0);
     const endOfDay = new Date(date);
     endOfDay.setHours(23, 59, 59, 999);
+
+    // Lazy import: the repository must not take a module-load-time
+    // dependency on a service that imports it back.
+    const { windowPredatesRawRetention } = await import('../services/telemetry-window');
+
+    if (windowPredatesRawRetention(startOfDay, now)) {
+      const rollup = await this.getDailyRollupsInScope(
+        vehicleId,
+        dayBucketUtc(startOfDay),
+        new Date(dayBucketUtc(startOfDay).getTime() + 24 * 60 * 60 * 1000),
+        context
+      );
+      const row = rollup[0];
+      if (!row) return null;
+
+      const distance = typeof row.distanceKm === 'number' ? row.distanceKm : 0;
+      return {
+        vehicleId,
+        date,
+        source: 'rollup',
+        totalDistance: distance,
+        maxSpeed: typeof row.maxSpeedKmh === 'number' ? row.maxSpeedKmh : 0,
+        avgSpeed: typeof row.avgSpeedKmh === 'number' ? row.avgSpeedKmh : 0,
+        fuelUsed: typeof row.fuelUsedLitres === 'number' ? row.fuelUsedLitres : 0,
+        alertCount: typeof row.alertCount === 'number' ? row.alertCount : 0,
+        dataPoints: typeof row.fixCount === 'number' ? row.fixCount : 0,
+      };
+    }
 
     const data = await this.getTelematicsHistoryInScope(
       vehicleId,
@@ -1012,6 +1144,7 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
     return {
       vehicleId,
       date,
+      source: 'raw',
       totalDistance: (last.trip?.odometer || 0) - (first.trip?.odometer || 0),
       maxSpeed: Math.max(...data.map((d) => d.location?.speed || 0)),
       avgSpeed: data.reduce((sum, d) => sum + (d.location?.speed || 0), 0) / data.length,

@@ -101,7 +101,9 @@ function makeItem(
   title: string,
   description: string,
   cost: number,
-  extra?: Partial<Pick<NeedsAttentionItem, 'dueDate' | 'entityId' | 'entityLabel' | 'href' | 'ownerTarget'>>
+  extra?: Partial<
+    Pick<NeedsAttentionItem, 'dueDate' | 'entityId' | 'entityLabel' | 'href' | 'ownerTarget' | 'evidence'>
+  >
 ): NeedsAttentionItem {
   return {
     id: `${source}:${id}`,
@@ -264,6 +266,10 @@ export class NeedsAttentionService {
             entityId: p.vehicleId,
             entityLabel: p.licensePlate,
             ownerTarget: { kind: 'vehicle', vehicleId: p.vehicleId },
+            // BACKLOG ITEM 7: forwarded, not re-derived. See the note
+            // on NeedsAttentionItem.evidence for why the aggregator
+            // must not read the underlying rows a second time.
+            ...(p.evidence?.length ? { evidence: p.evidence } : {}),
           }
         );
       });
@@ -318,6 +324,7 @@ export class NeedsAttentionService {
           {
             entityId: d.driverId,
             entityLabel: d.driverName,
+            ...(d.evidence?.length ? { evidence: d.evidence } : {}),
             // d.driverId is OrganizationMember.userId (see
             // driver-risk.service.ts), not a tbldrivers _id -- resolve
             // via the organization's embedded member record, not
@@ -351,6 +358,7 @@ export class NeedsAttentionService {
             entityId: alert.vehicleId,
             entityLabel: alert.licensePlate,
             ownerTarget: { kind: 'vehicle', vehicleId: alert.vehicleId },
+            ...(alert.evidence?.length ? { evidence: alert.evidence } : {}),
           }
         );
       });
@@ -386,6 +394,7 @@ export class NeedsAttentionService {
             // resolves via a single expense lookup rather than a
             // second hop through the vehicle it references.
             ownerTarget: { kind: 'expense', expenseId: alert.entityId },
+            ...(alert.evidence?.length ? { evidence: alert.evidence } : {}),
           }
         );
       });
@@ -426,6 +435,21 @@ export class NeedsAttentionService {
             // an org-unit-scoped read (complianceService.listInScope),
             // so this value is trustworthy without a second lookup.
             ownerTarget: { kind: 'org-unit-direct', orgUnitId: record.orgUnitId },
+            // BACKLOG ITEM 7: the compliance RECORD is the finding. No
+            // model, no score -- the item exists because this stored
+            // row says overdue -- so the row itself is the whole of the
+            // evidence and citing it is exact rather than a sample.
+            ...(record._id
+              ? {
+                  evidence: [
+                    {
+                      source: 'tblcompliancerecords',
+                      reference: String(record._id),
+                      ...(record.dueDate ? { observedAt: new Date(record.dueDate) } : {}),
+                    },
+                  ],
+                }
+              : {}),
           }
         );
       });
@@ -452,6 +476,21 @@ export class NeedsAttentionService {
           // Reminder already carries its own orgUnitId, inherited from
           // its vehicle at write time -- see maintenance.types.ts.
           ownerTarget: { kind: 'org-unit-direct', orgUnitId: reminder.orgUnitId },
+          // BACKLOG ITEM 7: the reminder row IS the finding.
+          ...(reminder._id
+            ? {
+                evidence: [
+                  {
+                    source: 'tblreminders',
+                    reference: String(reminder._id),
+                    ...(reminder.due_date ? { observedAt: new Date(reminder.due_date) } : {}),
+                    ...(typeof reminder.estimated_cost === 'number'
+                      ? { value: reminder.estimated_cost }
+                      : {}),
+                  },
+                ],
+              }
+            : {}),
         }
       )
     );
@@ -469,6 +508,20 @@ export class NeedsAttentionService {
           dueDate: reminder.due_date,
           entityLabel: reminder.license_plate,
           ownerTarget: { kind: 'org-unit-direct', orgUnitId: reminder.orgUnitId },
+          ...(reminder._id
+            ? {
+                evidence: [
+                  {
+                    source: 'tblreminders',
+                    reference: String(reminder._id),
+                    ...(reminder.due_date ? { observedAt: new Date(reminder.due_date) } : {}),
+                    ...(typeof reminder.estimated_cost === 'number'
+                      ? { value: reminder.estimated_cost }
+                      : {}),
+                  },
+                ],
+              }
+            : {}),
         }
       )
     );
@@ -515,6 +568,19 @@ export class NeedsAttentionService {
           {
             entityLabel: wo.license_plate,
             href: `/workorders?license_plate=${encodeURIComponent(wo.license_plate)}`,
+            // BACKLOG ITEM 7: the work order row IS the finding.
+            ...(wo._id
+              ? {
+                  evidence: [
+                    {
+                      source: 'tblworkorders',
+                      reference: String(wo._id),
+                      ...(wo.openedAt ? { observedAt: new Date(wo.openedAt) } : {}),
+                      ...(typeof wo.totalCost === 'number' ? { value: wo.totalCost } : {}),
+                    },
+                  ],
+                }
+              : {}),
             // WorkOrder already carries its own orgUnitId (the
             // workshop org unit, falling back to the vehicle's own at
             // creation time -- see workorder.tenancy-addendum.ts).

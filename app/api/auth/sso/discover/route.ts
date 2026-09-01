@@ -12,7 +12,7 @@ import { ssoDiscoverQuerySchema } from '@/shared/validations/sso.schema';
 import { rateLimiter } from '@/infrastructure/security/rate-limit';
 
 export async function GET(req: NextRequest) {
-  const { allowed } = rateLimiter.checkLimit(req, { windowMs: 60_000, maxRequests: 20 });
+  const { allowed } = await rateLimiter.checkLimit(req, { windowMs: 60_000, maxRequests: 20 });
   if (!allowed) {
     return NextResponse.json({ error: 'Too many requests' }, { status: 429 });
   }

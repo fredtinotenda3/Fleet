@@ -17,23 +17,31 @@
 //     vehicles per poll, every 10 seconds. getActiveAlertsInScope is
 //     keyed by a single vehicleId, so using it would add 500 queries per
 //     poll. There is no batched equivalent today.
-//   * tbltelematics_alerts rows carry NO orgUnitId.
-//     telematicsRepository.createAlert inserts
+//   * (HISTORICAL -- NOW FIXED) tbltelematics_alerts rows carried NO
+//     orgUnitId. createAlert inserted
 //     `{ vehicleId, ...alert, tenantId, createdAt, isDeleted }` and
 //     nothing else, while getActiveAlertsInScope applies the standard
-//     orgUnitId predicate. For any org-unit-scoped caller that predicate
-//     therefore matches zero rows. That direction is fail-CLOSED, so it
-//     is not a leak and is not urgent -- but it does mean the alert
-//     store cannot answer "is this vehicle alerting" for the exact
-//     users the live map is scoped for. Fixing it means changing the
-//     alert WRITE path (stamping orgUnitId at createAlert time and
-//     backfilling existing rows), which is a separate change with its
-//     own migration; it is recorded in the changelog, not attempted
-//     here.
+//     orgUnitId predicate -- so for any org-unit-scoped caller that
+//     predicate matched zero rows. Fail-CLOSED, never a leak, but a
+//     total loss of function for exactly the roles the live map is
+//     scoped for.
 //
-// Deriving from the reading sidesteps both, and by construction the map
-// agrees with the alert engine because they run the same function over
-// the same row.
+//     BACKLOG ITEM 2 closed it: createAlert now REQUIRES a
+//     `ResolvedAlertOwnership` (alert-ownership.resolver.ts) resolved
+//     from the vehicle record, so rows written since carry their org
+//     unit. Historical rows are corrected by
+//     `npm run db:backfill-alert-orgunits`.
+//
+// The N+1 reason is unaffected and remains sufficient on its own: there
+// is still no batched "which of these 500 vehicles is alerting" read, so
+// the live map still derives from the reading. The closed finding is
+// kept here rather than deleted, so a future reader neither re-opens it
+// nor assumes the map avoids the alert store for a reason that no longer
+// applies.
+//
+// Deriving from the reading also means that, by construction, the map
+// agrees with the alert engine -- they run the same function over the
+// same row.
 
 import { TelematicsAlert, TelematicsData } from '../types/telematics.types';
 

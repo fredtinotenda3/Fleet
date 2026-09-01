@@ -15,6 +15,7 @@ import connectToDatabase from '@/infrastructure/database/mongodb';
 import { mfaService } from '@/modules/security/services/mfa.service';
 import { threatDetectionService } from '@/modules/security/services/threat-detection.service';
 import { rateLimiter } from '@/infrastructure/security/rate-limit';
+import { getClientIp } from '@/infrastructure/security/client-ip';
 
 const precheckSchema = z.object({
   email: z.string().email(),
@@ -24,10 +25,14 @@ const precheckSchema = z.object({
 const AUTH_TENANT_ID = 'default';
 
 export async function POST(req: NextRequest) {
-  const { allowed } = rateLimiter.checkLimit(req, {
+  // BACKLOG ITEM 3: the key was the leftmost x-forwarded-for entry,
+  // which the caller controls -- so this endpoint, which accepts a
+  // password, had no effective limit at all. `getClientIp` applies the
+  // trusted-proxy model instead.
+  const { allowed } = await rateLimiter.checkLimit(req, {
     windowMs: 60_000,
     maxRequests: 10,
-    keyGenerator: (r) => `precheck:${r.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'}`,
+    keyGenerator: (r) => `precheck:${getClientIp(r)}`,
   });
   if (!allowed) {
     return NextResponse.json({ error: 'Too many requests' }, { status: 429 });

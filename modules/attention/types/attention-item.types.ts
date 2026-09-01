@@ -34,6 +34,7 @@ import type {
   NeedsAttentionSource,
   NeedsAttentionUrgency,
 } from '@/modules/ai/types/needs-attention.types';
+import type { AIEvidence } from '@/modules/ai/types/ai-evidence.types';
 
 export interface AttentionItem extends OrgUnitScopedEntity {
   /**
@@ -80,4 +81,19 @@ export interface AttentionItem extends OrgUnitScopedEntity {
   status?: 'open' | 'resolved';
   resolvedAt?: Date | null;
   resolvedBy?: string | null;
+
+  /**
+   * BACKLOG ITEM 7 -- the stored records the item's score rested on,
+   * carried through from the AI service that produced it.
+   *
+   * Persisted, not merely computed, because this is the row an operator
+   * ACTS on: BACKLOG ITEM 6 lets an item raise a work order, and "why
+   * did the platform create this job?" is the first question asked
+   * afterwards. An answer that only existed in the live feed at the
+   * moment of dispatch is not an answer.
+   *
+   * Capped at MAX_EVIDENCE_REFS (20) upstream, so the field cannot grow
+   * a row without bound.
+   */
+  evidence?: AIEvidence[];
 }

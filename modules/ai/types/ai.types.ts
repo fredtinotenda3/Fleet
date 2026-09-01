@@ -1,6 +1,32 @@
 // modules/ai/types/ai.types.ts
 
 import { BaseEntity } from '@/shared/types/common.types';
+import type { AIEvidence } from './ai-evidence.types';
+
+/**
+ * BACKLOG ITEM 7 (finding P6-N2) -- the evidence half of the shared
+ * envelope, now carried on every AI output that ships a score.
+ *
+ * `ai-evidence.types.ts` defined `AIConfidenceEnvelope` and the guard
+ * that rejects an empty one, but none of the services emitted it, so
+ * every confidence number in the product was still unfalsifiable.
+ *
+ * Added as an OPTIONAL field rather than by switching these interfaces
+ * to `AIConfidenceEnvelope`: the `confidence` numbers already exist and
+ * already agree platform-wide (see P6-N1), so replacing the shape would
+ * be a breaking change to every consumer for no gain. Optional also
+ * means a service that genuinely cannot cite stored records omits the
+ * field rather than shipping an empty array that reads as "we checked
+ * and found nothing" -- see BACKLOG_REMAINING.md for which those are.
+ */
+export interface WithAIEvidence {
+  /**
+   * The stored records this output actually rested on. Never empty when
+   * present: an empty array is indistinguishable from "no evidence
+   * exists", so a service with nothing to cite omits the field.
+   */
+  evidence?: AIEvidence[];
+}
 
 // ─── Base Types ──────────────────────────────────────────────────────────────
 
@@ -81,7 +107,7 @@ export interface FuelEntity {
 
 // ─── Predictive Maintenance ─────────────────────────────────────────────────
 
-export interface PredictiveMaintenancePrediction {
+export interface PredictiveMaintenancePrediction extends WithAIEvidence {
   predictionId: string;
   vehicleId: string;
   licensePlate: string;
@@ -103,7 +129,7 @@ export interface PredictiveMaintenancePrediction {
 
 // ─── Fleet Health Score ─────────────────────────────────────────────────────
 
-export interface FleetHealthScore {
+export interface FleetHealthScore extends WithAIEvidence {
   overallScore: number; // 0-100
   timestamp: Date;
   vehicleScores: Array<{
@@ -142,7 +168,7 @@ priority: 'critical' | 'high' | 'medium' | 'low';
 
 // ─── Driver Risk Score ──────────────────────────────────────────────────────
 
-export interface DriverRiskScore {
+export interface DriverRiskScore extends WithAIEvidence {
   driverId: string;
   driverName: string;
   overallScore: number; // 0-100 (lower = safer)
@@ -173,7 +199,7 @@ export interface DriverRiskScore {
 
 // ─── Fuel Fraud Detection ──────────────────────────────────────────────────
 
-export interface FuelFraudAlert {
+export interface FuelFraudAlert extends WithAIEvidence {
   alertId: string;
   vehicleId: string;
   licensePlate: string;
@@ -202,7 +228,7 @@ export interface FuelPattern {
 
 // ─── Expense Anomaly Detection ─────────────────────────────────────────────
 
-export interface ExpenseAnomalyAlert {
+export interface ExpenseAnomalyAlert extends WithAIEvidence {
   alertId: string;
   entityId: string;
   entityType: 'vehicle' | 'organization' | 'driver';

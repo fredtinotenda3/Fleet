@@ -1,14 +1,42 @@
 // infrastructure/security/rate-limit.ts
+//
+// BACKLOG ITEM 3 (audit finding F-8).
+//
+// WHAT CHANGED
+// ------------
+//   * The module-level `Map` is gone. Counting now happens in
+//     rate-limit-store.ts, which is Redis-backed when REDIS_URL is set
+//     and in-memory otherwise. See that file for why a per-instance Map
+//     counted nothing on Vercel.
+//   * `checkLimit` is now ASYNC. It has to be: a distributed counter is
+//     a network round trip. Every call site was updated; no synchronous
+//     variant is kept, because leaving one would let a caller silently
+//     opt back into per-instance limiting with no visible difference at
+//     the call site.
+//   * The key is built from `getClientIp` (client-ip.ts) instead of the
+//     leftmost `x-forwarded-for` entry. A caller-chosen key means a
+//     caller-chosen bucket, which defeats the limiter however good the
+//     store is.
+//
+// The sliding-window semantics and the default 100/minute are unchanged.
 
 import { NextRequest, NextResponse } from 'next/server';
 
-// In-memory store (replace with Redis in production)
-const requestStore = new Map<string, number[]>();
+import { getClientIp } from './client-ip';
+import { getRateLimitStore } from './rate-limit-store';
 
 export interface RateLimitConfig {
   windowMs: number;
   maxRequests: number;
   keyGenerator?: (req: NextRequest) => string;
+}
+
+export interface RateLimitResult {
+  allowed: boolean;
+  remaining: number;
+  reset: number;
+  /** Which store answered -- 'memory' in production means Redis is unreachable. */
+  store: 'redis' | 'memory';
 }
 
 export class RateLimiter {
@@ -17,10 +45,10 @@ export class RateLimiter {
     maxRequests: 100,
   };
 
-  checkLimit(
+  async checkLimit(
     req: NextRequest,
     config?: Partial<RateLimitConfig>
-  ): { allowed: boolean; remaining: number; reset: number } {
+  ): Promise<RateLimitResult> {
     const finalConfig = {
       ...this.defaultConfig,
       ...config,
@@ -28,49 +56,35 @@ export class RateLimiter {
 
     const key = this.getKey(req, finalConfig);
 
-    const now = Date.now();
-    const windowStart = now - finalConfig.windowMs;
-
-    const requests = (requestStore.get(key) ?? []).filter(
-      (timestamp) => timestamp > windowStart
+    const hit = await getRateLimitStore().hit(
+      key,
+      finalConfig.windowMs,
+      finalConfig.maxRequests
     );
 
-    if (requests.length >= finalConfig.maxRequests) {
-      return {
-        allowed: false,
-        remaining: 0,
-        reset: (requests[0] ?? now) + finalConfig.windowMs,
-      };
-    }
-
-    requests.push(now);
-    requestStore.set(key, requests);
-
     return {
-      allowed: true,
-      remaining: finalConfig.maxRequests - requests.length,
-      reset: now + finalConfig.windowMs,
+      allowed: hit.allowed,
+      remaining: hit.remaining,
+      reset: hit.reset,
+      store: hit.store,
     };
   }
 
+  /**
+   * The bucket a request counts against.
+   *
+   * `getClientIp` applies the trusted-proxy model; an unattributable
+   * request lands in the shared 'unknown' bucket rather than a
+   * per-request one. A custom `keyGenerator` still wins -- the auth
+   * pre-check route uses one to bucket by IP under its own namespace so
+   * a credential-probing client cannot spend another route's budget.
+   */
   private getKey(req: NextRequest, config: RateLimitConfig): string {
     if (config.keyGenerator) {
       return config.keyGenerator(req);
     }
 
-    // Next.js no longer exposes req.ip.
-    // Try the standard proxy headers.
-    const forwardedFor = req.headers.get('x-forwarded-for');
-    const realIp = req.headers.get('x-real-ip');
-
-    const ip =
-      forwardedFor?.split(',')[0].trim() ??
-      realIp ??
-      'unknown';
-
-    const path = req.nextUrl.pathname;
-
-    return `rate-limit:${ip}:${path}`;
+    return `${getClientIp(req)}:${req.nextUrl.pathname}`;
   }
 }
 
@@ -87,10 +101,7 @@ export async function withRateLimit(
     ...config,
   };
 
-  const { allowed, remaining, reset } = rateLimiter.checkLimit(
-    req,
-    finalConfig
-  );
+  const { allowed, remaining, reset } = await rateLimiter.checkLimit(req, finalConfig);
 
   if (!allowed) {
     return NextResponse.json(
@@ -107,6 +118,9 @@ export async function withRateLimit(
           'X-RateLimit-Limit': finalConfig.maxRequests.toString(),
           'X-RateLimit-Remaining': '0',
           'X-RateLimit-Reset': reset.toString(),
+          // Seconds, per RFC 9110 section 10.2.3. Without it a client
+          // has to guess, and guessing clients retry immediately.
+          'Retry-After': Math.max(1, Math.ceil((reset - Date.now()) / 1000)).toString(),
         },
       }
     );

@@ -20,6 +20,8 @@ import { vehicleIdentityResolver } from '@/modules/vehicles/services/vehicle-ide
 import { Anomaly, AnomalySeverity } from '@/shared/types/anomaly.types';
 import '@/shared/types/anomaly.tenancy-addendum';
 import crypto from 'crypto';
+import type { AIEvidence } from '@/modules/ai/types/ai-evidence.types';
+import { evidenceFromRows } from '@/modules/ai/services/ai-evidence.builders';
 
 export interface DetectedAnomaly {
   type: 'fuel' | 'expense' | 'maintenance';
@@ -28,6 +30,13 @@ export interface DetectedAnomaly {
   data: any;
   recommendation: string;
   licensePlate?: string;
+  /**
+   * BACKLOG ITEM 7 -- the stored rows behind this detection.
+   *
+   * `data` already carries the computed figures, but those are the
+   * model's own output and cannot be re-checked. These references can.
+   */
+  evidence?: AIEvidence[];
 }
 
 // Backward-compatible alias -- some existing callers may reference this name.
@@ -86,6 +95,18 @@ export class AnomalyDetectionService {
             const efficiency = distance / log.fuel_volume;
 
             if (avgEfficiency > 0 && efficiency < avgEfficiency * 0.7) {
+              /**
+               * BACKLOG ITEM 7 -- exactly the two rows the finding is
+               * a comparison OF.
+               *
+               * The efficiency figure is (log.odometer -
+               * prevLog.odometer) / log.fuel_volume, so those two
+               * refuels ARE the computation. Citing the whole vehicle
+               * history instead would be broader and less useful: a
+               * reviewer wants the pair that produced the number, and
+               * the fleet baseline it was compared against is a derived
+               * average, not a fetchable record.
+               */
               anomalies.push({
                 type: 'fuel',
                 severity: 'medium',
@@ -93,6 +114,10 @@ export class AnomalyDetectionService {
                 data: { licensePlate, efficiency, avgEfficiency, log },
                 recommendation: 'Check for fuel leaks, tire pressure, or driving behavior',
                 licensePlate,
+                evidence: evidenceFromRows('tblfuellogs', [log, prevLog], {
+                  observedAtField: 'date',
+                  valueField: 'fuel_volume',
+                }),
               });
             }
           }
@@ -130,6 +155,18 @@ export class AnomalyDetectionService {
       const lastMonthTotal = monthlyTotals.get(lastMonth) || 0;
 
       if (avgMonthly > 0 && lastMonthTotal > avgMonthly * 1.5) {
+        /**
+         * BACKLOG ITEM 7 -- the expenses that made up the spike month.
+         *
+         * The finding is "this month's total is 1.5x the average", so
+         * the rows a reviewer needs are the ones summing to that total,
+         * not every expense the vehicle has ever had. Filtered to the
+         * month under test for exactly that reason.
+         */
+        const spikeMonthExpenses = vehicleExpenses.filter(
+          (e) => new Date(e.date).toISOString().slice(0, 7) === lastMonth
+        );
+
         anomalies.push({
           type: 'expense',
           severity: lastMonthTotal > avgMonthly * 2.5 ? 'high' : 'medium',
@@ -137,6 +174,10 @@ export class AnomalyDetectionService {
           data: { licensePlate, lastMonthTotal, avgMonthly },
           recommendation: 'Review recent expenses for unusual patterns',
           licensePlate,
+          evidence: evidenceFromRows('tblexpenses', spikeMonthExpenses, {
+            observedAtField: 'date',
+            valueField: 'amount',
+          }),
         });
       }
     }
@@ -215,6 +256,10 @@ export class AnomalyDetectionService {
           recommendation: item.recommendation,
           licensePlate: item.licensePlate,
           data: item.data,
+          // BACKLOG ITEM 7. Omitted when the detection cited nothing,
+          // rather than persisted as an empty array -- see the note on
+          // Anomaly.evidence.
+          ...(item.evidence?.length ? { evidence: item.evidence } : {}),
           fingerprint,
           orgUnitId,
           detectedAt: new Date(),

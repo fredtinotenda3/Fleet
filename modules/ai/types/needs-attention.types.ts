@@ -6,6 +6,7 @@
 // and scoring logic.
 
 import type { AISeverity } from './ai.types';
+import type { AIEvidence } from './ai-evidence.types';
 import type { AttentionOwnerTarget } from '@/modules/attention/services/attention-ownership.resolver';
 // NOTE: this is the ai module (a source of intelligence) depending on
 // the attention module (its persistence layer) for a TYPE ONLY. That
@@ -58,6 +59,22 @@ export interface NeedsAttentionItem {
    * Omitted (undefined) is treated exactly like `{ kind: 'none' }`.
    */
   ownerTarget?: AttentionOwnerTarget;
+  /**
+   * BACKLOG ITEM 7 -- the stored records behind this item, carried
+   * through from the source that produced it.
+   *
+   * FORWARDED, never re-derived. The aggregator does not read the
+   * underlying rows a second time to build this: each per-source reader
+   * hands over the evidence its own service already produced, so the
+   * feed cites exactly what the score was computed from. Re-deriving
+   * would give the feed a second, silently divergent answer to "what
+   * did you look at" -- which is the shape of every bug this codebase
+   * has spent phases removing.
+   *
+   * Absent for a source that cannot cite a stored record; see
+   * BACKLOG_REMAINING.md.
+   */
+  evidence?: AIEvidence[];
 }
 
 export interface NeedsAttentionFeed {

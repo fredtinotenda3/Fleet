@@ -258,6 +258,14 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
       // geocode-cache.repository.ts for why a global cache would be a
       // cross-tenant movement-inference channel.
       'tblgeocode_cache',
+      // PHASE 4 daily aggregates, read by the reporting path added in
+      // BACKLOG ITEM 5. Registered here because a rollup carries the
+      // orgUnitId of the readings it summarises and is read through the
+      // same scope predicate: an aggregate over expired telemetry must
+      // not become the side channel the row-level filter closed, which
+      // is exactly what happened with the anomaly severity counts and
+      // the report engine's $match.
+      'tbltelematics_daily_rollup',
     ],
     level: 'org-unit',
     orgUnitSource: 'vehicle',
@@ -396,7 +404,7 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
   // ── Confirmed in the Phase 0 foundation-integrity pass. ────────────
   {
     module: 'attention',
-    collections: ['tblattentionitems', 'tblvalueledger'],
+    collections: ['tblattentionitems', 'tblvalueledger', 'tblattention_dispatches'],
     level: 'org-unit',
     orgUnitSource: 'parent-record',
     rationale:
@@ -414,7 +422,14 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
       'with its own orgUnitId) is persisted with orgUnitId unset -- fail-closed, invisible to ' +
       'narrowed reads, same as any other unbackfilled row in this codebase. value_ledger ' +
       'inherits the same (now correctly-resolved) orgUnitId from the attention item it ' +
-      'evidences at write time, in POST /:id/resolve.',
+      'evidences at write time, in POST /:id/resolve. BACKLOG ITEM 6 adds ' +
+      'tblattention_dispatches, which records what an item CAUSED (a work order, a scheduled ' +
+      'maintenance job). It inherits the item\'s own orgUnitId at write time and its list read ' +
+      'applies the standard predicate -- a dispatch record names a vehicle and the work created ' +
+      'against it, so it is exactly as sensitive as the item behind it. The idempotency PROBE ' +
+      '(findDispatch) is deliberately tenant-scoped only: narrowing it by org unit would let a ' +
+      'caller in another branch miss an existing dispatch and raise a second work order for the ' +
+      'same finding.',
     confirmed: true,
   },
 

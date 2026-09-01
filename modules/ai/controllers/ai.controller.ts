@@ -10,6 +10,7 @@ import {
 } from '../services';
 import { needsAttentionService } from '../services/needs-attention.service';
 import { attentionResolutionService } from '@/modules/attention/services/attention-resolution.service';
+import { attentionDispatchTrigger } from '@/modules/attention/services/attention-dispatch.trigger';
 import { resolveAttentionItemSchema } from '@/shared/validations/attention.schema';
 
 import { successResponse, createdResponse, errorResponse } from '@/server/utils/response.utils';
@@ -322,6 +323,40 @@ export class AIController {
       );
 
       return createdResponse(result);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /**
+   * BACKLOG ITEM 6 -- the operator-initiated dispatch trigger.
+   *
+   * This is the platform's DEFAULT and, unless
+   * `ATTENTION_AUTO_DISPATCH_ENABLED=true`, its ONLY route from a
+   * finding to created work: a person looks at an item and asks for it
+   * to be actioned. See attention-dispatch.config.ts for why the
+   * automatic path is opt-in.
+   *
+   * The route's permission gate (WORKORDER_CREATE or
+   * MAINTENANCE_CREATE) is deliberately stricter than the
+   * ANALYTICS_VIEW the rest of this feed uses: reading a finding and
+   * creating a work order against a vehicle are different acts.
+   *
+   * Every outcome is a 200 with a `status`, not an error, EXCEPT an
+   * item the caller may not see -- which is a 404 via NotFoundError,
+   * per the Phase G convention that an out-of-scope single read must
+   * not confirm the row exists. 'duplicate', 'no_action', 'refused'
+   * and 'action_failed' are all answers an operator needs to read, and
+   * mapping them onto HTTP errors would lose the reason.
+   */
+  async dispatchNeedsAttentionItem(req: NextRequest, rawItemKey: string) {
+    try {
+      const itemKey = decodeURIComponent(rawItemKey);
+      const { context, userId } = await resolveTenantContextWithUser(req);
+
+      const outcome = await attentionDispatchTrigger.dispatchByOperator(itemKey, context, userId);
+
+      return successResponse(outcome);
     } catch (error) {
       return this.handleError(error);
     }

@@ -87,6 +87,18 @@ export interface AttentionDispatchRecord {
   dispatchedBy: string;
   /** Set when the dispatched action later completed and resolved the item. */
   completedAt?: Date;
+  /**
+   * BACKLOG ITEM 6 -- set when the executor refused or failed AFTER the
+   * record was written.
+   *
+   * The record is never deleted on failure (record-before-execute is
+   * deliberate; see the comment on recordDispatch below), so without
+   * these two fields a dispatch record with no work behind it is
+   * indistinguishable from one whose work simply has not been linked
+   * back yet.
+   */
+  failedAt?: Date;
+  failureReason?: string;
 }
 
 export type DispatchOutcome =

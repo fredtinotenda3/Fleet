@@ -7,6 +7,7 @@
 // backward compatibility with any existing in-memory callers.
 
 import { BaseEntity } from './common.types';
+import type { AIEvidence } from '@/modules/ai/types/ai-evidence.types';
 
 export type AnomalyCategory = 'fuel' | 'expense' | 'maintenance';
 export type AnomalySeverity = 'low' | 'medium' | 'high' | 'critical';
@@ -29,6 +30,15 @@ export interface Anomaly extends BaseEntity {
    */
   fingerprint: string;
   detectedAt: Date;
+  /**
+   * BACKLOG ITEM 7 -- the stored rows this anomaly was derived from.
+   *
+   * Distinct from `data`, which holds the COMPUTED figures (efficiency,
+   * averages) for drill-down. Those cannot be re-checked: they are the
+   * model's own output. `evidence` points at rows a reviewer can fetch,
+   * which is what makes a disputed anomaly settleable.
+   */
+  evidence?: AIEvidence[];
   acknowledgedAt?: Date;
   acknowledgedBy?: string;
   resolvedAt?: Date;

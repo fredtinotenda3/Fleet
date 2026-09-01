@@ -13,6 +13,7 @@ import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/conte
 import { withAuth } from '@/server/middleware/with-auth';
 import { Permission } from '@/server/permissions/roles';
 import { oauthTokenService, OAuthTokenService } from '../services/oauth-token.service';
+import { getClientIpOrUndefined } from '@/infrastructure/security/client-ip';
 
 export class OAuthClientController {
   constructor(
@@ -130,7 +131,9 @@ export class OAuthClientController {
         throw new ValidationError('Invalid token request', parsed.error.flatten());
       }
 
-      const ipAddress = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+      // BACKLOG ITEM 3 -- recorded against the issued token, so it
+      // must not be a client-supplied string. See client-ip.ts.
+      const ipAddress = getClientIpOrUndefined(req);
       const userAgent = req.headers.get('user-agent') || undefined;
 
       const response = await this.tokenService.issueToken(parsed.data, ipAddress, userAgent);

@@ -18,6 +18,7 @@ import { resolveOrganization } from '@/server/tenancy/organization-resolver';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 import { SPEEDING_THRESHOLD_KMH } from '@/modules/telematics/services/reading-alerts';
+import { evidenceFromRows, mergeEvidence } from './ai-evidence.builders';
 
 /**
  * PHASE 1, F-18: km/h over SPEEDING_THRESHOLD_KMH at which a speeding
@@ -184,6 +185,28 @@ export class DriverRiskService extends BaseAIService {
 
       const incidents = this.collectIncidents(trips, telematicsData);
 
+      /**
+       * BACKLOG ITEM 7 -- the rows behind a score that can affect
+       * somebody's employment.
+       *
+       * Telemetry cited FIRST and ordered by recency: the speeding,
+       * hard-brake and hard-acceleration counts in `metrics` come
+       * entirely from those readings, so they are the rows a driver
+       * disputing this score needs. Trips follow, because the fatigue
+       * and night-driving components are computed from them.
+       *
+       * Deliberately a capped sample (see ai-evidence.builders.ts). A
+       * score built over four hundred readings cites twenty; the
+       * population size is visible in `metrics`, so the sampling is not
+       * hidden. Recorded as a known limit in BACKLOG_REMAINING.md.
+       */
+      const evidence = mergeEvidence([
+        evidenceFromRows('tbltelematics', telematicsData as never, {
+          observedAtField: 'timestamp',
+        }),
+        evidenceFromRows('tbltrips', trips as never, { observedAtField: 'date' }),
+      ]);
+
       const score: DriverRiskScore = {
         driverId: driver.userId,
         driverName: driver.name || driver.email || 'Unknown Driver',
@@ -194,6 +217,10 @@ export class DriverRiskService extends BaseAIService {
         trends,
         recommendations,
         incidents,
+        // A driver with no trips and no telemetry produces a
+        // default-safe score with nothing behind it. Omitted rather
+        // than an empty array, so "scored on no data" is visible.
+        ...(evidence.length > 0 ? { evidence } : {}),
       };
 
       this.logPrediction({

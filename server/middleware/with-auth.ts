@@ -12,6 +12,7 @@ import {
   canPerform,
 } from '@/server/auth/auth-context';
 import { rateLimiter, RateLimitConfig } from '@/infrastructure/security/rate-limit';
+import { getClientIp } from '@/infrastructure/security/client-ip';
 import { errorResponse } from '@/server/utils/response.utils';
 import { ResourceContext } from '@/modules/security/types/resource-permission.types';
 import { threatDetectionService } from '@/modules/security/services/threat-detection.service';
@@ -50,8 +51,19 @@ interface WithAuthOptions<P = unknown> {
   attributes?: AttributesResolver<P>;
 }
 
+/**
+ * BACKLOG ITEM 3: was
+ * `req.headers.get('x-forwarded-for')?.split(',')[0]` -- the leftmost
+ * entry, which is whatever the client itself sent. Threat detection
+ * keyed on it, so brute-force lockout and the rate-limit-anomaly signal
+ * were both bucketed by an attacker-chosen value.
+ *
+ * Now delegates to the single trusted-proxy-aware resolver in
+ * client-ip.ts. Kept as a named local function so the call sites below
+ * read unchanged.
+ */
 function getIpAddress(req: NextRequest): string {
-  return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+  return getClientIp(req);
 }
 
 /** Collapses ObjectId-shaped path segments so route labels stay low-cardinality in Prometheus. */
@@ -79,7 +91,9 @@ export function withAuth<P = unknown>(handler: Handler<P>, options: WithAuthOpti
       // ─── Rate Limiting ──────────────────────────────────────────────────────
       if (options.rateLimit !== false) {
         const rateLimitConfig = typeof options.rateLimit === 'object' ? options.rateLimit : undefined;
-        const { allowed, reset } = rateLimiter.checkLimit(req, rateLimitConfig);
+        // Awaited: the limiter is Redis-backed when REDIS_URL is set, so
+        // the check is a network round trip rather than a Map lookup.
+        const { allowed, reset } = await rateLimiter.checkLimit(req, rateLimitConfig);
 
         if (!allowed) {
           threatDetectionService

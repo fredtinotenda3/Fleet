@@ -14,6 +14,7 @@ import {
 import { ruleRepository } from '../repositories/rule.repository';
 import { ruleActionRegistry } from '../registry/RuleActionRegistry';
 import { registerDefaultRuleActions } from '../actions/default-actions';
+import { registerMaintenanceRuleActions } from '../actions/maintenance-actions';
 import { NotFoundError, ValidationError } from '@/server/errors/app.errors';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
 import { monitoring } from '@/infrastructure/monitoring/logger';
@@ -23,6 +24,13 @@ import { monitoring } from '@/infrastructure/monitoring/logger';
 // first imported, mirroring how modules/workflows registers nothing
 // extra but relies on its engine being self-contained. Idempotent.
 registerDefaultRuleActions();
+
+// BACKLOG ITEM 6: create_work_order / schedule_maintenance. Registered
+// here, beside the defaults, because AttentionDispatchService checks
+// `ruleActionRegistry.isRegistered(...)` BEFORE recording a dispatch and
+// refuses safely when an executor is absent -- which is why dispatch has
+// been inert. Idempotent, like the defaults.
+registerMaintenanceRuleActions();
 
 const MAX_CONDITION_DEPTH = 10;
 

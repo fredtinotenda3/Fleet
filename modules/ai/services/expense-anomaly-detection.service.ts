@@ -11,6 +11,7 @@ import {
 import { expenseRepository } from '@/modules/expenses/repositories/expense.repository';
 import { expenseTypeRepository } from '@/modules/expenses/repositories/expense-type.repository';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { evidenceFromRow } from './ai-evidence.builders';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 
 interface ExpenseBaseline {
@@ -297,6 +298,21 @@ export class ExpenseAnomalyDetectionService extends BaseAIService {
       entityType = 'vehicle';
     }
 
+    /**
+     * BACKLOG ITEM 7 -- the expense record itself.
+     *
+     * This is the one service whose evidence is genuinely a single row:
+     * every anomaly on this alert is a comparison of THIS expense
+     * against a fleet-wide baseline, so the row a reviewer needs to
+     * pull is this one. The baseline is a computed distribution over
+     * every expense in scope, not a record, so it is deliberately not
+     * cited -- a reference must be fetchable, and "the baseline" is not.
+     */
+    const evidence = evidenceFromRow('tblexpenses', expense, {
+      observedAtField: 'date',
+      valueField: 'amount',
+    });
+
     return {
       alertId: `expense_alert_${expense._id}_${Date.now()}`,
       entityId: expense._id!,
@@ -308,6 +324,7 @@ export class ExpenseAnomalyDetectionService extends BaseAIService {
       pattern: this.detectPattern(anomalies),
       recommendation: this.generateRecommendation(anomalies),
       status: 'open',
+      ...(evidence.length > 0 ? { evidence } : {}),
     };
   }
 

@@ -27,6 +27,19 @@ declare module '../types/telematics.types' {
   interface TelematicsAlert {
     /** Inherited from the vehicle that raised the alert. */
     orgUnitId?: string;
+    /**
+     * BACKLOG ITEM 2 -- why `orgUnitId` is what it is.
+     *
+     * Written by `createAlert` from `resolveAlertOwnership`. Present so
+     * a row with no org unit (invisible to every scoped reader) is
+     * self-explanatory: 'vehicle-unassigned' is an operator action,
+     * 'vehicle-not-found' is a data problem, and 'lookup-failed' is an
+     * infrastructure blip the backfill will clear up. Without it, all
+     * three look identical to whoever finds the empty list.
+     *
+     * Optional: rows written before this field existed do not carry one.
+     */
+    orgUnitResolution?: 'vehicle' | 'vehicle-unassigned' | 'vehicle-not-found' | 'lookup-failed';
   }
 
   interface TelematicsDevice {

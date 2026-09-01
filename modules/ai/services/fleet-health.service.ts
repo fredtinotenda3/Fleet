@@ -18,6 +18,7 @@ import { tripRepository } from '@/modules/trips/repositories/trip.repository';
 import { fuelRepository } from '@/modules/fuel/repositories/fuel.repository';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
+import { evidenceFromRows, mergeEvidence } from './ai-evidence.builders';
 
 export class FleetHealthService extends BaseAIService {
   protected readonly serviceName = 'FleetHealth';
@@ -92,6 +93,27 @@ export class FleetHealthService extends BaseAIService {
         metrics
       );
 
+      /**
+       * BACKLOG ITEM 7 -- what a fleet-wide score can honestly cite.
+       *
+       * This is the service P6-N2 had in mind with "several compute
+       * across an aggregation where the answer is genuinely these 400
+       * readings": the overall score is a mean over every vehicle, so
+       * no small set of rows "drove" it.
+       *
+       * What IS citable, and useful: the VEHICLES scored and the
+       * MAINTENANCE records that produced the component scores -- the
+       * two inputs carrying 90% of the weight in
+       * `calculateVehicleScores`. Expenses, trips and fuel carry 10%
+       * between them and are deliberately not cited; padding the sample
+       * with them would make it look broader while making the twenty
+       * entries less likely to include the ones that mattered.
+       */
+      const evidence = mergeEvidence([
+        evidenceFromRows('tblvehicles', vehicles as never),
+        evidenceFromRows('tblreminders', maintenance as never, { observedAtField: 'due_date' }),
+      ]);
+
       const healthScore: FleetHealthScore = {
         overallScore,
         timestamp: new Date(),
@@ -99,6 +121,7 @@ export class FleetHealthService extends BaseAIService {
         metrics,
         trends,
         recommendations,
+        ...(evidence.length > 0 ? { evidence } : {}),
       };
 
       this.logPrediction({

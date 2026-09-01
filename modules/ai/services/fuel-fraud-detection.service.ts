@@ -14,6 +14,7 @@ import { fuelRepository } from '@/modules/fuel/repositories/fuel.repository';
 import { vehicleRepository } from '@/modules/vehicles/repositories/vehicle.repository';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
+import { evidenceFromRows, evidenceFromRow, mergeEvidence } from './ai-evidence.builders';
 
 interface FuelBaseline {
   averageVolume: number;
@@ -228,6 +229,24 @@ export class FuelFraudDetectionService extends BaseAIService {
 
     const severity = this.determineSeverity(confidence, Math.min(1, anomalies.length / 5));
 
+    /**
+      * BACKLOG ITEM 7 -- what this score actually rested on.
+      *
+      * The fuel logs ARE the computation: the baseline, every anomaly
+      * and every pattern below are derived from exactly these rows, so
+      * citing them lets a driver disputing a fraud alert pull the same
+      * refuels the model did. `cost` is carried as the value because it
+      * is the number an investigation starts from.
+      *
+      * The vehicle is cited too -- the baseline is per-vehicle
+      * (tank capacity, fuel type), so the vehicle record is an input to
+      * the finding and not merely its subject.
+      */
+    const evidence = mergeEvidence([
+      evidenceFromRows('tblfuellogs', fuelLogs, { observedAtField: 'date', valueField: 'cost' }),
+      evidenceFromRow('tblvehicles', vehicle),
+    ]);
+
     const alert: FuelFraudAlert = {
       alertId: `fraud_${vehicleId}_${Date.now()}`,
       vehicleId,
@@ -239,6 +258,10 @@ export class FuelFraudDetectionService extends BaseAIService {
       patterns,
       recommendation: this.generateRecommendation(anomalies, patterns),
       status: 'open',
+      // Omitted entirely when nothing citable was read: an empty array
+      // reads as "we checked and found nothing", which is a different
+      // claim from "we did not record what we looked at".
+      ...(evidence.length > 0 ? { evidence } : {}),
     };
 
     this.logPrediction({

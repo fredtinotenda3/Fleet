@@ -12,10 +12,21 @@ import { tokenLoginSchema, tokenRefreshSchema, tokenRevokeSchema } from '@/share
 import { successResponse, errorResponse } from '@/server/utils/response.utils';
 import { AppError, UnauthorizedError, ValidationError, isAppError, describeError } from '@/server/errors/app.errors';
 import { rateLimiter } from '@/infrastructure/security/rate-limit';
+import { getClientIpOrUndefined } from '@/infrastructure/security/client-ip';
 import { Role } from '@/server/permissions/roles';
 
+/**
+ * BACKLOG ITEM 3: was the leftmost `x-forwarded-for` entry, i.e. a
+ * value the caller supplies. It keys the login rate limit AND is
+ * recorded on the session/threat-detection records, so a forged value
+ * both bought unlimited login attempts and wrote a fabricated address
+ * into the audit trail. Now the shared trusted-proxy resolver;
+ * `undefined` (rather than the string 'unknown') is preserved for the
+ * RECORDING call sites, which must not store a placeholder that later
+ * reads as a real address.
+ */
 function getClientIp(req: NextRequest): string | undefined {
-  return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || undefined;
+  return getClientIpOrUndefined(req);
 }
 
 /**
@@ -72,7 +83,7 @@ function clearAccessTokenCookie(response: NextResponse): void {
 export class TokenController {
   async login(req: NextRequest) {
     try {
-      const { allowed, reset } = rateLimiter.checkLimit(req, {
+      const { allowed, reset } = await rateLimiter.checkLimit(req, {
         windowMs: 60_000,
         maxRequests: 5,
         keyGenerator: (r) => `token-login:${getClientIp(r) || 'unknown'}`,

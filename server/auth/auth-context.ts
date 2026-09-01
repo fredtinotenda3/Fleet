@@ -11,6 +11,7 @@ import { apiKeyService } from '@/modules/security/services/api-key.service';
 import { tokenService } from '@/infrastructure/security/token.service';
 import { ACCESS_TOKEN_COOKIE_NAME } from '@/infrastructure/security/edge-token-verify';
 import { PLATFORM_SCOPE_TENANT_ID } from '@/server/tenancy/tenant-scope';
+import { getClientIpOrUndefined } from '@/infrastructure/security/client-ip';
 
 export interface AuthContext {
   userId: string;
@@ -63,8 +64,17 @@ export interface AuthContext {
   apiKeyId?: string;
 }
 
+/**
+ * BACKLOG ITEM 3: the address recorded on a UserSession row. Was the
+ * leftmost `x-forwarded-for` entry, so "which IP was this session
+ * created from" -- the field an operator reads when investigating a
+ * compromised account, and the field session-revocation decisions are
+ * made from -- was whatever the client claimed. Now resolved through
+ * the trusted-proxy model; `undefined` when unattributable, never a
+ * placeholder that reads as an address.
+ */
 function getClientIp(req: NextRequest): string | undefined {
-  return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || undefined;
+  return getClientIpOrUndefined(req);
 }
 
 async function getAuthContextFromApiKey(req: NextRequest): Promise<AuthContext | null> {

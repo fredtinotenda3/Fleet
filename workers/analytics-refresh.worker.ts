@@ -21,7 +21,7 @@
 import { BaseWorker } from '@/infrastructure/queue/worker-base.service';
 import { backgroundJobScopeService } from '@/server/scheduler/background-job-scope.service';
 import { fleetAnalyticsService } from '@/modules/analytics/services/fleet-analytics.service';
-import { queryCache } from '@/infrastructure/cache/query-cache.service';
+import { queryCache, orgWideCacheScope } from '@/infrastructure/cache/query-cache.service';
 import { monitoring } from '@/infrastructure/monitoring/logger';
 
 type RefreshAnalyticsPayload = Record<string, never>;
@@ -35,11 +35,23 @@ export class AnalyticsRefreshWorker extends BaseWorker<RefreshAnalyticsPayload> 
     const summary = await backgroundJobScopeService.forEachOrganization('refresh-analytics', async (scope) => {
       // Proactively re-populate the dashboard KPI cache for this
       // organization so the next request-path read is warm rather than
-      // paying for a live aggregation. queryCache.getDashboardKPIs
-      // already keys strictly per-tenantId (`dashboard:${tenantId}:kpis`),
-      // so warming one organization can never overwrite or expose
-      // another organization's cached figures.
-      await queryCache.getDashboardKPIs(scope.organizationId, () =>
+      // paying for a live aggregation.
+      //
+      // BACKLOG ITEM 4: the value computed here is ORG-WIDE --
+      // getFleetKPIs is called with no TenantContext, deliberately,
+      // because a warm job has no caller whose scope it could use. It
+      // used to be stored under `dashboard:${tenantId}:kpis`, a key
+      // carrying no scope at all, so the first scoped read path wired
+      // to this cache would have served every branch manager the whole
+      // organization's figures. `orgWideCacheScope` now states that
+      // explicitly and puts it in the key, where a scoped caller's own
+      // key can never collide with it.
+      //
+      // No-op unless QUERY_CACHE_ENABLED=true -- see the header of
+      // query-cache.service.ts for why the default is off. The call is
+      // left in place rather than removed so that enabling the flag
+      // restores warming without another code change.
+      await queryCache.getDashboardKPIs(orgWideCacheScope(scope.organizationId), () =>
         fleetAnalyticsService.getFleetKPIs(scope.organizationId)
       );
     });
