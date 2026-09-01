@@ -74,10 +74,18 @@ const LANDING_RULES: Array<{ permission: Permission; path: string }> = [
 export function resolveLandingPath(roles: string[]): string {
   if (!roles || roles.length === 0) return DEFAULT_LANDING_PATH;
 
-  // A platform admin has every permission, so the first rule would match
-  // regardless -- but being explicit documents the intent and survives
-  // reordering of LANDING_RULES.
-  if (roles.includes(Role.SUPER_ADMIN)) return '/admin';
+  // FIX (post-login 404): this used to explicitly send SUPER_ADMIN to
+  // '/admin'. There is no such page -- app/(protected) has no `admin`
+  // route, only API handlers under app/api/admin/* (job scheduling,
+  // reminder maintenance, user provisioning). Every login path funnels
+  // through this function (app/page.tsx, LoginPage.tsx,
+  // MfaVerifyPage.tsx), so a platform admin 404'd on every single
+  // login. A SUPER_ADMIN holds every permission including
+  // ANALYTICS_VIEW, so simply falling through to LANDING_RULES below
+  // is correct and lands them on '/dashboard' -- the same real,
+  // existing page every other manager-grade role gets. If a genuine
+  // platform-admin console page is added later, point this at it then;
+  // until it exists, do not special-case a route that isn't there.
 
   for (const rule of LANDING_RULES) {
     if (permissionService.hasPermission(roles, rule.permission)) {

@@ -109,8 +109,8 @@ describe('hierarchy ordering is internally consistent', () => {
 });
 
 describe('post-login landing', () => {
-  it('sends a platform admin to the platform console', () => {
-    expect(resolveLandingPath([Role.SUPER_ADMIN])).toBe('/admin');
+  it('sends a platform admin to the dashboard (no /admin page exists)', () => {
+    expect(resolveLandingPath([Role.SUPER_ADMIN])).toBe('/dashboard');
   });
 
   it('sends managers and owners to the dashboard', () => {
