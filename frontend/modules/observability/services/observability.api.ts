@@ -1,7 +1,11 @@
 // frontend/modules/observability/services/observability.api.ts
 
 import { apiClient } from '@/shared/utils/api-client.utils';
-import type { ProviderHealthResponse } from '../types';
+import type {
+  ProviderHealthResponse,
+  OutboxSummaryResponse,
+  ObservabilitySummaryResponse,
+} from '../types';
 
 const BASE = '/api/observability';
 
@@ -17,5 +21,26 @@ export const observabilityApi = {
    */
   async getTelematicsProviderHealth(): Promise<ProviderHealthResponse> {
     return apiClient.get<ProviderHealthResponse>(`${BASE}/telematics/providers`);
+  },
+
+  /**
+   * GET /api/observability/outbox -- gated on Permission.PLATFORM_VIEW,
+   * same as provider health (see app/api/observability/outbox/route.ts).
+   * Plain (non-enveloped) JSON, so apiClient.get() returns it as-is.
+   */
+  async getOutboxSummary(): Promise<OutboxSummaryResponse> {
+    return apiClient.get<OutboxSummaryResponse>(`${BASE}/outbox`);
+  },
+
+  /**
+   * GET /api/observability/summary -- gated on Permission.JOB_VIEW,
+   * NOT PLATFORM_VIEW (see app/api/observability/summary/route.ts and
+   * the note on ObservabilitySummaryResponse in ../types). Enveloped
+   * via successResponse ({ success, data, meta }); apiClient.get()
+   * unwraps `data` automatically, so the resolved value here is
+   * already the inner payload.
+   */
+  async getSummary(): Promise<ObservabilitySummaryResponse> {
+    return apiClient.get<ObservabilitySummaryResponse>(`${BASE}/summary`);
   },
 };

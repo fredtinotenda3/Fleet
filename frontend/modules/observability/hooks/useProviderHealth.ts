@@ -6,6 +6,8 @@ import { observabilityApi } from '../services/observability.api';
 export const observabilityKeys = {
   all: ['observability'] as const,
   telematicsProviders: () => [...observabilityKeys.all, 'telematics-providers'] as const,
+  outboxSummary: () => [...observabilityKeys.all, 'outbox-summary'] as const,
+  summary: () => [...observabilityKeys.all, 'summary'] as const,
 };
 
 /**

@@ -6,7 +6,7 @@
 // jsdom or React Testing Library wired up in this repo) without
 // needing to render anything.
 
-import type { ProviderHealthStatus } from '../types';
+import type { ProviderHealthStatus, OutboxStatus } from '../types';
 
 /**
  * The Badge component (frontend/shared/ui/data-display/badge.tsx) only
@@ -135,4 +135,58 @@ export function formatErrorCategory(category: string | null | undefined): string
     return null;
   }
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+// ---------------------------------------------------------------------------
+// Outbox status presentation/formatting
+
+/**
+ * Maps an outbox status to how it should render. 'dead_letter' is
+ * treated as destructive regardless of count -- per the backend
+ * route's own comment, a non-zero dead-letter count means domain
+ * events are being PERMANENTLY LOST, which is the one number on this
+ * dashboard that should never look calm. 'processing' and 'pending'
+ * are normal operating states, not problems, so they render neutral.
+ */
+export function outboxStatusPresentation(status: OutboxStatus): StatusPresentation {
+  switch (status) {
+    case 'dead_letter':
+      return STATUS_PRESENTATION.unavailable;
+    case 'processed':
+      return STATUS_PRESENTATION.healthy;
+    case 'processing':
+    case 'pending':
+    default:
+      return STATUS_PRESENTATION.unknown;
+  }
+}
+
+/** Human-facing label for an outbox status, e.g. 'dead_letter' -> 'Dead letter'. */
+export function outboxStatusLabel(status: OutboxStatus): string {
+  switch (status) {
+    case 'pending':
+      return 'Pending';
+    case 'processing':
+      return 'Processing';
+    case 'processed':
+      return 'Processed';
+    case 'dead_letter':
+      return 'Dead letter';
+    default:
+      return status;
+  }
+}
+
+/**
+ * Formats a raw count for display. Distinguishes 0 (a real, healthy
+ * value worth showing plainly) from missing data -- callers pass
+ * undefined only when a field genuinely isn't present in the response,
+ * which formatCount then renders as an em dash rather than a
+ * misleading zero.
+ */
+export function formatCount(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return '\u2014';
+  }
+  return value.toLocaleString();
 }

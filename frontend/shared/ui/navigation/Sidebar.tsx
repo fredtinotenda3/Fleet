@@ -33,6 +33,7 @@ import {
   AlertOctagon,
   MapPin,
   Activity,
+  Gauge,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUiStore } from '@/frontend/shared/store/ui.store';
@@ -342,6 +343,13 @@ const NAV_SECTIONS: NavSection[] = [
     // the gate on the API route itself.
     title: 'Platform',
     items: [
+      {
+        key: 'operational-dashboard',
+        label: 'Operational Dashboard',
+        href: '/observability/operational',
+        icon: Gauge,
+        permissions: [Permission.PLATFORM_VIEW],
+      },
       {
         key: 'provider-health',
         label: 'Provider Health',

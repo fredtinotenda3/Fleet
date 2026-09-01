@@ -2,4 +2,5 @@
 
 export const OBSERVABILITY_ROUTES = {
   telematicsProviders: '/observability/telematics/providers',
+  operational: '/observability/operational',
 };
