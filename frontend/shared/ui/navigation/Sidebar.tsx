@@ -32,6 +32,7 @@ import {
   Monitor,
   AlertOctagon,
   MapPin,
+  Activity,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUiStore } from '@/frontend/shared/store/ui.store';
@@ -330,6 +331,23 @@ const NAV_SECTIONS: NavSection[] = [
         href: '/organizations/advanced',
         icon: Settings,
         permissions: [Permission.ORG_MANAGE],
+      },
+    ],
+  },
+  {
+    // Platform-only, cross-tenant views. Gated on Permission.PLATFORM_VIEW,
+    // which PLATFORM_ONLY_PERMISSIONS (server/permissions/roles.ts) strips
+    // from every tenant-level role -- so this section is invisible to any
+    // organization owner/admin no matter how many roles they hold, matching
+    // the gate on the API route itself.
+    title: 'Platform',
+    items: [
+      {
+        key: 'provider-health',
+        label: 'Provider Health',
+        href: '/observability/telematics/providers',
+        icon: Activity,
+        permissions: [Permission.PLATFORM_VIEW],
       },
     ],
   },
