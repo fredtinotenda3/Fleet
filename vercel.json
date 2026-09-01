@@ -3,6 +3,9 @@
     "app/api/ai/dashboard/route.ts": {
       "maxDuration": 60
     },
+    "app/api/ai/needs-attention/route.ts": {
+      "maxDuration": 60
+    },
     "app/api/cron/eagletrack-sync/route.ts": {
       "maxDuration": 60
     }

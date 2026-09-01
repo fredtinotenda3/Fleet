@@ -49,6 +49,44 @@ function argValue(flag: string): string | undefined {
 const email = argValue('--email');
 const explicitPassword = argValue('--password');
 
+/**
+ * FIX (silent login lockout via shell quoting): cmd.exe -- unlike
+ * PowerShell and every POSIX shell -- does NOT treat a leading/trailing
+ * single quote as a string delimiter; it passes both quote characters
+ * through to process.argv literally. Running this script from a plain
+ * `C:\...>` prompt with `--password 'SomePass123'` therefore hashes
+ * the password INCLUDING the two quote characters, and the operator
+ * has no way to tell from the command they typed -- the only visible
+ * evidence is that the value printed back in the "PASSWORD:" banner
+ * below still has the quotes around it. Logging in with the password
+ * they actually meant (without quotes) then always fails with a plain
+ * 401, indistinguishable from a genuinely wrong password.
+ *
+ * This does not silently strip the quotes (a password could
+ * legitimately start and end with one) -- it just surfaces the
+ * ambiguity loudly, once, before anything is hashed.
+ */
+if (explicitPassword && explicitPassword.length >= 2) {
+  const first = explicitPassword[0];
+  const last = explicitPassword[explicitPassword.length - 1];
+  if ((first === "'" || first === '"') && first === last) {
+    console.warn('');
+    console.warn('!'.repeat(72));
+    console.warn(`WARNING: --password value starts AND ends with a matching ${first} character.`);
+    console.warn('If you are running this from cmd.exe (a plain "C:\\...>" prompt, not');
+    console.warn('PowerShell and not Git Bash/WSL), quotes are NOT stripped there --');
+    console.warn(`this script received ${JSON.stringify(explicitPassword)} as the literal password,`);
+    console.warn('quote characters included, and will hash exactly that.');
+    console.warn('');
+    console.warn('If that is not what you intended: re-run without the quotes (cmd.exe');
+    console.warn('only needs them to protect spaces, and only double quotes at that), or');
+    console.warn('switch to PowerShell/Git Bash, or use --set-password instead to have a');
+    console.warn('safe password generated for you.');
+    console.warn('!'.repeat(72));
+    console.warn('');
+  }
+}
+
 /** 20 chars from a 64-symbol alphabet ~= 120 bits. */
 function generatePassword(): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*';
