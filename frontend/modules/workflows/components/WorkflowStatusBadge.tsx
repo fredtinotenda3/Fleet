@@ -1,0 +1,23 @@
+// frontend/modules/workflows/components/WorkflowStatusBadge.tsx
+
+'use client';
+
+import { Badge } from '@/frontend/shared/ui/data-display/badge';
+import { cn } from '@/lib/utils';
+import { workflowStatusPresentation, workflowStatusLabel } from '../utils';
+import type { WorkflowStatus } from '../types';
+
+interface WorkflowStatusBadgeProps {
+  status: WorkflowStatus;
+  className?: string;
+}
+
+export function WorkflowStatusBadge({ status, className }: WorkflowStatusBadgeProps) {
+  const presentation = workflowStatusPresentation(status);
+  return (
+    <Badge variant={presentation.badgeVariant} className={cn(presentation.badgeClassName, className)}>
+      <span className={cn('inline-block h-1.5 w-1.5 rounded-full', presentation.dotClassName)} aria-hidden="true" />
+      {workflowStatusLabel(status)}
+    </Badge>
+  );
+}

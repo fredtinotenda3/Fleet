@@ -24,7 +24,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Vehicle Expense & Fleet Management",
-  description: "Created by Fred Tinotenda",
+  description: "Created by Fred Stanley",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,

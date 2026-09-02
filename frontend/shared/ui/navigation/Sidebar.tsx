@@ -33,8 +33,7 @@ import {
   AlertOctagon,
   MapPin,
   Activity,
-  Gauge,
-  Network,
+  GitBranch,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUiStore } from '@/frontend/shared/store/ui.store';
@@ -259,6 +258,17 @@ const NAV_SECTIONS: NavSection[] = [
         ],
       },
       {
+        key: 'workflows',
+        label: 'Workflows',
+        href: '/workflows',
+        icon: GitBranch,
+        permissions: [Permission.WORKFLOW_VIEW],
+        children: [
+          { key: 'workflows-instances', label: 'Instances', href: '/workflows/instances', permissions: [Permission.WORKFLOW_VIEW] },
+          { key: 'workflows-my-tasks', label: 'My Tasks', href: '/workflows/my-tasks', permissions: [Permission.WORKFLOW_VIEW] },
+        ],
+      },
+      {
         key: 'analytics',
         label: 'Organization Analytics',
         href: '/organizations/analytics',
@@ -344,33 +354,6 @@ const NAV_SECTIONS: NavSection[] = [
     // the gate on the API route itself.
     title: 'Platform',
     items: [
-      {
-        // Platform Admin -- cross-tenant organization and branch
-        // administration. Gated on PLATFORM_VIEW like its siblings, and
-        // matching the read gate on GET /api/platform/organizations.
-        //
-        // The API is stricter than this nav entry: PlatformController
-        // additionally requires the literal Role.SUPER_ADMIN, because
-        // `isSuperAdmin` is also true for organization_owner. That extra
-        // check cannot be expressed here (this file gates on Permissions
-        // only, deliberately -- see the note above isItemVisible about
-        // the hand-maintained role lists that had already drifted once),
-        // and it does not need to be: PLATFORM_ONLY_PERMISSIONS strips
-        // PLATFORM_VIEW from every tenant-level role, so no
-        // organization_owner sees this item either way.
-        key: 'platform-organizations',
-        label: 'Organizations',
-        href: '/platform-admin/organizations',
-        icon: Network,
-        permissions: [Permission.PLATFORM_VIEW],
-      },
-      {
-        key: 'operational-dashboard',
-        label: 'Operational Dashboard',
-        href: '/observability/operational',
-        icon: Gauge,
-        permissions: [Permission.PLATFORM_VIEW],
-      },
       {
         key: 'provider-health',
         label: 'Provider Health',
