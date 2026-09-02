@@ -1,65 +1,88 @@
-# Fleet Leaderboard — changed files
+# Platform Admin — Users, Roles & Permissions: changed files
 
-Verified against the supplied archive: **24 new files, 1 modified file,
+Verified against the supplied archive: **18 new files, 7 modified,
 0 backend files touched.**
 
 ```
-npm run type-check   clean
-npm run test:unit    98 suites, 1714 tests passing (85 new)
+npm run type-check      clean (first pass, no fixes needed)
+npm run test:unit       99 suites / 1814 tests passing (100 new)
 npx eslint <new files>  0 problems
 ```
 
 ## Constraints honoured
 
-- No file under `app/api/**`, `modules/**`, `server/**` or `shared/**`
-  was added or modified. No route, permission or response shape changed.
+- Nothing under `app/api/**`, `modules/**`, `server/**`, `shared/**` or
+  `infrastructure/**` was added or modified. No route, permission, DTO
+  or response shape changed.
 - No vehicle/driver assignment file touched.
-- Everything reads three endpoints that already exist.
+- Every call maps to an endpoint that already exists. Five features that
+  need endpoints which do not exist are documented in
+  `PLATFORM_ADMIN_BACKEND_GAPS.md` and not fabricated.
 
-## New — `frontend/modules/leaderboard/`
+## ⚠️ One note on applying this ZIP
+
+`frontend/shared/ui/navigation/Sidebar.tsx` is cumulative: it carries
+**both** this slice's `Platform Admin` nav group **and** the previous
+slice's `Fleet Leaderboard` entry under *Insights*. Apply this on top of
+a tree that already has the Fleet Leaderboard slice, or delete the
+`fleet-leaderboard` nav item — otherwise that one entry is a dead link.
+Nothing else in this ZIP depends on the leaderboard slice.
+
+The whole `frontend/modules/platform-admin/` directory is included so it
+unzips self-consistent; the table below marks which files are actually
+new or changed.
+
+---
+
+## New — module (`frontend/modules/platform-admin/`)
 
 | File | Purpose |
 | --- | --- |
-| `types/ai-dashboard.types.ts` | Wire shapes for `GET /api/ai/dashboard`, dates as ISO strings. Documents the three batches' incompatible `success` semantics. |
-| `types/leaderboard.types.ts` | View models: `RankedRow`, driver/vehicle rows, the seven-category tile model. |
-| `types/index.ts` | Barrel; re-exports the shared maintenance row shapes rather than copying them. |
-| `services/leaderboard.api.ts` | Read-only wrappers over the three existing endpoints. Clamps `limit`. Sends no tenant/org id. |
-| `services/index.ts` | Barrel. |
-| `utils/leaderboard.utils.ts` | **Pure.** Ranking (standard competition, deterministic tie-break), batch-finding counting, per-vehicle aggregation, formatting. |
-| `utils/alert-category.utils.ts` | **Pure.** The seven category definitions and the tile builder. Never emits `0` for an unknown. |
-| `utils/index.ts` | Barrel. |
-| `hooks/useFleetLeaderboard.ts` | TanStack Query hooks. Permission-gated `enabled`, no retry on 403, no polling of the expensive AI endpoint. |
-| `hooks/index.ts` | Barrel. |
-| `components/RankedBarChart.tsx` | Recharts horizontal ranked bars. Renders an already-ranked list; never re-sorts. |
-| `components/MetricToggle.tsx` | WAI-ARIA radiogroup segmented control with roving tabindex. |
-| `components/AlertCategoryTiles.tsx` | The seven tiles across four states (ready / loading / error / unsupported). |
-| `components/DriverLeaderboardCard.tsx` | Driver board, metric toggle, Excel export, rows deep-link to the existing scorecard. |
-| `components/VehicleLeaderboardCard.tsx` | Vehicle board over a discriminated union of the three metric shapes. |
-| `components/index.ts` | Barrel. |
-| `pages/FleetLeaderboardPage.tsx` | Composition. Degrades in halves across the two permissions. |
-| `pages/index.ts` | Barrel. |
-| `routes/index.ts` | `LEADERBOARD_ROUTES`. |
-| `index.ts` | Module barrel. |
+| `types/access.types.ts` | Wire shapes for roles, permissions, API keys, audit entries, member payloads. Header documents the three constraints that shape the slice. |
+| `services/platform-access.api.ts` | `apiClient` calls, one per real route, under `/api/security` and `/api/organizations`. |
+| `utils/platform-access.utils.ts` | **Pure.** Directory derivation, the fail-closed write gate, role matrix, permission merge, effective key status, audit query normalisation. |
+| `hooks/usePlatformAccess.ts` | TanStack Query hooks + member mutations. Per-permission `enabled`, no retry on 403. |
+| `components/UserDirectoryTable.tsx` | Cross-organization user rows. No action column, by design. |
+| `components/RoleMatrixTable.tsx` | Built-in roles, expandable to every grant. |
+| `components/CustomRoleTable.tsx` | Tenant roles, separating inherited from direct grants. |
+| `components/ApiKeyTable.tsx` | Keys with *effective* status, never a secret. |
+| `components/ApiKeyForm.tsx` | Two-act dialog: create, then copy-once plaintext panel. |
+| `components/AuditLogTable.tsx` | Ledger with sequence, chain hashes and expandable metadata. |
+| `components/OrganizationMembersTable.tsx` | Member rows; owner row is deliberately actionless. |
+| `components/OrganizationMembersSection.tsx` | Members card, owns the own-organization write gate. |
+| `components/MemberRoleDialog.tsx` | Assign a built-in role; states why custom roles are absent. |
+| `components/InviteMemberDialog.tsx` | Invite by email + role, with seat context. |
+| `pages/UsersPage.tsx` | Derived directory, search + 3 filters, states its own scope. |
+| `pages/RolesPermissionsPage.tsx` | Built-in matrix, custom roles, permission catalogue. |
+| `pages/PlatformApiKeysPage.tsx` | Keys for the caller's organization, scope stated in a banner. |
+| `pages/PlatformAuditLogPage.tsx` | Filterable ledger + on-demand chain verification. |
 
 ## New — elsewhere
 
 | File | Purpose |
 | --- | --- |
-| `app/(protected)/leaderboard/page.tsx` | Route shim, matching the observability/scorecard pattern. |
-| `tests/unit/leaderboard/leaderboard-utils.spec.ts` | 60 tests: ranking, ties, aggregation, guards, formatting. |
-| `tests/unit/leaderboard/alert-category-utils.spec.ts` | 25 tests: the catalogue and every not-ready tile path. |
-| `docs/leaderboard/BACKEND_AGGREGATION_GAPS.md` | The three gaps, what was searched, and the endpoint contracts that would close them. |
+| `app/(protected)/platform-admin/users/page.tsx` | Route shim |
+| `app/(protected)/platform-admin/roles/page.tsx` | Route shim |
+| `app/(protected)/platform-admin/api-keys/page.tsx` | Route shim |
+| `app/(protected)/platform-admin/audit-log/page.tsx` | Route shim |
+| `tests/unit/platform-admin/platform-access.utils.spec.ts` | 100 tests |
+| `PLATFORM_ADMIN_BACKEND_GAPS.md` | Six gaps, two of them security findings, each with a proposed contract |
 
-## Modified — 1 file, 2 additive hunks
+## Modified
 
-`frontend/shared/ui/navigation/Sidebar.tsx`
+| File | Change |
+| --- | --- |
+| `frontend/shared/ui/navigation/Sidebar.tsx` | One `Platform Admin` item + 4 children in the existing `Platform` section. Also restores the nav entry for `/platform-admin/organizations`, which had shipped with none. (Plus the previous slice's leaderboard entry — see the note above.) |
+| `frontend/modules/platform-admin/pages/OrganizationDetailPage.tsx` | One import, one `<OrganizationMembersSection />` element. No existing markup changed. |
+| `frontend/modules/platform-admin/types/index.ts` | One `export * from './access.types'`. |
+| `frontend/modules/platform-admin/routes/index.ts` | Four route constants. |
+| `frontend/modules/platform-admin/hooks/index.ts` | Re-export of the new hooks. |
+| `frontend/modules/platform-admin/components/index.ts` | Re-export of the new components. |
+| `frontend/modules/platform-admin/index.ts` | Re-export of the new service and utils. |
 
-- Added `Trophy` to the existing `lucide-react` import.
-- Added one `NAV_SECTIONS` entry under **Insights**, gated on
-  `[ANALYTICS_VIEW, MAINTENANCE_VIEW]` (the file's `permissions` array is
-  ANY-of, matching how the page degrades).
+## Unchanged — included only so the module unzips whole
 
-Nothing else in the file changed. Its five pre-existing
-`no-unused-vars` lint errors (icons kept for the commented-out
-Operations section) are unchanged and were confirmed present in the
-original archive.
+`components/OrganizationTable.tsx`, `components/OrganizationForm.tsx`,
+`components/OrgUnitTable.tsx`, `components/OrgUnitForm.tsx`,
+`pages/OrganizationsPage.tsx`, `hooks/usePlatformOrganizations.ts`,
+`services/platform-admin.api.ts`, `utils/platform-admin.utils.ts`.

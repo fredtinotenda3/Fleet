@@ -396,6 +396,61 @@ const NAV_SECTIONS: NavSection[] = [
         icon: Activity,
         permissions: [Permission.PLATFORM_VIEW],
       },
+      /**
+       * Platform Admin (frontend/modules/platform-admin).
+       *
+       * FIX (dead page, the inverse of a dead link):
+       * app/(protected)/platform-admin/organizations/** has shipped
+       * since the first Platform Admin slice but had NO nav entry, so
+       * the only way to reach it was to type the URL. Added here
+       * alongside the new Users / Roles / API keys / Audit log pages
+       * rather than left unreachable.
+       *
+       * Every entry is gated on Permission.PLATFORM_VIEW, which
+       * PLATFORM_ONLY_PERMISSIONS strips from every tenant-level role
+       * -- so the whole group is invisible to an organization owner or
+       * admin no matter how many roles they hold, matching the gate on
+       * the platform routes themselves. The children carry the SAME
+       * gate rather than their endpoint's own (CUSTOM_ROLE_VIEW,
+       * API_KEY_VIEW, AUDIT_LOG_VIEW): those permissions are held by
+       * ordinary tenant roles too, and gating a child on one of them
+       * would surface a /platform-admin link to a non-platform user
+       * whose page then refuses them. Each page checks its endpoint's
+       * real permission itself and says which one is missing.
+       */
+      {
+        key: 'platform-admin',
+        label: 'Platform Admin',
+        href: '/platform-admin/organizations',
+        icon: Building2,
+        permissions: [Permission.PLATFORM_VIEW],
+        children: [
+          {
+            key: 'platform-admin-users',
+            label: 'Users',
+            href: '/platform-admin/users',
+            permissions: [Permission.PLATFORM_VIEW],
+          },
+          {
+            key: 'platform-admin-roles',
+            label: 'Roles & Permissions',
+            href: '/platform-admin/roles',
+            permissions: [Permission.PLATFORM_VIEW],
+          },
+          {
+            key: 'platform-admin-api-keys',
+            label: 'API Keys',
+            href: '/platform-admin/api-keys',
+            permissions: [Permission.PLATFORM_VIEW],
+          },
+          {
+            key: 'platform-admin-audit-log',
+            label: 'Audit Log',
+            href: '/platform-admin/audit-log',
+            permissions: [Permission.PLATFORM_VIEW],
+          },
+        ],
+      },
     ],
   },
 ];

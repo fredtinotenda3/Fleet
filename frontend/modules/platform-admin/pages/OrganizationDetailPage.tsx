@@ -24,6 +24,7 @@ import {
 import { useCreateOrgUnit, useOrgUnitsForTenant, usePlatformOrganization } from '../hooks';
 import { OrgUnitTable } from '../components/OrgUnitTable';
 import { OrgUnitForm } from '../components/OrgUnitForm';
+import { OrganizationMembersSection } from '../components/OrganizationMembersSection';
 import { PLATFORM_ADMIN_ROUTES } from '../routes';
 import {
   canManageOrgUnitsFor,
@@ -193,6 +194,16 @@ export function OrganizationDetailPage({ organizationId }: OrganizationDetailPag
           </dl>
         </CardContent>
       </Card>
+
+      {/*
+        Members read cross-tenant (GET /api/platform/organizations/:id
+        is a SUPER_ADMIN platform read) but WRITE only for the caller's
+        own organization. The section decides that itself via
+        canManageMembersFor() and explains the restriction in place --
+        see its header for why the member routes are not trusted
+        cross-tenant.
+      */}
+      <OrganizationMembersSection organization={organization} sessionTenantId={sessionTenantId} />
 
       <Card>
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">

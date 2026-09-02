@@ -10,8 +10,10 @@
 
 export * from './types';
 export { platformAdminApi } from './services/platform-admin.api';
+export { platformAccessApi, AUDIT_LOG_MAX_LIMIT } from './services/platform-access.api';
 export * from './hooks';
 export * from './utils/platform-admin.utils';
+export * from './utils/platform-access.utils';
 export * from './components';
 export * from './pages';
 export { PLATFORM_ADMIN_ROUTES } from './routes';

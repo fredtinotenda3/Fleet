@@ -51,6 +51,16 @@ import type { Organization } from '@/shared/types/organization.types';
 
 export type { Organization };
 
+/**
+ * Slice 2 (Users, Roles & Permissions, API keys, Audit log) wire
+ * shapes. Kept in their own file rather than appended here: that slice
+ * talks to a different set of routes under /api/security and
+ * /api/organizations, with different gates and different scoping rules,
+ * and its header documents all three. Re-exported so `../types` stays
+ * the single import path for the module.
+ */
+export * from './access.types';
+
 /** `Organization['status']`, restated so components can enumerate it. */
 export type OrganizationStatus = Organization['status'];
 
