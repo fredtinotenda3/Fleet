@@ -34,6 +34,7 @@ import {
   MapPin,
   Activity,
   GitBranch,
+  Trophy,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUiStore } from '@/frontend/shared/store/ui.store';
@@ -255,6 +256,24 @@ const NAV_SECTIONS: NavSection[] = [
   {
     title: 'Insights',
     items: [
+      // Fleet Leaderboard (frontend/modules/leaderboard): ranked driver
+      // and vehicle boards plus the alert-category tiles.
+      //
+      // Gated on ANY of ANALYTICS_VIEW / MAINTENANCE_VIEW because the
+      // page reads two independently-gated groups of endpoints
+      // (GET /api/ai/dashboard needs the former, the /api/reminders
+      // analytics actions the latter) and degrades in halves rather
+      // than all-or-nothing -- see FleetLeaderboardPage. Gating the nav
+      // entry on both would hide a page that a maintenance-only role is
+      // entitled to open and would find useful, which is the same
+      // nav/API mismatch the Tracker Mapping child above documents.
+      {
+        key: 'fleet-leaderboard',
+        label: 'Fleet Leaderboard',
+        href: '/leaderboard',
+        icon: Trophy,
+        permissions: [Permission.ANALYTICS_VIEW, Permission.MAINTENANCE_VIEW],
+      },
       {
         key: 'reports',
         label: 'Reports',
