@@ -34,6 +34,7 @@ import {
   MapPin,
   Activity,
   Gauge,
+  Network,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUiStore } from '@/frontend/shared/store/ui.store';
@@ -343,6 +344,26 @@ const NAV_SECTIONS: NavSection[] = [
     // the gate on the API route itself.
     title: 'Platform',
     items: [
+      {
+        // Platform Admin -- cross-tenant organization and branch
+        // administration. Gated on PLATFORM_VIEW like its siblings, and
+        // matching the read gate on GET /api/platform/organizations.
+        //
+        // The API is stricter than this nav entry: PlatformController
+        // additionally requires the literal Role.SUPER_ADMIN, because
+        // `isSuperAdmin` is also true for organization_owner. That extra
+        // check cannot be expressed here (this file gates on Permissions
+        // only, deliberately -- see the note above isItemVisible about
+        // the hand-maintained role lists that had already drifted once),
+        // and it does not need to be: PLATFORM_ONLY_PERMISSIONS strips
+        // PLATFORM_VIEW from every tenant-level role, so no
+        // organization_owner sees this item either way.
+        key: 'platform-organizations',
+        label: 'Organizations',
+        href: '/platform-admin/organizations',
+        icon: Network,
+        permissions: [Permission.PLATFORM_VIEW],
+      },
       {
         key: 'operational-dashboard',
         label: 'Operational Dashboard',
