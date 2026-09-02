@@ -17,7 +17,9 @@ import { useVehicle, useVehicleActivity } from '../hooks/useVehicles';
 import { useDeleteVehicle, useUpdateVehicle } from '../hooks/useVehicleMutations';
 import { VehicleModal, type VehicleModalMode } from '../components/VehicleModal';
 import { VehicleAnalyticsPanel } from '../components/analytics';
+import { DriverAssignmentPanel } from '../components/DriverAssignmentPanel';
 import { VehicleCostsPanel } from '@/frontend/modules/finance/components/VehicleCostsPanel';
+import { canAssignDriverToVehicle } from '@/frontend/modules/drivers/utils';
 import {
   getVehicleStatusMeta,
   getVehicleStatusBadgeClass,
@@ -53,6 +55,7 @@ export function VehicleDetailPage({ vehicleId }: VehicleDetailPageProps) {
   const roles = user?.roles ?? [];
   const canManage = canManageVehicles(roles);
   const canDelete = canDeleteVehicles(roles);
+  const canAssignDriver = canAssignDriverToVehicle(roles);
 
   const { data: vehicle, isLoading, isError } = useVehicle(vehicleId);
   const { data: activity, isLoading: activityLoading } = useVehicleActivity(vehicleId);
@@ -150,6 +153,7 @@ export function VehicleDetailPage({ vehicleId }: VehicleDetailPageProps) {
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="specifications">Specifications</TabsTrigger>
+          <TabsTrigger value="driver">Driver</TabsTrigger>
           <TabsTrigger value="analytics">Analytics</TabsTrigger>
           <TabsTrigger value="costs">Costs</TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
@@ -213,6 +217,10 @@ export function VehicleDetailPage({ vehicleId }: VehicleDetailPageProps) {
               <DetailRow label="Status" value={statusMeta.label} />
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="driver" className="mt-4">
+          <DriverAssignmentPanel vehicle={vehicle} canAssign={canAssignDriver} />
         </TabsContent>
 
         <TabsContent value="analytics" className="mt-4">

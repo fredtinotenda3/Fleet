@@ -33,3 +33,25 @@ export function canManageDrivers(roles: string[]): boolean {
 export function canDeleteDrivers(roles: string[]): boolean {
   return permissionService.hasAnyPermission(roles, [Permission.VEHICLE_DELETE]);
 }
+
+/**
+ * Gates the vehicle <-> driver assignment controls (Vehicle Detail
+ * page's "Driver" tab; see DriverAssignmentPanel).
+ *
+ * Unlike canManageDrivers/canDeleteDrivers above, this does NOT need the
+ * VEHICLE_* stopgap -- Permission.DRIVER_ASSIGN already exists in the
+ * enum and is already granted to FLEET_MANAGER, DISPATCHER, SUPERVISOR,
+ * and BRANCH_MANAGER (see server/permissions/roles.ts -- note that
+ * DEPARTMENT_MANAGER, despite mirroring BRANCH_MANAGER in most other
+ * permission lists, does NOT hold this one). It simply had no UI control
+ * wired to it before this feature.
+ *
+ * NOTE: the backend route this gates (PATCH /api/vehicles/:id/driver)
+ * does not exist yet -- see
+ * docs/DRIVER_VEHICLE_ASSIGNMENT_MISSING_BACKEND.md. This function only
+ * controls whether the button renders; it is not an authorization
+ * boundary, same caveat as the helpers above.
+ */
+export function canAssignDriverToVehicle(roles: string[]): boolean {
+  return permissionService.hasPermission(roles, Permission.DRIVER_ASSIGN);
+}

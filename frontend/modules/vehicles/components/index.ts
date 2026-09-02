@@ -6,6 +6,7 @@ export { VehicleModal } from './VehicleModal';
 export type { VehicleModalMode } from './VehicleModal';
 export { VehiclesTable } from './VehiclesTable';
 export { VehicleStatsCards } from './VehicleStatsCards';
+export { DriverAssignmentPanel } from './DriverAssignmentPanel';
 
 // Vehicle-Level Analytics
 export { VehicleFuelAnalyticsPanel, VehicleExpenseAnalyticsPanel, VehicleAnalyticsPanel } from './analytics';

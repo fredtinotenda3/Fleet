@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { vehiclesApi } from '../services/vehicles.api';
 import { vehicleKeys } from './useVehicles';
-import type { Vehicle } from '../types';
+import type { Vehicle, VehicleWithAssignment, AssignVehicleDriverPayload } from '../types';
 import type { VehicleFormValues } from '../schemas';
 
 function errMsg(error: unknown, fallback: string): string {
@@ -77,5 +77,31 @@ export function useUpdateVehicleStatus() {
       toast.success('Status updated');
     },
     onError: (error) => toast.error(errMsg(error, 'Failed to update status')),
+  });
+}
+
+/**
+ * PENDING BACKEND -- see docs/DRIVER_VEHICLE_ASSIGNMENT_MISSING_BACKEND.md.
+ * Calls vehiclesApi.assignDriver(), which hits a route that does not
+ * exist yet (PATCH /api/vehicles/:id/driver). Until that route ships,
+ * this mutation will genuinely fail and surface the real error through
+ * the toast below -- it does not fake success or write local-only state.
+ */
+export function useAssignVehicleDriver(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: AssignVehicleDriverPayload) => vehiclesApi.assignDriver(id, payload),
+    onSuccess: (vehicle: VehicleWithAssignment, payload) => {
+      queryClient.setQueryData(vehicleKeys.detail(id), vehicle);
+      queryClient.invalidateQueries({ queryKey: vehicleKeys.lists() });
+      toast.success(payload.driverId ? 'Driver assigned' : 'Driver unassigned');
+    },
+    onError: (error) =>
+      toast.error(
+        errMsg(
+          error,
+          'Failed to update driver assignment -- this endpoint may not be deployed yet'
+        )
+      ),
   });
 }

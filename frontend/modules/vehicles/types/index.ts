@@ -4,8 +4,29 @@
 
 import type { Vehicle, VehicleFilters, VehicleStats } from '@/shared/types/vehicle.types';
 import type { PaginationParams, PaginatedResponse, Status } from '@/shared/types/common.types';
+import type { DriverRef } from '@/shared/types/driver.types';
 
-export type { Vehicle, VehicleFilters, VehicleStats, PaginationParams, PaginatedResponse };
+export type { Vehicle, VehicleFilters, VehicleStats, PaginationParams, PaginatedResponse, DriverRef };
+
+/**
+ * PENDING BACKEND -- see docs/DRIVER_VEHICLE_ASSIGNMENT_MISSING_BACKEND.md.
+ *
+ * `Vehicle` (shared/types/vehicle.types.ts) has no driver-assignment
+ * field today, and VehicleResponseDto never emits one. This is a
+ * frontend-only projection describing the shape the UI expects once
+ * GET /api/vehicles/:id and PATCH /api/vehicles/:id/driver return it.
+ * Until that ships, `assignedDriver` will always be `undefined` on data
+ * that actually came from the API -- it is never populated client-side.
+ */
+export interface VehicleWithAssignment extends Vehicle {
+  assignedDriver?: DriverRef | null;
+}
+
+/** Body for the not-yet-implemented PATCH /api/vehicles/:id/driver. */
+export interface AssignVehicleDriverPayload {
+  /** `null` (or omitted) unassigns the vehicle's current driver. */
+  driverId: string | null;
+}
 
 /**
  * The backend's update-status command only accepts these three values

@@ -8,7 +8,7 @@ import type { Vehicle } from '@/shared/types/vehicle.types';
 import type { ExportFormat } from '@/shared/export/export.types';
 import { triggerExport, type ExportDownloadResult } from '@/shared/utils/export-download.utils';
 import { vehiclesApi } from '../services/vehicles.api';
-import type { VehicleStatus, VehicleTableFilters } from '../types';
+import type { VehicleStatus, VehicleTableFilters, DriverRef } from '../types';
 import { Permission, permissionService } from '@/server/permissions/roles';
 
 export const VEHICLE_TYPE_OPTIONS = VEHICLE_CONFIG.vehicleTypes;
@@ -71,6 +71,38 @@ export function canManageVehicles(roles: string[] = []): boolean {
 
 export function canDeleteVehicles(roles: string[] = []): boolean {
   return permissionService.hasPermission(roles, Permission.VEHICLE_DELETE);
+}
+
+export interface DriverAssignmentStatus {
+  /** Primary line: the driver's name, or an "unassigned" message. */
+  label: string;
+  /** Secondary line, e.g. the driver's code. Omitted when unassigned. */
+  detail?: string;
+  assigned: boolean;
+}
+
+/**
+ * Pure presentation helper for DriverAssignmentPanel (Vehicle Detail
+ * page). Kept dependency-free so it can be unit tested without React/
+ * jsdom -- see tests/unit/vehicles/driver-assignment.utils.spec.ts.
+ *
+ * `driver` is expected to be `VehicleWithAssignment['assignedDriver']`,
+ * which today is always `undefined` for real API data (see
+ * docs/DRIVER_VEHICLE_ASSIGNMENT_MISSING_BACKEND.md) -- this function
+ * still needs to format that correctly as "no driver assigned" rather
+ * than throwing or rendering "undefined".
+ */
+export function formatDriverAssignmentStatus(
+  driver: DriverRef | null | undefined
+): DriverAssignmentStatus {
+  if (!driver) {
+    return { label: 'No driver assigned', assigned: false };
+  }
+  return {
+    label: driver.name,
+    detail: driver.driver_code ? `Code: ${driver.driver_code}` : undefined,
+    assigned: true,
+  };
 }
 
 /**
