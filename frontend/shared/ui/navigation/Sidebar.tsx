@@ -156,7 +156,23 @@ const NAV_SECTIONS: NavSection[] = [
       },
       // FIX: /drivers existed as a backend module and two API routes but
       // had no page and no nav entry, so drivers were unreachable in the UI.
-      { key: 'drivers', label: 'Drivers', href: '/drivers', icon: Users, permissions: [Permission.VEHICLE_VIEW] },
+      //
+      // 'Scorecard' child added for the AI driver-risk scorecard
+      // (frontend/modules/ai). Gated on ANALYTICS_VIEW rather than
+      // VEHICLE_VIEW like the parent -- it's the permission
+      // GET /api/ai/driver-risk actually enforces (see
+      // app/api/ai/driver-risk/route.ts), which is a different gate
+      // than the drivers roster itself.
+      {
+        key: 'drivers',
+        label: 'Drivers',
+        href: '/drivers',
+        icon: Users,
+        permissions: [Permission.VEHICLE_VIEW],
+        children: [
+          { key: 'drivers-scorecard', label: 'Scorecard', href: '/drivers/scorecard', permissions: [Permission.ANALYTICS_VIEW] },
+        ],
+      },
       {
         key: 'trips',
         label: 'Trips',
