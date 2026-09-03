@@ -77,6 +77,9 @@ import {
   // ── Digital Twin specific event names ────────────────────────────
   VEHICLE_STATUS_CHANGED,
   TRIP_COMPLETED,
+  // ── Driver <-> vehicle assignment ─────────────────────────────────
+  VEHICLE_DRIVER_ASSIGNED,
+  VEHICLE_DRIVER_UNASSIGNED,
 } from './event-names';
 import { OBSERVABILITY_ALERT_TRIGGERED } from '@/infrastructure/observability/event-names';
 import { allocationPostingHandler } from './handlers/finance/AllocationPostingHandler';
@@ -263,6 +266,15 @@ export function bootstrapEvents(): void {
     VEHICLE_CREATED,
     VEHICLE_UPDATED,
     VEHICLE_STATUS_CHANGED,
+    // Driver assignment already rides along on VEHICLE_UPDATED (every
+    // AssignVehicleDriverHandler write also publishes a
+    // VehicleUpdatedEvent, same as UpdateVehicleStatusHandler does for
+    // VEHICLE_STATUS_CHANGED) -- these two are here purely so the
+    // digital-twin projection, and anything else that wants to react
+    // SPECIFICALLY to an assignment rather than any vehicle update, can
+    // subscribe narrowly instead of filtering VEHICLE_UPDATED payloads.
+    VEHICLE_DRIVER_ASSIGNED,
+    VEHICLE_DRIVER_UNASSIGNED,
     FUEL_LOGGED,
     TRIP_CREATED,
     TRIP_COMPLETED,

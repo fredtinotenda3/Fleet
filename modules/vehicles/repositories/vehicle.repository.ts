@@ -337,6 +337,43 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
     return { total, active, inactive, maintenance };
   }
 
+  /**
+   * All non-deleted, tenant-scoped vehicles currently holding the given
+   * driver as their `currentDriverId`, optionally excluding one vehicle
+   * (the one being assigned right now). Backs
+   * AssignVehicleDriverHandler's "one vehicle per driver" business rule:
+   * before setting `currentDriverId` on the target vehicle, the handler
+   * looks up every OTHER vehicle already holding this driver and clears
+   * them in the same operation, so the partial unique index in
+   * infrastructure/database/indexes.vehicle-driver-addendum.ts is never
+   * hit as an error path during an ordinary reassignment.
+   *
+   * `excludeVehicleId` is converted to an ObjectId explicitly (via
+   * `toObjectId`) rather than compared as a bare string -- `_id` in the
+   * stored document is a real ObjectId, and a naive `{ $ne: <string> }`
+   * would never equal it and would therefore fail to exclude anything,
+   * including the very vehicle being reassigned. See
+   * BaseRepository.normalizeDoc's header comment for the general shape
+   * of that bug elsewhere in this codebase.
+   */
+  async findByCurrentDriver(
+    driverId: string,
+    tenantId: string,
+    excludeVehicleId?: string
+  ): Promise<Vehicle[]> {
+    const collection = await this.getCollection();
+    const filter: Record<string, unknown> = {
+      ...this.getActiveFilter(tenantId, false, this.isPlatformScopeTenant(tenantId)),
+      currentDriverId: driverId,
+    };
+    if (excludeVehicleId && ObjectId.isValid(excludeVehicleId)) {
+      filter._id = { $ne: this.toObjectId(excludeVehicleId) };
+    }
+    return this.normalizeDocs<Vehicle>(
+      await collection.find(filter as Filter<Vehicle>).toArray()
+    );
+  }
+
   async getVehiclesByStatus(
     status: string,
     tenantId: string

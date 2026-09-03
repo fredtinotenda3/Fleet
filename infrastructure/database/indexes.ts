@@ -31,6 +31,7 @@ import { SESSION_INDEXES } from './indexes.session-addendum';
 import { SECURITY_INDEXES } from './indexes.security-addendum';
 import { BILLING_INDEXES } from './indexes.billing-addendum';
 import { DRIVER_INDEXES } from './indexes.drivers-addendum';
+import { VEHICLE_DRIVER_INDEXES } from './indexes.vehicle-driver-addendum';
 import { FUEL_DRIVER_INDEXES } from './indexes.fuel-driver-addendum';
 import { FUEL_ANALYTICS_INDEXES } from './indexes.fuel-analytics-addendum';
 import { REPORTING_INDEXES } from './indexes.reporting-addendum';
@@ -429,6 +430,10 @@ export const INDEXES = {
   ...ANOMALY_INDEXES,
   ...ATTENTION_INDEXES,
   ...FINANCE_INDEXES,
+  tblvehicles: [
+    ...BASE_INDEXES.tblvehicles,
+    ...VEHICLE_DRIVER_INDEXES.tblvehicles,
+  ],
   tbltrips: [
     ...BASE_INDEXES.tbltrips,
     ...TRIP_ANALYTICS_INDEXES.tbltrips,             // Phase 3

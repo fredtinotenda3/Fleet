@@ -21,6 +21,7 @@ import { getAuthContext } from '@/server/auth/auth-context';
 import { tenantContextService } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 import { vehicleRepository } from '../repositories/vehicle.repository';
+import { driverRepository } from '@/modules/drivers/repositories/driver.repository';
 import { exportService, fileDownloadResponse } from '@/shared/export';
 import {
   VEHICLE_EXPORT_COLUMNS,
@@ -199,7 +200,12 @@ export class VehicleController {
       throw new NotFoundError('Vehicle not found');
     }
 
-    return { authContext, vehicle };
+    // tenantContext is returned (not just used internally) so callers
+    // that need a SECOND scope check against a different entity -- see
+    // assignVehicleDriver()'s driver org-unit check below -- don't have
+    // to re-resolve it via a second tenantContextService.resolveContext
+    // call per request.
+    return { authContext, vehicle, tenantContext };
   }
 
   async getVehicle(req: NextRequest, id: string) {
@@ -482,6 +488,85 @@ export class VehicleController {
         status,
         authContext.tenantId,
         userId
+      );
+      return successResponse(vehicle);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /**
+   * PATCH /api/vehicles/:id/driver -- assign, change, or clear the
+   * vehicle's current driver. See
+   * docs/DRIVER_VEHICLE_ASSIGNMENT_MISSING_BACKEND.md for the original
+   * spec this implements.
+   *
+   * Scope enforcement mirrors updateVehicle/deleteVehicle/
+   * updateVehicleStatus above: loadInScopeVehicle() already refuses a
+   * vehicle outside the caller's tenant or org-unit scope (404, not
+   * 403, to avoid leaking existence -- see that method's own comment).
+   * This method adds the SAME check for the driver side of the
+   * assignment: a caller scoped to one branch must not be able to
+   * assign a driver who belongs to a different branch, even though
+   * DriverRepository.findById alone would happily return them (it only
+   * enforces tenant, not org unit). Reuses the tenantContext
+   * loadInScopeVehicle already resolved rather than resolving it again.
+   *
+   * Permission is enforced entirely by the route
+   * (app/api/vehicles/[id]/driver/route.ts -> withAuth(...,
+   * { permission: Permission.DRIVER_ASSIGN })), same as every other
+   * vehicle route -- nothing extra to check here.
+   */
+  async assignVehicleDriver(req: NextRequest, id: string) {
+    try {
+      const { authContext, tenantContext } = await this.loadInScopeVehicle(req, id);
+
+      let body: unknown;
+      try {
+        body = await req.json();
+      } catch {
+        body = {};
+      }
+      const rawDriverId = (body as Record<string, unknown> | null)?.driverId;
+
+      if (rawDriverId !== undefined && rawDriverId !== null && typeof rawDriverId !== 'string') {
+        // Malformed payload shape (e.g. a number or object) is a client
+        // error distinct from "driver not found" -- 400, not 404.
+        throw new ValidationError('driverId must be a string or null');
+      }
+
+      const driverId =
+        typeof rawDriverId === 'string' && rawDriverId.trim() ? rawDriverId.trim() : null;
+
+      if (driverId) {
+        // Tenant isolation: findById only ever returns a driver that
+        // belongs to authContext.tenantId (and is not soft-deleted).
+        // A well-formed but nonexistent/cross-tenant id is "not found",
+        // not a validation error -- see the class comment on
+        // AssignVehicleDriverCommand for why this same check is
+        // repeated at the command-handler layer too.
+        const driver = await driverRepository.findById(driverId, authContext.tenantId);
+        if (!driver) {
+          throw new NotFoundError('Driver not found');
+        }
+
+        const driverOrgUnitId = (driver as any).orgUnitId as string | undefined;
+        if (
+          driverOrgUnitId &&
+          !tenantScopeService.canAccessOrgUnit(tenantContext, driverOrgUnitId)
+        ) {
+          // Same "404, not 403" reasoning as the vehicle scope check in
+          // loadInScopeVehicle: don't confirm to a scoped caller that a
+          // driver with this id exists in another branch.
+          throw new NotFoundError('Driver not found');
+        }
+      }
+
+      const vehicle = await vehicleCommandService.assignDriver(
+        id,
+        driverId,
+        authContext.tenantId,
+        authContext.userId
       );
       return successResponse(vehicle);
     } catch (error) {

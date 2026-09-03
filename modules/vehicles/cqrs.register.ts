@@ -3,16 +3,19 @@
 import { CommandBus } from '@/server/cqrs/command-bus';
 import { QueryBus } from '@/server/cqrs/query-bus';
 import { vehicleRepository } from './repositories/vehicle.repository';
+import { driverRepository } from '@/modules/drivers/repositories/driver.repository';
 
 import { CreateVehicleCommand } from './commands/create-vehicle.command';
 import { UpdateVehicleCommand } from './commands/update-vehicle.command';
 import { DeleteVehicleCommand } from './commands/delete-vehicle.command';
 import { UpdateVehicleStatusCommand } from './commands/update-vehicle-status.command';
+import { AssignVehicleDriverCommand } from './commands/assign-vehicle-driver.command';
 
 import { CreateVehicleHandler } from './commands/handlers/create-vehicle.handler';
 import { UpdateVehicleHandler } from './commands/handlers/update-vehicle.handler';
 import { DeleteVehicleHandler } from './commands/handlers/delete-vehicle.handler';
 import { UpdateVehicleStatusHandler } from './commands/handlers/update-vehicle-status.handler';
+import { AssignVehicleDriverHandler } from './commands/handlers/assign-vehicle-driver.handler';
 
 import { GetVehicleByIdQuery } from './queries/get-vehicle-by-id.query';
 import { GetVehicleByLicensePlateQuery } from './queries/get-vehicle-by-license-plate.query';
@@ -51,6 +54,10 @@ export function registerVehicleCqrsHandlers(
   commandBus.register(
     UpdateVehicleStatusCommand,
     new UpdateVehicleStatusHandler(vehicleRepository)
+  );
+  commandBus.register(
+    AssignVehicleDriverCommand,
+    new AssignVehicleDriverHandler(vehicleRepository, driverRepository)
   );
 
   // Queries

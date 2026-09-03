@@ -1,8 +1,9 @@
 # Driver ↔ Vehicle assignment: missing backend
 
-**Status: frontend built, backend not implemented.** Nothing in this doc
-has been wired into `app/api/**` or `modules/vehicles|drivers/**`. This is
-a spec for the next backend change, not a description of shipped code.
+**Status: implemented.** `PATCH /api/vehicles/:id/driver` now exists and
+follows the shape proposed below. This doc is kept as the design record;
+see "What shipped" at the bottom for the final file list and the one
+open business-rule decision this doc deliberately left unresolved.
 
 ## What was searched
 
@@ -135,3 +136,59 @@ route ships — only removing the "pending backend" notice in
   panel correctly renders "No driver assigned" for every vehicle right
   now, not because that's true, but because the backend has no way to
   say otherwise yet.
+
+## What shipped
+
+Files added/changed to implement the endpoint above:
+
+```
+shared/types/vehicle.types.ts                          (+ currentDriverId)
+modules/vehicles/dto/vehicle-response.dto.ts            (+ currentDriverId, assignedDriver)
+modules/vehicles/commands/assign-vehicle-driver.command.ts
+modules/vehicles/commands/handlers/assign-vehicle-driver.handler.ts
+modules/vehicles/events/VehicleDriverAssignedEvent.ts
+modules/vehicles/events/VehicleDriverUnassignedEvent.ts
+modules/vehicles/repositories/vehicle.repository.ts     (+ findByCurrentDriver)
+modules/vehicles/services/vehicle-command.service.ts    (+ assignDriver)
+modules/vehicles/controllers/vehicle.controller.ts       (+ assignVehicleDriver)
+modules/vehicles/cqrs.register.ts                        (wiring)
+server/events/event-names.ts                             (+ VEHICLE_DRIVER_ASSIGNED/UNASSIGNED)
+server/events/bootstrap.ts                                (digital-twin subscription)
+app/api/vehicles/[id]/driver/route.ts
+infrastructure/database/indexes.vehicle-driver-addendum.ts
+infrastructure/database/indexes.ts                        (wiring)
+```
+
+### The business-rule decision this doc left open
+
+**Resolved: a driver may be the CURRENT driver of at most one vehicle at
+a time.** Reassigning a driver who already holds another vehicle
+unassigns them from that vehicle in the same request -- the caller
+never has to make two calls, and the response only ever reflects the
+vehicle they actually patched (the other vehicle's own unassignment is
+still recorded, via `VehicleUpdatedEvent`/`VehicleDriverUnassignedEvent`
+for that vehicle, so its own activity feed and any digital-twin/audit
+consumers stay correct without the frontend polling for it).
+
+This is enforced twice, deliberately:
+
+- **In application code**, in `AssignVehicleDriverHandler`: before
+  writing the target vehicle, it looks up every other vehicle in the
+  tenant already holding this driver (`VehicleRepository
+  .findByCurrentDriver`) and clears them first.
+- **In the database**, via a partial unique index on
+  `{ tenantId, currentDriverId }` (scoped to non-deleted vehicles with a
+  non-null `currentDriverId`, mirroring how `idx_vehicle_tenant_plate`
+  is scoped) -- a backstop against two concurrent requests both trying
+  to assign the same driver to two different vehicles, not the primary
+  mechanism.
+
+A driver is **not** restricted from appearing on many vehicles
+*historically* -- `Trip.driver_id`, `DriverShift.driverId`, and
+`DispatchJob.assignedDriverId` are untouched by this feature and keep
+recording whatever actually happened. Only the notion of "current"
+vehicle (`Vehicle.currentDriverId`) is exclusive.
+
+The reverse rule -- a vehicle has at most one current driver -- was
+never in question; `currentDriverId` is a single scalar field, so it is
+structurally impossible for a vehicle to have two.

@@ -5,6 +5,7 @@ import { CreateVehicleCommand } from '../commands/create-vehicle.command';
 import { UpdateVehicleCommand } from '../commands/update-vehicle.command';
 import { DeleteVehicleCommand } from '../commands/delete-vehicle.command';
 import { UpdateVehicleStatusCommand } from '../commands/update-vehicle-status.command';
+import { AssignVehicleDriverCommand } from '../commands/assign-vehicle-driver.command';
 import { Vehicle } from '@/shared/types/vehicle.types';
 
 /**
@@ -56,6 +57,18 @@ export class VehicleCommandService {
   ): Promise<Vehicle> {
     return commandBus.execute<Vehicle>(
       new UpdateVehicleStatusCommand(vehicleId, status, tenantId, userId)
+    );
+  }
+
+  /** `driverId: null` clears the vehicle's current driver. */
+  async assignDriver(
+    vehicleId: string,
+    driverId: string | null,
+    tenantId: string,
+    userId?: string
+  ): Promise<Vehicle> {
+    return commandBus.execute<Vehicle>(
+      new AssignVehicleDriverCommand(vehicleId, driverId, tenantId, userId)
     );
   }
 }

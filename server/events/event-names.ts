@@ -4,6 +4,8 @@ export const VEHICLE_CREATED = 'VehicleCreated';
 export const VEHICLE_UPDATED = 'VehicleUpdated';
 export const VEHICLE_DELETED = 'VehicleDeleted';
 export const VEHICLE_STATUS_CHANGED = 'VehicleStatusChanged';
+export const VEHICLE_DRIVER_ASSIGNED = 'VehicleDriverAssigned';
+export const VEHICLE_DRIVER_UNASSIGNED = 'VehicleDriverUnassigned';
 
 export const EXPENSE_CREATED = 'ExpenseCreated';
 export const EXPENSE_UPDATED = 'ExpenseUpdated';
