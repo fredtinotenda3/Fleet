@@ -29,6 +29,7 @@ import { Role, ORGANIZATION_ROLES, ASSIGNABLE_ORGANIZATION_ROLES } from '@/serve
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 import { resolveOrganization } from '@/server/tenancy/organization-resolver';
+import { isPlatformScope, matchesTenant } from '@/server/tenancy/tenant-scope';
 
 export interface AddMemberDirectInput {
   name: string;
@@ -196,11 +197,37 @@ export class OrganizationService {
      *
      * resolveOrganization() accepts the slug or an ObjectId and is the
      * canonical resolver -- see server/tenancy/organization-resolver.ts.
+     *
+     * FIX (security -- PLATFORM_ADMIN_BACKEND_GAPS.md, Gap 2): this
+     * method used to resolve `organizationId` and hand it straight
+     * back without ever looking at `tenantId`, which every member
+     * write route (invite/suspend/restore/role-change/remove) passes
+     * this method after taking `organizationId` from the URL. A caller
+     * holding ORG_MEMBERS_MANAGE in tenant A could therefore name
+     * tenant B's organization id in the path and the write would land
+     * in B -- `withAuth` checks permissions, not resource ownership,
+     * and `tenantId` was previously used only to stamp the audit
+     * entry. The organization is now required to belong to the
+     * caller's tenant unless the caller is platform-scoped.
+     *
+     * Genuine cross-tenant reads do not run through here:
+     * `PlatformService.getOrganization` calls `resolveOrganization()`
+     * directly and is gated on the literal Role.SUPER_ADMIN, which is
+     * also the only way `isPlatformScope(tenantId)` below can be true
+     * (see server/auth/auth-context.ts).
      */
     const organization = await resolveOrganization(organizationId);
     if (!organization) {
       throw new NotFoundError(`Organization not found: "${organizationId}"`);
     }
+
+    if (!isPlatformScope(tenantId) && !matchesTenant(organization.tenantId, tenantId)) {
+      // 404, not 403 -- a 403 would confirm the id is real and belongs
+      // to someone else. Same convention used elsewhere in the app for
+      // cross-tenant resource lookups.
+      throw new NotFoundError(`Organization not found: "${organizationId}"`);
+    }
+
     return organization;
   }
 

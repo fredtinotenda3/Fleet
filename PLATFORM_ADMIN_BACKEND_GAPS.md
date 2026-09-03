@@ -16,7 +16,7 @@ code.
 | # | Gap | Severity | Shipped behaviour |
 |---|---|---|---|
 | 1 | No platform-wide user endpoint | Feature | Directory **derived** from the organizations listing; page states its own scope |
-| 2 | Member routes take an organization id nothing binds to the caller | **Security** | Writes restricted to the caller's own organization, fail-closed |
+| 2 | Member routes take an organization id nothing binds to the caller | **Security — FIXED** | Writes restricted to the caller's own organization, fail-closed |
 | 3 | `/api/admin` legacy surface is under-gated | **Security** | Not used at all |
 | 4 | API keys are organization-scoped, not platform-scoped | Feature | Page says so in a banner; heading is "API keys", not "Platform API keys" |
 | 5 | Custom roles cannot be assigned to a member | Feature | Role dialog lists built-in roles only and explains why |
@@ -161,6 +161,15 @@ component takes the same row shape and needs no change.
 **Severity: security. This one is not a missing feature — it is a
 missing authorization check.**
 
+**Status: FIXED.** `OrganizationService.getOrganization(organizationId,
+tenantId)` now enforces the tenant-binding check described below —
+see "What actually shipped" at the end of this section for the
+enforcement, the helper it uses, and the regression test file. The
+platform-scoped member-management routes proposed in "Suggested fix"
+were deliberately **not** added as part of this change; only the
+missing check was closed. They remain a Gap 2 follow-up, not a
+prerequisite for it.
+
 ### What was found
 
 All five member routes take the organization from the URL:
@@ -272,6 +281,64 @@ disappears.
 > `export-scope-conformance.spec.ts`). A case asserting that a tenant-A
 > caller with `ORG_MEMBERS_MANAGE` gets a 404 from tenant B's member
 > routes would pin this closed.
+
+### What actually shipped
+
+The suggested fix above was implemented essentially as written, with
+one substitution: no `matchesTenant` helper existed anywhere in the
+codebase, so it was added to `server/tenancy/tenant-scope.ts` — the
+file's own header already names itself the single source of truth for
+tenant-scope logic, and it already exports the sibling `isPlatformScope`
+helper the fix depends on. `matchesTenant` does the same exact-string
+comparison `BaseRepository.getTenantFilter()` uses to build `{ tenantId:
+scope.tenantId }` predicates, so the new check is consistent with how
+every other repository already decides "is this record mine."
+
+`modules/organizations/services/organization.service.ts`,
+`getOrganization(organizationId, tenantId)`:
+
+```ts
+const organization = await resolveOrganization(organizationId);
+if (!organization) {
+  throw new NotFoundError(`Organization not found: "${organizationId}"`);
+}
+
+if (!isPlatformScope(tenantId) && !matchesTenant(organization.tenantId, tenantId)) {
+  // 404, not 403 -- same convention as before.
+  throw new NotFoundError(`Organization not found: "${organizationId}"`);
+}
+
+return organization;
+```
+
+Every member-write path (`addMember` / invite, `suspendMember`,
+`restoreMember`, `updateMemberRole`, `removeMember`) already calls
+`getOrganization` first, so this one change closes the gap for all five
+routes at once. `PlatformService.getOrganization` calls
+`resolveOrganization()` directly and was already gated on the literal
+`Role.SUPER_ADMIN` at the controller — it does not route through
+`OrganizationService.getOrganization` and is unaffected. A literal
+`SUPER_ADMIN` caller's `tenantId` is always the platform sentinel (see
+`server/auth/auth-context.ts`), so `isPlatformScope(tenantId)` is `true`
+for them and the same member-write routes keep working for a genuine
+platform admin.
+
+**Regression tests:**
+`tests/security/organization-member-tenant-binding.spec.ts` — covers,
+against the real `OrganizationService` and `OrganizationRepository`:
+
+* a tenant-A caller with `ORG_MEMBERS_MANAGE` cannot suspend, restore,
+  change the role of, remove, or invite-into tenant B (and the reverse
+  direction);
+* every one of those cross-tenant calls rejects with `NotFoundError`
+  whose `statusCode` is `404`, not `403`;
+* the same five operations still succeed for a caller acting on their
+  own organization;
+* a platform-scoped caller (`tenantId === PLATFORM_SCOPE_TENANT_ID`,
+  i.e. a literal `SUPER_ADMIN`) is exempt from the tenant check and can
+  still act cross-tenant;
+* a nonexistent organization id still 404s, unchanged from before the
+  fix.
 
 ---
 
