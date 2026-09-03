@@ -159,6 +159,14 @@ describe('Gap 3: the legacy /api/admin surface has been removed', () => {
     const ALLOWED_DIRECT_TBLADMIN_ACCESS = new Set([
       'modules/security/controllers/token.controller.ts',
       'modules/security/services/refresh-token.service.ts',
+      // Pre-login lookup: "does this email use SSO?" It reads tbladmin
+      // to check for an SSO-linked account, but returns no account data
+      // -- see tests/security/route-auth-conformance.spec.ts's
+      // PUBLIC_ROUTES entry for this same route, which documents the
+      // no-data-returned property this test independently checks below
+      // ("no route or repository selects the tbladmin Password field").
+      // Legitimately unauthenticated (there is no session yet at
+      // pre-login) and already reviewed; not the class of bug Gap 3 was.
       'app/api/auth/precheck/route.ts',
       'modules/organizations/repositories/admin-user.repository.ts',
       'workers/email.worker.ts',
@@ -168,7 +176,11 @@ describe('Gap 3: the legacy /api/admin surface has been removed', () => {
     const offenders: string[] = [];
     for (const file of walk(apiRoot)) {
       if (!file.endsWith('route.ts')) continue;
-      const rel = path.relative(ROOT, file);
+      // Normalise to forward slashes before comparing against the
+      // allow-list: path.relative() returns backslash-separated paths
+      // on Windows, which would otherwise make every legitimate entry
+      // below look like a new offender on that platform.
+      const rel = path.relative(ROOT, file).replace(/\\/g, '/');
       if (ALLOWED_DIRECT_TBLADMIN_ACCESS.has(rel)) continue;
       const content = fs.readFileSync(file, 'utf8');
       if (/collection\(\s*['"]tbladmin['"]\s*\)/.test(content)) {
