@@ -73,12 +73,11 @@ const ORGANIZATIONS_PER_PAGE = 50;
  * searches for someone and finds nothing needs to know whether that
  * means "not on the platform" or "not on this page".
  *
- * (`/api/admin` also returns rows of the legacy `tbladmin` collection.
- * It is deliberately not used: gated on `requireAuth()` alone -- any
- * authenticated user, no Permission check -- returning a bare array
- * outside the `{ success, data }` envelope, and its own route header
- * records it as a pre-multi-tenancy holdover to be migrated or removed.
- * See PLATFORM_ADMIN_BACKEND_GAPS.md.)
+ * (`/api/admin` used to also return rows of the legacy `tbladmin`
+ * collection, gated on `requireAuth()` alone with no Permission check,
+ * no tenant scoping, and a bare-array response. It has been REMOVED --
+ * see PLATFORM_ADMIN_BACKEND_GAPS.md, Gap 3 -- since nothing in the
+ * product called it. This directory was never built on it.)
  *
  * ─────────────────────────────────────────────────────────────────────
  * NO ACTIONS HERE

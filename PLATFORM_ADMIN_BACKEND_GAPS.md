@@ -17,7 +17,7 @@ code.
 |---|---|---|---|
 | 1 | No platform-wide user endpoint | Feature | Directory **derived** from the organizations listing; page states its own scope |
 | 2 | Member routes take an organization id nothing binds to the caller | **Security — FIXED** | Writes restricted to the caller's own organization, fail-closed |
-| 3 | `/api/admin` legacy surface is under-gated | **Security** | Not used at all |
+| 3 | `/api/admin` legacy surface is under-gated | **Security — FIXED** | Routes removed; nothing in the product used them |
 | 4 | API keys are organization-scoped, not platform-scoped | Feature | Page says so in a banner; heading is "API keys", not "Platform API keys" |
 | 5 | Custom roles cannot be assigned to a member | Feature | Role dialog lists built-in roles only and explains why |
 | 6 | Custom role listing is tenant-scoped | Feature | Card states it shows the caller's own organization only |
@@ -346,7 +346,14 @@ against the real `OrganizationService` and `OrganizationRepository`:
 
 **Severity: security.**
 
-`app/api/admin/route.ts` returns every row of the legacy `tbladmin`
+**Status: FIXED by removal.** `app/api/admin/route.ts`,
+`app/api/admin/register/route.ts`, `app/api/admin/update/route.ts`, and
+`app/api/admin/delete/route.ts` have been deleted. See "What actually
+shipped" below for why removal (rather than migration onto
+`withAuth`/`Permission`) was the safe choice here, and what remains as
+an operational follow-up.
+
+`app/api/admin/route.ts` returned every row of the legacy `tbladmin`
 collection. Its problems, in its own header's words and verified in the
 code:
 
@@ -354,23 +361,106 @@ code:
   tenant, with no `Permission` check and no tenant filter. Every other
   admin surface in the app goes through `withAuth` + a `Permission`.
 * **No tenant scoping at all.** The query is `db.collection("tbladmin").find()`.
-* **Wrong response shape.** It returns a bare array via
+* **Wrong response shape.** It returned a bare array via
   `NextResponse.json(admins)`, not the `{ success, data }` envelope
   `apiClient.handleResponse` expects.
-* Its own comment calls it "a pre-multi-tenancy holdover… It should be
+* Its own comment called it "a pre-multi-tenancy holdover… It should be
   migrated onto that system (or removed) rather than patched
   indefinitely."
 
-The same applies to `admin/register`, `admin/update` and `admin/delete`.
+At the time of this fix, `admin/register`, `admin/update` and
+`admin/delete` had already been separately hardened in a prior pass —
+each required `context.isSuperAdmin` and tenant-scoped non-platform
+callers — so they were no longer exactly as exposed as `route.ts`
+remained. They still shared the deeper problem: routes bypassing
+`withAuth`/`Permission` entirely, invisible to the Permission-based
+conformance tooling the rest of the app relies on, and reachable by
+nobody in the actual product.
 
-### Shipped behaviour
+### Shipped behaviour (before this fix)
 
 **Not used.** The Users page is built on `/api/platform/organizations`
 instead. Wiring a Platform Admin screen to `/api/admin` would put an
 under-gated endpoint into the product's administration surface and imply
 it is platform-grade.
 
-### Suggested fix
+### What actually shipped
+
+Before choosing between the two options below, this pass looked for
+every consumer of these four routes — Platform Admin frontend,
+organization-member flows, other backend modules, and the test suite —
+and found **none**. `OrganizationMember` (embedded on `Organization`,
+see Gap 1/2 above) is the platform's real user-membership model, and
+tenant-bound account creation/update/removal already goes through
+`OrganizationService` (`addMember`, `addMemberDirect`,
+`suspendMember`/`restoreMember`, `updateMemberRole`, `removeMember`) via
+`/api/organizations/*`, not through this surface. That made **removal**
+the safe option per the stated preference order, not the migration
+fallback:
+
+1. Deleted `app/api/admin/route.ts`, `app/api/admin/register/route.ts`,
+   `app/api/admin/update/route.ts`, `app/api/admin/delete/route.ts`.
+2. Left the unrelated `/api/admin/jobs/*` and `/api/admin/reminders/*`
+   routes untouched — they are a separate, already `withAuth` +
+   `Permission`-gated feature (job scheduling / maintenance-reminder
+   triggers) that happens to share the `/api/admin` URL prefix, not
+   part of this finding.
+3. Updated the two frontend comments that referenced `/api/admin` as an
+   unused-but-present alternative (`frontend/modules/platform-admin/
+   types/access.types.ts`, `.../pages/UsersPage.tsx`) to state it has
+   been removed, so they don't describe a route that no longer exists.
+4. Corrected a factual error carried from the original audit write-up:
+   the earlier "suggested fix" below states `AdminUserRepository`
+   "fronts `tblusers`" — there is no `tblusers` collection anywhere in
+   this codebase. `AdminUserRepository` (and `lib/authOptions.ts`, and
+   every script under `scripts/*` that touches admin accounts) reads
+   and writes `tbladmin`, the same collection the removed routes
+   exposed. `tbladmin` is **not** a dead table and was **not** touched
+   by this fix: it remains the collection NextAuth authenticates
+   against and the one `OrganizationService.addMemberDirect` writes new
+   login-ready accounts to. Removing the four HTTP routes closes the
+   unauthorized *read/write surface* over it; it does not affect
+   `tbladmin` itself.
+5. `lib/requireAuth.ts` (the auth helper `GET /api/admin` used) has no
+   remaining callers after this change. It has been left in place
+   rather than deleted, since removing a now-unused helper file was
+   judged out of scope for a security fix — noted here as a minor
+   cleanup follow-up, not a risk.
+
+**Operational follow-up (not code):** `tbladmin` still stores live,
+bcrypt-hashed credentials and predates the `tenantId`-scoping
+conventions the rest of the app follows (see
+`modules/organizations/repositories/admin-user.repository.ts`'s own
+header). Migrating it onto the current `BaseEntity`/tenant-scoping model
+— or consolidating it with `OrganizationMember` outright — remains
+worthwhile, but is a data-migration project, not something to fold into
+a routes-removal fix. No credential field was exposed by this change in
+either direction: it was already stripped by the one route that
+returned data, and no route returns `tbladmin` rows any more at all.
+
+### Regression tests
+
+`tests/security/legacy-admin-routes-removed.spec.ts` — covers:
+
+* all four route files are gone from disk, and `require()`-ing any of
+  their paths fails with `Cannot find module` — the structural proxy
+  for "no anonymous, authenticated non-super-admin, or super-admin
+  caller can reach this route any more," since there is no handler left
+  for any of them to reach;
+* the unrelated `/api/admin/jobs/*` and `/api/admin/reminders/*` routes
+  still exist, untouched;
+* no file in the tracked tree still references any of the removed URL
+  paths (a repository-wide scan, excluding this suite and the two
+  now-updated frontend comments documenting the removal);
+* no other `app/api/**/route.ts` reads the `tbladmin` collection
+  directly outside a small, named allow-list of legitimate,
+  already-reviewed auth call sites (login, token refresh, SSO precheck);
+* neither `AdminUserRepository` nor the token controller returns a raw
+  `tbladmin` document (and therefore its `Password` hash) in an HTTP
+  response;
+* `PLATFORM_ADMIN_BACKEND_GAPS.md` itself records Gap 3 as fixed.
+
+### Suggested fix (original audit text, superseded above)
 
 Two options, both out of scope here:
 

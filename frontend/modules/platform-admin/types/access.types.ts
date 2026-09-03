@@ -50,13 +50,11 @@
 //    fan-out. Its scope is exactly "the organizations on this page",
 //    which the page states rather than implying completeness.
 //
-//    (`/api/admin` also exists and returns rows of the legacy
-//    `tbladmin` collection. It is NOT used here: it is gated on
-//    `requireAuth()` alone -- any authenticated user, no Permission
-//    check -- returns a bare array outside the `{ success, data }`
-//    envelope, and its own route header records it as a
-//    pre-multi-tenancy holdover that should be migrated or removed
-//    rather than patched. See PLATFORM_ADMIN_BACKEND_GAPS.md.)
+//    (`/api/admin` used to also exist, returning rows of the legacy
+//    `tbladmin` collection with no Permission check and no tenant
+//    scoping. It has been REMOVED -- see PLATFORM_ADMIN_BACKEND_GAPS.md,
+//    Gap 3 -- since nothing in the product called it. This directory
+//    was never built on it and needs no change as a result.)
 //
 // 3. MEMBER WRITES ARE OFFERED ONLY FOR THE CALLER'S OWN ORGANIZATION.
 //    The five member routes take the organization from the URL and are

@@ -1,0 +1,16 @@
+Gap 3 fix — files DELETED from the repository (apply these deletions
+manually; a ZIP of changed files cannot represent a removal):
+
+  app/api/admin/route.ts
+  app/api/admin/register/route.ts
+  app/api/admin/update/route.ts
+  app/api/admin/delete/route.ts
+
+Note: app/api/admin/register/, app/api/admin/update/, and
+app/api/admin/delete/ become empty directories once their route.ts is
+removed — delete the directories too if your tooling doesn't do this
+automatically. Do NOT touch app/api/admin/jobs/* or
+app/api/admin/reminders/* — those are a separate, already-secured
+feature that happens to share the /api/admin URL prefix.
+
+See PLATFORM_ADMIN_BACKEND_GAPS.md (Gap 3) for the full rationale.
