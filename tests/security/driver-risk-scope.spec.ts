@@ -5,19 +5,24 @@
 // narrowed TenantContext only sees drivers assigned to an accessible org
 // unit, and only their trips/telematics within that scope feed the score.
 //
-// Mirrors the mocking style of
-// tests/security/org-unit-descendants-objectid.spec.ts -- mock the
-// repositories at the boundary this service actually calls, rather than
-// standing up a real Mongo connection.
+// FIX (scorecard showing every organization member as a "driver"): this
+// suite used to mock resolveOrganization()/organization.members and
+// asserted that every org member -- including non-driver roles -- was
+// scored. That was pinning the bug in place, not testing a fix. The
+// roster now comes from driverRepository (the real tbldrivers
+// collection, the same source the Drivers table and the vehicle
+// assignment picker use), so this suite mocks driverRepository instead
+// and adds an explicit regression test proving organization members who
+// are not drivers never appear on the scorecard.
 
 import { driverRiskService } from '../../modules/ai/services/driver-risk.service';
-import { resolveOrganization } from '../../server/tenancy/organization-resolver';
+import { driverRepository } from '../../modules/drivers/repositories/driver.repository';
 import { tripRepository } from '../../modules/trips/repositories/trip.repository';
 import { telematicsRepository } from '../../modules/telematics/repositories/telematics.repository';
 import { TenantContext } from '../../modules/tenancy/services/tenant-context.service';
 
-jest.mock('../../server/tenancy/organization-resolver', () => ({
-  resolveOrganization: jest.fn(),
+jest.mock('../../modules/drivers/repositories/driver.repository', () => ({
+  driverRepository: { findAll: jest.fn(), findAllInScope: jest.fn() },
 }));
 jest.mock('../../modules/trips/repositories/trip.repository', () => ({
   tripRepository: { findMany: jest.fn() },
@@ -26,7 +31,8 @@ jest.mock('../../modules/telematics/repositories/telematics.repository', () => (
   telematicsRepository: { findMany: jest.fn() },
 }));
 
-const mockedResolveOrganization = resolveOrganization as jest.Mock;
+const mockedFindAll = driverRepository.findAll as jest.Mock;
+const mockedFindAllInScope = driverRepository.findAllInScope as jest.Mock;
 const mockedTripFindMany = tripRepository.findMany as jest.Mock;
 const mockedTelematicsFindMany = telematicsRepository.findMany as jest.Mock;
 
@@ -35,21 +41,19 @@ const HARARE_BRANCH = 'branch-harare';
 const BULAWAYO_BRANCH = 'branch-bulawayo';
 
 const hareDriver = {
-  userId: 'user-harare-driver',
+  _id: 'driver-harare-1',
+  tenantId: ORG,
   name: 'Harare Driver',
-  email: 'harare@example.com',
-  role: 'member',
-  permissions: [],
+  email: 'harare.driver@example.com',
   status: 'active' as const,
   orgUnitId: HARARE_BRANCH,
 };
 
 const bulawayoDriver = {
-  userId: 'user-bulawayo-driver',
+  _id: 'driver-bulawayo-1',
+  tenantId: ORG,
   name: 'Bulawayo Driver',
-  email: 'bulawayo@example.com',
-  role: 'member',
-  permissions: [],
+  email: 'bulawayo.driver@example.com',
   status: 'active' as const,
   orgUnitId: BULAWAYO_BRANCH,
 };
@@ -66,10 +70,15 @@ function makeScopedContext(accessibleOrgUnitIds: string[] | null): TenantContext
 
 describe('driver-risk org-unit scoping', () => {
   beforeEach(() => {
-    mockedResolveOrganization.mockResolvedValue({
-      _id: ORG,
-      name: 'Willsgrove Farm Enterprises',
-      members: [hareDriver, bulawayoDriver],
+    mockedFindAll.mockResolvedValue([hareDriver, bulawayoDriver]);
+    // findAllInScope simulates the repository's own org-unit filtering
+    // (see DriverRepository.findAllInScope) so this suite doesn't
+    // duplicate that logic -- it just needs to return the scoped subset.
+    mockedFindAllInScope.mockImplementation(async (context: TenantContext) => {
+      if (context.accessibleOrgUnitIds === null) return [hareDriver, bulawayoDriver];
+      return [hareDriver, bulawayoDriver].filter((d) =>
+        context.accessibleOrgUnitIds!.includes(d.orgUnitId)
+      );
     });
     mockedTripFindMany.mockResolvedValue([]);
     mockedTelematicsFindMany.mockResolvedValue([]);
@@ -79,22 +88,24 @@ describe('driver-risk org-unit scoping', () => {
     jest.clearAllMocks();
   });
 
-  it('with no context (org-wide caller), scores every member', async () => {
+  it('with no context (org-wide caller), scores every real driver', async () => {
     const result = await driverRiskService.calculateDriverRisk(ORG);
 
+    expect(mockedFindAll).toHaveBeenCalledWith(ORG);
     expect(result.success).toBe(true);
     expect(result.total).toBe(2);
     const ids = result.results.map((r) => r.entityId).sort();
-    expect(ids).toEqual(['user-bulawayo-driver', 'user-harare-driver']);
+    expect(ids).toEqual(['driver-bulawayo-1', 'driver-harare-1']);
   });
 
   it('with a Harare-only context, excludes the Bulawayo driver entirely', async () => {
     const context = makeScopedContext([HARARE_BRANCH]);
     const result = await driverRiskService.calculateDriverRisk(ORG, context);
 
+    expect(mockedFindAllInScope).toHaveBeenCalledWith(context);
     expect(result.success).toBe(true);
     expect(result.total).toBe(1);
-    expect(result.results.map((r) => r.entityId)).toEqual(['user-harare-driver']);
+    expect(result.results.map((r) => r.entityId)).toEqual(['driver-harare-1']);
   });
 
   it('with a Harare-only context, the trip query includes the org-unit filter', async () => {
@@ -103,7 +114,7 @@ describe('driver-risk org-unit scoping', () => {
 
     expect(mockedTripFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        driver_id: hareDriver.userId,
+        driver_id: hareDriver._id,
         orgUnitId: { $in: [HARARE_BRANCH] },
       }),
       ORG
@@ -119,16 +130,33 @@ describe('driver-risk org-unit scoping', () => {
     expect(mockedTripFindMany).not.toHaveBeenCalled();
   });
 
-  it('a member with no orgUnitId is invisible to a scope-narrowed caller (fail-closed, matches driver.tenancy-addendum precedent)', async () => {
-    mockedResolveOrganization.mockResolvedValue({
-      _id: ORG,
-      name: 'Willsgrove Farm Enterprises',
-      members: [{ ...hareDriver, orgUnitId: undefined }, bulawayoDriver],
-    });
+  it('an empty driver store produces zero scored drivers', async () => {
+    mockedFindAll.mockResolvedValue([]);
+    mockedFindAllInScope.mockResolvedValue([]);
 
-    const context = makeScopedContext([HARARE_BRANCH]);
-    const result = await driverRiskService.calculateDriverRisk(ORG, context);
+    const result = await driverRiskService.calculateDriverRisk(ORG);
 
+    expect(result.success).toBe(true);
     expect(result.total).toBe(0);
+    expect(result.results).toEqual([]);
+  });
+
+  it('REGRESSION: organization members who are not real drivers never appear on the scorecard', async () => {
+    // Same shape the bug produced: an organization with accountants,
+    // auditors, and managers as members, but only one real tbldrivers
+    // record. The roster must come entirely from driverRepository, so
+    // no member-derived entry (by email/role) can leak in.
+    mockedFindAll.mockResolvedValue([hareDriver]);
+
+    const result = await driverRiskService.calculateDriverRisk(ORG);
+
+    expect(result.total).toBe(1);
+    const names = result.results.map((r) =>
+      r.success ? (r as { data: { driverName: string } }).data.driverName : undefined
+    );
+    expect(names).toEqual(['Harare Driver']);
+    expect(
+      names.some((n) => /manager|accountant|auditor|mechanic|dispatcher/i.test(String(n)))
+    ).toBe(false);
   });
 });

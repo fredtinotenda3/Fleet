@@ -1,15 +1,10 @@
 // frontend/modules/vehicles/components/DriverAssignmentPanel.tsx
 //
-// PENDING BACKEND -- see docs/DRIVER_VEHICLE_ASSIGNMENT_MISSING_BACKEND.md.
-//
-// This panel is fully wired to real hooks/services (useAssignVehicleDriver
-// -> vehiclesApi.assignDriver -> PATCH /api/vehicles/:id/driver), but that
-// route does not exist in the backend yet. It is built ahead of the
-// backend against the contract documented above, not mocked: "Assign"/
-// "Unassign" will genuinely round-trip to the server and surface a real
-// error (via the existing toast pattern) until the endpoint ships. The
-// notice below exists so that failure isn't confusing to whoever tries
-// this before the backend lands -- remove it once the route is live.
+// Wired to real hooks/services (useAssignVehicleDriver ->
+// vehiclesApi.assignDriver -> PATCH /api/vehicles/:id/driver). That route
+// is implemented server-side (see vehicleController.assignVehicleDriver
+// and docs/DRIVER_VEHICLE_ASSIGNMENT_MISSING_BACKEND.md for the design
+// record) -- "Assign"/"Unassign" round-trip to the server for real.
 
 'use client';
 
@@ -17,7 +12,6 @@ import { useState } from 'react';
 import { UserRound, UserRoundPlus, UserRoundX } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/frontend/shared/ui/data-display/card';
 import { Button } from '@/frontend/shared/ui/primitives/button';
-import { Alert, AlertTitle, AlertDescription } from '@/frontend/shared/ui/feedback/alert';
 import {
   Dialog,
   DialogContent,
@@ -64,15 +58,6 @@ export function DriverAssignmentPanel({ vehicle, canAssign }: DriverAssignmentPa
         <CardTitle>Driver assignment</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <Alert>
-          <AlertTitle>Backend not deployed yet</AlertTitle>
-          <AlertDescription>
-            This panel calls PATCH /api/vehicles/{'{id}'}/driver, which doesn&apos;t exist in the
-            backend yet. Assign/unassign actions here will fail until that endpoint ships -- see
-            docs/DRIVER_VEHICLE_ASSIGNMENT_MISSING_BACKEND.md.
-          </AlertDescription>
-        </Alert>
-
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted">

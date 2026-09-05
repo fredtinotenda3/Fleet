@@ -15,16 +15,12 @@
 //   - `driverId` prop supplied (route: /drivers/[id]/scorecard) ->
 //     the full scorecard for that one driver via useDriverRisk(driverId).
 //
-// The picker deliberately reuses the SAME ids the driver-risk batch
-// endpoint returns (AIBatchItem.entityId / DriverRiskScore.driverId --
-// an OrganizationMember.userId) rather than the existing
-// DriverSelect/useDriversList components, which are bound to the
-// unrelated tbldrivers collection. driver-risk.service.ts's own
-// KNOWN OPEN QUESTION comment says these two rosters may not agree;
-// binding this picker to DriverSelect would silently risk sending a
-// tbldrivers _id into an endpoint that only recognizes
-// OrganizationMember.userId, producing a confident-looking 404 for
-// ids that are perfectly valid drivers elsewhere in the app.
+// The picker reuses the SAME ids the driver-risk batch endpoint returns
+// (AIBatchItem.entityId / DriverRiskScore.driverId). As of the fix to
+// driver-risk.service.ts, that id IS the tbldrivers `_id` -- the same
+// roster and the same id DriverSelect/useDriversList already use -- so
+// there is no longer a mismatch between "who driver-risk scores" and
+// "who the Drivers table/vehicle picker call a driver".
 
 'use client';
 
@@ -56,7 +52,7 @@ import {
 import type { DriverRiskBatchItem } from '../types/driver-risk.types';
 
 interface DriverScorecardPageProps {
-  /** OrganizationMember.userId -- see the doc comment above and on DriverRiskScore.driverId. */
+  /** tbldrivers `_id` -- see the doc comment above and on DriverRiskScore.driverId. */
   driverId?: string;
 }
 

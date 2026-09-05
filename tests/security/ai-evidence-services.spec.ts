@@ -23,6 +23,7 @@ const rows = {
   telematics: [] as Array<Record<string, unknown>>,
   latestTelematics: null as Record<string, unknown> | null,
   members: [] as Array<Record<string, unknown>>,
+  drivers: [] as Array<Record<string, unknown>>,
 };
 
 jest.mock('@/modules/vehicles/repositories/vehicle.repository', () => ({
@@ -48,6 +49,12 @@ jest.mock('@/modules/telematics/repositories/telematics.repository', () => ({
 }));
 jest.mock('@/server/tenancy/organization-resolver', () => ({
   resolveOrganization: jest.fn(async () => ({ members: rows.members })),
+}));
+jest.mock('@/modules/drivers/repositories/driver.repository', () => ({
+  driverRepository: {
+    findAll: jest.fn(async () => rows.drivers),
+    findAllInScope: jest.fn(async () => rows.drivers),
+  },
 }));
 jest.mock('@/infrastructure/monitoring/logger', () => ({
   monitoring: { logError: jest.fn(), logWarn: jest.fn(), logInfo: jest.fn(), logDebug: jest.fn() },
@@ -86,6 +93,7 @@ beforeEach(() => {
   rows.telematics = [];
   rows.latestTelematics = null;
   rows.members = [];
+  rows.drivers = [];
 });
 
 // ─────────────────────────────────────────────────────────────────────
@@ -194,10 +202,18 @@ describe('fleet health', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────
+// FIX (driver-risk roster): driverRiskService now sources its driver
+// roster from driverRepository (real tbldrivers records), not
+// organization.members -- see driver-risk.service.ts and
+// tests/security/driver-risk-scope.spec.ts. This block's fixture and
+// mock were updated to match; the resolveOrganization/`members` mock
+// above is still used by the fleet-health and predictive-maintenance
+// blocks elsewhere in this file.
 describe('driver risk', () => {
   beforeEach(() => {
-    rows.members = [
-      { userId: 'user-1', name: 'T. Moyo', role: 'driver', orgUnitId: 'unit-harare' },
+    rows.drivers = [
+      { _id: 'user-1', name: 'T. Moyo', tenantId: TENANT, status: 'active', orgUnitId: 'unit-harare' },
     ];
     rows.trips = [
       { _id: 'trip-1', license_plate: 'ADY2531', driver_id: 'user-1', date: new Date(2026, 7, 20), distance_calculated: 400, trip_duration: 9 },

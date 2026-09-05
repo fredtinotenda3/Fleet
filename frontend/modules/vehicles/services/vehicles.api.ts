@@ -49,7 +49,7 @@ export const vehiclesApi = {
     return apiClient.get<PaginatedResponse<Vehicle>>(BASE, { params: buildListQuery(params) });
   },
 
-  async getById(id: string): Promise<Vehicle> {
+  async getById(id: string): Promise<VehicleWithAssignment> {
     return apiClient.get<Vehicle>(`${BASE}/${id}`);
   },
 
@@ -70,12 +70,10 @@ export const vehiclesApi = {
   },
 
   /**
-   * PENDING BACKEND -- see docs/DRIVER_VEHICLE_ASSIGNMENT_MISSING_BACKEND.md.
-   * PATCH /api/vehicles/:id/driver does not exist in this codebase yet.
-   * This is written against the contract proposed in that doc (mirrors
-   * updateStatus() above) so the mutation/hook/UI layer is ready to go
-   * the moment the route ships. Calling this today will reject with a
-   * 404 from Next's router -- it is a real network call, not a mock.
+   * PATCH /api/vehicles/:id/driver -- implemented server-side by
+   * vehicleController.assignVehicleDriver (see
+   * docs/DRIVER_VEHICLE_ASSIGNMENT_MISSING_BACKEND.md for the design
+   * record). Returns the updated vehicle with `assignedDriver` resolved.
    */
   async assignDriver(id: string, payload: AssignVehicleDriverPayload): Promise<VehicleWithAssignment> {
     return apiClient.patch<VehicleWithAssignment>(`${BASE}/${id}/driver`, payload);

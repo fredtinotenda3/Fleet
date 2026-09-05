@@ -9,20 +9,18 @@ import type { DriverRef } from '@/shared/types/driver.types';
 export type { Vehicle, VehicleFilters, VehicleStats, PaginationParams, PaginatedResponse, DriverRef };
 
 /**
- * PENDING BACKEND -- see docs/DRIVER_VEHICLE_ASSIGNMENT_MISSING_BACKEND.md.
- *
- * `Vehicle` (shared/types/vehicle.types.ts) has no driver-assignment
- * field today, and VehicleResponseDto never emits one. This is a
- * frontend-only projection describing the shape the UI expects once
- * GET /api/vehicles/:id and PATCH /api/vehicles/:id/driver return it.
- * Until that ships, `assignedDriver` will always be `undefined` on data
- * that actually came from the API -- it is never populated client-side.
+ * `Vehicle` (shared/types/vehicle.types.ts) carries only the raw
+ * `currentDriverId`. GET /api/vehicles/:id and PATCH
+ * /api/vehicles/:id/driver both resolve that id to a DriverRef and
+ * return it as `assignedDriver` (see VehicleController.withAssignedDriver
+ * / VehicleResponseDto) so the UI doesn't need a second driver lookup
+ * just to render assignment status.
  */
 export interface VehicleWithAssignment extends Vehicle {
   assignedDriver?: DriverRef | null;
 }
 
-/** Body for the not-yet-implemented PATCH /api/vehicles/:id/driver. */
+/** Body for PATCH /api/vehicles/:id/driver. */
 export interface AssignVehicleDriverPayload {
   /** `null` (or omitted) unassigns the vehicle's current driver. */
   driverId: string | null;

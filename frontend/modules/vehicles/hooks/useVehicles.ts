@@ -2,7 +2,7 @@
 
 import { useQuery, type UseQueryOptions } from '@tanstack/react-query';
 import { vehiclesApi, type VehicleListParams } from '../services/vehicles.api';
-import type { Vehicle } from '../types';
+import type { VehicleWithAssignment } from '../types';
 
 export const vehicleKeys = {
   all: ['vehicles'] as const,
@@ -25,7 +25,7 @@ export function useVehiclesList(params: Partial<VehicleListParams>) {
   });
 }
 
-export function useVehicle(id: string | undefined, options?: Partial<UseQueryOptions<Vehicle>>) {
+export function useVehicle(id: string | undefined, options?: Partial<UseQueryOptions<VehicleWithAssignment>>) {
   return useQuery({
     queryKey: vehicleKeys.detail(id ?? ''),
     queryFn: () => vehiclesApi.getById(id as string),

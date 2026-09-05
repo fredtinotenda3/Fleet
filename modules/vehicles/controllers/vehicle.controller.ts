@@ -4,7 +4,9 @@ import { NextRequest } from 'next/server';
 import { bootstrapCqrs } from '@/server/cqrs/cqrs.module';
 import { vehicleCommandService } from '../services/vehicle-command.service';
 import { vehicleQueryService } from '../services/vehicle-query.service';
-import { VehicleFilters } from '@/shared/types/vehicle.types';
+import { Vehicle, VehicleFilters } from '@/shared/types/vehicle.types';
+import { VehicleResponseDto } from '../dto/vehicle-response.dto';
+import { DriverRef } from '@/shared/types/driver.types';
 import { validatePaginationParams } from '@/shared/utils/pagination.utils';
 import {
   successResponse,
@@ -210,11 +212,36 @@ export class VehicleController {
 
   async getVehicle(req: NextRequest, id: string) {
     try {
-      const { vehicle } = await this.loadInScopeVehicle(req, id);
-      return successResponse(vehicle);
+      const { authContext, vehicle } = await this.loadInScopeVehicle(req, id);
+      const response = await this.withAssignedDriver(vehicle, authContext.tenantId);
+      return successResponse(response);
     } catch (error) {
       return this.handleError(error);
     }
+  }
+
+  /**
+   * FIX (driver assignment never visible after it round-trips):
+   * VehicleResponseDto.assignedDriver existed and DriverAssignmentPanel
+   * reads it, but nothing ever constructed a VehicleResponseDto -- every
+   * response path returned the raw Vehicle document, whose only driver
+   * field is `currentDriverId` (a bare id string). The frontend's
+   * VehicleWithAssignment.assignedDriver was consequently always
+   * `undefined` on real API data, so the panel showed "Unassigned" (or
+   * stale data) even immediately after a successful PATCH
+   * /api/vehicles/:id/driver. This resolves `currentDriverId` to a
+   * DriverRef (a single findById, not a list scan) and returns the
+   * VehicleResponseDto shape the frontend has been expecting.
+   */
+  private async withAssignedDriver(vehicle: Vehicle, tenantId: string): Promise<VehicleResponseDto> {
+    if (!vehicle.currentDriverId) {
+      return VehicleResponseDto.fromVehicle(vehicle, null);
+    }
+    const driver = await driverRepository.findById(vehicle.currentDriverId, tenantId);
+    const driverRef: DriverRef | null = driver
+      ? { _id: driver._id!, name: driver.name, driver_code: driver.driver_code }
+      : null;
+    return VehicleResponseDto.fromVehicle(vehicle, driverRef);
   }
 
   async getVehicleByLicensePlate(req: NextRequest) {
@@ -568,7 +595,8 @@ export class VehicleController {
         authContext.tenantId,
         authContext.userId
       );
-      return successResponse(vehicle);
+      const response = await this.withAssignedDriver(vehicle, authContext.tenantId);
+      return successResponse(response);
     } catch (error) {
       return this.handleError(error);
     }

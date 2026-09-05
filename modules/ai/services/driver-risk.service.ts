@@ -9,12 +9,11 @@ import {
   DriverTelematicsData,
   TripEntity,
   TelematicsEntity,
-  OrganizationMember,
 } from '../types/ai.types';
-import { organizationRepository } from '@/modules/organizations/repositories/organization.repository';
+import { driverRepository } from '@/modules/drivers/repositories/driver.repository';
+import { Driver } from '@/shared/types/driver.types';
 import { tripRepository } from '@/modules/trips/repositories/trip.repository';
 import { telematicsRepository } from '@/modules/telematics/repositories/telematics.repository';
-import { resolveOrganization } from '@/server/tenancy/organization-resolver';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 import { SPEEDING_THRESHOLD_KMH } from '@/modules/telematics/services/reading-alerts';
@@ -32,64 +31,46 @@ export class DriverRiskService extends BaseAIService {
   protected readonly predictionType = 'driver_risk';
 
   /**
-   * Driver risk, now org-unit scoped the same way fleet-health is:
-   * every read this service makes -- the driver roster itself, plus
-   * each driver's trips and telematics -- is narrowed by the caller's
-   * accessibleOrgUnitIds rather than computed org-wide and handed to
-   * whoever asked.
+   * FIX (scorecard showing every organization member as a "driver"):
+   * this previously read its roster from OrganizationMember
+   * (organization.members) -- every account in the org, including
+   * accountants, auditors, managers, dispatchers, and mechanics -- and
+   * matched trips by member.userId === trip.driver_id. There is a
+   * dedicated tbldrivers collection (modules/drivers) that is the real
+   * source of truth for who is a driver; DriverSelect pickers across
+   * the app (fuel, vehicle assignment) already bind their `driver_id`
+   * to THAT collection's `_id`. Sourcing the roster from
+   * organization.members meant every non-driver role appeared on the
+   * scorecard with a default-safe (0/100, "Low") score built on zero
+   * matching trips, and an org with zero rows in tbldrivers still
+   * showed a scorecard entry for every member.
+   *
+   * Now the roster comes from driverRepository, the same repository
+   * and org-unit scoping (findAllInScope / getFilteredDriversInScope)
+   * used by the Drivers table and the vehicle-assignment picker, so
+   * "who counts as a driver" is defined in exactly one place. An empty
+   * tbldrivers collection now correctly produces zero scored drivers.
    *
    * `context` optional: platform tooling and any nightly digest job
    * still want organization-wide risk scores with no context.
-   *
-   * KNOWN OPEN QUESTION (not fixed here, flagging rather than guessing):
-   * this reads drivers from OrganizationMember (organization.members),
-   * matching trips by member.userId === trip.driver_id. Elsewhere in
-   * this codebase there's a dedicated tbldrivers collection
-   * (modules/drivers) with its own scoped roster
-   * (driverRepository.findAllInScope), and DriverSelect pickers in the
-   * fuel module bind driver_id to THAT collection's _id, not a user's
-   * userId. TripForm's own driver_id field, meanwhile, is a free-text
-   * input, not bound to either. Depending on which shape driver_id
-   * actually holds in your data, member.userId may never match a real
-   * trip's driver_id, which would silently return zero trips (and a
-   * default-safe score) for every driver regardless of scoping. I
-   * don't have production data to check which case you're in, and
-   * switching the source entity is a real behavior change, not a
-   * mechanical scoping fix -- flagging this rather than guessing.
    */
   async calculateDriverRisk(
     tenantId: string,
     context?: TenantContext
   ): Promise<AIBatchResult<DriverRiskScore>> {
     try {
-      const organization = await resolveOrganization(tenantId);
-      if (!organization) {
-        return {
-          success: false,
-          results: [],
-          total: 0,
-          succeeded: 0,
-          failed: 0,
-          timestamp: new Date(),
-        };
-      }
+      const rawDrivers = context
+        ? await driverRepository.findAllInScope(context)
+        : await driverRepository.findAll(tenantId);
+      // Every driver returned by the repository has already been
+      // persisted (and normalizeDoc() stringifies its ObjectId), so
+      // `_id` is always present here -- this narrows Driver['_id']
+      // (optional, to also cover not-yet-saved instances elsewhere in
+      // the codebase) to the non-optional shape this service needs.
+      const drivers: Array<Driver & { _id: string }> = rawDrivers.filter(
+        (d): d is Driver & { _id: string } => Boolean(d._id)
+      );
 
-      const allMembers: OrganizationMember[] = organization.members || [];
-
-      // Same fail-closed pattern as driver.tenancy-addendum.ts: a
-      // member with no orgUnitId is invisible to a scope-narrowed
-      // caller until assigned to an org unit, rather than defaulting
-      // to visible.
-      const drivers: OrganizationMember[] =
-        context && context.accessibleOrgUnitIds !== null
-          ? allMembers.filter(
-              (m) =>
-                (m as OrganizationMember & { orgUnitId?: string }).orgUnitId != null &&
-                context.accessibleOrgUnitIds!.includes(
-                  (m as OrganizationMember & { orgUnitId?: string }).orgUnitId!
-                )
-            )
-          : allMembers;
       const results: AIBatchResult<DriverRiskScore> = {
         success: true,
         results: [],
@@ -99,19 +80,19 @@ export class DriverRiskService extends BaseAIService {
         timestamp: new Date(),
       };
 
-      for (const member of drivers) {
+      for (const driver of drivers) {
         try {
-          const score = await this.calculateSingleRisk(member, tenantId, context);
+          const score = await this.calculateSingleRisk(driver, tenantId, context);
           if (score.success && score.data) {
             results.results.push({
-              entityId: member.userId,
+              entityId: driver._id,
               success: true,
               data: score.data,
             });
             results.succeeded++;
           } else {
             results.results.push({
-              entityId: member.userId,
+              entityId: driver._id,
               success: false,
               error: score.error || 'Unknown error',
             });
@@ -119,7 +100,7 @@ export class DriverRiskService extends BaseAIService {
           }
         } catch (error) {
           results.results.push({
-            entityId: member.userId,
+            entityId: driver._id,
             success: false,
             error: error instanceof Error ? error.message : 'Unknown error',
           });
@@ -142,7 +123,7 @@ export class DriverRiskService extends BaseAIService {
   }
 
   private async calculateSingleRisk(
-    driver: OrganizationMember,
+    driver: Driver & { _id: string },
     tenantId: string,
     context?: TenantContext
   ): Promise<AIResult<DriverRiskScore>> {
@@ -152,7 +133,7 @@ export class DriverRiskService extends BaseAIService {
         : {};
 
       const rawTrips = await tripRepository.findMany(
-        { driver_id: driver.userId, ...scope } as never,
+        { driver_id: driver._id, ...scope } as never,
         tenantId
       );
 
@@ -162,7 +143,7 @@ export class DriverRiskService extends BaseAIService {
         return {
           _id: t._id || '',
           license_plate: t.license_plate,
-          driver_id: t.driver_id || driver.userId,
+          driver_id: t.driver_id || driver._id,
           date: t.date || new Date(),
           distance_calculated: t.distance_calculated || 0,
           trip_duration: trip.trip_duration,
@@ -171,7 +152,7 @@ export class DriverRiskService extends BaseAIService {
         };
       });
 
-      const telematicsData = await this.getDriverTelematics(driver.userId, tenantId, context);
+      const telematicsData = await this.getDriverTelematics(driver._id, tenantId, context);
 
       const metrics = this.calculateRiskMetrics(driver, trips, telematicsData);
 
@@ -208,7 +189,7 @@ export class DriverRiskService extends BaseAIService {
       ]);
 
       const score: DriverRiskScore = {
-        driverId: driver.userId,
+        driverId: driver._id,
         driverName: driver.name || driver.email || 'Unknown Driver',
         overallScore,
         riskLevel,
@@ -224,7 +205,7 @@ export class DriverRiskService extends BaseAIService {
       };
 
       this.logPrediction({
-        driverId: driver.userId,
+        driverId: driver._id,
         overallScore,
         riskLevel,
         incidentCount: incidents.length,
@@ -236,7 +217,7 @@ export class DriverRiskService extends BaseAIService {
         timestamp: new Date(),
       };
     } catch (error) {
-      this.logError(`Failed to calculate risk for driver ${driver.userId}`, error as Error);
+      this.logError(`Failed to calculate risk for driver ${driver._id}`, error as Error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error',
@@ -291,7 +272,7 @@ export class DriverRiskService extends BaseAIService {
   }
 
   private calculateRiskMetrics(
-    driver: OrganizationMember,
+    driver: Driver,
     trips: TripEntity[],
     telematics: TelematicsEntity[]
   ): DriverRiskScore['metrics'] {

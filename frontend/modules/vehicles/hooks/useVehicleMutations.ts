@@ -81,11 +81,11 @@ export function useUpdateVehicleStatus() {
 }
 
 /**
- * PENDING BACKEND -- see docs/DRIVER_VEHICLE_ASSIGNMENT_MISSING_BACKEND.md.
- * Calls vehiclesApi.assignDriver(), which hits a route that does not
- * exist yet (PATCH /api/vehicles/:id/driver). Until that route ships,
- * this mutation will genuinely fail and surface the real error through
- * the toast below -- it does not fake success or write local-only state.
+ * Calls vehiclesApi.assignDriver() -> PATCH /api/vehicles/:id/driver,
+ * which is implemented server-side (vehicleController.assignVehicleDriver).
+ * On success, both the vehicle detail cache and the vehicle list are
+ * invalidated so the assignment shows up immediately everywhere it's
+ * rendered.
  */
 export function useAssignVehicleDriver(id: string) {
   const queryClient = useQueryClient();
