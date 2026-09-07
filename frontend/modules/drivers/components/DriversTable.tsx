@@ -14,12 +14,30 @@ import {
 } from '@/frontend/shared/ui/navigation/NestedMenu';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
-import { MoreHorizontal, Pencil, Trash2, AlertTriangle } from 'lucide-react';
+import { EmptyState } from '@/shared/ui/feedback/EmptyState';
+import { MoreHorizontal, Pencil, Trash2, AlertTriangle, Users } from 'lucide-react';
 import type { Driver, DriverStatus } from '../types';
 
 interface DriversTableProps {
   drivers: Driver[];
   isLoading: boolean;
+  /**
+   * ADDED. This table had a loading branch and no failure branch, so a failed
+   * fetch rendered the empty message — "No drivers yet. Add your first driver
+   * to start assigning trips and fuel logs." — telling an operator that nobody
+   * is on the roster when in fact the driver register could not be reached.
+   * DataTable checks error before empty, so the two can no longer be confused.
+   * The drivers list page owns its own failure branch today; these props exist
+   * so every consumer of this table gets the same ordering.
+   */
+  isError?: boolean;
+  errorMessage?: string;
+  onRetry?: () => void;
+  /** True when a search term or status filter is applied, so the empty state can tell the two cases apart. */
+  hasFilters?: boolean;
+  onClearFilters?: () => void;
+  /** Offered by the first-run empty state when the viewer may add a driver. */
+  onCreate?: () => void;
   onEdit: (driver: Driver) => void;
   onDelete: (driver: Driver) => void;
   canManage: boolean;
@@ -56,6 +74,12 @@ function licenceExpiryState(expiry?: Date | string): {
 export function DriversTable({
   drivers,
   isLoading,
+  isError = false,
+  errorMessage,
+  onRetry,
+  hasFilters = false,
+  onClearFilters,
+  onCreate,
   onEdit,
   onDelete,
   canManage,
@@ -160,12 +184,78 @@ export function DriversTable({
     [canManage, onEdit, onDelete]
   );
 
+  // Two genuinely different empty states. "No drivers at all" is a first-run
+  // moment that should explain what the roster unlocks and offer to start it;
+  // "no drivers match these filters" is the operator having hidden their own
+  // people, and the useful action there is to clear the filters. The old
+  // single message covered both and helped with neither.
+  const empty = hasFilters ? (
+    <EmptyState
+      icon={<Users aria-hidden="true" />}
+      title="No drivers match these filters"
+      description="Every driver in your scope is currently filtered out."
+      action={onClearFilters ? { label: 'Clear filters', onClick: onClearFilters } : undefined}
+    />
+  ) : (
+    <EmptyState
+      icon={<Users aria-hidden="true" />}
+      title="No drivers on the roster yet"
+      description="Driver records are what make behaviour scoring, risk analysis and per-driver fuel accountability possible. Until a driver exists, every trip and every refuel in the platform is activity with no owner."
+      hints={[
+        'Score how each person actually drives, not just how the vehicle performed.',
+        'Hold a named person to their fuel consumption instead of the fleet average.',
+        'Surface a licence that is expiring before it puts an unlicensed driver on the road.',
+      ]}
+      action={onCreate ? { label: 'Add your first driver', onClick: onCreate } : undefined}
+    />
+  );
+
   return (
     <DataTable
       columns={columns}
       data={drivers}
       isLoading={isLoading}
-      emptyMessage="No drivers yet. Add your first driver to start assigning trips and fuel logs."
+      isError={isError}
+      errorMessage={errorMessage}
+      onRetry={onRetry}
+      caption="Drivers"
+      empty={empty}
+      // Six columns do not fit a phone. Below `lg` each driver renders as a
+      // card carrying the fields that identify the person and the one field
+      // that can stop them driving — their licence expiry.
+      renderMobileRow={(driver) => {
+        const style = STATUS_STYLES[driver.status] ?? STATUS_STYLES.inactive;
+        const expiry = licenceExpiryState(driver.license_expiry);
+        return (
+          <div className="space-y-1.5">
+            <div className="flex items-start justify-between gap-2">
+              <span className="text-body-sm font-medium text-foreground">{driver.name}</span>
+              <Badge variant="outline" className={`${style.className} shrink-0`}>
+                {style.label}
+              </Badge>
+            </div>
+            {driver.driver_code && (
+              <p className="text-caption text-muted-foreground">{driver.driver_code}</p>
+            )}
+            {(driver.email || driver.phone) && (
+              <p className="text-caption text-muted-foreground">
+                {[driver.email, driver.phone].filter(Boolean).join(' · ')}
+              </p>
+            )}
+            <p
+              className={
+                expiry.tone === 'expired'
+                  ? 'text-caption text-destructive'
+                  : expiry.tone === 'warn'
+                    ? 'text-caption text-warning'
+                    : 'text-caption text-muted-foreground'
+              }
+            >
+              Licence {driver.license_number || 'not recorded'} · {expiry.label}
+            </p>
+          </div>
+        );
+      }}
     />
   );
 }

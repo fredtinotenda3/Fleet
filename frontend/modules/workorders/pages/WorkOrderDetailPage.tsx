@@ -11,6 +11,7 @@ import { Badge } from '@/frontend/shared/ui/data-display/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/frontend/shared/ui/data-display/card';
 import { LoadingState } from '@/shared/ui/feedback/LoadingState';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
+import { ErrorState, describeQueryError } from '@/frontend/shared/ui/patterns';
 import { formatDate } from '@/shared/utils/date.utils';
 import { useSessionStore } from '@/frontend/shared/store/session.store';
 import { useWorkOrder } from '../hooks/useWorkOrders';
@@ -32,11 +33,27 @@ export function WorkOrderDetailPage({ id }: WorkOrderDetailPageProps) {
   const roles = user?.roles ?? [];
   const canAssign = canAssignWorkOrders(roles);
 
-  const { data: workOrder, isLoading } = useWorkOrder(id);
+  const { data: workOrder, isLoading, isError, error, refetch } = useWorkOrder(id);
   const assignMechanic = useAssignMechanic(id);
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
 
   if (isLoading) return <LoadingState type="full" />;
+  // The failure branch has to be checked before the not-found branch, because a
+  // request that failed leaves `workOrder` undefined exactly as a deleted work
+  // order does. Without this the page told a mechanic their job had been
+  // removed every time the API was merely unreachable, which is how an open
+  // defect quietly stops being anybody's problem.
+  if (isError) {
+    return (
+      <ErrorState
+        title="This work order didn't load"
+        description="The work order could not be fetched. This does not mean it has been cancelled or removed."
+        detail={describeQueryError(error)}
+        onRetry={() => refetch()}
+        size="page"
+      />
+    );
+  }
   if (!workOrder) {
     return (
       <EmptyState

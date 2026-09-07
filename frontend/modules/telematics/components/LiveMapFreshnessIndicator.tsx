@@ -36,7 +36,10 @@ export function LiveMapFreshnessIndicator({ dataStale, refreshRequested }: LiveM
   return (
     <Badge
       variant="outline"
-      className="gap-1 text-amber-700 border-amber-300 bg-amber-50 dark:text-amber-400 dark:border-amber-900 dark:bg-amber-950"
+      // Warning tokens instead of six hand-written amber shades: --warning-bg
+      // and --warning-border are already redefined under .dark, so the stale-data
+      // badge now themes itself and matches every other warning in the product.
+      className="gap-1 border-warning-border bg-warning-bg text-warning"
       title={
         refreshRequested
           ? 'Showing the last data we have while a refresh is in progress.'

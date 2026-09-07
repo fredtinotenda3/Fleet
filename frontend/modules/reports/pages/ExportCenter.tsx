@@ -16,6 +16,7 @@ import { Download } from 'lucide-react';
 import { useSavedReports } from '../hooks/useSavedReports';
 import { useExportReport } from '../hooks/useExportReport';
 import { ExportJobsTable } from '../components/ExportJobsTable';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { EXPORT_FORMATS, EXPORT_FORMAT_LABELS, type ExportFormat } from '../schemas/exportConfig';
 import { LoadingState } from '@/shared/ui/feedback/LoadingState';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
@@ -44,12 +45,10 @@ export default function ExportCenter() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Export Center</h1>
-        <p className="text-sm text-muted-foreground">
-          Generate a report as CSV, Excel, PDF, Word, or JSON, and track every export you&apos;ve run.
-        </p>
-      </div>
+      <PageHeader
+        title="Export Center"
+        description="Generate a report as CSV, Excel, PDF, Word, or JSON, and track every export you've run."
+      />
 
       <section className="p-4 border rounded-lg sm:p-6">
         <h2 className="mb-4 text-sm font-medium">New export</h2>

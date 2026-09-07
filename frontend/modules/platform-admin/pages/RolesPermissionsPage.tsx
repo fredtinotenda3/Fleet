@@ -7,6 +7,7 @@ import { AlertTriangle, Info, RefreshCw, Search, ShieldCheck } from 'lucide-reac
 
 import { useAuth } from '@/frontend/modules/auth/hooks/useAuth';
 import { Permission, permissionService } from '@/server/permissions/roles';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
 import { Alert, AlertDescription, AlertTitle } from '@/frontend/shared/ui/feedback/alert';
 import { Skeleton } from '@/frontend/shared/ui/feedback/skeleton';
@@ -119,29 +120,27 @@ export function RolesPermissionsPage() {
 
   return (
     <div className="p-4 space-y-6 sm:p-6">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h1 className="text-h1">Roles &amp; permissions</h1>
-          <p className="mt-1 text-body-sm text-muted-foreground">
-            What every role can do, and which permission keys exist.
-          </p>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => {
-            customRoles.refetch();
-            catalogue.refetch();
-          }}
-          disabled={customRoles.isFetching || catalogue.isFetching}
-        >
-          <RefreshCw
-            className={`size-3.5 ${customRoles.isFetching || catalogue.isFetching ? 'animate-spin' : ''}`}
-            aria-hidden="true"
-          />
-          Refresh
-        </Button>
-      </div>
+      <PageHeader
+        title="Roles & permissions"
+        description="What every role can do, and which permission keys exist."
+        actions={
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              customRoles.refetch();
+              catalogue.refetch();
+            }}
+            disabled={customRoles.isFetching || catalogue.isFetching}
+          >
+            <RefreshCw
+              className={`size-3.5 ${customRoles.isFetching || catalogue.isFetching ? 'animate-spin' : ''}`}
+              aria-hidden="true"
+            />
+            Refresh
+          </Button>
+        }
+      />
 
       <StatisticCards>
         <StatisticCard title="Built-in roles" value={staticRoles.length} />

@@ -1,57 +1,96 @@
-﻿
 // frontend/shared/dashboards/widgets/KPIsWidget.tsx
 
 'use client';
 
 import { Truck, Wrench, Wallet, Fuel as FuelIcon } from 'lucide-react';
-import { StatsCard } from '@/shared/ui/cards/StatsCard';
+import { MetricCard, MetricCardGrid } from '@/frontend/shared/ui/patterns';
 import { formatCurrencyCompact } from '@/shared/utils/currency.utils';
-import { useVehicleStatsWidget, useMaintenanceWidget, useExpenseBreakdownWidget, useFuelTrendsWidget } from '@/frontend/modules/dashboard/hooks/useDashboardData';
+import {
+  useVehicleStatsWidget,
+  useMaintenanceWidget,
+  useExpenseBreakdownWidget,
+  useFuelTrendsWidget,
+} from '@/frontend/modules/dashboard/hooks/useDashboardData';
 
+/**
+ * The four figures at the top of the dashboard.
+ *
+ * FIXED HERE (UI/UX overhaul): this widget never read `isError` on any of its
+ * four queries. Every value used `?? 0`, so a failed request rendered a
+ * confident, plausible, wrong number rather than a failure:
+ *
+ *   - Fleet size showed "0" — an operator's fleet reported as empty.
+ *   - Open maintenance showed "0" AND, because the colour was chosen by
+ *     `maintenance.data && overdueCount > 0 ? 'red' : 'green'`, an undefined
+ *     response painted the card GREEN. A backend outage was displayed as
+ *     "nothing is overdue".
+ *   - Expenses and fuel spend both showed "$0".
+ *
+ * Alone on the most-viewed screen in the product, that is the single most
+ * damaging defect the audit found: unlike a spinner or an error, there is
+ * nothing about a zero that tells the reader not to trust it. Each card now
+ * carries its query's error state, and `MetricCard` renders "Unavailable"
+ * instead of a figure.
+ */
 export function KPIsWidget() {
   const vehicleStats = useVehicleStatsWidget();
   const maintenance = useMaintenanceWidget();
   const expenses = useExpenseBreakdownWidget();
   const fuel = useFuelTrendsWidget();
 
-  const total = vehicleStats.data?.total ?? 0;
+  const total = vehicleStats.data?.total;
   const active = vehicleStats.data?.active ?? 0;
-  const activePercent = total > 0 ? Math.round((active / total) * 100) : 0;
+  const activePercent = total && total > 0 ? Math.round((active / total) * 100) : 0;
+
+  const overdueCount = maintenance.data?.overdueCount;
+  const upcomingCount = maintenance.data?.upcoming.length ?? 0;
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <StatsCard
-        title="Fleet size"
-        value={total}
-        icon={<Truck className="w-4 h-4" />}
-        description={`${active} active (${activePercent}%)`}
+    <MetricCardGrid columns={4}>
+      <MetricCard
+        label="Fleet size"
+        value={total !== undefined ? total.toLocaleString() : null}
+        hint={total !== undefined ? `${active.toLocaleString()} active (${activePercent}%)` : undefined}
+        icon={<Truck aria-hidden="true" />}
         loading={vehicleStats.isLoading}
-        color="blue"
+        error={vehicleStats.isError}
+        href="/vehicles"
       />
-      <StatsCard
-        title="Open maintenance"
-        value={maintenance.data?.overdueCount ?? 0}
-        icon={<Wrench className="w-4 h-4" />}
-        description={`${maintenance.data?.upcoming.length ?? 0} due soon`}
+
+      <MetricCard
+        label="Open maintenance"
+        value={overdueCount !== undefined ? overdueCount.toLocaleString() : null}
+        hint={overdueCount !== undefined ? `${upcomingCount.toLocaleString()} due soon` : undefined}
+        icon={<Wrench aria-hidden="true" />}
         loading={maintenance.isLoading}
-        color={maintenance.data && maintenance.data.overdueCount > 0 ? 'red' : 'green'}
+        error={maintenance.isError}
+        // Tone is derived only from a value that was actually received. An
+        // absent response is neutral, never "positive" — that was the bug.
+        tone={overdueCount === undefined ? 'neutral' : overdueCount > 0 ? 'critical' : 'positive'}
+        href="/maintenance/overdue"
       />
-      <StatsCard
-        title="Total expenses"
-        value={formatCurrencyCompact(expenses.data?.total ?? 0)}
-        icon={<Wallet className="w-4 h-4" />}
-        description="All recorded expenses"
+
+      <MetricCard
+        label="Total expenses"
+        value={expenses.data ? formatCurrencyCompact(expenses.data.total) : null}
+        hint="All recorded expenses"
+        icon={<Wallet aria-hidden="true" />}
         loading={expenses.isLoading}
-        color="purple"
+        error={expenses.isError}
+        href="/expenses"
       />
-      <StatsCard
-        title="Fuel spend"
-        value={formatCurrencyCompact(fuel.data?.totalCost ?? 0)}
-        icon={<FuelIcon className="w-4 h-4" />}
-        description={`${Math.round(fuel.data?.totalVolume ?? 0).toLocaleString()} L logged`}
+
+      <MetricCard
+        label="Fuel spend"
+        value={fuel.data ? formatCurrencyCompact(fuel.data.totalCost) : null}
+        hint={
+          fuel.data ? `${Math.round(fuel.data.totalVolume).toLocaleString()} L logged` : undefined
+        }
+        icon={<FuelIcon aria-hidden="true" />}
         loading={fuel.isLoading}
-        color="yellow"
+        error={fuel.isError}
+        href="/fuel"
       />
-    </div>
+    </MetricCardGrid>
   );
 }

@@ -89,9 +89,9 @@ export function ReportList() {
                 type="button"
                 onClick={() => toggleFavorite(report.id)}
                 aria-label={isFavorite(report.id) ? 'Unfavorite' : 'Favorite'}
-                className="text-muted-foreground hover:text-yellow-500"
+                className="text-muted-foreground hover:text-warning"
               >
-                <Star className={`h-4 w-4 ${isFavorite(report.id) ? 'fill-yellow-400 text-yellow-500' : ''}`} />
+                <Star className={`h-4 w-4 ${isFavorite(report.id) ? 'fill-warning text-warning' : ''}`} />
               </button>
 
               <Link href={REPORTS_ROUTES.builder.edit(report.id)} className="flex-1 min-w-0">

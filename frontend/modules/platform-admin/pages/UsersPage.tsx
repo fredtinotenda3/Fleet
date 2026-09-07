@@ -8,6 +8,7 @@ import { useDebounce } from 'use-debounce';
 
 import { useAuth } from '@/frontend/modules/auth/hooks/useAuth';
 import { Permission, permissionService } from '@/server/permissions/roles';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { PageLoader } from '@/frontend/shared/loading/PageLoader';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
 import { Alert, AlertDescription, AlertTitle } from '@/frontend/shared/ui/feedback/alert';
@@ -162,21 +163,19 @@ export function UsersPage() {
 
   return (
     <div className="p-4 space-y-6 sm:p-6">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h1 className="text-h1">Users</h1>
-          <p className="mt-1 text-body-sm text-muted-foreground">
-            Members and pending invitations across tenant organizations.
-          </p>
-        </div>
-        <Button type="button" variant="outline" onClick={() => refetch()} disabled={isFetching}>
-          <RefreshCw
-            className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`}
-            aria-hidden="true"
-          />
-          Refresh
-        </Button>
-      </div>
+      <PageHeader
+        title="Users"
+        description="Members and pending invitations across tenant organizations."
+        actions={
+          <Button type="button" variant="outline" onClick={() => refetch()} disabled={isFetching}>
+            <RefreshCw
+              className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`}
+              aria-hidden="true"
+            />
+            Refresh
+          </Button>
+        }
+      />
 
       {isError ? (
         <Alert variant="destructive">

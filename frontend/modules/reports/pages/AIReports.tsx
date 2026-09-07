@@ -16,6 +16,7 @@ import {
   Pie,
   Legend,
 } from 'recharts';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/frontend/shared/ui/navigation/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/frontend/shared/ui/data-display/card';
 import { StatsCard } from '@/shared/ui/cards/StatsCard';
@@ -271,15 +272,13 @@ export default function AIReports() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">AI-Powered Insights</h1>
-        <p className="text-sm text-muted-foreground">
-          Predictive maintenance, fraud detection, anomaly analysis, fleet health, and driver risk scores.
-        </p>
-      </div>
+      <PageHeader
+        title="AI-Powered Insights"
+        description="Predictive maintenance, fraud detection, anomaly analysis, fleet health, and driver risk scores."
+      />
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="flex w-full flex-wrap">
           <TabsTrigger value="predictive">Predictive Maintenance</TabsTrigger>
           <TabsTrigger value="fuelFraud">Fuel Fraud</TabsTrigger>
           <TabsTrigger value="expenseAnomalies">Expense Anomalies</TabsTrigger>

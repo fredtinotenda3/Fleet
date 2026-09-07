@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { RefreshCw, AlertTriangle } from 'lucide-react';
 import { useAuth } from '@/frontend/modules/auth/hooks/useAuth';
 import { Permission, permissionService } from '@/server/permissions/roles';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { PageLoader } from '@/frontend/shared/loading/PageLoader';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
 import { Alert, AlertTitle, AlertDescription } from '@/frontend/shared/ui/feedback/alert';
@@ -74,23 +75,21 @@ export function ProviderHealthDashboardPage() {
 
   return (
     <div className="p-4 space-y-6 sm:p-6">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h1 className="text-h1">Provider health</h1>
-          <p className="mt-1 text-body-sm text-muted-foreground">
-            Telematics provider status across all tenants.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => refetch()}
-          disabled={isFetching}
-          className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-body-sm text-foreground hover:bg-muted disabled:opacity-50"
-        >
-          <RefreshCw className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`} aria-hidden="true" />
-          Refresh
-        </button>
-      </div>
+      <PageHeader
+        title="Provider health"
+        description="Telematics provider status across all tenants."
+        actions={
+          <button
+            type="button"
+            onClick={() => refetch()}
+            disabled={isFetching}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-body-sm text-foreground hover:bg-muted disabled:opacity-50"
+          >
+            <RefreshCw className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`} aria-hidden="true" />
+            Refresh
+          </button>
+        }
+      />
 
       <StatisticCards>
         <StatisticCard

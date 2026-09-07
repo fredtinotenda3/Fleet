@@ -101,7 +101,7 @@ export function MaintenanceForm({ record, onSubmit, onCancel, isSubmitting }: Ma
         {errors.title && <p className="text-xs text-destructive">{errors.title.message}</p>}
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="space-y-1.5">
           <Label>Category</Label>
           <Controller
@@ -159,7 +159,7 @@ export function MaintenanceForm({ record, onSubmit, onCancel, isSubmitting }: Ma
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="space-y-1.5">
           <Label htmlFor="service_type">Service type</Label>
           <Input id="service_type" placeholder="e.g. Workshop service" {...register('service_type')} />

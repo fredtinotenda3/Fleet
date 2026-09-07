@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/frontend/modules/auth/hooks/useAuth';
 import { useCurrentOrganization } from '../hooks/useCurrentOrganization';
 import { RoleList } from '../components/roles/RoleList';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { PageLoader } from '@/frontend/shared/loading/PageLoader';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
 import { ORGANIZATION_ROUTES } from '../routes';
@@ -42,12 +43,10 @@ export function OrganizationRolesPage() {
 
   return (
     <div className="p-4 space-y-6 sm:p-6">
-      <div>
-        <h1 className="text-h1">Roles & permissions</h1>
-        <p className="mt-1 text-body-sm text-muted-foreground">
-          Control what each role can see and do within {organization.name}.
-        </p>
-      </div>
+      <PageHeader
+        title="Roles & permissions"
+        description={`Control what each role can see and do within ${organization.name}.`}
+      />
 
       <RoleList />
     </div>

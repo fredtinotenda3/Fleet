@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/frontend/modules/auth/hooks/useAuth';
 import { useCurrentOrganization } from '../hooks/useCurrentOrganization';
 import { OrgUnitTree } from '../components/roles/OrgUnitTree';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { PageLoader } from '@/frontend/shared/loading/PageLoader';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
 import { canManageMembers } from '../utils';
@@ -34,12 +35,10 @@ export function OrganizationTeamsPage() {
 
   return (
     <div className="p-4 space-y-6 sm:p-6">
-      <div>
-        <h1 className="text-h1">Teams & branches</h1>
-        <p className="mt-1 text-body-sm text-muted-foreground">
-          Organize {organization.name} into branches, departments, teams, fleets, and workshops.
-        </p>
-      </div>
+      <PageHeader
+        title="Teams & branches"
+        description={`Organize ${organization.name} into branches, departments, teams, fleets, and workshops.`}
+      />
 
       <OrgUnitTree />
     </div>

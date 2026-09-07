@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import { Plus, Download, FileSpreadsheet, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
+import { describeQueryError } from '@/frontend/shared/ui/patterns';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import {
   DropdownMenu,
@@ -49,7 +50,15 @@ export function VehiclesListPage() {
   const [activeVehicle, setActiveVehicle] = useState<Vehicle | null>(null);
 
   const listParams = useMemo(() => ({ ...filters, page, limit: PAGE_SIZE }), [filters, page]);
-  const { data: result, isLoading } = useVehiclesList(listParams);
+  const { data: result, isLoading, isError, error, refetch } = useVehiclesList(listParams);
+
+  // Drives the empty state's branch: "no vehicles at all" (a first-run
+  // moment) versus "no vehicles match your filters" (the user hiding their
+  // own fleet). Rendering the same message for both is what made a healthy
+  // new tenant and an over-filtered list look identical.
+  const hasFilters = Object.values(filters).some(
+    (value) => value !== undefined && value !== null && value !== ''
+  );
 
   const createVehicle = useCreateVehicle();
   const updateVehicleMutation = useUpdateVehicle(activeVehicle?._id ?? '');
@@ -194,6 +203,12 @@ export function VehiclesListPage() {
         <VehiclesTable
           result={result}
           isLoading={isLoading}
+          isError={isError}
+          errorMessage={describeQueryError(error)}
+          onRetry={() => refetch()}
+          hasFilters={hasFilters}
+          onClearFilters={() => handleFiltersChange({})}
+          onAddVehicle={canManage ? openCreate : undefined}
           pageSize={PAGE_SIZE}
           onPageChange={setPage}
           selectedIds={selectedIds}

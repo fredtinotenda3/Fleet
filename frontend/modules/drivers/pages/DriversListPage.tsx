@@ -3,9 +3,10 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Plus, Search, AlertCircle } from 'lucide-react';
+import { Plus, Search } from 'lucide-react';
 import { useDebounce } from 'use-debounce';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
+import { ErrorState, describeQueryError } from '@/frontend/shared/ui/patterns';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { Input } from '@/frontend/shared/ui/forms/input';
 import {
@@ -58,7 +59,17 @@ export function DriversListPage() {
   const deleteDriver = useDeleteDriver();
 
   const drivers = result?.data ?? [];
+
+  // Drives the table's empty-state branch: "no drivers at all" (a roster that
+  // has never been filled in) versus "no drivers match your filters" (the
+  // operator having hidden their own people). Rendering the same message for
+  // both is what made a brand new tenant and a narrowed search look identical.
   const isFiltered = Boolean(params.search || params.status);
+
+  function clearFilters() {
+    setSearch('');
+    setStatus(ALL_STATUSES);
+  }
 
   function openCreate() {
     setModalMode('create');
@@ -134,50 +145,31 @@ export function DriversListPage() {
           </Select>
         </div>
 
+        {/* The failure branch is resolved before anything that renders rows,
+            because a failed fetch leaves `drivers` empty exactly as a genuinely
+            empty roster does. Falling through to the table would tell an
+            operator that nobody is licensed to drive while the register was
+            simply unreachable — the one message a fleet system must never get
+            wrong. The hand-rolled alert this replaces is now the shared
+            ErrorState, so an outage looks the same everywhere in the product. */}
         {isError ? (
-          <div
-            role="alert"
-            className="flex flex-col items-center gap-3 rounded-md border border-destructive/40 p-8 text-center"
-          >
-            <AlertCircle className="h-6 w-6 text-destructive" />
-            <div>
-              <p className="font-medium">Couldn&apos;t load drivers</p>
-              <p className="text-sm text-muted-foreground">
-                {error instanceof Error ? error.message : 'An unexpected error occurred.'}
-              </p>
-            </div>
-            <Button variant="outline" size="sm" onClick={() => refetch()}>
-              Try again
-            </Button>
-          </div>
+          <ErrorState
+            title="Drivers didn't load"
+            description="The driver register could not be fetched. This does not mean there are no drivers."
+            detail={describeQueryError(error)}
+            onRetry={() => refetch()}
+          />
         ) : (
-          <>
-            <DriversTable
-              drivers={drivers}
-              isLoading={isLoading}
-              onEdit={openEdit}
-              onDelete={handleDelete}
-              canManage={canManage}
-            />
-
-            {!isLoading && drivers.length === 0 && isFiltered ? (
-              <div className="flex flex-col items-center gap-2 py-6 text-center">
-                <p className="text-sm text-muted-foreground">
-                  No drivers match those filters.
-                </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setSearch('');
-                    setStatus(ALL_STATUSES);
-                  }}
-                >
-                  Clear filters
-                </Button>
-              </div>
-            ) : null}
-          </>
+          <DriversTable
+            drivers={drivers}
+            isLoading={isLoading}
+            hasFilters={isFiltered}
+            onClearFilters={clearFilters}
+            onCreate={canManage ? openCreate : undefined}
+            onEdit={openEdit}
+            onDelete={handleDelete}
+            canManage={canManage}
+          />
         )}
       </div>
 

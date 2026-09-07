@@ -15,7 +15,8 @@ import {
 } from '@/frontend/shared/ui/navigation/NestedMenu';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
-import { MoreHorizontal, Eye, Pencil, Trash2 } from 'lucide-react';
+import { MoreHorizontal, Eye, Pencil, Trash2, Receipt } from 'lucide-react';
+import { EmptyState } from '@/shared/ui/feedback/EmptyState';
 import { formatDate } from '@/shared/utils/date.utils';
 import type { PaginatedResponse } from '@/shared/types/common.types';
 import type { Expense } from '../types';
@@ -24,8 +25,25 @@ import { expenseCategoryLabel, formatExpenseAmount } from '../utils';
 interface ExpensesTableProps {
   result: PaginatedResponse<Expense> | undefined;
   isLoading: boolean;
+  /**
+   * ADDED. The table had a loading branch but no failure branch, so a failed
+   * fetch fell through to the empty message — "No expenses found. Try
+   * adjusting your filters or record a new expense." — which reports zero
+   * spend during an outage. On a cost ledger that reading is actively
+   * dangerous: "we spent nothing" is a conclusion someone will act on.
+   * DataTable now checks error before empty.
+   */
+  isError?: boolean;
+  errorMessage?: string;
+  onRetry?: () => void;
+  /** True when any filter is applied, so the empty state can tell the two cases apart. */
+  hasFilters?: boolean;
+  onClearFilters?: () => void;
+  /** Offered by the first-run empty state when the viewer may record expenses. */
+  onCreate?: () => void;
   pageSize: number;
   onPageChange: (page: number) => void;
+  onPageSizeChange?: (pageSize: number) => void;
   selectedIds: Set<string>;
   onToggleSelect: (id: string) => void;
   onToggleSelectAll: (ids: string[]) => void;
@@ -84,8 +102,15 @@ function CategoryBadge({ expense }: { expense: Expense }) {
 export function ExpensesTable({
   result,
   isLoading,
+  isError = false,
+  errorMessage,
+  onRetry,
+  hasFilters = false,
+  onClearFilters,
+  onCreate,
   pageSize,
   onPageChange,
+  onPageSizeChange,
   selectedIds,
   onToggleSelect,
   onToggleSelectAll,
@@ -222,12 +247,71 @@ export function ExpensesTable({
     return cols;
   }, [data, selectedIds, onToggleSelect, onToggleSelectAll, onView, onEdit, onDelete, canManage, canDelete, hideVehicleColumn]);
 
+  // Two genuinely different empty states behind one old message. "No
+  // expenses at all" is a first-run moment that should say what the ledger
+  // unlocks; "no expenses match these filters" is the user having narrowed
+  // their own spend out of view, and the useful action there is to clear the
+  // filters rather than to record a duplicate.
+  const empty = hasFilters ? (
+    <EmptyState
+      icon={<Receipt aria-hidden="true" />}
+      title="No expenses match these filters"
+      description="Every expense in your scope is currently filtered out."
+      action={onClearFilters ? { label: 'Clear filters', onClick: onClearFilters } : undefined}
+    />
+  ) : (
+    <EmptyState
+      icon={<Receipt aria-hidden="true" />}
+      title="Nothing has been costed yet"
+      description="Expense records are what cost visibility is built on. The category breakdown, spend trends and cost per km are all computed from these rows — until one exists, every cost view in the platform is empty by definition, not by good fortune."
+      hints={[
+        'See where the money actually goes, split by category rather than one total.',
+        'Attribute spend to a vehicle to get a true cost per km alongside fuel.',
+        'Surface outlier transactions before they settle into a pattern.',
+      ]}
+      action={onCreate ? { label: 'Record your first expense', onClick: onCreate } : undefined}
+    />
+  );
+
   return (
     <DataTable
       columns={columns}
       data={data}
       isLoading={isLoading}
-      emptyMessage="No expenses found. Try adjusting your filters or record a new expense."
+      isError={isError}
+      errorMessage={errorMessage}
+      onRetry={onRetry}
+      caption="Expenses"
+      empty={empty}
+      // Seven columns do not fit a phone. Below `lg` each expense collapses to
+      // the fields that identify a transaction: which vehicle, what it was
+      // for, when, and how much.
+      renderMobileRow={(expense) => (
+        <div className="space-y-1.5">
+          <div className="flex items-start justify-between gap-2">
+            {/* The vehicle column can be hidden on a per-vehicle page, where
+                repeating the plate on every card would be noise. */}
+            <span className="text-body-sm font-medium text-foreground">
+              {hideVehicleColumn ? expenseCategoryLabel(expense) : expense.license_plate}
+            </span>
+            <span className="shrink-0 text-body-sm font-medium tabular-nums text-foreground">
+              {formatExpenseAmount(expense.amount)}
+            </span>
+          </div>
+          {!hideVehicleColumn && (
+            <p className="text-caption text-muted-foreground">{expenseCategoryLabel(expense)}</p>
+          )}
+          <p className="text-caption text-muted-foreground">
+            {formatDate(expense.date)}
+            {expense.jobTrip ? ` · ${expense.jobTrip}` : ''}
+          </p>
+          {expense.description && (
+            <p className="truncate text-caption text-muted-foreground" title={expense.description}>
+              {expense.description}
+            </p>
+          )}
+        </div>
+      )}
       pagination={
         result
           ? {
@@ -236,6 +320,7 @@ export function ExpensesTable({
               total: result.pagination.total,
               totalPages: result.pagination.totalPages,
               onPageChange,
+              onPageSizeChange,
             }
           : undefined
       }

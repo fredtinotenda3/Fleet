@@ -8,6 +8,7 @@ import { AlertTriangle, ArrowLeft, Info, Network, Plus, RefreshCw } from 'lucide
 
 import { useAuth } from '@/frontend/modules/auth/hooks/useAuth';
 import { Permission, permissionService } from '@/server/permissions/roles';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { PageLoader } from '@/frontend/shared/loading/PageLoader';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
 import { Alert, AlertDescription, AlertTitle } from '@/frontend/shared/ui/feedback/alert';
@@ -141,18 +142,13 @@ export function OrganizationDetailPage({ organizationId }: OrganizationDetailPag
 
   return (
     <div className="p-4 space-y-6 sm:p-6">
-      <Link
-        href={PLATFORM_ADMIN_ROUTES.organizations}
-        className="inline-flex items-center gap-1 text-body-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="size-3.5" aria-hidden="true" />
-        All organizations
-      </Link>
-
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-h1">{organization.name}</h1>
+      <PageHeader
+        title={organization.name}
+        description="Plan, seats, members, and branch structure for this tenant."
+        backHref={PLATFORM_ADMIN_ROUTES.organizations}
+        backLabel="All organizations"
+        meta={
+          <>
             <Badge variant={presentation.badgeVariant} className="gap-1">
               <span
                 className={`inline-block h-2 w-2 rounded-full ${presentation.dotClassName}`}
@@ -160,17 +156,19 @@ export function OrganizationDetailPage({ organizationId }: OrganizationDetailPag
               />
               {organizationStatusLabel(organization.status)}
             </Badge>
-          </div>
-          {tenant && <code className="mt-1 block text-body-sm text-muted-foreground">{tenant}</code>}
-        </div>
-        <Button type="button" variant="outline" onClick={() => refetch()} disabled={isFetching}>
-          <RefreshCw
-            className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`}
-            aria-hidden="true"
-          />
-          Refresh
-        </Button>
-      </div>
+            {tenant && <code className="text-body-sm text-muted-foreground">{tenant}</code>}
+          </>
+        }
+        actions={
+          <Button type="button" variant="outline" onClick={() => refetch()} disabled={isFetching}>
+            <RefreshCw
+              className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`}
+              aria-hidden="true"
+            />
+            Refresh
+          </Button>
+        }
+      />
 
       <Card>
         <CardHeader>

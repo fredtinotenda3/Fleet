@@ -10,6 +10,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Plus, Download, FileSpreadsheet, Trash2, Printer, BarChart3, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
+import { describeQueryError } from '@/frontend/shared/ui/patterns';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import {
   DropdownMenu,
@@ -70,7 +71,15 @@ export function TripsListPage() {
   const [importModalOpen, setImportModalOpen] = useState(false);
 
   const listParams = useMemo(() => ({ ...filters, page, limit: PAGE_SIZE }), [filters, page]);
-  const { data: result, isLoading } = useTripsList(listParams);
+  const { data: result, isLoading, isError, error, refetch } = useTripsList(listParams);
+
+  // Drives the empty state's branch: "no trips at all" (a first-run moment)
+  // versus "no trips match your filters" (the operator hiding their own
+  // journeys). Rendering the same message for both is what made a brand new
+  // tenant and an over-filtered list look identical.
+  const hasFilters = Object.values(filters).some(
+    (value) => value !== undefined && value !== null && value !== ''
+  );
 
   const createTrip = useCreateTrip();
   const updateTripMutation = useUpdateTrip(activeTrip?._id ?? '');
@@ -233,6 +242,12 @@ export function TripsListPage() {
         <TripsTable
           result={result}
           isLoading={isLoading}
+          isError={isError}
+          errorMessage={describeQueryError(error)}
+          onRetry={() => refetch()}
+          hasFilters={hasFilters}
+          onClearFilters={() => handleFiltersChange({})}
+          onCreate={canManage ? openCreate : undefined}
           pageSize={PAGE_SIZE}
           onPageChange={setPage}
           selectedIds={selectedIds}

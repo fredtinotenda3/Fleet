@@ -49,7 +49,9 @@ export function ChecklistItem({ item, helpText, onChange }: ChecklistItemProps) 
           className={cn(
             'flex h-14 items-center justify-center gap-2 rounded-lg border text-sm font-semibold transition-colors',
             item.status === 'ok'
-              ? 'border-transparent bg-emerald-600 text-white'
+              // Design-system success token rather than a raw palette green,
+              // so the pass state matches every other 'good' signal in the app.
+              ? 'border-transparent bg-success text-success-foreground'
               : 'border-border bg-background text-foreground hover:bg-muted'
           )}
           aria-pressed={item.status === 'ok'}

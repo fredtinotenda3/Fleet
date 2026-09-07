@@ -5,6 +5,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Settings, Users, Shield, FileClock } from 'lucide-react';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { PageLoader } from '@/frontend/shared/loading/PageLoader';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
 import { useCurrentOrganization } from '../hooks/useCurrentOrganization';
@@ -56,14 +57,10 @@ export function OrganizationDashboardPage({ currentUserId }: OrganizationDashboa
 
   return (
     <div className="p-4 space-y-6 sm:p-6">
-      <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
-        <div>
-          <h1 className="text-h1">{organization.name}</h1>
-          <p className="mt-1 text-body-sm text-muted-foreground">
-            Organization overview and key metrics
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title={organization.name}
+        description="Organization overview and key metrics"
+      />
 
       <OverviewStatsGrid
         statistics={statistics}

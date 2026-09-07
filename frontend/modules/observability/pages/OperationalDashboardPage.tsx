@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { RefreshCw, AlertTriangle } from 'lucide-react';
 import { useAuth } from '@/frontend/modules/auth/hooks/useAuth';
 import { Permission, permissionService } from '@/server/permissions/roles';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { PageLoader } from '@/frontend/shared/loading/PageLoader';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
 import { Alert, AlertTitle, AlertDescription, AlertAction } from '@/frontend/shared/ui/feedback/alert';
@@ -115,23 +116,21 @@ export function OperationalDashboardPage() {
 
   return (
     <div className="p-4 space-y-6 sm:p-6">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h1 className="text-h1">Operational dashboard</h1>
-          <p className="mt-1 text-body-sm text-muted-foreground">
-            Platform-wide health at a glance: telematics providers, the event outbox, and error activity.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={refetchAll}
-          disabled={isFetching}
-          className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-body-sm text-foreground hover:bg-muted disabled:opacity-50"
-        >
-          <RefreshCw className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`} aria-hidden="true" />
-          Refresh
-        </button>
-      </div>
+      <PageHeader
+        title="Operational dashboard"
+        description="Platform-wide health at a glance: telematics providers, the event outbox, and error activity."
+        actions={
+          <button
+            type="button"
+            onClick={refetchAll}
+            disabled={isFetching}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-body-sm text-foreground hover:bg-muted disabled:opacity-50"
+          >
+            <RefreshCw className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`} aria-hidden="true" />
+            Refresh
+          </button>
+        }
+      />
 
       <OperationalSummaryCards
         providerAggregate={providerHealth.data.aggregate}

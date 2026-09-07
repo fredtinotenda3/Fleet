@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/frontend/modules/auth/hooks/useAuth';
 import { useCurrentOrganization } from '../hooks/useCurrentOrganization';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/frontend/shared/ui/navigation/tabs';
 import { FeatureFlagsSection } from '../components/advanced/FeatureFlagsSection';
 import { AISettingsSection } from '../components/advanced/AISettingsSection';
@@ -48,12 +49,10 @@ export function OrganizationAdvancedPage() {
 
   return (
     <div className="p-6 mx-auto space-y-6 max-w-form-wide">
-      <div>
-        <h1 className="text-h1">Advanced administration</h1>
-        <p className="text-muted-foreground text-body-sm">
-          Feature flags, billing, plugins, AI models, and reporting defaults for {organization.name}.
-        </p>
-      </div>
+      <PageHeader
+        title="Advanced administration"
+        description={`Feature flags, billing, plugins, AI models, and reporting defaults for ${organization.name}.`}
+      />
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
         <TabsList>

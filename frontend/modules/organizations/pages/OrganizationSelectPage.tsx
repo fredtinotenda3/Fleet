@@ -7,6 +7,7 @@ import { Plus, Search } from 'lucide-react';
 import { useState, useMemo } from 'react';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { Input } from '@/frontend/shared/ui/forms/input';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
 import { OrganizationCard } from '../components/OrganizationCard';
 import { CreateOrganizationDialog } from '../components/CreateOrganizationDialog';
@@ -35,23 +36,22 @@ export function OrganizationSelectPage({ currentUserId }: OrganizationSelectPage
 
   return (
     <div className="max-w-3xl px-4 py-10 mx-auto sm:px-6">
-      <div className="flex items-center justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-h1">Your organizations</h1>
-          <p className="mt-1 text-body-sm text-muted-foreground">
-            Choose an organization to continue, or create a new one.
-          </p>
-        </div>
-        <CreateOrganizationDialog
-          onCreated={handleSelect}
-          trigger={
-            <Button>
-              <Plus className="mr-1.5 h-4 w-4" aria-hidden="true" />
-              New organization
-            </Button>
-          }
-        />
-      </div>
+      <PageHeader
+        className="mb-6"
+        title="Your organizations"
+        description="Choose an organization to continue, or create a new one."
+        actions={
+          <CreateOrganizationDialog
+            onCreated={handleSelect}
+            trigger={
+              <Button>
+                <Plus className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                New organization
+              </Button>
+            }
+          />
+        }
+      />
 
       {organizations.length > 0 && (
         <div className="relative mb-4">

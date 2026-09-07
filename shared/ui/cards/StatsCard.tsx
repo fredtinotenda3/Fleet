@@ -3,9 +3,7 @@
 'use client';
 
 import { ReactNode } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/frontend/shared/ui/data-display/card';
-import { Skeleton } from '@/frontend/shared/ui/feedback/skeleton';
-import { cn } from '@/lib/utils';
+import { MetricCard } from '@/frontend/shared/ui/patterns/MetricCard';
 
 interface StatsCardProps {
   title: string;
@@ -17,19 +15,38 @@ interface StatsCardProps {
     isPositive: boolean;
   };
   loading?: boolean;
+  /**
+   * RETAINED FOR COMPATIBILITY, NO LONGER RENDERED.
+   *
+   * This used to select a hardcoded Tailwind gradient wash
+   * (`from-blue-500 to-blue-600`, `from-green-500 …`) painted behind the
+   * card at 5% opacity. Those are raw Tailwind palette colours that appear
+   * nowhere in this product's token set, they did not respond to dark mode,
+   * and they made every stat card carry decoration that told the reader
+   * nothing. The prop is kept so the nine existing call sites keep compiling;
+   * pass `tone` on `MetricCard` directly if a card genuinely needs to carry
+   * a status.
+   */
   color?: string;
   className?: string;
 }
 
-const colorVariants = {
-  blue: 'from-blue-500 to-blue-600',
-  green: 'from-green-500 to-green-600',
-  red: 'from-red-500 to-red-600',
-  yellow: 'from-yellow-500 to-yellow-600',
-  purple: 'from-purple-500 to-purple-600',
-  gray: 'from-gray-500 to-gray-600',
-};
-
+/**
+ * Thin adapter over the shared `MetricCard`.
+ *
+ * Kept as its own module because nine files import this path; the component
+ * no longer has any layout of its own, so `StatsCard` and `StatisticCard`
+ * (the other, independently-written stat card this codebase had) now render
+ * identically.
+ *
+ * NOTE on `trend`: the legacy API takes `isPositive`, which means "render
+ * this as good news", not "the number went up". `MetricCard` asks the more
+ * useful question (`higherIsBetter`) and derives the colour from the sign.
+ * The translation below preserves each existing call site's current
+ * appearance exactly — it maps whatever the caller declared as positive onto
+ * an equivalent upward-good delta — rather than silently re-colouring nine
+ * screens. New code should use `MetricCard` and state `higherIsBetter`.
+ */
 export function StatsCard({
   title,
   value,
@@ -37,43 +54,29 @@ export function StatsCard({
   description,
   trend,
   loading = false,
-  color = 'blue',
   className,
 }: StatsCardProps) {
-  if (loading) {
-    return (
-      <Card className={cn('relative overflow-hidden', className)}>
-        <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
-          <CardTitle className="text-sm font-medium">{title}</CardTitle>
-          {icon && <div className="w-4 h-4">{icon}</div>}
-        </CardHeader>
-        <CardContent>
-          <Skeleton className="w-24 h-8 mb-2" />
-          {description && <Skeleton className="w-32 h-3" />}
-        </CardContent>
-      </Card>
-    );
-  }
-
   return (
-    <Card className={cn('relative overflow-hidden', className)}>
-      <div className={cn(`absolute inset-0 bg-linear-to-br opacity-5 ${colorVariants[color as keyof typeof colorVariants]}`)} />
-      <CardHeader className="flex flex-row items-center justify-between pb-2 space-y-0">
-        <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>
-        {icon && <div className="w-5 h-5 text-muted-foreground">{icon}</div>}
-      </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-bold">{value}</div>
-        {description && <p className="mt-1 text-xs text-muted-foreground">{description}</p>}
-        {trend && (
-          <div className="flex items-center gap-1 mt-2">
-            <span className={cn('text-xs font-medium', trend.isPositive ? 'text-green-600' : 'text-red-600')}>
-              {trend.isPositive ? '+' : ''}{trend.value}%
-            </span>
-            <span className="text-xs text-muted-foreground">from last period</span>
-          </div>
-        )}
-      </CardContent>
-    </Card>
+    <MetricCard
+      label={title}
+      value={value}
+      hint={description}
+      icon={icon}
+      loading={loading}
+      className={className}
+      delta={
+        trend
+          ? {
+              // The legacy prop carries an unsigned magnitude plus a
+              // "good/bad" flag. Re-express it as a signed delta whose sign
+              // agrees with that flag under higherIsBetter:true, which
+              // reproduces the old colour for every existing caller.
+              value: trend.isPositive ? Math.abs(trend.value) : -Math.abs(trend.value),
+              higherIsBetter: true,
+              comparisonLabel: 'from last period',
+            }
+          : undefined
+      }
+    />
   );
 }

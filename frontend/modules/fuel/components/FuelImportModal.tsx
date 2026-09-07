@@ -412,7 +412,7 @@ export function FuelImportModal({ open, onOpenChange }: FuelImportModalProps) {
 
           {result && (
             <div className="space-y-3">
-              <div className="grid grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <div className="p-3 text-center rounded-md bg-muted/50">
                   <div className="text-xl font-semibold">{result.summary.total}</div>
                   <div className="text-xs text-muted-foreground">Total rows</div>

@@ -19,6 +19,7 @@ import { LoadingState } from '@/shared/ui/feedback/LoadingState';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { formatMoney } from '../utils/money.utils';
 import { formatDate } from '@/shared/utils/date.utils';
 import { cn } from '@/lib/utils';
@@ -79,57 +80,54 @@ export default function GLReconciliationPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">GL Reconciliation</h1>
-          <p className="text-sm text-muted-foreground">
-            Allocation-ledger totals against your general ledger, per account, with the variance named.
-          </p>
-        </div>
+      <PageHeader
+        title="GL Reconciliation"
+        description="Allocation-ledger totals against your general ledger, per account, with the variance named."
+        actions={
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <label htmlFor="gl-period" className="block mb-1 text-sm font-medium">
+                Period
+              </label>
+              <select
+                id="gl-period"
+                className="input-base"
+                value={monthsAgo}
+                onChange={(event) => setMonthsAgo(event.target.value)}
+              >
+                {PERIOD_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-        <div className="flex flex-wrap items-end gap-3">
-          <div>
-            <label htmlFor="gl-period" className="block mb-1 text-sm font-medium">
-              Period
-            </label>
-            <select
-              id="gl-period"
-              className="input-base"
-              value={monthsAgo}
-              onChange={(event) => setMonthsAgo(event.target.value)}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!report || report.lines.length === 0}
+              onClick={() => report && exportReconciliationCsv(report)}
             >
-              {PERIOD_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+              <Download className="h-3.5 w-3.5" />
+              CSV
+            </Button>
+
+            {/*
+              Print-to-PDF rather than a server-rendered PDF. The backend
+              route GET /api/finance/gl/reconciliation returns JSON only (no
+              `format` parameter), and `pdfkit` -- what the value-ledger
+              export uses -- is server-side, so a real PDF needs a small
+              backend generator. Offering a fake `format=pdf` link would
+              download a JSON body named ".pdf". See the changelog.
+            */}
+            <Button variant="outline" size="sm" disabled={!report} onClick={() => window.print()}>
+              <Printer className="h-3.5 w-3.5" />
+              Print / PDF
+            </Button>
           </div>
-
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!report || report.lines.length === 0}
-            onClick={() => report && exportReconciliationCsv(report)}
-          >
-            <Download className="h-3.5 w-3.5" />
-            CSV
-          </Button>
-
-          {/*
-            Print-to-PDF rather than a server-rendered PDF. The backend
-            route GET /api/finance/gl/reconciliation returns JSON only (no
-            `format` parameter), and `pdfkit` -- what the value-ledger
-            export uses -- is server-side, so a real PDF needs a small
-            backend generator. Offering a fake `format=pdf` link would
-            download a JSON body named ".pdf". See the changelog.
-          */}
-          <Button variant="outline" size="sm" disabled={!report} onClick={() => window.print()}>
-            <Printer className="h-3.5 w-3.5" />
-            Print / PDF
-          </Button>
-        </div>
-      </div>
+        }
+      />
 
       {isLoading ? (
         <LoadingState type="table" count={6} />

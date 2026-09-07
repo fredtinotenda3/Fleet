@@ -6,6 +6,7 @@ import { useMemo, useRef, useState } from 'react';
 import { Plus, Download, FileSpreadsheet, Trash2, Printer, Upload, UploadCloud } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
+import { describeQueryError } from '@/frontend/shared/ui/patterns';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { Separator } from '@/frontend/shared/ui/data-display/separator';
 import {
@@ -101,7 +102,15 @@ export function ExpenseListPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const listParams = useMemo(() => ({ ...filters, page, limit: PAGE_SIZE }), [filters, page]);
-  const { data: result, isLoading } = useExpensesList(listParams);
+  const { data: result, isLoading, isError, error, refetch } = useExpensesList(listParams);
+
+  // Drives the empty state's branch: "no expenses at all" (a first-run
+  // moment) versus "no expenses match your filters" (the user narrowing their
+  // own spend out of view). Showing the same message for both made a brand-new
+  // tenant and an over-filtered ledger indistinguishable.
+  const hasFilters = Object.values(filters).some(
+    (value) => value !== undefined && value !== null && value !== ''
+  );
 
   const createExpense = useCreateExpense();
   const updateExpenseMutation = useUpdateExpense(activeExpense?._id ?? '');
@@ -281,6 +290,12 @@ export function ExpenseListPage() {
         <ExpensesTable
           result={result}
           isLoading={isLoading}
+          isError={isError}
+          errorMessage={describeQueryError(error)}
+          onRetry={() => refetch()}
+          hasFilters={hasFilters}
+          onClearFilters={() => handleFiltersChange({})}
+          onCreate={canManage ? openCreate : undefined}
           pageSize={PAGE_SIZE}
           onPageChange={setPage}
           selectedIds={selectedIds}

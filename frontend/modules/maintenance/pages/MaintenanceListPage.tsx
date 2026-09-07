@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import { Plus, Download, FileSpreadsheet, Trash2, Printer } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
+import { describeQueryError } from '@/frontend/shared/ui/patterns';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import {
   DropdownMenu,
@@ -55,7 +56,15 @@ export function MaintenanceListPage() {
   const [activeRecord, setActiveRecord] = useState<Reminder | null>(null);
 
   const listParams = useMemo(() => ({ ...filters, page, limit: PAGE_SIZE }), [filters, page]);
-  const { data: result, isLoading } = useMaintenanceList(listParams);
+  const { data: result, isLoading, isError, error, refetch } = useMaintenanceList(listParams);
+
+  // Drives the empty state's branch: "no service records at all" (a first-run
+  // moment) versus "no records match your filters" (the operator hiding their
+  // own schedule). Rendering the same message for both is what made a brand
+  // new tenant and an over-filtered list look identical.
+  const hasFilters = Object.values(filters).some(
+    (value) => value !== undefined && value !== null && value !== ''
+  );
 
   const createRecord = useCreateMaintenanceRecord();
   const updateRecord = useUpdateMaintenanceRecord(activeRecord?._id ?? '');
@@ -198,6 +207,12 @@ export function MaintenanceListPage() {
         <MaintenanceTable
           result={result}
           isLoading={isLoading}
+          isError={isError}
+          errorMessage={describeQueryError(error)}
+          onRetry={() => refetch()}
+          hasFilters={hasFilters}
+          onClearFilters={() => handleFiltersChange({})}
+          onCreate={canManage ? openCreate : undefined}
           pageSize={PAGE_SIZE}
           onPageChange={setPage}
           selectedIds={selectedIds}

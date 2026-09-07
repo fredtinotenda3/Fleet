@@ -11,8 +11,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { formatDistanceToNow } from 'date-fns';
-import { RefreshCw, MapPin, AlertTriangle, Clock } from 'lucide-react';
+import { RefreshCw, MapPin, Clock } from 'lucide-react';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
+import { ErrorState, describeQueryError } from '@/frontend/shared/ui/patterns';
+import { EmptyState } from '@/shared/ui/feedback/EmptyState';
 import { PageLoader } from '@/frontend/shared/loading/PageLoader';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
@@ -52,12 +54,17 @@ export function LiveMapPage() {
 
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
 
-  const { data: payload, isLoading, isError, refetch, isFetching } = useLiveMap({ enabled: canView });
+  const { data: payload, isLoading, isError, error, refetch, isFetching } = useLiveMap({ enabled: canView });
   const { data: routeHistory } = useVehicleRouteHistory(selectedVehicleId ?? undefined);
   const { data: vehicleDetail, isLoading: isDetailLoading } = useVehicleDetail(selectedVehicleId ?? undefined);
 
-  const vehicles = payload?.vehicles ?? [];
-  const geofences = payload?.geofences ?? [];
+  // Memoised because `?? []` allocates a NEW array on every render, and both
+  // the selection-cleanup effect and the status-count useMemo below list
+  // `vehicles` as a dependency — so every render invalidated both. On a page
+  // that repolls every 10 seconds and re-renders a Leaflet map, that is a
+  // real cost, not a lint nicety.
+  const vehicles = useMemo(() => payload?.vehicles ?? [], [payload?.vehicles]);
+  const geofences = useMemo(() => payload?.geofences ?? [], [payload?.geofences]);
 
   const selectedVehicle = vehicles.find((v) => v.vehicleId === selectedVehicleId) ?? null;
 
@@ -134,14 +141,10 @@ export function LiveMapPage() {
   const eagletrackLastSyncAt = payload?.eagletrackLastSyncAt ?? null;
 
   if (!canView) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-2 py-24 text-center">
-        <AlertTriangle className="w-6 h-6 text-muted-foreground" aria-hidden="true" />
-        <p className="text-body-sm text-muted-foreground">
-          You don&apos;t have permission to view the live fleet map.
-        </p>
-      </div>
-    );
+    // The shared permission variant rather than a bespoke block, so a
+    // refusal looks the same here as anywhere else in the product and does
+    // not offer a Retry button that could only ever fail again.
+    return <ErrorState variant="permission" size="page" />;
   }
 
   return (
@@ -163,13 +166,33 @@ export function LiveMapPage() {
       {isLoading ? (
         <PageLoader label="Loading live map" fullScreen={false} />
       ) : isError ? (
-        <div className="flex flex-col items-center justify-center gap-3 py-16 text-center surface-card">
-          <AlertTriangle className="w-5 h-5 text-danger" aria-hidden="true" />
-          <p className="text-body-sm text-muted-foreground">Failed to load the live map.</p>
-          <Button size="sm" variant="outline" onClick={() => refetch()}>
-            Retry
-          </Button>
-        </div>
+        <ErrorState
+          title="The live map didn't load"
+          description="Vehicle positions could not be fetched. Nothing here should be read as the fleet being stationary or offline."
+          detail={describeQueryError(error)}
+          onRetry={() => refetch()}
+          size="page"
+        />
+      ) : vehicles.length === 0 ? (
+        /* A map with no pins is indistinguishable from a map that failed to
+           draw. Saying plainly that there is nothing to plot — and why —
+           is what stops the most important operational screen in the product
+           from looking broken on a new tenant. */
+        <EmptyState
+          icon={<MapPin aria-hidden="true" />}
+          title="No vehicles to show on the map"
+          description={
+            payload?.demoMode
+              ? 'Demo mode is on but no simulated vehicles were returned.'
+              : 'Live positions appear once vehicles exist and a telematics provider is reporting for them.'
+          }
+          hints={[
+            'Add vehicles to the register, then map each tracker to one.',
+            'A vehicle with no recent fix is shown as offline rather than hidden.',
+          ]}
+          action={{ label: 'Map trackers to vehicles', href: '/telematics/trackers' }}
+          secondaryAction={{ label: 'Go to vehicles', href: '/vehicles' }}
+        />
       ) : (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3 px-1">
@@ -195,8 +218,14 @@ export function LiveMapPage() {
             </div>
           </div>
 
+          {/* On a phone the vehicle list stacked above the map at full
+              height, so a 40-vehicle fleet pushed the map entirely below the
+              fold — on the one screen whose whole purpose is the map. The
+              list is capped and independently scrollable under `lg`, and
+              only becomes a full-height sidebar when there is room beside
+              the map. */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
-            <div className="overflow-hidden surface-card">
+            <div className="max-h-64 overflow-hidden surface-card lg:max-h-none">
               <LiveMapVehicleList
                 vehicles={vehicles}
                 selectedVehicleId={selectedVehicleId}
@@ -204,7 +233,7 @@ export function LiveMapPage() {
               />
             </div>
 
-            <div className="p-2 overflow-hidden surface-card" style={{ minHeight: 560 }}>
+            <div className="min-h-100 overflow-hidden p-2 surface-card lg:min-h-140">
               <LiveMapLeaflet
                 vehicles={vehicles}
                 geofences={geofences}

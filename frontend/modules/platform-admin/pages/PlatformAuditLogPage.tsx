@@ -7,6 +7,7 @@ import { AlertTriangle, CheckCircle2, RefreshCw, ScrollText, ShieldAlert, X } fr
 
 import { useAuth } from '@/frontend/modules/auth/hooks/useAuth';
 import { Permission, permissionService } from '@/server/permissions/roles';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { PageLoader } from '@/frontend/shared/loading/PageLoader';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
 import { Alert, AlertDescription, AlertTitle } from '@/frontend/shared/ui/feedback/alert';
@@ -151,37 +152,37 @@ export function PlatformAuditLogPage() {
 
   return (
     <div className="p-4 space-y-6 sm:p-6">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h1 className="text-h1">Audit log</h1>
-          <p className="mt-1 text-body-sm text-muted-foreground">
-            {canFilterByTenant
-              ? 'The append-only security ledger, across every tenant.'
-              : 'The append-only security ledger for your organization.'}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => verification.refetch()}
-            disabled={verification.isFetching}
-          >
-            <ShieldAlert
-              className={`size-3.5 ${verification.isFetching ? 'animate-pulse' : ''}`}
-              aria-hidden="true"
-            />
-            Verify chain
-          </Button>
-          <Button type="button" variant="outline" onClick={() => refetch()} disabled={isFetching}>
-            <RefreshCw
-              className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`}
-              aria-hidden="true"
-            />
-            Refresh
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Audit log"
+        description={
+          canFilterByTenant
+            ? 'The append-only security ledger, across every tenant.'
+            : 'The append-only security ledger for your organization.'
+        }
+        actions={
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => verification.refetch()}
+              disabled={verification.isFetching}
+            >
+              <ShieldAlert
+                className={`size-3.5 ${verification.isFetching ? 'animate-pulse' : ''}`}
+                aria-hidden="true"
+              />
+              Verify chain
+            </Button>
+            <Button type="button" variant="outline" onClick={() => refetch()} disabled={isFetching}>
+              <RefreshCw
+                className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`}
+                aria-hidden="true"
+              />
+              Refresh
+            </Button>
+          </div>
+        }
+      />
 
       {/*
         Rendered only after the operator asks. `verification.data` is

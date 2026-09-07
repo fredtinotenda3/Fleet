@@ -17,6 +17,7 @@ import { useFinanceSettings } from '@/frontend/modules/finance/hooks/useFinance'
 import { CartrackConfigSection } from '@/frontend/modules/telematics/components/CartrackConfigSection';
 import { EagleTrackConfigSection } from '@/frontend/modules/telematics/components/EagleTrackConfigSection';
 import { PageLoader } from '@/frontend/shared/loading/PageLoader';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 
 const TABS = [
   { value: 'general', label: 'General' },
@@ -48,12 +49,10 @@ export function OrganizationSettingsPage() {
 
   return (
     <div className="p-6 mx-auto space-y-6 max-w-form-wide">
-      <div>
-        <h1 className="text-h1">Organization Settings</h1>
-        <p className="text-muted-foreground text-body-sm">
-          Manage {organization.name}&apos;s profile, branding, and operational configuration.
-        </p>
-      </div>
+      <PageHeader
+        title="Organization Settings"
+        description={`Manage ${organization.name}'s profile, branding, and operational configuration.`}
+      />
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
         <TabsList>

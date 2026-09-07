@@ -25,12 +25,25 @@ interface UiState {
   commandPaletteOpen: boolean;
   favorites: FavoriteEntry[];
   recentlyViewed: FavoriteEntry[];
+  /**
+   * Nav items the user has explicitly expanded or collapsed, keyed by nav
+   * item key. Absent = follow the default (expand when the section contains
+   * the current route).
+   *
+   * Stored as an explicit tri-state map rather than a list of open keys so
+   * that "I closed this even though I'm inside it" is distinguishable from
+   * "I have never touched this". A list of open keys cannot express the
+   * first, so a user collapsing the section they are standing in would see
+   * it spring open again on the next render.
+   */
+  navExpanded: Record<string, boolean>;
 
   toggleSidebar: () => void;
   setSidebarCollapsed: (value: boolean) => void;
   setMobileNavOpen: (value: boolean) => void;
   setCommandPaletteOpen: (value: boolean) => void;
   toggleCommandPalette: () => void;
+  setNavExpanded: (key: string, value: boolean) => void;
 
   isFavorite: (path: string) => boolean;
   toggleFavorite: (entry: FavoriteEntry) => void;
@@ -45,12 +58,14 @@ export const useUiStore = create<UiState>()(
       commandPaletteOpen: false,
       favorites: [],
       recentlyViewed: [],
+      navExpanded: {},
 
       toggleSidebar: () => set({ sidebarCollapsed: !get().sidebarCollapsed }),
       setSidebarCollapsed: (value) => set({ sidebarCollapsed: value }),
       setMobileNavOpen: (value) => set({ mobileNavOpen: value }),
       setCommandPaletteOpen: (value) => set({ commandPaletteOpen: value }),
       toggleCommandPalette: () => set({ commandPaletteOpen: !get().commandPaletteOpen }),
+      setNavExpanded: (key, value) => set({ navExpanded: { ...get().navExpanded, [key]: value } }),
 
       isFavorite: (path) => get().favorites.some((f) => f.path === path),
 
@@ -73,6 +88,7 @@ export const useUiStore = create<UiState>()(
         sidebarCollapsed: state.sidebarCollapsed,
         favorites: state.favorites,
         recentlyViewed: state.recentlyViewed,
+        navExpanded: state.navExpanded,
       }),
     }
   )

@@ -17,6 +17,7 @@ import { ExpenseBreakdownChart } from '../components/charts/ExpenseBreakdownChar
 import { MaintenanceChart } from '../components/charts/MaintenanceChart';
 import { FleetHealthGauge } from '../components/charts/FleetHealthGauge';
 import { DashboardWidget } from '@/frontend/shared/dashboards/DashboardWidget';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { LoadingState } from '@/shared/ui/feedback/LoadingState';
 import { formatCurrency, formatNumber, formatPercent } from '@/shared/utils/currency.utils';
 import { formatDistance } from '@/shared/utils/distance.utils';
@@ -90,24 +91,22 @@ export default function ExecutiveDashboard() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Executive Dashboard</h1>
-          <p className="text-sm text-muted-foreground">
-            Fleet-wide performance, cost, and health at a glance.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => {
-            refresh();
-            fleetHealth.refetch();
-          }}
-          className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium border rounded-md hover:bg-accent"
-        >
-          <RefreshCw className="h-4 w-4" /> Refresh
-        </button>
-      </div>
+      <PageHeader
+        title="Executive Dashboard"
+        description="Fleet-wide performance, cost, and health at a glance."
+        actions={
+          <button
+            type="button"
+            onClick={() => {
+              refresh();
+              fleetHealth.refetch();
+            }}
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium border rounded-md hover:bg-accent"
+          >
+            <RefreshCw className="h-4 w-4" /> Refresh
+          </button>
+        }
+      />
 
       {/* Default analytics KPIs - always shown */}
       {fleetKPIs.data && (

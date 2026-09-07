@@ -6,6 +6,7 @@ import { useMemo, useState } from 'react';
 import { Plus, Download, FileSpreadsheet, Trash2, Printer, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
+import { describeQueryError } from '@/frontend/shared/ui/patterns';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import {
   DropdownMenu,
@@ -43,7 +44,15 @@ export function FuelListPage() {
   const [importModalOpen, setImportModalOpen] = useState(false);
 
   const listParams = useMemo(() => ({ ...filters, page, limit: PAGE_SIZE }), [filters, page]);
-  const { data: result, isLoading } = useFuelLogsList(listParams);
+  const { data: result, isLoading, isError, error, refetch } = useFuelLogsList(listParams);
+
+  // Drives the empty state's branch: "no fuel logs at all" (a first-run
+  // moment) versus "no fuel logs match your filters" (the user hiding their
+  // own history). Showing the same message for both made a brand-new tenant
+  // and an over-filtered list indistinguishable.
+  const hasFilters = Object.values(filters).some(
+    (value) => value !== undefined && value !== null && value !== ''
+  );
 
   const createFuelLog = useCreateFuelLog();
   const updateFuelLogMutation = useUpdateFuelLog(activeLog?._id ?? '');
@@ -181,6 +190,12 @@ export function FuelListPage() {
         <FuelTable
           result={result}
           isLoading={isLoading}
+          isError={isError}
+          errorMessage={describeQueryError(error)}
+          onRetry={() => refetch()}
+          hasFilters={hasFilters}
+          onClearFilters={() => handleFiltersChange({})}
+          onCreate={canManage ? openCreate : undefined}
           pageSize={PAGE_SIZE}
           onPageChange={setPage}
           selectedIds={selectedIds}

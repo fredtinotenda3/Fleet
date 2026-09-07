@@ -19,6 +19,7 @@ import { ReportList } from '../components/ReportList';
 import { REPORT_DATA_SOURCES } from '../schemas/reportDefinition';
 import type { BuilderStep } from '../routes/builder';
 import { REPORTS_ROUTES } from '../routes';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { LoadingState } from '@/shared/ui/feedback/LoadingState';
 
 const DATA_SOURCE_LABELS: Record<(typeof REPORT_DATA_SOURCES)[number], string> = {
@@ -62,23 +63,19 @@ export default function ReportBuilder({ reportId }: ReportBuilderPageProps) {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {reportId ? `Edit report${form.name ? `: ${form.name}` : ''}` : 'New custom report'}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Pick columns, filters, and grouping to build exactly the report you need.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setSaveDialogOpen(true)}
-          className="px-4 py-2 text-sm font-medium rounded-md bg-primary text-primary-foreground hover:opacity-90"
-        >
-          {reportId ? 'Save changes' : 'Save report'}
-        </button>
-      </div>
+      <PageHeader
+        title={reportId ? `Edit report${form.name ? `: ${form.name}` : ''}` : 'New custom report'}
+        description="Pick columns, filters, and grouping to build exactly the report you need."
+        actions={
+          <button
+            type="button"
+            onClick={() => setSaveDialogOpen(true)}
+            className="px-4 py-2 text-sm font-medium rounded-md bg-primary text-primary-foreground hover:opacity-90"
+          >
+            {reportId ? 'Save changes' : 'Save report'}
+          </button>
+        }
+      />
 
       <BuilderLayout
         activeStep={step}

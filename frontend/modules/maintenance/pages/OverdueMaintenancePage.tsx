@@ -9,6 +9,7 @@ import { Button } from '@/frontend/shared/ui/primitives/button';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
 import { LoadingState } from '@/shared/ui/feedback/LoadingState';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
+import { ErrorState, describeQueryError } from '@/frontend/shared/ui/patterns';
 import { useSessionStore } from '@/frontend/shared/store/session.store';
 import { useOverdueMaintenance } from '../hooks/useMaintenance';
 import { useRecalculateOverdue } from '../hooks/useMaintenanceMutations';
@@ -20,7 +21,7 @@ export function OverdueMaintenancePage() {
   const router = useRouter();
   const user = useSessionStore((s) => s.user);
   const canManage = canManageMaintenance(user?.roles ?? []);
-  const { data: records, isLoading } = useOverdueMaintenance();
+  const { data: records, isLoading, isError, error, refetch } = useOverdueMaintenance();
   const recalculate = useRecalculateOverdue();
 
   return (
@@ -39,8 +40,21 @@ export function OverdueMaintenancePage() {
         }
       />
 
+      {/* The failure branch sits between loading and empty on purpose. A failed
+          request leaves `records` undefined, which is indistinguishable from a
+          genuinely clear schedule, so without this the page reported "Nothing
+          overdue" during an outage — the single most dangerous thing this
+          screen can say. */}
       {isLoading ? (
         <LoadingState type="table" count={6} />
+      ) : isError ? (
+        <ErrorState
+          title="Overdue maintenance didn't load"
+          description="This list could not be fetched. Do not read it as an all-clear — there may be overdue services it never received."
+          detail={describeQueryError(error)}
+          onRetry={() => refetch()}
+          size="page"
+        />
       ) : !records || records.length === 0 ? (
         <EmptyState
           icon={<AlertTriangle className="w-10 h-10 text-muted-foreground" />}

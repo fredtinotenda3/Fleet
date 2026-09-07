@@ -11,6 +11,7 @@ import { Badge } from '@/frontend/shared/ui/data-display/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/frontend/shared/ui/data-display/card';
 import { LoadingState } from '@/shared/ui/feedback/LoadingState';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
+import { ErrorState, describeQueryError } from '@/frontend/shared/ui/patterns';
 import { useSessionStore } from '@/frontend/shared/store/session.store';
 import { useMaintenanceRecord } from '../hooks/useMaintenance';
 import { useUpdateMaintenanceRecord, useDeleteMaintenanceRecord, useCompleteMaintenanceRecord } from '../hooks/useMaintenanceMutations';
@@ -42,13 +43,29 @@ export function MaintenanceDetailPage({ id }: MaintenanceDetailPageProps) {
   const canDelete = canDeleteMaintenance(roles);
   const canComplete = canCompleteMaintenance(roles);
 
-  const { data: record, isLoading } = useMaintenanceRecord(id);
+  const { data: record, isLoading, isError, error, refetch } = useMaintenanceRecord(id);
   const updateRecord = useUpdateMaintenanceRecord(id);
   const deleteRecord = useDeleteMaintenanceRecord();
   const completeRecord = useCompleteMaintenanceRecord();
   const [modalOpen, setModalOpen] = useState(false);
 
   if (isLoading) return <LoadingState type="full" />;
+  // The failure branch has to be checked before the not-found branch, because
+  // a request that failed leaves `record` undefined just as a deleted record
+  // does. Without this the page told the user their maintenance record had
+  // been deleted every time the API was merely unreachable, which is the kind
+  // of message that gets a real service written off as lost.
+  if (isError) {
+    return (
+      <ErrorState
+        title="This maintenance record didn't load"
+        description="The record could not be fetched. This does not mean it has been deleted."
+        detail={describeQueryError(error)}
+        onRetry={() => refetch()}
+        size="page"
+      />
+    );
+  }
   if (!record) {
     return (
       <EmptyState

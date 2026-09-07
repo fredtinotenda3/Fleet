@@ -14,6 +14,7 @@ import { useScheduledReports } from '../hooks/useScheduledReports';
 import { useSavedReports } from '../hooks/useSavedReports';
 import { ScheduleFormDialog, type ScheduleFormDialogReportOption } from '../components/ScheduleFormDialog';
 import type { ScheduleConfigForm } from '../schemas/scheduleConfig';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { LoadingState } from '@/shared/ui/feedback/LoadingState';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
 
@@ -97,24 +98,22 @@ export default function ScheduledReports() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Scheduled Reports</h1>
-          <p className="text-sm text-muted-foreground">
-            Automatically generate and deliver reports on a recurring schedule.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={openNewSchedule}
-          disabled={reportOptions.length === 0}
-          className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-          title={reportOptions.length === 0 ? 'Save a report first to schedule it' : undefined}
-        >
-          <Plus className="w-4 h-4" aria-hidden="true" />
-          New schedule
-        </button>
-      </div>
+      <PageHeader
+        title="Scheduled Reports"
+        description="Automatically generate and deliver reports on a recurring schedule."
+        actions={
+          <button
+            type="button"
+            onClick={openNewSchedule}
+            disabled={reportOptions.length === 0}
+            className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+            title={reportOptions.length === 0 ? 'Save a report first to schedule it' : undefined}
+          >
+            <Plus className="w-4 h-4" aria-hidden="true" />
+            New schedule
+          </button>
+        }
+      />
 
       {typedSchedules.length === 0 ? (
         <EmptyState

@@ -5,6 +5,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useFleetKPIs, useOperationalMetrics, useCostBreakdown, useFuelEfficiencyTrend, useMaintenanceForecast } from '@/frontend/modules/analytics/hooks/useAnalytics';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { StatsCard } from '@/shared/ui/cards/StatsCard';
 import { ChartContainer } from '@/frontend/shared/ui/charts';
 import { LoadingState } from '@/shared/ui/feedback/LoadingState';
@@ -40,10 +41,10 @@ export default function AnalyticsOverview() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Fleet Overview</h1>
-        <p className="text-sm text-muted-foreground">Key performance indicators and operational metrics.</p>
-      </div>
+      <PageHeader
+        title="Fleet Overview"
+        description="Key performance indicators and operational metrics."
+      />
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

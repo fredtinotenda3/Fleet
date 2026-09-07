@@ -9,11 +9,12 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Download, Pencil } from 'lucide-react';
+import { Download, Pencil } from 'lucide-react';
 import { reportDefinitionsApi } from '../services/reports.api';
 import { ReportPreviewPanel } from '../components/ReportPreviewPanel';
 import { savedReportsStore } from '../store/savedReportsStore';
 import { REPORTS_ROUTES } from '../routes';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { LoadingState } from '@/shared/ui/feedback/LoadingState';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
 import type { ReportResult, PivotResult } from '../types';
@@ -84,31 +85,27 @@ export default function ReportPreview({ reportId }: ReportPreviewPageProps) {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-2">
-          <Link href={REPORTS_ROUTES.builder.root} className="rounded-md p-1.5 hover:bg-accent" aria-label="Back">
-            <ArrowLeft className="w-4 h-4" />
-          </Link>
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">{definition.name}</h1>
-            {definition.description && <p className="text-sm text-muted-foreground">{definition.description}</p>}
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <Link
-            href={REPORTS_ROUTES.builder.edit(reportId)}
-            className="inline-flex items-center gap-1.5 rounded-md border px-3 py-2 text-sm font-medium hover:bg-accent"
-          >
-            <Pencil className="w-4 h-4" /> Edit
-          </Link>
-          <Link
-            href={`${REPORTS_ROUTES.exports}?reportId=${reportId}`}
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
-          >
-            <Download className="w-4 h-4" /> Export
-          </Link>
-        </div>
-      </div>
+      <PageHeader
+        title={definition.name}
+        description={definition.description}
+        backHref={REPORTS_ROUTES.builder.root}
+        actions={
+          <>
+            <Link
+              href={REPORTS_ROUTES.builder.edit(reportId)}
+              className="inline-flex items-center gap-1.5 rounded-md border px-3 py-2 text-sm font-medium hover:bg-accent"
+            >
+              <Pencil className="w-4 h-4" /> Edit
+            </Link>
+            <Link
+              href={`${REPORTS_ROUTES.exports}?reportId=${reportId}`}
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+            >
+              <Download className="w-4 h-4" /> Export
+            </Link>
+          </>
+        }
+      />
 
       <ReportPreviewPanel
         columns={columns}

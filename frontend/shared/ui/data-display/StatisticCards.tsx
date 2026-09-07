@@ -1,6 +1,6 @@
-﻿'use client';
+'use client';
 
-import { Card, CardContent, CardHeader, CardTitle } from '@/frontend/shared/ui/data-display/card';
+import { MetricCard, MetricCardGrid } from '@/frontend/shared/ui/patterns/MetricCard';
 import { cn } from '@/lib/utils';
 
 interface StatCardProps {
@@ -8,9 +8,7 @@ interface StatCardProps {
   /**
    * Widened from `string | number` to `React.ReactNode` so cards can
    * render richer content (e.g. a colored category badge) where a plain
-   * number/string isn't expressive enough. Every existing caller passes
-   * a string or number, both of which are valid ReactNode, so this is
-   * purely additive -- no existing usage needs to change.
+   * number/string isn't expressive enough.
    */
   value: React.ReactNode;
   description?: string;
@@ -19,23 +17,37 @@ interface StatCardProps {
   className?: string;
 }
 
+/**
+ * Thin adapter over the shared `MetricCard`.
+ *
+ * This component and `shared/ui/cards/StatsCard` were two independently
+ * written stat cards with different type scales, different trend colours
+ * (`text-success`/`text-danger` here, raw `text-green-600`/`text-red-600`
+ * there) and different loading behaviour — used side by side across seven
+ * modules. Both now delegate to one implementation, so a KPI row looks the
+ * same in Fuel as it does in Vehicles. All 17 call sites keep their existing
+ * props.
+ *
+ * See the note in StatsCard.tsx on why `trend.isPositive` is translated
+ * rather than passed through.
+ */
 export function StatisticCard({ title, value, description, icon, trend, className }: StatCardProps) {
   return (
-    <Card className={cn('transition-shadow hover:shadow-md', className)}>
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <CardTitle className="text-sm font-medium">{title}</CardTitle>
-        {icon}
-      </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-bold leading-tight">{value}</div>
-        {description && <p className="text-xs text-muted-foreground">{description}</p>}
-        {trend && (
-          <p className={cn('text-xs', trend.isPositive ? 'text-success' : 'text-danger')}>
-            {trend.isPositive ? '↑' : '↓'} {trend.value}%
-          </p>
-        )}
-      </CardContent>
-    </Card>
+    <MetricCard
+      label={title}
+      value={value}
+      hint={description}
+      icon={icon}
+      className={className}
+      delta={
+        trend
+          ? {
+              value: trend.isPositive ? Math.abs(trend.value) : -Math.abs(trend.value),
+              higherIsBetter: true,
+            }
+          : undefined
+      }
+    />
   );
 }
 
@@ -44,6 +56,11 @@ interface StatisticCardsProps {
   className?: string;
 }
 
+/**
+ * Grid wrapper. Delegates to `MetricCardGrid` so the breakpoints match every
+ * other KPI row; `className` still wins, so callers that had already tuned
+ * their column counts are unaffected.
+ */
 export function StatisticCards({ children, className }: StatisticCardsProps) {
-  return <div className={cn('grid gap-4 md:grid-cols-2 lg:grid-cols-4', className)}>{children}</div>;
+  return <MetricCardGrid className={cn(className)}>{children}</MetricCardGrid>;
 }

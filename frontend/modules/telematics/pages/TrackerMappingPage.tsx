@@ -33,6 +33,7 @@ import { useMemo, useState } from 'react';
 import { AlertTriangle, Link2, Loader2, Trash2 } from 'lucide-react';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import {
   useCreateTrackerLink,
   useDeleteTrackerLink,
@@ -101,18 +102,17 @@ export function TrackerMappingPage() {
 
   return (
     <div className="space-y-6 p-4 sm:p-6">
-      <header className="space-y-1">
-        <h1 className="text-xl font-semibold text-foreground">Eagle Track tracker mapping</h1>
-        <p className="text-sm text-muted-foreground">
-          Link a tracker to a vehicle when automatic matching cannot place it. A link takes
-          precedence over plate and name matching.
-        </p>
-        {data?.lastSyncAt ? (
-          <p className="text-xs text-muted-foreground">
-            Worklist from the sync at {new Date(data.lastSyncAt).toLocaleString()}.
-          </p>
-        ) : null}
-      </header>
+      <PageHeader
+        title="Eagle Track tracker mapping"
+        description="Link a tracker to a vehicle when automatic matching cannot place it. A link takes precedence over plate and name matching."
+        meta={
+          data?.lastSyncAt ? (
+            <span className="text-caption text-muted-foreground">
+              Worklist from the sync at {new Date(data.lastSyncAt).toLocaleString()}.
+            </span>
+          ) : undefined
+        }
+      />
 
       {!data?.eagletrackConfigured ? (
         <p className="rounded-md border border-border bg-muted/40 p-4 text-sm text-muted-foreground">

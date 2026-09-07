@@ -15,6 +15,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
+import { describeQueryError } from '@/frontend/shared/ui/patterns';
 import { useSessionStore } from '@/frontend/shared/store/session.store';
 import { WorkOrderFilterBar } from '../components/WorkOrderFilterBar';
 import { WorkOrderTable } from '../components/WorkOrderTable';
@@ -43,7 +44,15 @@ export function WorkOrderListPage() {
   const [autoRedirectChecked, setAutoRedirectChecked] = useState(false);
 
   const listParams = useMemo(() => ({ ...filters, page, limit: PAGE_SIZE }), [filters, page]);
-  const { data: result, isLoading } = useWorkOrderList(listParams);
+  const { data: result, isLoading, isError, error, refetch } = useWorkOrderList(listParams);
+
+  // Drives the empty state's branch: "no work orders at all" (a workshop that
+  // has not raised any yet) versus "no work orders match your filters" (the
+  // operator hiding their own backlog). Rendering the same message for both is
+  // what made a quiet workshop and an over-filtered list look identical.
+  const hasFilters = Object.values(filters).some(
+    (value) => value !== undefined && value !== null && value !== ''
+  );
 
   const assignMechanic = useAssignMechanic(assignTarget?._id ?? '');
 
@@ -86,6 +95,12 @@ export function WorkOrderListPage() {
         <WorkOrderTable
           result={result}
           isLoading={isLoading}
+          isError={isError}
+          errorMessage={describeQueryError(error)}
+          onRetry={() => refetch()}
+          hasFilters={hasFilters}
+          onClearFilters={() => handleFiltersChange({})}
+          pageSize={PAGE_SIZE}
           onPageChange={setPage}
           onView={(workOrder) => router.push(WORKORDER_ROUTES.detail(workOrder._id!))}
           onAssign={openAssign}

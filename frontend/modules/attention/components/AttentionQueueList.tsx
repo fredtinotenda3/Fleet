@@ -2,142 +2,91 @@
 
 'use client';
 
-import type { ComponentType } from 'react';
-import Link from 'next/link';
-import {
-  AlertOctagon,
-  Wrench,
-  Sparkles,
-  ShieldAlert,
-  Fuel as FuelIcon,
-  ReceiptText,
-  FileWarning,
-  CalendarClock,
-} from 'lucide-react';
-import { Badge } from '@/frontend/shared/ui/data-display/badge';
+import { CheckCircle2, Filter } from 'lucide-react';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
-import { formatDate, formatRelativeDate } from '@/shared/utils/date.utils';
-import { formatCurrency } from '@/shared/utils/currency.utils';
-import { cn } from '@/lib/utils';
+import { AttentionItemCard } from './AttentionItemCard';
 import type { NeedsAttentionItem } from '../types';
-import type { NeedsAttentionSource, NeedsAttentionUrgency } from '@/modules/ai/types/needs-attention.types';
-import type { AISeverity } from '@/modules/ai/types/ai.types';
-
-// Mirrors frontend/shared/dashboards/widgets/NeedsAttentionWidget.tsx's
-// SOURCE_ICON so an item looks the same whether it's seen on the
-// Dashboard widget or the full Command Centre queue.
-const SOURCE_ICON: Record<NeedsAttentionSource, ComponentType<{ className?: string }>> = {
-  predictive_maintenance: Wrench,
-  fleet_health: Sparkles,
-  driver_risk: ShieldAlert,
-  fuel_fraud: FuelIcon,
-  expense_anomaly: ReceiptText,
-  compliance: FileWarning,
-  maintenance: CalendarClock,
-};
-
-const SEVERITY_ROW_CLASS: Record<AISeverity, string> = {
-  critical: 'border-danger-border bg-danger-bg',
-  high: 'border-warning-border bg-warning-bg',
-  medium: 'border-border bg-card',
-  low: 'border-border bg-card',
-};
-
-const SEVERITY_ICON_CLASS: Record<AISeverity, string> = {
-  critical: 'text-danger',
-  high: 'text-warning',
-  medium: 'text-warning',
-  low: 'text-muted-foreground',
-};
-
-const SEVERITY_BADGE: Record<AISeverity, 'destructive' | 'outline'> = {
-  critical: 'destructive',
-  high: 'destructive',
-  medium: 'outline',
-  low: 'outline',
-};
-
-const URGENCY_LABEL: Record<NeedsAttentionUrgency, string> = {
-  overdue: 'Overdue',
-  immediate: 'Immediate',
-  soon: 'Due soon',
-  planned: 'Planned',
-  monitor: 'Monitor',
-};
-
-const URGENCY_CLASS: Record<NeedsAttentionUrgency, string> = {
-  overdue: 'text-danger',
-  immediate: 'text-danger',
-  soon: 'text-warning',
-  planned: 'text-muted-foreground',
-  monitor: 'text-muted-foreground',
-};
 
 interface AttentionQueueListProps {
   items: NeedsAttentionItem[];
+  /**
+   * How many items the feed returned BEFORE the client-side severity/source
+   * filters were applied.
+   *
+   * WHY THIS PROP EXISTS: the list previously rendered "Nothing matches these
+   * filters" for both an empty feed and an over-filtered one. Those are
+   * opposite pieces of news — the first says the fleet is in good shape, the
+   * second says the operator has hidden their own work — and showing the
+   * filter message to someone with a healthy fleet made the product look
+   * broken on its single most important screen.
+   */
+  totalBeforeFilters: number;
+  onClearFilters?: () => void;
+  canResolve: boolean;
+  canDispatch: boolean;
+  onResolve: (item: NeedsAttentionItem) => void;
+  onDispatch: (item: NeedsAttentionItem) => void;
+  resolvingId?: string | null;
+  dispatchingId?: string | null;
 }
 
-export function AttentionQueueList({ items }: AttentionQueueListProps) {
+export function AttentionQueueList({
+  items,
+  totalBeforeFilters,
+  onClearFilters,
+  canResolve,
+  canDispatch,
+  onResolve,
+  onDispatch,
+  resolvingId,
+  dispatchingId,
+}: AttentionQueueListProps) {
   if (items.length === 0) {
+    // Genuinely nothing to do. Rendered as good news, with a positive tone,
+    // because in an operations console silence must be legible as "all
+    // clear" rather than as "this screen failed to load".
+    if (totalBeforeFilters === 0) {
+      return (
+        <EmptyState
+          tone="positive"
+          icon={<CheckCircle2 aria-hidden="true" />}
+          title="No active attention items"
+          description="Nothing across maintenance, fuel, expenses, compliance or driver risk currently needs a decision."
+          hints={[
+            'This queue refreshes as telemetry, fuel logs and expenses arrive.',
+            'Items are ranked by severity, cost at stake and how soon they are due.',
+          ]}
+        />
+      );
+    }
+
     return (
       <EmptyState
-        icon={<AlertOctagon className="w-10 h-10 text-muted-foreground" />}
-        title="Nothing matches these filters"
-        description="Try clearing a filter, or your fleet may simply be in good shape right now."
+        icon={<Filter aria-hidden="true" />}
+        title="No items match these filters"
+        description={`${totalBeforeFilters.toLocaleString()} ${
+          totalBeforeFilters === 1 ? 'item is' : 'items are'
+        } in the queue, but none match the severity and source you have selected.`}
+        action={onClearFilters ? { label: 'Clear filters', onClick: onClearFilters } : undefined}
       />
     );
   }
 
   return (
     <ol className="space-y-2">
-      {items.map((item, index) => {
-        const SourceIcon = SOURCE_ICON[item.source] ?? AlertOctagon;
-        const rowClasses = cn(
-          'flex items-start gap-3 rounded-md border p-4 transition-colors',
-          SEVERITY_ROW_CLASS[item.severity]
-        );
-
-        const content = (
-          <>
-            <span
-              className="mt-0.5 shrink-0 text-caption font-semibold text-muted-foreground tabular-nums w-6 text-right"
-              aria-hidden="true"
-            >
-              {index + 1}
-            </span>
-            <SourceIcon className={cn('mt-0.5 h-5 w-5 shrink-0', SEVERITY_ICON_CLASS[item.severity])} aria-hidden="true" />
-            <div className="flex-1 min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="font-medium text-body-sm text-foreground">{item.title}</p>
-                <Badge variant={SEVERITY_BADGE[item.severity]} className="capitalize shrink-0">
-                  {item.severity}
-                </Badge>
-                <span className={cn('text-caption font-medium shrink-0', URGENCY_CLASS[item.urgency])}>
-                  {URGENCY_LABEL[item.urgency]}
-                </span>
-              </div>
-              <p className="mt-0.5 text-body-sm text-muted-foreground">{item.description}</p>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-caption text-muted-foreground">
-                {item.entityLabel && <span>{item.entityLabel}</span>}
-                {item.cost > 0 && <span>{formatCurrency(item.cost)} at stake</span>}
-                {item.dueDate && <span title={formatDate(item.dueDate)}>{formatRelativeDate(item.dueDate)}</span>}
-              </div>
-            </div>
-          </>
-        );
-
-        return (
-          <li key={item.id}>
-            {item.href ? (
-              <Link href={item.href} className={cn(rowClasses, 'hover:brightness-95 dark:hover:brightness-110')}>
-                {content}
-              </Link>
-            ) : (
-              <div className={rowClasses}>{content}</div>
-            )}
-          </li>
-        );
-      })}
+      {items.map((item, index) => (
+        <AttentionItemCard
+          key={item.id}
+          item={item}
+          rank={index + 1}
+          canResolve={canResolve}
+          canDispatch={canDispatch}
+          onResolve={onResolve}
+          onDispatch={onDispatch}
+          isResolving={resolvingId === item.id}
+          isDispatching={dispatchingId === item.id}
+        />
+      ))}
     </ol>
   );
 }

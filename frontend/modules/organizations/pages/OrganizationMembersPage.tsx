@@ -10,6 +10,7 @@ import { AddMemberDialog } from '../components/members/AddMemberDialog';
 import { MembersTable } from '../components/members/MembersTable';
 import { PendingInvitationsList } from '../components/members/PendingInvitationsList';
 import { Button } from '@/frontend/shared/ui/primitives/button';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { PageLoader } from '@/frontend/shared/loading/PageLoader';
 import { canManageMembers } from '../utils';
 
@@ -32,25 +33,23 @@ export function OrganizationMembersPage() {
 
   return (
     <div className="p-4 space-y-6 sm:p-6">
-      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-        <div>
-          <h1 className="text-h1">Members</h1>
-          <p className="mt-1 text-body-sm text-muted-foreground">
-            Manage who has access to {organization.name} and what they can do.
-          </p>
-        </div>
-        {canManage && (
-          <AddMemberDialog
-            organizationId={organization._id!}
-            trigger={
-              <Button>
-                <UserPlus className="mr-1.5 h-4 w-4" aria-hidden="true" />
-                Add member
-              </Button>
-            }
-          />
-        )}
-      </div>
+      <PageHeader
+        title="Members"
+        description={`Manage who has access to ${organization.name} and what they can do.`}
+        actions={
+          canManage ? (
+            <AddMemberDialog
+              organizationId={organization._id!}
+              trigger={
+                <Button>
+                  <UserPlus className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                  Add member
+                </Button>
+              }
+            />
+          ) : undefined
+        }
+      />
 
       <MembersTable
         organizationId={organization._id!}

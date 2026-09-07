@@ -68,7 +68,12 @@ export function ServiceCalendar({ onSelectRecord }: ServiceCalendarProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-7 gap-px overflow-hidden text-xs border rounded-md bg-border">
+      {/* A month grid cannot collapse below seven columns and stay a
+          calendar, so instead of squeezing the cells it keeps a readable
+          minimum width and scrolls inside its own container. Without the
+          wrapper the min-width would widen the whole page on a phone. */}
+      <div className="overflow-x-auto">
+      <div className="grid min-w-140 grid-cols-7 gap-px overflow-hidden rounded-md border bg-border text-xs">
         {WEEKDAYS.map((day) => (
           <div key={day} className="bg-muted px-2 py-1.5 text-center font-medium text-muted-foreground">
             {day}
@@ -105,6 +110,7 @@ export function ServiceCalendar({ onSelectRecord }: ServiceCalendarProps) {
             </div>
           );
         })}
+      </div>
       </div>
     </div>
   );

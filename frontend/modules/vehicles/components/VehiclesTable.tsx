@@ -15,6 +15,8 @@ import {
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { MoreHorizontal, Eye, Pencil, Copy, Trash2, Wrench, CheckCircle2, PauseCircle } from 'lucide-react';
 import { formatDistance } from '@/shared/utils/distance.utils';
+import { EmptyState } from '@/shared/ui/feedback/EmptyState';
+import { Truck } from 'lucide-react';
 import type { PaginatedResponse } from '@/shared/types/common.types';
 import type { Vehicle, VehicleStatus } from '../types';
 import { getVehicleStatusMeta, getVehicleStatusBadgeClass } from '../utils';
@@ -23,8 +25,23 @@ import { cn } from '@/lib/utils';
 interface VehiclesTableProps {
   result: PaginatedResponse<Vehicle> | undefined;
   isLoading: boolean;
+  /**
+   * ADDED. Without this the table rendered its empty message on a failed
+   * fetch — telling an operator "No vehicles found. Try adjusting your
+   * filters or add a new vehicle." while the fleet register was simply
+   * unreachable. DataTable now checks error before empty.
+   */
+  isError?: boolean;
+  errorMessage?: string;
+  onRetry?: () => void;
+  /** True when any filter is applied, so the empty state can tell the two cases apart. */
+  hasFilters?: boolean;
+  onClearFilters?: () => void;
+  /** Offered by the first-run empty state when the viewer may add a vehicle. */
+  onAddVehicle?: () => void;
   pageSize: number;
   onPageChange: (page: number) => void;
+  onPageSizeChange?: (pageSize: number) => void;
   selectedIds: Set<string>;
   onToggleSelect: (id: string) => void;
   onToggleSelectAll: (ids: string[]) => void;
@@ -40,8 +57,15 @@ interface VehiclesTableProps {
 export function VehiclesTable({
   result,
   isLoading,
+  isError = false,
+  errorMessage,
+  onRetry,
+  hasFilters = false,
+  onClearFilters,
+  onAddVehicle,
   pageSize,
   onPageChange,
+  onPageSizeChange,
   selectedIds,
   onToggleSelect,
   onToggleSelectAll,
@@ -175,12 +199,69 @@ export function VehiclesTable({
     return cols;
   }, [data, selectedIds, onToggleSelect, onToggleSelectAll, onView, onEdit, onDuplicate, onDelete, onStatusChange, canManage, canDelete]);
 
+  // Two genuinely different empty states. "No vehicles at all" is a
+  // first-run moment that should explain what the register unlocks and offer
+  // to start it; "no vehicles match these filters" is the user having hidden
+  // their own fleet, and the useful action there is to clear the filters.
+  const empty = hasFilters ? (
+    <EmptyState
+      icon={<Truck aria-hidden="true" />}
+      title="No vehicles match these filters"
+      description="Every vehicle in your scope is currently filtered out."
+      action={onClearFilters ? { label: 'Clear filters', onClick: onClearFilters } : undefined}
+    />
+  ) : (
+    <EmptyState
+      icon={<Truck aria-hidden="true" />}
+      title="Your fleet is ready to be configured"
+      description="Vehicles are the spine of the platform. Everything else — fuel, maintenance, trips, cost per km and every alert — attaches to one."
+      hints={[
+        'Track service intervals and get warned before something is overdue.',
+        'Attribute fuel and expenses per vehicle to see true cost per km.',
+        'Map a telematics tracker to a vehicle to put it on the live map.',
+      ]}
+      action={onAddVehicle ? { label: 'Add your first vehicle', onClick: onAddVehicle } : undefined}
+      secondaryAction={{ label: 'Connect telematics', href: '/telematics/trackers' }}
+    />
+  );
+
   return (
     <DataTable
       columns={columns}
       data={data}
       isLoading={isLoading}
-      emptyMessage="No vehicles found. Try adjusting your filters or add a new vehicle."
+      isError={isError}
+      errorMessage={errorMessage}
+      onRetry={onRetry}
+      caption="Vehicles"
+      empty={empty}
+      // Nine columns do not fit a phone. Below `lg` each vehicle renders as a
+      // card carrying the four fields that actually identify it.
+      renderMobileRow={(vehicle) => {
+        // Same cast the status column above uses: Vehicle.status is the
+        // broader shared `Status` union, of which VehicleStatus is the subset
+        // these helpers cover.
+        const status = vehicle.status as VehicleStatus;
+        return (
+          <div className="space-y-1.5">
+            <div className="flex items-start justify-between gap-2">
+              <span className="text-body-sm font-medium text-foreground">{vehicle.license_plate}</span>
+              <span className={cn('badge-status shrink-0', getVehicleStatusBadgeClass(status))}>
+                {getVehicleStatusMeta(status).label}
+              </span>
+            </div>
+            <p className="text-caption text-muted-foreground">
+              {vehicle.make} {vehicle.model}
+              {vehicle.year ? ` · ${vehicle.year}` : ''}
+            </p>
+            {vehicle.odometer !== undefined && vehicle.odometer !== null && (
+              <p className="text-caption text-muted-foreground tabular-nums">
+                {formatDistance(vehicle.odometer)}
+              </p>
+            )}
+          </div>
+        );
+      }}
       pagination={
         result
           ? {
@@ -189,6 +270,7 @@ export function VehiclesTable({
               total: result.pagination.total,
               totalPages: result.pagination.totalPages,
               onPageChange,
+              onPageSizeChange,
             }
           : undefined
       }

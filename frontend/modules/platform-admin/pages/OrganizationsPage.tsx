@@ -7,6 +7,7 @@ import { AlertTriangle, Building2, Plus, RefreshCw } from 'lucide-react';
 
 import { useAuth } from '@/frontend/modules/auth/hooks/useAuth';
 import { Permission, permissionService } from '@/server/permissions/roles';
+import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { PageLoader } from '@/frontend/shared/loading/PageLoader';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
 import { Alert, AlertDescription, AlertTitle } from '@/frontend/shared/ui/feedback/alert';
@@ -87,32 +88,30 @@ export function OrganizationsPage() {
 
   return (
     <div className="p-4 space-y-6 sm:p-6">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h1 className="text-h1">Organizations</h1>
-          <p className="mt-1 text-body-sm text-muted-foreground">
-            Every tenant on the platform.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => refetch()}
-            disabled={isFetching}
-          >
-            <RefreshCw
-              className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`}
-              aria-hidden="true"
-            />
-            Refresh
-          </Button>
-          <Button type="button" onClick={() => setCreateOpen(true)}>
-            <Plus className="size-4" aria-hidden="true" />
-            New organization
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Organizations"
+        description="Every tenant on the platform."
+        actions={
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => refetch()}
+              disabled={isFetching}
+            >
+              <RefreshCw
+                className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`}
+                aria-hidden="true"
+              />
+              Refresh
+            </Button>
+            <Button type="button" onClick={() => setCreateOpen(true)}>
+              <Plus className="size-4" aria-hidden="true" />
+              New organization
+            </Button>
+          </div>
+        }
+      />
 
       <StatisticCards>
         {/*

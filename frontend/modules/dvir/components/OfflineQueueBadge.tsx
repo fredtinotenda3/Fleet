@@ -38,7 +38,9 @@ export function OfflineQueueBadge() {
       }}
       className={cn(
         'flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium',
-        online ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400' : 'bg-muted text-muted-foreground'
+        // The warning tokens already carry their own light/dark values, so
+        // this no longer needs a hand-written dark: variant.
+        online ? 'border border-warning-border bg-warning-bg text-warning' : 'bg-muted text-muted-foreground'
       )}
     >
       {syncing ? <RefreshCw className="size-3.5 animate-spin" /> : <CloudOff className="size-3.5" />}

@@ -14,6 +14,7 @@ import {
 } from '@/frontend/shared/ui/forms/select';
 import { LoadingState } from '@/shared/ui/feedback/LoadingState';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
+import { ErrorState, describeQueryError } from '@/frontend/shared/ui/patterns';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
 import { Clock } from 'lucide-react';
 import { useUpcomingMaintenance } from '../hooks/useMaintenance';
@@ -24,7 +25,7 @@ import { MAINTENANCE_ROUTES } from '../routes';
 export function UpcomingMaintenancePage() {
   const router = useRouter();
   const [daysAhead, setDaysAhead] = useState(7);
-  const { data: records, isLoading } = useUpcomingMaintenance(daysAhead);
+  const { data: records, isLoading, isError, error, refetch } = useUpcomingMaintenance(daysAhead);
 
   return (
     <div className="space-y-6">
@@ -44,8 +45,20 @@ export function UpcomingMaintenancePage() {
         }
       />
 
+      {/* The failure branch sits between loading and empty on purpose. A failed
+          request leaves `records` undefined, which looks exactly like an empty
+          window, so without this the page promised "Nothing due soon" while
+          the schedule it was reporting on had never arrived. */}
       {isLoading ? (
         <LoadingState type="table" count={6} />
+      ) : isError ? (
+        <ErrorState
+          title="Upcoming maintenance didn't load"
+          description="This schedule could not be fetched. Do not read it as an all-clear — there may be services due in this window it never received."
+          detail={describeQueryError(error)}
+          onRetry={() => refetch()}
+          size="page"
+        />
       ) : !records || records.length === 0 ? (
         <EmptyState
           icon={<Clock className="w-10 h-10 text-muted-foreground" />}
