@@ -5,6 +5,15 @@ import { ImportExpensesCommand } from '../import-expenses.command';
 import { ExpenseRepository } from '@/modules/expenses/repositories/expense.repository';
 import { ObjectId } from 'mongodb';
 import connectToDatabase from '@/infrastructure/database/mongodb';
+import { AppError } from '@/server/errors/app.errors';
+import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-resolver.service';
+
+/**
+ * Per-import memo of plate -> resolution. Holds the org unit on success
+ * and the refusal message on failure, so a spreadsheet with many rows
+ * for one plate does a single scoped lookup either way.
+ */
+type ResolvedImportVehicle = { orgUnitId?: string } | { error: string };
 
 export interface ImportRowResult {
   row: number;
@@ -47,7 +56,7 @@ export class ImportExpensesHandler
     const results: ImportRowResult[] = [];
 
     // Cache vehicle and category lookups across rows to avoid N+1 queries.
-    const vehicleCache = new Map<string, boolean>();
+    const vehicleCache = new Map<string, ResolvedImportVehicle>();
     const categoryCache = new Map<string, ObjectId>();
 
     for (const row of command.rows) {
@@ -92,24 +101,46 @@ export class ImportExpensesHandler
         continue;
       }
 
-      // --- Vehicle existence (cached) ---
-      let vehicleExists = vehicleCache.get(plate);
-      if (vehicleExists === undefined) {
-        const vehicle = await db.collection('tblvehicles').findOne({
-          license_plate: plate,
-          isDeleted: { $ne: true },
-        });
-        vehicleExists = Boolean(vehicle);
-        vehicleCache.set(plate, vehicleExists);
+      /**
+       * --- Vehicle resolution (cached) ---
+       *
+       * TWO FIXES HERE.
+       *
+       * 1. SCOPE. This was an existence check against an unscoped
+       *    query, so an import could reference any tenant's vehicle.
+       *    It now resolves through vehicleWriteResolver under the
+       *    importer's own scope.
+       * 2. ORG UNIT. Even on success the resolved vehicle was
+       *    discarded and the row inserted below carried NO orgUnitId
+       *    at all -- so every expense that has ever been imported by
+       *    spreadsheet is invisible to every scope-narrowed user, in a
+       *    module whose interactive create path stamps the field
+       *    correctly. The cache now holds the org unit, not a boolean.
+       *
+       * The cache stores the failure too (as null), so a spreadsheet
+       * with 300 rows for one out-of-scope plate does one lookup, not
+       * 300.
+       */
+      let resolved = vehicleCache.get(plate);
+      if (resolved === undefined) {
+        try {
+          const vehicle = await vehicleWriteResolver.resolveForWrite(plate, command.scope);
+          resolved = { orgUnitId: vehicleWriteResolver.orgUnitIdFor(vehicle) };
+        } catch (err) {
+          resolved = {
+            error: err instanceof AppError ? err.message : `Vehicle "${plate}" was not found`,
+          };
+        }
+        vehicleCache.set(plate, resolved);
       }
-      if (!vehicleExists) {
+      if ('error' in resolved) {
         results.push({
           row: rowNum,
           success: false,
           column: 'vehicle',
           invalidValue: plate,
-          error: `Vehicle "${plate}" was not found`,
-          suggestedFix: 'Check the license plate matches an existing vehicle exactly.',
+          error: resolved.error,
+          suggestedFix: 'Check the license plate matches a vehicle you have access to.',
         });
         continue;
       }
@@ -174,6 +205,7 @@ export class ImportExpensesHandler
             license_plate: plate,
             amount,
             date: parsedDate,
+            ...(resolved.orgUnitId && { orgUnitId: resolved.orgUnitId }),
             ...(expenseTypeId && { expense_type_id: expenseTypeId as unknown as string }),
             ...(row.description && { description: row.description.trim() }),
             ...(row.jobTrip && { jobTrip: row.jobTrip.trim() }),

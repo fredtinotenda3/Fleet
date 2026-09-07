@@ -160,16 +160,52 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
     module: 'dispatch',
     collections: ['tbldispatchjobs'],
     level: 'org-unit',
-    orgUnitSource: 'vehicle',
-    rationale: 'Dispatch assigns a branch vehicle and driver to a job.',
+    /**
+     * CORRECTED from 'vehicle'. A dispatch job is created BEFORE a
+     * vehicle is assigned to it -- `status` starts at 'unassigned' --
+     * so at write time there is no vehicle to inherit from and the
+     * declared join could never have run. DispatchService.create takes
+     * the SUBMITTER's unit instead (resolveCreationOrgUnitId), which is
+     * what 'explicit' means here.
+     *
+     * The backfill consequence is deliberate: 'explicit' makes
+     * tenancy:backfill REPORT unassigned dispatch rows rather than join
+     * them to whatever vehicle happens to be assigned by the time the
+     * migration runs. That join would look plausible and would silently
+     * re-home jobs a dispatcher raised for their own branch. The
+     * collection is currently empty, so nothing is lost by refusing to
+     * guess.
+     */
+    orgUnitSource: 'explicit',
+    rationale:
+      'A dispatch job is raised by one branch and assigned a vehicle later, so it ' +
+      'takes the raising unit -- not the vehicle, which does not exist yet at create time.',
     confirmed: true,
   },
   {
     module: 'inventory',
     collections: ['tblspareparts', 'tblstockmovements'],
     level: 'org-unit',
-    orgUnitSource: 'workshop-bay',
-    rationale: 'Stock is physically held at one workshop; counts are per-location.',
+    /**
+     * CORRECTED from 'workshop-bay'. The declared ladder joins on a
+     * `bayId` field, and NEITHER collection has one: SparePart carries
+     * sku/name/category/cost/quantities/warehouseLocation, and
+     * StockMovement carries sparePartId. The join therefore resolved
+     * 'no-reference' for every row -- fail-safe (it assigned nothing),
+     * but the declaration described a migration that could not run.
+     *
+     * At write time: a spare part takes the SUBMITTER's unit (it sits in
+     * a store, with no asset to inherit from), and a stock movement
+     * inherits its PARENT PART's unit, which is the join the backfill
+     * would want if these collections are ever populated before it runs.
+     * Both are currently empty. Adding a `spare-part` ladder is recorded
+     * as a follow-up rather than written speculatively against no data.
+     */
+    orgUnitSource: 'explicit',
+    rationale:
+      'Stock is physically held at one workshop; counts are per-location. Parts are ' +
+      'operator-declared (no asset reference exists on the row); movements inherit ' +
+      'their parent part at write time.',
     confirmed: true,
   },
   {

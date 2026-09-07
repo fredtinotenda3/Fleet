@@ -8,6 +8,8 @@ import { Trip } from '@/shared/types/trip.types';
 import { NotFoundError, ValidationError, AppError } from '@/server/errors/app.errors';
 import { validateWithZod } from '@/shared/utils/validation.utils';
 import connectToDatabase from '@/infrastructure/database/mongodb';
+import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-resolver.service';
+import { driverRepository } from '@/modules/drivers/repositories/driver.repository';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { TripUpdatedEvent } from '@/modules/trips/events/TripUpdatedEvent';
 
@@ -76,19 +78,17 @@ export class UpdateTripHandler implements ICommandHandler<UpdateTripCommand, Tri
     const db = await connectToDatabase();
 
     if (updateData.license_plate) {
-      const vehicle = await db.collection('tblvehicles').findOne({
-        license_plate: String(updateData.license_plate).toUpperCase(),
-        isDeleted: { $ne: true },
-      });
-      if (!vehicle) {
-        throw new AppError(
-          `Vehicle "${updateData.license_plate}" not found`,
-          'VEHICLE_NOT_FOUND',
-          400
-        );
-      }
+      /**
+       * SCOPE FIX -- re-plating a trip rewrites its orgUnitId, moving
+       * it (and its distance, which feeds cost/km) between branches.
+       * See server/tenancy/write-scope.ts.
+       */
+      const vehicle = await vehicleWriteResolver.resolveForWrite(
+        String(updateData.license_plate),
+        command.scope
+      );
       updateData.license_plate = String(updateData.license_plate).toUpperCase();
-      updateData.orgUnitId = (vehicle as { orgUnitId?: string }).orgUnitId ?? null;
+      updateData.orgUnitId = vehicleWriteResolver.orgUnitIdFor(vehicle) ?? null;
     }
 
     if (updateData.unit_id) {
@@ -111,10 +111,16 @@ export class UpdateTripHandler implements ICommandHandler<UpdateTripCommand, Tri
      * assignment and is intentionally not checked against tbldrivers.
      */
     if (updateData.driver_id) {
-      const driver = await db.collection('tbldrivers').findOne({
-        _id: updateData.driver_id as any,
-        isDeleted: { $ne: true },
-      });
+      /**
+       * Same two fixes as CreateTripHandler: a string was compared
+       * against an ObjectId `_id` (so this check could never pass), and
+       * the lookup crossed tenants. driverRepository.findById handles
+       * both.
+       */
+      const driver = await driverRepository.findById(
+        String(updateData.driver_id),
+        command.tenantId
+      );
       if (!driver) {
         throw new AppError(
           `Driver "${updateData.driver_id}" not found`,

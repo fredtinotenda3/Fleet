@@ -6,6 +6,8 @@ import { validatePaginationParams } from '@/shared/utils/pagination.utils';
 import { successResponse, paginatedResponse, errorResponse, createdResponse } from '@/server/utils/response.utils';
 import { AppError, ValidationError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
+import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
+import { userWriteScope } from '@/server/tenancy/write-scope';
 
 export class InventoryController {
   async listParts(req: NextRequest) {
@@ -36,10 +38,10 @@ export class InventoryController {
 
   async createPart(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const context = await resolveTenantContext(req);
       const userId = await getUserIdFromRequest(req);
       const body = await req.json();
-      return createdResponse(await inventoryService.createPart(body, tenantId, userId));
+      return createdResponse(await inventoryService.createPart(body, userWriteScope(context), userId));
     } catch (error) {
       return this.handleError(error);
     }

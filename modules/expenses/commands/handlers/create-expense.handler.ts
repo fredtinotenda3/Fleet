@@ -11,6 +11,7 @@ import { ObjectId } from 'mongodb';
 import connectToDatabase from '@/infrastructure/database/mongodb';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { ExpenseCreatedEvent } from '@/modules/expenses/events/ExpenseCreatedEvent';
+import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-resolver.service';
 
 export class CreateExpenseHandler
   implements ICommandHandler<CreateExpenseCommand, Expense>
@@ -47,21 +48,18 @@ export class CreateExpenseHandler
     const validated = result.data;
 
     const db = await connectToDatabase();
-    const vehicle = await db.collection('tblvehicles').findOne({
-      license_plate: String(validated.license_plate).toUpperCase(),
-      isDeleted: { $ne: true },
-      ...(command.tenantId !== 'default' && command.tenantId !== 'system'
-        ? { tenantId: command.tenantId }
-        : {}),
-    });
+    /**
+     * SCOPE FIX. This lookup was tenant-scoped only for non-sentinel
+     * tenants, and had no org-unit check at all -- so a branch manager
+     * could file a cost against another branch's vehicle and the
+     * expense would inherit that branch's orgUnitId, vanishing from
+     * their own list. See server/tenancy/write-scope.ts.
+     */
+    const vehicle = await vehicleWriteResolver.resolveForWrite(
+      validated.license_plate as string,
+      command.scope
+    );
 
-    if (!vehicle) {
-      throw new AppError(
-        `Vehicle "${validated.license_plate}" not found`,
-        'VEHICLE_NOT_FOUND',
-        400
-      );
-    }
 
     let expenseTypeId: ObjectId | undefined;
     if (validated.expense_type_id) {
@@ -110,8 +108,8 @@ export class CreateExpenseHandler
       license_plate: String(validated.license_plate).toUpperCase(),
       amount: Number(validated.amount),
       date: new Date(validated.date as unknown as string),
-      ...((vehicle as { orgUnitId?: string }).orgUnitId && {
-        orgUnitId: (vehicle as { orgUnitId?: string }).orgUnitId,
+      ...(vehicleWriteResolver.orgUnitIdFor(vehicle) && {
+        orgUnitId: vehicleWriteResolver.orgUnitIdFor(vehicle),
       }),
       ...(expenseTypeId && { expense_type_id: expenseTypeId as unknown as string }),
       ...(validated.description && { description: String(validated.description).trim() }),

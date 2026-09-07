@@ -13,23 +13,49 @@ import {
   BookingCheckedInEvent,
 } from '../events/booking.events';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
+import { WriteScope, tenantIdOf } from '@/server/tenancy/write-scope';
+import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-resolver.service';
 
 export class BookingService {
   constructor(private readonly repo: BookingRepository = bookingRepository) {}
 
-  async create(data: BookingCreateDTO, tenantId: string, userId: string): Promise<Booking> {
+  /**
+   * THREE FIXES.
+   *
+   * 1. SCOPE MISMATCH. BookingRepository.getFilteredInScope filters on
+   *    orgUnitId and create never wrote it -- a booking made by a
+   *    scope-narrowed user was invisible to that user. Same class as
+   *    drivers; see server/tenancy/write-scope.ts.
+   * 2. NO VEHICLE VALIDATION AT ALL. The vehicle was never looked up,
+   *    so a booking could be made against a plate in another tenant, a
+   *    deleted vehicle, or nothing at all.
+   * 3. `vehicleId` AND `license_plate` WERE BOTH TAKEN FROM THE CLIENT
+   *    and never checked against each other, so they could disagree --
+   *    findOverlapping keys off vehicleId while every human-facing
+   *    surface renders license_plate, meaning the double-booking guard
+   *    could be protecting a different vehicle from the one displayed.
+   *    Both are now derived from ONE resolved vehicle.
+   */
+  async create(data: BookingCreateDTO, scope: WriteScope, userId: string): Promise<Booking> {
+    const tenantId = tenantIdOf(scope);
     const startTime = new Date(data.startTime);
     const endTime = new Date(data.endTime);
     if (endTime <= startTime) throw new ValidationError('endTime must be after startTime');
 
-    const overlapping = await this.repo.findOverlapping(data.vehicleId, startTime, endTime, tenantId);
+    const vehicle = await vehicleWriteResolver.resolveForWrite(data.license_plate, scope);
+    const vehicleId = String(vehicle._id);
+
+    const overlapping = await this.repo.findOverlapping(vehicleId, startTime, endTime, tenantId);
     if (overlapping.length > 0) throw new ConflictError('Vehicle is already booked for an overlapping time window');
 
     const created = await this.repo.create(
       {
         tenantId,
-        vehicleId: data.vehicleId,
-        license_plate: data.license_plate.toUpperCase(),
+        ...(vehicleWriteResolver.orgUnitIdFor(vehicle)
+          ? { orgUnitId: vehicleWriteResolver.orgUnitIdFor(vehicle) }
+          : {}),
+        vehicleId,
+        license_plate: vehicle.license_plate.toUpperCase(),
         requestedBy: userId,
         purpose: data.purpose,
         startTime,

@@ -12,6 +12,8 @@ import {
   DispatchJobCancelledEvent,
 } from '../events/dispatch.events';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
+import { WriteScope, tenantIdOf } from '@/server/tenancy/write-scope';
+import { resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
 
 const VALID_TRANSITIONS: Record<DispatchJobStatus, DispatchJobStatus[]> = {
   unassigned: ['assigned', 'cancelled'],
@@ -25,13 +27,39 @@ const VALID_TRANSITIONS: Record<DispatchJobStatus, DispatchJobStatus[]> = {
 export class DispatchService {
   constructor(private readonly repo: DispatchRepository = dispatchRepository) {}
 
-  async create(data: DispatchJobCreateDTO, tenantId: string, userId: string): Promise<DispatchJob> {
+  /**
+   * SCOPE MISMATCH FIX. DispatchRepository.getBoardInScope /
+   * getActiveBoardInScope both filter on `{ orgUnitId: { $in: ... } }`,
+   * and dispatch.tenancy-addendum.ts documents the field -- but create
+   * never wrote it, so every job a scope-narrowed dispatcher raised was
+   * absent from the board they raised it on. Same class as drivers; see
+   * server/tenancy/write-scope.ts.
+   *
+   * The unit comes from the SUBMITTER, not from a vehicle: a dispatch
+   * job is created BEFORE a vehicle is assigned, so there is no asset to
+   * inherit from at this point.
+   *
+   * NOTE ON THE ADDENDUM'S WORDING. dispatch.tenancy-addendum.ts says
+   * the unit "falls back to the assigned vehicle's orgUnitId once
+   * assigned". That is deliberately NOT implemented: re-homing a live
+   * job to another branch at assignment time would make it disappear
+   * from the board of the dispatcher who is actively running it. The
+   * assignment path validates the vehicle is in scope instead, which
+   * gets the safety property without the vanishing act. The addendum
+   * comment has been corrected to match.
+   */
+  async create(data: DispatchJobCreateDTO, scope: WriteScope, userId: string): Promise<DispatchJob> {
+    const tenantId = tenantIdOf(scope);
     if (!data.title?.trim()) throw new ValidationError('title is required');
     if (!data.pickupLocation?.trim()) throw new ValidationError('pickupLocation is required');
+
+    const orgUnitId =
+      scope.kind === 'user' ? resolveCreationOrgUnitId(scope.context, data.orgUnitId) : undefined;
 
     const created = await this.repo.create(
       {
         tenantId,
+        ...(orgUnitId ? { orgUnitId } : {}),
         title: data.title,
         priority: data.priority || 'medium',
         status: 'unassigned',

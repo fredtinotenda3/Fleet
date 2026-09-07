@@ -38,6 +38,7 @@ import {
 // three byte-identical private copies in this codebase). Only the creation
 // helper is imported here to avoid shadowing it.
 import { resolveTenantContext, resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
+import { userWriteScope } from '@/server/tenancy/write-scope';
 
 bootstrapCqrs();
 
@@ -361,7 +362,7 @@ export class FuelController {
       throw new NotFoundError('Fuel log not found');
     }
 
-    return { authContext, log };
+    return { authContext, log, tenantContext };
   }
 
   async getFuelLog(req: NextRequest, id: string) {
@@ -378,11 +379,21 @@ export class FuelController {
       const context = await resolveTenantContext(req);
       const userId = await getUserIdFromRequest(req);
       const body = await req.json();
-      const orgUnitId = resolveCreationOrgUnitId(context, (body as any)?.orgUnitId);
+      /**
+       * resolveCreationOrgUnitId is still called, but ONLY for its
+       * side effect: it throws ForbiddenError when a scope-narrowed
+       * caller names an org unit outside their scope, or has no
+       * assignment at all. Its return value is deliberately discarded --
+       * a fuel log's org unit comes from the VEHICLE (resolved under
+       * scope in the handler), not from the submitter, because the cost
+       * belongs to the branch that runs the truck. See
+       * modules/vehicles/services/vehicle-write-resolver.service.ts.
+       */
+      resolveCreationOrgUnitId(context, (body as any)?.orgUnitId);
 
       const log = await fuelCommandService.createFuelLog(
-        { ...(body as Record<string, unknown>), orgUnitId },
-        context.organizationId,
+        body as Record<string, unknown>,
+        userWriteScope(context),
         userId
       );
       return createdResponse(log);
@@ -393,7 +404,17 @@ export class FuelController {
 
   async importFuelLogs(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      /**
+       * A bulk import is still a USER write, so it gets a user scope,
+       * not a system one. A branch manager uploading a spreadsheet must
+       * not be able to file rows against vehicles outside their branch
+       * -- an importer is the easiest place to do that at volume, and
+       * the per-row error reporting below already has somewhere sensible
+       * to surface the refusal.
+       */
+      const context = await resolveTenantContext(req);
+      const tenantId = context.organizationId;
+      const importScope = userWriteScope(context);
       const userId = await getUserIdFromRequest(req);
 
       let body: { records?: unknown };
@@ -511,7 +532,7 @@ export class FuelController {
             }
           }
 
-          const log = await fuelCommandService.createFuelLog(rawRow, tenantId, userId);
+          const log = await fuelCommandService.createFuelLog(rawRow, importScope, userId);
           succeeded += 1;
           if (dedupKey) seenInBatch.add(dedupKey);
           results.push({
@@ -539,11 +560,16 @@ export class FuelController {
 
   async updateFuelLog(req: NextRequest, id: string) {
     try {
-      const { authContext } = await this.loadInScopeFuelLog(req, id);
+      const { authContext, tenantContext } = await this.loadInScopeFuelLog(req, id);
       const userId = authContext.userId;
       const body = await req.json();
 
-      const log = await fuelCommandService.updateFuelLog(id, body, authContext.tenantId, userId);
+      const log = await fuelCommandService.updateFuelLog(
+        id,
+        body,
+        userWriteScope(tenantContext),
+        userId
+      );
       return successResponse(log);
     } catch (error) {
       return this.handleError(error);

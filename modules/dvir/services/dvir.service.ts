@@ -30,6 +30,8 @@ import { storageService } from '@/infrastructure/storage/storage.service';
 import { workOrderService } from '@/modules/workorders/services/workorder.service';
 import { notificationService } from '@/modules/notifications/services/notification.service';
 import connectToDatabase from '@/infrastructure/database/mongodb';
+import { systemWriteScope } from '@/server/tenancy/write-scope';
+import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-resolver.service';
 
 const MAX_ITEMS = 50;
 
@@ -86,14 +88,24 @@ export class DVIRService {
 
     const licensePlate = data.license_plate.toUpperCase();
     const db = await connectToDatabase();
-    const vehicle = await db.collection('tblvehicles').findOne({
-      license_plate: licensePlate,
-      isDeleted: { $ne: true },
-      ...(context.organizationId !== 'default' && context.organizationId !== 'system'
-        ? { tenantId: context.organizationId }
-        : {}),
-    });
-    if (!vehicle) throw new AppError(`Vehicle "${licensePlate}" not found`, 'VEHICLE_NOT_FOUND', 400);
+    /**
+     * Migrated to the shared resolver. The org-unit check below was
+     * already correct and is KEPT rather than replaced: it produces a
+     * 403 with a message a driver can act on, which is the right
+     * behaviour for a DVIR (the driver knows perfectly well the truck
+     * exists -- they are standing next to it), whereas the resolver's
+     * default is a deliberately indistinguishable 400 to avoid leaking
+     * existence to a caller probing plates. What the resolver adds here
+     * is a hard tenant boundary (the sentinel branch above disabled it)
+     * and refusal on an ambiguous plate.
+     */
+    const vehicle = await vehicleWriteResolver.resolveForWrite(
+      licensePlate,
+      systemWriteScope(
+        context.organizationId,
+        'DVIR does its own org-unit check below, with a driver-facing 403'
+      )
+    );
 
     const vehicleOrgUnitId: string | undefined = (vehicle as any).orgUnitId;
     if (vehicleOrgUnitId && !tenantScopeService.canAccessOrgUnit(context, vehicleOrgUnitId)) {
@@ -204,7 +216,13 @@ export class DVIRService {
             driverId,
             photoUrl: defect.photoUrl,
           } as any,
-          context.organizationId,
+          // The DVIR's own org-unit check (above) has already run and
+          // orgUnitId is passed explicitly, so this raise is a system
+          // write from WorkOrderService's point of view.
+          systemWriteScope(
+            context.organizationId,
+            'DVIR-raised work order: scope already checked against the inspected vehicle'
+          ),
           userId
         );
         workOrderIds.push(workOrder._id!);

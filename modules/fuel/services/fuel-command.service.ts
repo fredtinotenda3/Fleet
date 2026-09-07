@@ -5,26 +5,33 @@ import { CreateFuelLogCommand } from '../commands/create-fuel-log.command';
 import { UpdateFuelLogCommand } from '../commands/update-fuel-log.command';
 import { DeleteFuelLogCommand } from '../commands/delete-fuel-log.command';
 import { FuelLog } from '@/shared/types/fuel.types';
+import { WriteScope, tenantIdOf } from '@/server/tenancy/write-scope';
 
 export class FuelCommandService {
+  /**
+   * `scope` replaces the former `tenantId` parameter rather than joining
+   * it: the tenant is derivable from the scope (tenantIdOf), and keeping
+   * both would let a caller pass a tenantId that disagrees with the
+   * scope's own -- a contradiction the handler would have to arbitrate.
+   */
   async createFuelLog(
     rawData: unknown,
-    tenantId: string,
+    scope: WriteScope,
     userId?: string
   ): Promise<FuelLog> {
     return commandBus.execute<FuelLog>(
-      new CreateFuelLogCommand(rawData, tenantId, userId)
+      new CreateFuelLogCommand(rawData, tenantIdOf(scope), scope, userId)
     );
   }
 
   async updateFuelLog(
     fuelLogId: string,
     rawData: unknown,
-    tenantId: string,
+    scope: WriteScope,
     userId?: string
   ): Promise<FuelLog> {
     return commandBus.execute<FuelLog>(
-      new UpdateFuelLogCommand(fuelLogId, rawData, tenantId, userId)
+      new UpdateFuelLogCommand(fuelLogId, rawData, tenantIdOf(scope), scope, userId)
     );
   }
 

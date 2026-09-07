@@ -12,26 +12,32 @@ import { ImportExpensesCommand, ImportExpenseRow } from '../commands/import-expe
 import { Expense } from '@/shared/types/expense.types';
 import type { BulkImportResult } from '../commands/handlers/bulk-import-expenses.handler';
 import type { ImportExpensesResult } from '../commands/handlers/import-expenses.handler';
+import { WriteScope, tenantIdOf } from '@/server/tenancy/write-scope';
 
 export class ExpenseCommandService {
+  /**
+   * `scope` replaces the former `tenantId` parameter (the tenant is
+   * derivable from it) so a caller cannot pass a tenantId that
+   * contradicts the scope.
+   */
   async createExpense(
     rawData: unknown,
-    tenantId: string,
+    scope: WriteScope,
     userId?: string
   ): Promise<Expense> {
     return commandBus.execute<Expense>(
-      new CreateExpenseCommand(rawData, tenantId, userId)
+      new CreateExpenseCommand(rawData, tenantIdOf(scope), scope, userId)
     );
   }
 
   async updateExpense(
     expenseId: string,
     rawData: unknown,
-    tenantId: string,
+    scope: WriteScope,
     userId?: string
   ): Promise<Expense> {
     return commandBus.execute<Expense>(
-      new UpdateExpenseCommand(expenseId, rawData, tenantId, userId)
+      new UpdateExpenseCommand(expenseId, rawData, tenantIdOf(scope), scope, userId)
     );
   }
 
@@ -48,22 +54,22 @@ export class ExpenseCommandService {
 
   async bulkImport(
     records: BulkExpenseRecord[],
-    tenantId: string,
+    scope: WriteScope,
     userId?: string
   ): Promise<BulkImportResult> {
     return commandBus.execute<BulkImportResult>(
-      new BulkImportExpensesCommand(records, tenantId, userId)
+      new BulkImportExpensesCommand(records, tenantIdOf(scope), scope, userId)
     );
   }
 
   /** Standard-column enterprise import (date/vehicle/category/amount/jobTrip/description). */
   async importExpenses(
     rows: ImportExpenseRow[],
-    tenantId: string,
+    scope: WriteScope,
     userId?: string
   ): Promise<ImportExpensesResult> {
     return commandBus.execute<ImportExpensesResult>(
-      new ImportExpensesCommand(rows, tenantId, userId)
+      new ImportExpensesCommand(rows, tenantIdOf(scope), scope, userId)
     );
   }
 }

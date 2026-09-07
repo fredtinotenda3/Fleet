@@ -6,6 +6,8 @@ import { validatePaginationParams } from '@/shared/utils/pagination.utils';
 import { successResponse, paginatedResponse, errorResponse, createdResponse } from '@/server/utils/response.utils';
 import { AppError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
+import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
+import { userWriteScope } from '@/server/tenancy/write-scope';
 
 export class SchedulingController {
   async list(req: NextRequest) {
@@ -38,10 +40,10 @@ export class SchedulingController {
 
   async create(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const context = await resolveTenantContext(req);
       const userId = await getUserIdFromRequest(req);
       const body = await req.json();
-      return createdResponse(await schedulingService.createShift(body, tenantId, userId));
+      return createdResponse(await schedulingService.createShift(body, userWriteScope(context), userId));
     } catch (error) {
       return this.handleError(error);
     }

@@ -30,6 +30,7 @@ import { AnalyticsScope, vehicleScope } from '@/shared/types/analytics-scope.typ
 // three byte-identical private copies in this codebase). Only the creation
 // helper is imported here to avoid shadowing it.
 import { resolveTenantContext, resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
+import { userWriteScope } from '@/server/tenancy/write-scope';
 
 bootstrapCqrs();
 
@@ -184,7 +185,7 @@ export class ExpenseController {
       throw new NotFoundError('Expense not found');
     }
 
-    return { authContext, expense };
+    return { authContext, expense, tenantContext };
   }
 
   async getExpense(req: NextRequest, id: string) {
@@ -201,10 +202,18 @@ export class ExpenseController {
       const context = await resolveTenantContext(req);
       const userId = await getUserIdFromRequest(req);
       const body = await req.json();
-      const orgUnitId = resolveCreationOrgUnitId(context, (body as any)?.orgUnitId);
+      /**
+       * Called for its side effect only -- it refuses a scope-narrowed
+       * caller who names a unit outside their scope, or who has no
+       * assignment. The returned value is discarded: an expense's org
+       * unit comes from the VEHICLE, resolved under scope in the
+       * handler, because the cost belongs to the branch that runs the
+       * truck. See modules/vehicles/services/vehicle-write-resolver.service.ts.
+       */
+      resolveCreationOrgUnitId(context, (body as any)?.orgUnitId);
       const expense = await expenseCommandService.createExpense(
-        { ...(body as Record<string, unknown>), orgUnitId },
-        context.organizationId,
+        body as Record<string, unknown>,
+        userWriteScope(context),
         userId
       );
       return createdResponse(expense);
@@ -215,10 +224,15 @@ export class ExpenseController {
 
   async updateExpense(req: NextRequest, id: string) {
     try {
-      const { authContext } = await this.loadInScopeExpense(req, id);
+      const { authContext, tenantContext } = await this.loadInScopeExpense(req, id);
       const userId = authContext.userId;
       const body = await req.json();
-      const expense = await expenseCommandService.updateExpense(id, body, authContext.tenantId, userId);
+      const expense = await expenseCommandService.updateExpense(
+        id,
+        body,
+        userWriteScope(tenantContext),
+        userId
+      );
       return successResponse(expense);
     } catch (error) {
       return this.handleError(error);
@@ -245,10 +259,12 @@ export class ExpenseController {
 
   async bulkImport(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      // A bulk import is a user write: scope it to the importer, not to
+      // the tenant at large. See importFuelLogs for the same reasoning.
+      const context = await resolveTenantContext(req);
       const userId = await getUserIdFromRequest(req);
       const { records } = await req.json();
-      const result = await expenseCommandService.bulkImport(records, tenantId, userId);
+      const result = await expenseCommandService.bulkImport(records, userWriteScope(context), userId);
       return successResponse({
         message: `Import completed: ${result.inserted} inserted, ${result.errors} errors`,
         results: result,
@@ -260,11 +276,11 @@ export class ExpenseController {
 
   async importExpenses(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const context = await resolveTenantContext(req);
       const userId = await getUserIdFromRequest(req);
       const { rows } = await req.json();
       if (!Array.isArray(rows) || rows.length === 0) throw new ValidationError('No rows to import');
-      const result = await expenseCommandService.importExpenses(rows, tenantId, userId);
+      const result = await expenseCommandService.importExpenses(rows, userWriteScope(context), userId);
       return successResponse(result);
     } catch (error) {
       return this.handleError(error);

@@ -8,6 +8,8 @@ import { Trip } from '@/shared/types/trip.types';
 import { ValidationError, AppError } from '@/server/errors/app.errors';
 import { validateWithZod } from '@/shared/utils/validation.utils';
 import connectToDatabase from '@/infrastructure/database/mongodb';
+import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-resolver.service';
+import { driverRepository } from '@/modules/drivers/repositories/driver.repository';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { TripCreatedEvent } from '@/modules/trips/events/TripCreatedEvent';
 
@@ -100,17 +102,16 @@ export class CreateTripHandler implements ICommandHandler<CreateTripCommand, Tri
     const validated = result.data;
     const db = await connectToDatabase();
 
-    const vehicle = await db.collection('tblvehicles').findOne({
-      license_plate: String(validated.license_plate).toUpperCase(),
-      isDeleted: { $ne: true },
-    });
-    if (!vehicle) {
-      throw new AppError(
-        `Vehicle "${validated.license_plate}" not found`,
-        'VEHICLE_NOT_FOUND',
-        400
-      );
-    }
+    /**
+     * SCOPE FIX -- see server/tenancy/write-scope.ts. The resolved
+     * vehicle's orgUnitId is copied onto the trip below, so an unscoped
+     * lookup here files the trip (and everything downstream that keys
+     * off it: distance, cost/km, driver risk) under a foreign org unit.
+     */
+    const vehicle = await vehicleWriteResolver.resolveForWrite(
+      validated.license_plate as string,
+      command.scope
+    );
 
     const unit = await db.collection('tblunits').findOne({
       unit_id: validated.unit_id,
@@ -132,10 +133,27 @@ export class CreateTripHandler implements ICommandHandler<CreateTripCommand, Tri
      * vehicle/unit existence checks immediately above.
      */
     if (validated.driver_id) {
-      const driver = await db.collection('tbldrivers').findOne({
-        _id: validated.driver_id as any,
-        isDeleted: { $ne: true },
-      });
+      /**
+       * TWO FIXES.
+       *
+       * 1. TYPE. This was `findOne({ _id: validated.driver_id as any })`
+       *    -- a STRING compared against tbldrivers._id, which Mongo
+       *    stores as an ObjectId. Mongo does not coerce between the
+       *    two, so the query matched nothing and EVERY trip naming a
+       *    driver was rejected with DRIVER_NOT_FOUND. The `as any` is
+       *    what let it compile. tbltrips being empty in this
+       *    deployment is consistent with that.
+       * 2. SCOPE. There was no tenantId filter, so a driver belonging
+       *    to another tenant would have satisfied the check.
+       *
+       * driverRepository.findById does both correctly (ObjectId.isValid
+       * guard, conversion, tenant filter), which is why this calls it
+       * rather than repairing the raw query in place.
+       */
+      const driver = await driverRepository.findById(
+        String(validated.driver_id),
+        command.tenantId
+      );
       if (!driver) {
         throw new AppError(
           `Driver "${validated.driver_id}" not found`,
@@ -199,8 +217,8 @@ export class CreateTripHandler implements ICommandHandler<CreateTripCommand, Tri
       date: new Date(validated.date as unknown as string),
       unit_id: String(validated.unit_id),
       distance_calculated,
-      ...((vehicle as { orgUnitId?: string }).orgUnitId && {
-        orgUnitId: (vehicle as { orgUnitId?: string }).orgUnitId,
+      ...(vehicleWriteResolver.orgUnitIdFor(vehicle) && {
+        orgUnitId: vehicleWriteResolver.orgUnitIdFor(vehicle),
       }),
       ...(validated.trip_distance != null && { trip_distance: Number(validated.trip_distance) }),
       ...(validated.start_odometer != null && { start_odometer: Number(validated.start_odometer) }),

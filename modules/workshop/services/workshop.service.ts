@@ -5,6 +5,8 @@ import { ConflictError, NotFoundError, ValidationError } from '@/server/errors/a
 import { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { WorkshopBayCreatedEvent, WorkshopBayStatusChangedEvent, MechanicAssignedEvent, MechanicUnassignedEvent } from '../events/workshop.events';
+import { WriteScope, tenantIdOf } from '@/server/tenancy/write-scope';
+import { resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
 
 export class WorkshopService {
   constructor(
@@ -12,11 +14,28 @@ export class WorkshopService {
     private readonly assignmentRepo: MechanicAssignmentRepository = mechanicAssignmentRepository
   ) {}
 
-  async createBay(data: WorkshopBayCreateDTO, tenantId: string, userId: string): Promise<WorkshopBay> {
+  /**
+   * SCOPE MISMATCH FIX. WorkshopRepository.getFilteredInScope and
+   * getAvailableInScope filter on orgUnitId and createBay never wrote
+   * it, so a workshop manager saw none of their own bays -- including
+   * in the "available bay" picker that work-order scheduling depends
+   * on. Same class as drivers; see server/tenancy/write-scope.ts.
+   *
+   * A bay is part of a workshop, so it takes the SUBMITTER's unit.
+   */
+  async createBay(data: WorkshopBayCreateDTO, scope: WriteScope, userId: string): Promise<WorkshopBay> {
+    const tenantId = tenantIdOf(scope);
     if (!data.bayNumber?.trim()) throw new ValidationError('Bay number is required');
+
+    const orgUnitId =
+      scope.kind === 'user'
+        ? resolveCreationOrgUnitId(scope.context, (data as { orgUnitId?: unknown }).orgUnitId)
+        : undefined;
+
     const created = await this.bayRepo.create(
       {
         tenantId,
+        ...(orgUnitId ? { orgUnitId } : {}),
         name: data.name,
         bayNumber: data.bayNumber,
         status: 'available',
@@ -63,15 +82,37 @@ export class WorkshopService {
     const active = await this.assignmentRepo.findActiveForMechanic(mechanicId, tenantId);
     if (active.length > 0) throw new ConflictError('Mechanic already has an active assignment');
 
+    let bayOrgUnitId: string | undefined;
     if (bayId) {
       const bay = await this.bayRepo.findById(bayId, tenantId);
       if (!bay) throw new NotFoundError('Workshop bay not found');
       if (bay.status === 'occupied') throw new ConflictError('Bay is already occupied');
+      bayOrgUnitId = bay.orgUnitId;
       await this.bayRepo.update(bayId, { status: 'occupied', currentWorkOrderId: workOrderId, currentMechanicIds: [...bay.currentMechanicIds, mechanicId] }, tenantId, userId);
     }
 
+    /**
+     * workshop.tenancy-addendum.ts documents MechanicAssignment.orgUnitId
+     * as "denormalized from the parent WorkshopBay's orgUnitId at
+     * creation time". That denormalization was never actually performed
+     * -- the same shape of gap as WorkOrderService's documented-but-
+     * unwired vehicle fallback. Now wired.
+     *
+     * An assignment made with no bay (a mechanic assigned straight to a
+     * work order) has no parent to inherit from and is left unset
+     * rather than guessed; the addendum's contract is bay-derived and
+     * inventing a unit here would put the assignment in a workshop it
+     * has no relationship to.
+     */
     const created = await this.assignmentRepo.create(
-      { tenantId, mechanicId, bayId, workOrderId, assignedAt: new Date() } as any,
+      {
+        tenantId,
+        ...(bayOrgUnitId ? { orgUnitId: bayOrgUnitId } : {}),
+        mechanicId,
+        bayId,
+        workOrderId,
+        assignedAt: new Date(),
+      } as any,
       tenantId,
       userId
     );

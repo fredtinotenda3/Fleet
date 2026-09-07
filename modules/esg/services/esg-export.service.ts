@@ -65,7 +65,9 @@ export class EsgExportService {
         maintenanceCompletionRate: 0,
         overdueMaintenanceCount: 0,
         pendingMaintenanceCount: 0,
-        averageFuelEfficiency: 0,
+        // null, not 0 -- this is the "fleet health unavailable" branch,
+        // which is not the same claim as "achieved 0 km/L".
+        averageFuelEfficiency: null,
         recommendationCount: 0,
         estimatedRecommendedSpend: 0,
         byCategory: {},

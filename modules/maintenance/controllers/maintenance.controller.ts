@@ -32,6 +32,7 @@ import {
 // three byte-identical private copies in this codebase). Only the creation
 // helper is imported here to avoid shadowing it.
 import { resolveTenantContext, resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
+import { userWriteScope } from '@/server/tenancy/write-scope';
 
 bootstrapCqrs();
 
@@ -223,7 +224,7 @@ export class MaintenanceController {
       throw new NotFoundError('Reminder not found');
     }
 
-    return { authContext, reminder };
+    return { authContext, reminder, tenantContext };
   }
 
   async getReminder(req: NextRequest, id: string) {
@@ -240,11 +241,18 @@ export class MaintenanceController {
       const context = await resolveTenantContext(req);
       const userId = await getUserIdFromRequest(req);
       const body = await req.json();
-      const orgUnitId = resolveCreationOrgUnitId(context, (body as any)?.orgUnitId);
+      /**
+       * Called for its side effect only: it refuses a scope-narrowed
+       * caller who names a unit outside their scope or has no
+       * assignment. A reminder's own org unit comes from the VEHICLE,
+       * resolved under scope in the handler -- the service is due where
+       * the truck lives, not where the person who typed it sits.
+       */
+      resolveCreationOrgUnitId(context, (body as any)?.orgUnitId);
 
       const reminder = await maintenanceCommandService.createReminder(
-        { ...(body as Record<string, unknown>), orgUnitId },
-        context.organizationId,
+        body as Record<string, unknown>,
+        userWriteScope(context),
         userId
       );
       return createdResponse(reminder);
@@ -255,11 +263,16 @@ export class MaintenanceController {
 
   async updateReminder(req: NextRequest, id: string) {
     try {
-      const { authContext } = await this.loadInScopeReminder(req, id);
+      const { authContext, tenantContext } = await this.loadInScopeReminder(req, id);
       const userId = authContext.userId;
       const body = await req.json();
 
-      const reminder = await maintenanceCommandService.updateReminder(id, body, authContext.tenantId, userId);
+      const reminder = await maintenanceCommandService.updateReminder(
+        id,
+        body,
+        userWriteScope(tenantContext),
+        userId
+      );
       return successResponse(reminder);
     } catch (error) {
       return this.handleError(error);
@@ -351,7 +364,10 @@ export class MaintenanceController {
    */
   async importReminders(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      // A user write, so a user scope -- see FuelController.importFuelLogs.
+      const context = await resolveTenantContext(req);
+      const tenantId = context.organizationId;
+      const importScope = userWriteScope(context);
       const userId = await getUserIdFromRequest(req);
 
       let body: { records?: unknown };
@@ -380,7 +396,7 @@ export class MaintenanceController {
           typeof rawRow.license_plate === 'string' ? rawRow.license_plate.toUpperCase() : undefined;
 
         try {
-          const reminder = await maintenanceCommandService.createReminder(rawRow, tenantId, userId);
+          const reminder = await maintenanceCommandService.createReminder(rawRow, importScope, userId);
           succeeded += 1;
           results.push({ row: rowNumber, success: true, identifier: reminder.title });
         } catch (error) {

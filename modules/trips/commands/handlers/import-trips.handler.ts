@@ -31,6 +31,8 @@ import type { Mode } from '@/shared/types/common.types';
 import connectToDatabase from '@/infrastructure/database/mongodb';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { TripCreatedEvent } from '@/modules/trips/events/TripCreatedEvent';
+import { userWriteScope, systemWriteScope } from '@/server/tenancy/write-scope';
+import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-resolver.service';
 
 export interface ImportRowResult {
   row: number;
@@ -169,14 +171,35 @@ export class ImportTripsHandler
       // --- Vehicle existence + scope check (cached) ---
       let vehicle = vehicleCache.get(plate);
       if (vehicle === undefined) {
-        const found = await db.collection('tblvehicles').findOne({
-          license_plate: plate,
-          tenantId: command.tenantId,
-          isDeleted: { $ne: true },
-        });
-        vehicle = found
-          ? { license_plate: found.license_plate, orgUnitId: (found as { orgUnitId?: string }).orgUnitId }
-          : null;
+        /**
+         * Migrated to the shared resolver. This query was already
+         * tenant-filtered (unlike its siblings), so the change here is
+         * narrower: it adds refusal on an AMBIGUOUS plate. `findOne`
+         * returns whichever of two same-plate vehicles Mongo reached
+         * first, and an import is the worst place to silently pick one
+         * -- it attributes a whole spreadsheet of distance, and
+         * therefore of cost-per-km, to an arbitrary vehicle.
+         *
+         * The command's `context` is optional (older callers pass
+         * none), so a system scope is used when it is absent. The
+         * controller always supplies one, so interactive imports are
+         * org-unit checked; see ImportTripsCommand.
+         */
+        const scope = command.context
+          ? userWriteScope(command.context)
+          : systemWriteScope(
+              command.tenantId,
+              'trip import invoked without a caller context (non-HTTP path)'
+            );
+        try {
+          const found = await vehicleWriteResolver.resolveForWrite(plate, scope);
+          vehicle = {
+            license_plate: found.license_plate,
+            orgUnitId: vehicleWriteResolver.orgUnitIdFor(found),
+          };
+        } catch {
+          vehicle = null;
+        }
         vehicleCache.set(plate, vehicle);
       }
       if (!vehicle) {

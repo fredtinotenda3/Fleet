@@ -14,7 +14,7 @@ import { AppError, isAppError, describeError } from '@/server/errors/app.errors'
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
 import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
 import { driverRepository } from '@/modules/drivers/repositories/driver.repository';
-import { resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
+import { userWriteScope } from '@/server/tenancy/write-scope';
 
 export class DriverController {
   async list(req: NextRequest) {
@@ -77,19 +77,27 @@ export class DriverController {
   async create(req: NextRequest) {
     try {
       /**
-       * Drivers were the last create path not stamping orgUnitId. A
-       * driver created by a scoped user landed with no unit and was then
-       * hidden by the scoped read filter -- they add a driver and watch
-       * it disappear, which reads as data loss rather than a scoping
-       * rule.
+       * A driver created by a scoped user used to land with no
+       * orgUnitId and was then hidden by the scoped read filter -- they
+       * add a driver and watch it disappear, which reads as data loss
+       * rather than a scoping rule.
+       *
+       * An earlier attempt to fix that lived HERE: it computed an
+       * orgUnitId and spread it into the request body. That never
+       * reached the database (the create schema strips unknown keys,
+       * and the service's payload allowlist omitted the field), so the
+       * bug survived a fix that looked correct in review. The
+       * responsibility now sits in DriverService.create, where the same
+       * function that derives the value also writes it -- see the note
+       * there.
        */
       const createContext = await resolveTenantContext(req);
       const userId = await getUserIdFromRequest(req);
       const body = await req.json();
-      const orgUnitId = resolveCreationOrgUnitId(createContext, (body as any)?.orgUnitId);
+
       const driver = await driverService.create(
-        { ...(body as Record<string, unknown>), orgUnitId },
-        createContext.organizationId,
+        body as Record<string, unknown>,
+        userWriteScope(createContext),
         userId
       );
       return createdResponse(driver);

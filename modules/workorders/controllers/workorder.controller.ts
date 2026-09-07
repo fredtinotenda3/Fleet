@@ -6,6 +6,8 @@ import { validatePaginationParams } from '@/shared/utils/pagination.utils';
 import { successResponse, paginatedResponse, errorResponse, createdResponse } from '@/server/utils/response.utils';
 import { AppError, ValidationError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
+import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
+import { userWriteScope } from '@/server/tenancy/write-scope';
 
 export class WorkOrderController {
   async list(req: NextRequest) {
@@ -37,10 +39,16 @@ export class WorkOrderController {
 
   async create(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      /**
+       * SCOPE FIX. This resolved only a tenantId, so raising a work
+       * order was never org-unit scope-checked: a workshop manager
+       * could open a job against any vehicle in the organization and it
+       * would land in the owning branch's queue.
+       */
+      const context = await resolveTenantContext(req);
       const userId = await getUserIdFromRequest(req);
       const body = await req.json();
-      return createdResponse(await workOrderService.create(body, tenantId, userId));
+      return createdResponse(await workOrderService.create(body, userWriteScope(context), userId));
     } catch (error) {
       return this.handleError(error);
     }

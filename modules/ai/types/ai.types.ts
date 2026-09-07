@@ -145,7 +145,14 @@ export interface FleetHealthScore extends WithAIEvidence {
     pendingMaintenanceCount: number;
     overdueMaintenanceCount: number;
     averageDowntime: number;
-    fuelEfficiencyAverage: number;
+    /**
+     * Fleet km per litre. `null` when no distance has been recorded for
+     * the period -- see FleetHealthService.calculateMetrics. NEVER 0:
+     * a 0 here was rendered to customers as "Current fuel efficiency
+     * (0.0 km/L) is below optimal" and generated a $5,000 savings
+     * opportunity out of the absence of data.
+     */
+    fuelEfficiencyAverage: number | null;
   };
   trends: {
     weekly: number[];

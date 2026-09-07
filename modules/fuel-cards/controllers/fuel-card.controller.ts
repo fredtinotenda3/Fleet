@@ -8,6 +8,7 @@ import { successResponse, paginatedResponse, errorResponse, createdResponse } fr
 import { AppError, isAppError, describeError } from '@/server/errors/app.errors';
 import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
 import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
+import { userWriteScope } from '@/server/tenancy/write-scope';
 
 export class FuelCardController {
   async list(req: NextRequest) {
@@ -49,10 +50,10 @@ export class FuelCardController {
 
   async create(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const context = await resolveTenantContext(req);
       const userId = await getUserIdFromRequest(req);
       const body = await req.json();
-      const card = await fuelCardService.create(body, tenantId, userId);
+      const card = await fuelCardService.create(body, userWriteScope(context), userId);
       return createdResponse(card);
     } catch (error) {
       return this.handleError(error);
@@ -68,7 +69,7 @@ export class FuelCardController {
       // cannot see, rather than letting the update's own tenant filter
       // (organization-wide) decide.
       await fuelCardService.getByIdInScope(id, context);
-      const card = await fuelCardService.update(id, body, context.organizationId, userId);
+      const card = await fuelCardService.update(id, body, userWriteScope(context), userId);
       return successResponse(card);
     } catch (error) {
       return this.handleError(error);

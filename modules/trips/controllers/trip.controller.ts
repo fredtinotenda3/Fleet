@@ -29,6 +29,7 @@ import {
   TRIP_EXPORT_BASE_FILENAME,
 } from '../export/trip-export.columns';
 import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
+import { userWriteScope } from '@/server/tenancy/write-scope';
 
 bootstrapCqrs();
 
@@ -209,7 +210,7 @@ export class TripController {
       throw new NotFoundError('Trip not found');
     }
 
-    return { authContext, trip };
+    return { authContext, trip, tenantContext };
   }
 
   async getTrip(req: NextRequest, id: string) {
@@ -223,11 +224,18 @@ export class TripController {
 
   async createTrip(req: NextRequest) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      /**
+       * SCOPE FIX. This path resolved only a tenantId, so unlike
+       * fuel/expense/maintenance it never checked the caller's org-unit
+       * scope at all -- any authenticated user with TRIP_CREATE could
+       * record a trip against any vehicle in the organization. The
+       * handler now resolves the vehicle under this scope.
+       */
+      const context = await resolveTenantContext(req);
       const userId = await getUserIdFromRequest(req);
       const body = await req.json();
 
-      const trip = await tripCommandService.createTrip(body, tenantId, userId);
+      const trip = await tripCommandService.createTrip(body, userWriteScope(context), userId);
       return createdResponse(trip);
     } catch (error) {
       return this.handleError(error);
@@ -270,11 +278,16 @@ export class TripController {
 
   async updateTrip(req: NextRequest, id: string) {
     try {
-      const { authContext } = await this.loadInScopeTrip(req, id);
+      const { authContext, tenantContext } = await this.loadInScopeTrip(req, id);
       const userId = authContext.userId;
       const body = await req.json();
 
-      const trip = await tripCommandService.updateTrip(id, body, authContext.tenantId, userId);
+      const trip = await tripCommandService.updateTrip(
+        id,
+        body,
+        userWriteScope(tenantContext),
+        userId
+      );
       return successResponse(trip);
     } catch (error) {
       return this.handleError(error);

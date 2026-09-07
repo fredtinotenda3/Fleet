@@ -248,13 +248,63 @@ export class FleetHealthService extends BaseAIService {
     return Math.round(50 + ratio * 50);
   }
 
+  /**
+   * UNITS WERE INVERTED, AND MISSING DATA SCORED PERFECT.
+   *
+   * The previous implementation was:
+   *
+   *     const avgEfficiency = fuel.reduce((sum, f) =>
+   *       sum + (f.fuel_volume / Math.max(1, f.odometer || 1)), 0) / n;
+   *     const ratio = Math.min(1, avgEfficiency / 10);  // "10 km/L"
+   *
+   * `fuel_volume / odometer` is LITRES PER KILOMETRE, compared against a
+   * benchmark labelled km/L. The comparison therefore ran backwards: a
+   * vehicle achieving 1 km/L (1.0 L/km) scored 55, while one achieving
+   * 10 km/L (0.1 L/km) scored 51. Worse economy scored higher.
+   *
+   * The missing-data case was worse still. Real rows here carry
+   * `odometer: 0`, so `Math.max(1, 0 || 1)` made the denominator 1 and
+   * the ratio `fuel_volume / 10` -- 22 for a 220 L fill, clamped to 1 --
+   * giving a PERFECT fuel score of 100. So the same screen showed a
+   * fleet with no odometer readings a fuel health of 100/100 and a fuel
+   * efficiency of 0.0 km/L, and both numbers were invented.
+   *
+   * Efficiency needs a DISTANCE, and a per-log odometer reading is a
+   * position, not a distance (see calculateFleetMetrics and
+   * FuelFraudDetectionService.calculateBaseline for the same lesson).
+   * Distance is max - min across readings that exist, with 0 meaning
+   * "not recorded" rather than kilometre zero.
+   *
+   * WHEN IT CANNOT BE MEASURED this returns the NEUTRAL 50 rather than
+   * 100 or 0. That is a modelling choice and it is stated rather than
+   * hidden: 100 rewards a fleet for having no data, 0 punishes it for
+   * the same, and neither is a finding. 50 is this scale's own "no
+   * signal" midpoint -- every other component here bottoms out at 50
+   * too. It carries only 0.02 weight in the overall score.
+   *
+   * The wider issue -- that this whole score is a weighted blend of
+   * hard-coded benchmarks (10 km/L, $200 per expense, 100 km per trip)
+   * with no stated provenance -- is NOT addressed here. It is a product
+   * decision, recorded in the findings document rather than decided
+   * unilaterally in a bug fix.
+   */
   private calculateFuelScore(fuel: FuelEntity[]): number {
-    const avgEfficiency = fuel.reduce((sum, f) => {
-      return sum + (f.fuel_volume / Math.max(1, f.odometer || 1));
-    }, 0) / Math.max(1, fuel.length);
-    const expected = 10; // km/L
-    const ratio = Math.min(1, avgEfficiency / expected);
-    return Math.round(50 + ratio * 50);
+    const NEUTRAL_SCORE = 50;
+    const EXPECTED_KM_PER_LITRE = 10;
+
+    const odometers = fuel
+      .map((f) => f.odometer)
+      .filter((o): o is number => typeof o === 'number' && Number.isFinite(o) && o > 0);
+    const totalVolume = fuel.reduce((sum, f) => sum + (f.fuel_volume || 0), 0);
+
+    if (odometers.length < 2 || totalVolume <= 0) return NEUTRAL_SCORE;
+
+    const distance = Math.max(...odometers) - Math.min(...odometers);
+    if (distance <= 0) return NEUTRAL_SCORE;
+
+    const kmPerLitre = distance / totalVolume;
+    const ratio = Math.min(1, kmPerLitre / EXPECTED_KM_PER_LITRE);
+    return Math.round(NEUTRAL_SCORE + ratio * 50);
   }
 
   private calculateFleetMetrics(
@@ -265,6 +315,29 @@ export class FleetHealthService extends BaseAIService {
   ): FleetHealthScore['metrics'] {
     const totalMileage = trips.reduce((sum, t) => sum + t.distance_calculated, 0);
     const totalFuel = fuel.reduce((sum, f) => sum + f.fuel_volume, 0);
+    /**
+     * FABRICATED METRIC FIX.
+     *
+     * `fuelEfficiencyAverage` was `totalFuel > 0 ? totalMileage / totalFuel : 0`.
+     * Distance comes from TRIPS. In this deployment tbltrips is empty
+     * -- partly because CreateTripHandler rejected every trip naming a
+     * driver, see its own note -- while 40 fuel logs exist. So
+     * totalMileage was 0, totalFuel was not, and the fleet's efficiency
+     * was reported as exactly 0.0 km/L.
+     *
+     * That number then reached the customer twice: as the Fleet Health
+     * metric, and via generateRecommendations() below, whose `< 8` test
+     * a 0 passes trivially -- producing a persisted attention item
+     * ("Improve fleet fuel efficiency ... 0.0 km/L is below optimal")
+     * carrying a $1,000 estimated cost and a $5,000 estimated benefit,
+     * both invented from the absence of data.
+     *
+     * "No trips recorded" and "this fleet achieves zero kilometres per
+     * litre" are different statements and must not share a
+     * representation. Null is the honest one, and every consumer now
+     * has to decide what to show for it.
+     */
+    const efficiencyMeasurable = totalMileage > 0 && totalFuel > 0;
 
     const completedMaintenance = maintenance.filter((m) => m.status === 'completed');
     const pendingMaintenance = maintenance.filter((m) => m.status === 'pending');
@@ -279,7 +352,7 @@ export class FleetHealthService extends BaseAIService {
       pendingMaintenanceCount: pendingMaintenance.length,
       overdueMaintenanceCount: overdueMaintenance.length,
       averageDowntime: 5, // Placeholder - needs real data
-      fuelEfficiencyAverage: totalFuel > 0 ? totalMileage / totalFuel : 0,
+      fuelEfficiencyAverage: efficiencyMeasurable ? totalMileage / totalFuel : null,
     };
   }
 
@@ -395,8 +468,17 @@ export class FleetHealthService extends BaseAIService {
       });
     }
 
-    // Low fuel efficiency
-    if (metrics.fuelEfficiencyAverage < 8) {
+    /**
+     * Low fuel efficiency.
+     *
+     * The null guard is the point: `null < 8` is false in JavaScript, so
+     * this would already stop firing -- but relying on that coincidence
+     * is how the next refactor reintroduces the bug. Stated explicitly:
+     * a fleet whose efficiency has never been measured has not been
+     * shown to have a fuel problem, and must not be sold a $5,000
+     * opportunity to fix one.
+     */
+    if (metrics.fuelEfficiencyAverage !== null && metrics.fuelEfficiencyAverage < 8) {
       recommendations.push({
         priority: 'medium',
         category: 'Fuel',

@@ -19,8 +19,19 @@ import { evidenceFromRows, evidenceFromRow, mergeEvidence } from './ai-evidence.
 interface FuelBaseline {
   averageVolume: number;
   averageCost: number;
-  averageFrequency: number;
-  efficiency: number;
+  /**
+   * Fills per 1,000 km. `null` when distance could not be derived --
+   * see calculateBaseline. Never 0: zero fills per 1,000 km is a
+   * measurement, and "we could not measure it" is not.
+   */
+  averageFrequency: number | null;
+  /**
+   * km per litre over the sampled period, or `null` when distance could
+   * not be derived. Deliberately nullable for the same reason: a
+   * fabricated 0.0 km/L is the most damaging available wrong answer,
+   * because it looks like a catastrophic finding rather than a gap.
+   */
+  efficiency: number | null;
   standardDeviation: number;
 }
 
@@ -281,10 +292,53 @@ export class FuelFraudDetectionService extends BaseAIService {
     };
   }
 
+  /**
+   * DISTANCE WAS BEING COMPUTED BY SUMMING ODOMETER READINGS.
+   *
+   * The line was:
+   *
+   *     const totalDistance =
+   *       fuelLogs.reduce((sum, f) => sum + (f.odometer || 0), 0);
+   *
+   * An odometer is CUMULATIVE. Summing ten readings from a truck at
+   * ~84,000 km yields ~840,000 "km", so `efficiency = totalDistance /
+   * totalVolume` reported something in the hundreds of km/L, and
+   * `averageFrequency` was equally meaningless.
+   *
+   * In this deployment it fails the other way and is worse: real
+   * tblfuellogs rows carry `odometer: 0`, so `|| 0` made totalDistance
+   * exactly 0, efficiency exactly 0, and the platform raised a
+   * `fleet_health` attention item reading "Current fuel efficiency
+   * (0.0 km/L) is below optimal" with a $1,000 cost attached. That is a
+   * fabricated finding about a real fleet, which is the most expensive
+   * kind of wrong number a product like this can produce.
+   *
+   * Distance between two odometer readings is max - min, over readings
+   * that actually exist. That is precisely what
+   * FuelRepository.getFuelKPIs already does with its per-vehicle
+   * `$min`/`$max` aggregation; this brings the AI path into line with
+   * the query path rather than inventing a third convention.
+   *
+   * ZERO IS NOT A READING. `odometer: 0` in this data means "not
+   * recorded", not "the vehicle is at kilometre zero", so zeros are
+   * excluded rather than treated as the minimum -- including them would
+   * make every distance equal to the vehicle's lifetime mileage.
+   *
+   * When distance cannot be derived (fewer than two usable readings, or
+   * no forward movement between them) efficiency and frequency are
+   * NULL, not 0, and every consumer must render that as "no data".
+   */
   private calculateBaseline(fuelLogs: any[], vehicle: any): FuelBaseline {
     const totalVolume = fuelLogs.reduce((sum, f) => sum + f.fuel_volume, 0);
     const totalCost = fuelLogs.reduce((sum, f) => sum + f.cost, 0);
-    const totalDistance = fuelLogs.reduce((sum, f) => sum + (f.odometer || 0), 0);
+
+    const odometers = fuelLogs
+      .map((f) => f.odometer)
+      .filter((o): o is number => typeof o === 'number' && Number.isFinite(o) && o > 0);
+
+    const totalDistance =
+      odometers.length >= 2 ? Math.max(...odometers) - Math.min(...odometers) : 0;
+    const distanceKnown = totalDistance > 0;
 
     const volumeValues = fuelLogs.map((f) => f.fuel_volume);
     const mean = totalVolume / fuelLogs.length;
@@ -294,8 +348,8 @@ export class FuelFraudDetectionService extends BaseAIService {
     return {
       averageVolume: totalVolume / fuelLogs.length,
       averageCost: totalCost / fuelLogs.length,
-      averageFrequency: totalDistance > 0 ? fuelLogs.length / (totalDistance / 1000) : 0,
-      efficiency: totalVolume > 0 ? totalDistance / totalVolume : 0,
+      averageFrequency: distanceKnown ? fuelLogs.length / (totalDistance / 1000) : null,
+      efficiency: distanceKnown && totalVolume > 0 ? totalDistance / totalVolume : null,
       standardDeviation: Math.sqrt(variance),
     };
   }

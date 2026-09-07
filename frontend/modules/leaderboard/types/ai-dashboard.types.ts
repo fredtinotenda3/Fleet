@@ -146,7 +146,15 @@ export interface FleetHealthScore {
     pendingMaintenanceCount: number;
     overdueMaintenanceCount: number;
     averageDowntime: number;
-    fuelEfficiencyAverage: number;
+    /**
+     * km per litre, or `null` when the period has no recorded trip
+     * distance to divide by. Mirrors FleetHealthScore['metrics'] in
+     * modules/ai/types/ai.types.ts -- this is a hand-maintained copy of
+     * that shape, so the two drift silently; if you change one, change
+     * both. Rendering a null as 0 here reintroduces the "0.0 km/L is
+     * below optimal" defect on the customer's screen.
+     */
+    fuelEfficiencyAverage: number | null;
   };
 }
 

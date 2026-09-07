@@ -10,6 +10,7 @@ import { NotFoundError, ValidationError, AppError } from '@/server/errors/app.er
 import { validateWithZod } from '@/shared/utils/validation.utils';
 import { ObjectId } from 'mongodb';
 import connectToDatabase from '@/infrastructure/database/mongodb';
+import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-resolver.service';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { ExpenseUpdatedEvent } from '@/modules/expenses/events/ExpenseUpdatedEvent';
 
@@ -54,19 +55,18 @@ export class UpdateExpenseHandler
     const db = await connectToDatabase();
 
     if (updateData.license_plate) {
-      const vehicle = await db.collection('tblvehicles').findOne({
-        license_plate: String(updateData.license_plate).toUpperCase(),
-        isDeleted: { $ne: true },
-      });
-      if (!vehicle) {
-        throw new AppError(
-          `Vehicle "${updateData.license_plate}" not found`,
-          'VEHICLE_NOT_FOUND',
-          400
-        );
-      }
+      /**
+       * SCOPE FIX. Re-plating an expense rewrites its orgUnitId from
+       * the new vehicle, moving the cost between branches. That move
+       * previously crossed both the org-unit and the tenant boundary
+       * unchecked. See server/tenancy/write-scope.ts.
+       */
+      const vehicle = await vehicleWriteResolver.resolveForWrite(
+        String(updateData.license_plate),
+        command.scope
+      );
       updateData.license_plate = String(updateData.license_plate).toUpperCase();
-      updateData.orgUnitId = (vehicle as { orgUnitId?: string }).orgUnitId ?? null;
+      updateData.orgUnitId = vehicleWriteResolver.orgUnitIdFor(vehicle) ?? null;
     }
 
     if (updateData.expense_type_id) {

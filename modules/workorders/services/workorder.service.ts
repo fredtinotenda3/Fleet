@@ -18,6 +18,8 @@ import { auditLog } from '@/infrastructure/monitoring/audit.logger';
 import { inventoryService } from '@/modules/inventory/services/inventory.service';
 import { sparePartRepository } from '@/modules/inventory/repositories/spare-part.repository';
 import connectToDatabase from '@/infrastructure/database/mongodb';
+import { WriteScope, tenantIdOf } from '@/server/tenancy/write-scope';
+import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-resolver.service';
 
 const VALID_TRANSITIONS: Record<WorkOrderStatus, WorkOrderStatus[]> = {
   open: ['assigned', 'cancelled'],
@@ -31,17 +33,19 @@ const VALID_TRANSITIONS: Record<WorkOrderStatus, WorkOrderStatus[]> = {
 export class WorkOrderService {
   constructor(private readonly repo: WorkOrderRepository = workOrderRepository) {}
 
-  async create(data: WorkOrderCreateDTO, tenantId: string, userId: string): Promise<WorkOrder> {
+  async create(data: WorkOrderCreateDTO, scope: WriteScope, userId: string): Promise<WorkOrder> {
+    const tenantId = tenantIdOf(scope);
     if (!data.license_plate?.trim()) throw new ValidationError('license_plate is required');
     if (!data.title?.trim()) throw new ValidationError('title is required');
 
-    const db = await connectToDatabase();
-    const vehicle = await db.collection('tblvehicles').findOne({
-      license_plate: data.license_plate.toUpperCase(),
-      isDeleted: { $ne: true },
-      ...(tenantId !== 'default' && tenantId !== 'system' ? { tenantId } : {}),
-    });
-    if (!vehicle) throw new AppError(`Vehicle "${data.license_plate}" not found`, 'VEHICLE_NOT_FOUND', 400);
+    /**
+     * SCOPE FIX. This lookup was tenant-scoped only for non-sentinel
+     * tenants and had no org-unit check, while the work order below
+     * inherits the vehicle's orgUnitId -- so a job could be raised
+     * against another branch's truck and land in that branch's workshop
+     * queue. See server/tenancy/write-scope.ts.
+     */
+    const vehicle = await vehicleWriteResolver.resolveForWrite(data.license_plate, scope);
 
     const created = await this.repo.create(
       {

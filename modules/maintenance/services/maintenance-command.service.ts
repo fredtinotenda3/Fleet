@@ -8,26 +8,28 @@ import { CompleteReminderCommand } from '../commands/complete-reminder.command';
 import { BulkUpdateOverdueCommand } from '../commands/bulk-update-overdue.command';
 import { Reminder } from '@/shared/types/maintenance.types';
 import type { BulkUpdateOverdueResult } from '../commands/handlers/bulk-update-overdue.handler';
+import { WriteScope, tenantIdOf } from '@/server/tenancy/write-scope';
 
 export class MaintenanceCommandService {
+  /** `scope` replaces `tenantId`; the tenant is derivable from it. */
   async createReminder(
     rawData: unknown,
-    tenantId: string,
+    scope: WriteScope,
     userId?: string
   ): Promise<Reminder> {
     return commandBus.execute<Reminder>(
-      new CreateReminderCommand(rawData, tenantId, userId)
+      new CreateReminderCommand(rawData, tenantIdOf(scope), scope, userId)
     );
   }
 
   async updateReminder(
     reminderId: string,
     rawData: unknown,
-    tenantId: string,
+    scope: WriteScope,
     userId?: string
   ): Promise<Reminder> {
     return commandBus.execute<Reminder>(
-      new UpdateReminderCommand(reminderId, rawData, tenantId, userId)
+      new UpdateReminderCommand(reminderId, rawData, tenantIdOf(scope), scope, userId)
     );
   }
 

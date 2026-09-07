@@ -13,6 +13,9 @@ import { FuelCardDeletedEvent } from '../events/FuelCardDeletedEvent';
 import connectToDatabase from '@/infrastructure/database/mongodb';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import '@/shared/types/fuel-card.tenancy-addendum';
+import { WriteScope, tenantIdOf } from '@/server/tenancy/write-scope';
+import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-resolver.service';
+import { resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
 
 // Define the payload type that the repository expects (without fields it generates)
 type FuelCardCreatePayload = Omit<FuelCard, '_id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'updatedBy' | 'isDeleted' | 'deletedAt'>;
@@ -62,25 +65,43 @@ export class FuelCardService {
     return card;
   }
 
-  async create(rawData: unknown, tenantId: string, userId?: string): Promise<FuelCard> {
+  /**
+   * TWO FIXES.
+   *
+   * 1. SCOPE. The vehicle lookup below had no tenantId filter at all,
+   *    so a card could be bound to another tenant's plate.
+   * 2. SCOPE MISMATCH. getById (above) refuses a card whose orgUnitId
+   *    is outside the caller's scope, and treats a card with NO
+   *    orgUnitId as out of scope -- but create never wrote the field.
+   *    Every fuel card created by a scope-narrowed user was therefore
+   *    invisible to that same user the moment they navigated away.
+   *    This is the drivers/dispatch/bookings class; see
+   *    server/tenancy/write-scope.ts.
+   *
+   * A card bound to a vehicle inherits that vehicle's unit (the card
+   * belongs where the truck is). A card with no vehicle has no asset to
+   * inherit from, so it falls back to the submitter's own unit via
+   * resolveCreationOrgUnitId -- the rule this codebase already uses for
+   * asset-less records such as drivers.
+   */
+  async create(rawData: unknown, scope: WriteScope, userId?: string): Promise<FuelCard> {
+    const tenantId = tenantIdOf(scope);
     const result = await validateWithZod(fuelCardCreateSchema, rawData);
     if (!result.success || !result.data) {
       throw new ValidationError('Validation failed', result.errors || {});
     }
 
+    let orgUnitId: string | undefined;
     if (result.data.license_plate) {
-      const db = await connectToDatabase();
-      const vehicle = await db.collection('tblvehicles').findOne({
-        license_plate: result.data.license_plate.toUpperCase(),
-        isDeleted: { $ne: true },
-      });
-      if (!vehicle) {
-        throw new AppError(`Vehicle "${result.data.license_plate}" not found`, 'VEHICLE_NOT_FOUND', 400);
-      }
+      const vehicle = await vehicleWriteResolver.resolveForWrite(result.data.license_plate, scope);
+      orgUnitId = vehicleWriteResolver.orgUnitIdFor(vehicle);
+    } else if (scope.kind === 'user') {
+      orgUnitId = resolveCreationOrgUnitId(scope.context, undefined);
     }
 
     const payload: FuelCardCreatePayload = {
       tenantId,
+      ...(orgUnitId ? { orgUnitId } : {}),
       card_last4: result.data.card_last4,
       provider: result.data.provider,
       currency: result.data.currency ?? 'USD',
@@ -99,7 +120,8 @@ export class FuelCardService {
     return created;
   }
 
-  async update(id: string, rawData: unknown, tenantId: string, userId?: string): Promise<FuelCard> {
+  async update(id: string, rawData: unknown, scope: WriteScope, userId?: string): Promise<FuelCard> {
+    const tenantId = tenantIdOf(scope);
     const result = await validateWithZod(fuelCardUpdateSchema, {
       ...(rawData as Record<string, unknown>),
       _id: id,
@@ -113,15 +135,14 @@ export class FuelCardService {
     const updateData: Record<string, unknown> = { ...rest };
 
     if (updateData.license_plate) {
-      const db = await connectToDatabase();
-      const vehicle = await db.collection('tblvehicles').findOne({
-        license_plate: String(updateData.license_plate).toUpperCase(),
-        isDeleted: { $ne: true },
-      });
-      if (!vehicle) {
-        throw new AppError(`Vehicle "${updateData.license_plate}" not found`, 'VEHICLE_NOT_FOUND', 400);
-      }
+      // Re-binding a card to a different vehicle moves it between
+      // branches, exactly as re-plating a fuel log does.
+      const vehicle = await vehicleWriteResolver.resolveForWrite(
+        String(updateData.license_plate),
+        scope
+      );
       updateData.license_plate = String(updateData.license_plate).toUpperCase();
+      updateData.orgUnitId = vehicleWriteResolver.orgUnitIdFor(vehicle) ?? null;
     }
 
     if (updateData.expiry_date) {

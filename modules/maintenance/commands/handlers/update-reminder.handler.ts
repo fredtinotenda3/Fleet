@@ -8,6 +8,7 @@ import { Reminder, ReminderStatus } from '@/shared/types/maintenance.types';
 import { NotFoundError, ValidationError, AppError } from '@/server/errors/app.errors';
 import { validateWithZod } from '@/shared/utils/validation.utils';
 import connectToDatabase from '@/infrastructure/database/mongodb';
+import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-resolver.service';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { ReminderUpdatedEvent } from '@/modules/maintenance/events/ReminderUpdatedEvent';
 
@@ -70,17 +71,13 @@ export class UpdateReminderHandler
     const db = await connectToDatabase();
 
     if (updateData.license_plate) {
-      const vehicle = await db.collection('tblvehicles').findOne({
-        license_plate: String(updateData.license_plate).toUpperCase(),
-        isDeleted: { $ne: true },
-      });
-      if (!vehicle) {
-        throw new AppError(
-          `Vehicle "${updateData.license_plate}" not found or deleted`,
-          'VEHICLE_NOT_FOUND',
-          400
-        );
-      }
+      /**
+       * SCOPE FIX -- see server/tenancy/write-scope.ts.
+       */
+      const vehicle = await vehicleWriteResolver.resolveForWrite(
+        String(updateData.license_plate),
+        command.scope
+      );
       updateData.license_plate = String(updateData.license_plate).toUpperCase();
       updateData.orgUnitId = (vehicle as { orgUnitId?: string }).orgUnitId ?? null;
     }

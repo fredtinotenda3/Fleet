@@ -58,7 +58,11 @@ export async function buildEsgPdfBuffer(data: EsgExportData): Promise<Buffer> {
       `Maintenance completion rate: ${formatPercent(fh.maintenanceCompletionRate)}`,
       `Overdue maintenance items: ${fh.overdueMaintenanceCount}`,
       `Pending maintenance items: ${fh.pendingMaintenanceCount}`,
-      `Average fuel efficiency: ${fh.averageFuelEfficiency.toFixed(1)}`,
+      `Average fuel efficiency: ${
+        fh.averageFuelEfficiency === null
+          ? 'Not measured (no trip distance recorded for this period)'
+          : `${fh.averageFuelEfficiency.toFixed(1)} km/L`
+      }`,
       `Open recommendations: ${fh.recommendationCount} (est. ${formatCurrency(fh.estimatedRecommendedSpend)})`,
     ];
     doc.fontSize(10).fillColor('#333');

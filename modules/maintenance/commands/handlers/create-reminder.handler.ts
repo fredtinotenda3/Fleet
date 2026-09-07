@@ -8,6 +8,7 @@ import { Reminder } from '@/shared/types/maintenance.types';
 import { ValidationError, AppError } from '@/server/errors/app.errors';
 import { validateWithZod } from '@/shared/utils/validation.utils';
 import connectToDatabase from '@/infrastructure/database/mongodb';
+import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-resolver.service';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { ReminderCreatedEvent } from '@/modules/maintenance/events/ReminderCreatedEvent';
 
@@ -52,18 +53,16 @@ export class CreateReminderHandler
     const validated = result.data;
 
     const db = await connectToDatabase();
-    const vehicle = await db.collection('tblvehicles').findOne({
-      license_plate: String(validated.license_plate).toUpperCase(),
-      isDeleted: { $ne: true },
-    });
-
-    if (!vehicle) {
-      throw new AppError(
-        `Vehicle "${validated.license_plate}" not found or deleted`,
-        'VEHICLE_NOT_FOUND',
-        400
-      );
-    }
+    /**
+     * SCOPE FIX -- see server/tenancy/write-scope.ts. The reminder
+     * inherits this vehicle's orgUnitId below, and a maintenance
+     * reminder filed under the wrong branch is one a workshop never
+     * sees in its queue.
+     */
+    const vehicle = await vehicleWriteResolver.resolveForWrite(
+      validated.license_plate as string,
+      command.scope
+    );
 
     const reminderData: Omit<
       Reminder,
@@ -74,8 +73,8 @@ export class CreateReminderHandler
       title: String(validated.title),
       due_date: new Date(validated.due_date as unknown as string),
       status: validated.status ?? 'pending',
-      ...((vehicle as { orgUnitId?: string }).orgUnitId && {
-        orgUnitId: (vehicle as { orgUnitId?: string }).orgUnitId,
+      ...(vehicleWriteResolver.orgUnitIdFor(vehicle) && {
+        orgUnitId: vehicleWriteResolver.orgUnitIdFor(vehicle),
       }),
       notes: validated.notes ? String(validated.notes) : undefined,
       priority: validated.priority,

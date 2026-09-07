@@ -8,26 +8,28 @@ import { ImportTripsCommand, ImportTripRow } from '../commands/import-trips.comm
 import type { ImportTripsResult } from '../commands/handlers/import-trips.handler';
 import { Trip } from '@/shared/types/trip.types';
 import type { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { WriteScope, tenantIdOf } from '@/server/tenancy/write-scope';
 
 export class TripCommandService {
+  /** `scope` replaces `tenantId`; the tenant is derivable from it. */
   async createTrip(
     rawData: unknown,
-    tenantId: string,
+    scope: WriteScope,
     userId?: string
   ): Promise<Trip> {
     return commandBus.execute<Trip>(
-      new CreateTripCommand(rawData, tenantId, userId)
+      new CreateTripCommand(rawData, tenantIdOf(scope), scope, userId)
     );
   }
 
   async updateTrip(
     tripId: string,
     rawData: unknown,
-    tenantId: string,
+    scope: WriteScope,
     userId?: string
   ): Promise<Trip> {
     return commandBus.execute<Trip>(
-      new UpdateTripCommand(tripId, rawData, tenantId, userId)
+      new UpdateTripCommand(tripId, rawData, tenantIdOf(scope), scope, userId)
     );
   }
 

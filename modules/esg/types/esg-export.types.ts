@@ -33,7 +33,13 @@ export interface EsgFleetHealthSection {
   maintenanceCompletionRate: number;
   overdueMaintenanceCount: number;
   pendingMaintenanceCount: number;
-  averageFuelEfficiency: number;
+  /**
+   * Fleet km per litre, or `null` when it could not be measured for the
+   * period. Nullable deliberately: this figure is printed into an ESG
+   * disclosure PDF, and a fabricated 0.0 in a sustainability report is
+   * a materially worse defect than the same 0.0 on a dashboard.
+   */
+  averageFuelEfficiency: number | null;
   recommendationCount: number;
   estimatedRecommendedSpend: number;
   byCategory: Record<string, number>;

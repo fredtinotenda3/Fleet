@@ -12,6 +12,7 @@ import {
   TwinAlertSeverity,
 } from '../types/digital-twin.types';
 import { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
+import { resolveAlertOwnership } from '@/modules/telematics/services/alert-ownership.resolver';
 
 const SEVERITY_RANK: Record<TwinAlertSeverity, number> = {
   low: 0,
@@ -51,6 +52,33 @@ export class DigitalTwinRepository extends TenantScopedRepository<VehicleDigital
     const collection = await this.getCollection();
     const now = new Date();
 
+    /**
+     * SCOPE MISMATCH FIX. getFilteredInScope/getByVehicleInScope (below)
+     * apply the org-unit predicate on `orgUnitId`, and this upsert --
+     * the ONLY path that creates or updates a twin -- never wrote the
+     * field. So every digital twin was invisible to every scope-narrowed
+     * reader: a branch manager's twin list was permanently empty and
+     * read as "no vehicles instrumented" rather than "cannot see them".
+     * Fail-closed, so never a leak; a total loss of function for exactly
+     * the roles the twin was built for. Same shape as the alert-store
+     * defect documented in alert-ownership.resolver.ts.
+     *
+     * Resolved FROM THE VEHICLE via that same memoised resolver, for the
+     * same three reasons it gives: the vehicle is the record of truth,
+     * a copy taken from the triggering event goes stale, and a twin
+     * patch runs on the telemetry hot path so a Mongo round trip per
+     * event is not affordable. `$set` rather than `$setOnInsert`, so a
+     * vehicle reassigned to another branch takes its twin with it --
+     * a twin pinned to the unit it was first seen in would drift
+     * permanently out of step with the vehicle it projects.
+     *
+     * A twin whose ownership cannot be established keeps no orgUnitId at
+     * all rather than an explicit null, which leaves it exactly where
+     * the historical rows are: visible to org-wide roles, repaired by
+     * `npm run db:backfill-org-units`.
+     */
+    const ownership = await resolveAlertOwnership(vehicleId, tenantId);
+
     const result = await collection.findOneAndUpdate(
       { vehicleId, tenantId, isDeleted: { $ne: true } } as Filter<VehicleDigitalTwin>,
       {
@@ -59,6 +87,7 @@ export class DigitalTwinRepository extends TenantScopedRepository<VehicleDigital
           vehicleId,
           license_plate,
           tenantId,
+          ...(ownership.orgUnitId ? { orgUnitId: ownership.orgUnitId } : {}),
           lastEventName: eventName,
           updatedAt: now,
           'currentState.lastUpdated': now,

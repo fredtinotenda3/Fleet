@@ -14,6 +14,8 @@ import {
   StockLowThresholdBreachedEvent,
 } from '../events/inventory.events';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
+import { WriteScope, tenantIdOf } from '@/server/tenancy/write-scope';
+import { resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
 
 export class InventoryService {
   constructor(
@@ -21,14 +23,30 @@ export class InventoryService {
     private readonly movementRepo: StockMovementRepository = stockMovementRepository
   ) {}
 
-  async createPart(data: SparePartCreateDTO, tenantId: string, userId: string): Promise<SparePart> {
+  /**
+   * SCOPE MISMATCH FIX. SparePartRepository.getFilteredInScope and
+   * getBelowThresholdInScope both filter on orgUnitId; createPart never
+   * wrote it, so a workshop manager's own parts catalogue was empty to
+   * them. Same class as drivers; see server/tenancy/write-scope.ts.
+   *
+   * A spare part sits in a store, not on a vehicle, so the unit comes
+   * from the SUBMITTER via resolveCreationOrgUnitId.
+   */
+  async createPart(data: SparePartCreateDTO, scope: WriteScope, userId: string): Promise<SparePart> {
+    const tenantId = tenantIdOf(scope);
     if (!data.sku?.trim()) throw new ValidationError('SKU is required');
     const existing = await this.partRepo.findBySku(data.sku, tenantId);
     if (existing) throw new ConflictError(`A spare part with SKU "${data.sku}" already exists`);
 
+    const orgUnitId =
+      scope.kind === 'user'
+        ? resolveCreationOrgUnitId(scope.context, (data as { orgUnitId?: unknown }).orgUnitId)
+        : undefined;
+
     const created = await this.partRepo.create(
       {
         tenantId,
+        ...(orgUnitId ? { orgUnitId } : {}),
         sku: data.sku.trim(),
         name: data.name,
         category: data.category,
@@ -71,8 +89,15 @@ export class InventoryService {
     const updated = await this.partRepo.adjustQuantity(sparePartId, tenantId, quantity);
     if (!updated) throw new NotFoundError('Spare part not found');
 
+      /**
+       * A stock movement records a change to THIS part, so it belongs to
+       * the part's own org unit. StockMovementRepository.getForPartInScope
+       * filters on the field and nothing wrote it, so a scoped user could
+       * open a part and see an empty movement history for stock they had
+       * just moved themselves.
+       */
     const movement = await this.movementRepo.create(
-      { tenantId, sparePartId, type: 'receipt', quantity, balanceAfter: updated.quantityOnHand, purchaseOrderId: refs?.purchaseOrderId } as any,
+      { tenantId, sparePartId, ...(part.orgUnitId ? { orgUnitId: part.orgUnitId } : {}), type: 'receipt', quantity, balanceAfter: updated.quantityOnHand, purchaseOrderId: refs?.purchaseOrderId } as any,
       tenantId,
       userId
     );
@@ -92,8 +117,15 @@ export class InventoryService {
     const updated = await this.partRepo.adjustQuantity(sparePartId, tenantId, -quantity);
     if (!updated) throw new NotFoundError('Spare part not found');
 
+      /**
+       * A stock movement records a change to THIS part, so it belongs to
+       * the part's own org unit. StockMovementRepository.getForPartInScope
+       * filters on the field and nothing wrote it, so a scoped user could
+       * open a part and see an empty movement history for stock they had
+       * just moved themselves.
+       */
     const movement = await this.movementRepo.create(
-      { tenantId, sparePartId, type: 'consumption', quantity: -quantity, balanceAfter: updated.quantityOnHand, workOrderId: refs?.workOrderId } as any,
+      { tenantId, sparePartId, ...(part.orgUnitId ? { orgUnitId: part.orgUnitId } : {}), type: 'consumption', quantity: -quantity, balanceAfter: updated.quantityOnHand, workOrderId: refs?.workOrderId } as any,
       tenantId,
       userId
     );
@@ -116,8 +148,15 @@ export class InventoryService {
     const updated = await this.partRepo.adjustQuantity(sparePartId, tenantId, delta);
     if (!updated) throw new NotFoundError('Spare part not found');
 
+      /**
+       * A stock movement records a change to THIS part, so it belongs to
+       * the part's own org unit. StockMovementRepository.getForPartInScope
+       * filters on the field and nothing wrote it, so a scoped user could
+       * open a part and see an empty movement history for stock they had
+       * just moved themselves.
+       */
     const movement = await this.movementRepo.create(
-      { tenantId, sparePartId, type: 'adjustment', quantity: delta, balanceAfter: updated.quantityOnHand, reason } as any,
+      { tenantId, sparePartId, ...(part.orgUnitId ? { orgUnitId: part.orgUnitId } : {}), type: 'adjustment', quantity: delta, balanceAfter: updated.quantityOnHand, reason } as any,
       tenantId,
       userId
     );

@@ -59,6 +59,7 @@ import { workOrderService } from '@/modules/workorders/services/workorder.servic
 import { workOrderRepository } from '@/modules/workorders/repositories/workorder.repository';
 import { maintenanceCommandService } from '@/modules/maintenance/services/maintenance-command.service';
 import type { Priority } from '@/shared/types/common.types';
+import { systemWriteScope } from '@/server/tenancy/write-scope';
 
 /** How long after dispatch an auto-scheduled maintenance reminder falls due. */
 const SCHEDULED_MAINTENANCE_LEAD_DAYS = 7;
@@ -190,7 +191,7 @@ class CreateWorkOrderAction implements IRuleActionExecutor {
         // falls back to the vehicle's own when this is absent.
         ...(str(params.orgUnitId) ? { orgUnitId: str(params.orgUnitId) } : {}),
       } as never,
-      tenantId,
+      systemWriteScope(tenantId, 'rule engine action: create_work_order has no acting user'),
       userId || 'system'
     );
   }
@@ -245,7 +246,14 @@ class ScheduleMaintenanceAction implements IRuleActionExecutor {
         // maintenance forecast.
         ...(estimatedCost !== undefined ? { estimated_cost: estimatedCost } : {}),
       },
-      tenantId,
+      /**
+       * A rule action has no acting user, so it cannot be org-unit
+       * scope-checked -- there is no user scope to check against. It is
+       * still tenant-scoped, and the reminder still inherits the
+       * VEHICLE's org unit in the handler, so the record lands in the
+       * right branch. See server/tenancy/write-scope.ts.
+       */
+      systemWriteScope(tenantId, 'rule engine action: schedule_maintenance has no acting user'),
       userId || 'system'
     );
   }

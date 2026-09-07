@@ -5,14 +5,48 @@ import { ConflictError, NotFoundError, ValidationError } from '@/server/errors/a
 import { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { DriverShiftCreatedEvent, DriverShiftUpdatedEvent, DriverShiftCancelledEvent } from '../events/scheduling.events';
+import { WriteScope, tenantIdOf } from '@/server/tenancy/write-scope';
+import { driverRepository } from '@/modules/drivers/repositories/driver.repository';
+import { resolveAlertOwnership } from '@/modules/telematics/services/alert-ownership.resolver';
+import '@/shared/types/driver.tenancy-addendum';
 
 export class SchedulingService {
   constructor(private readonly repo: DriverShiftRepository = driverShiftRepository) {}
 
-  async createShift(data: DriverShiftCreateDTO, tenantId: string, userId: string): Promise<DriverShift> {
+  /**
+   * TWO FIXES.
+   *
+   * 1. SCOPE MISMATCH. SchedulingRepository's scoped reads apply the
+   *    org-unit predicate on `orgUnitId`, and scheduling.tenancy-addendum.ts
+   *    documents the field as "Inherited from the rostered driver; falls
+   *    back to the assigned vehicle" -- but createShift never wrote it,
+   *    so a department manager's own roster was empty to them. The
+   *    addendum's own header notes that leaving this unscoped let any
+   *    department manager EDIT another department's shifts, which makes
+   *    the missing write the more serious half. Same class as drivers;
+   *    see server/tenancy/write-scope.ts.
+   * 2. NO DRIVER EXISTENCE CHECK. `driverId` was stored unvalidated, so
+   *    a stale or cross-tenant id saved cleanly and surfaced later as a
+   *    broken join in the roster view -- the same gap the trip handlers
+   *    had closed for themselves.
+   *
+   * The addendum's documented fallback order (driver, then vehicle) is
+   * implemented here as written.
+   */
+  async createShift(data: DriverShiftCreateDTO, scope: WriteScope, userId: string): Promise<DriverShift> {
+    const tenantId = tenantIdOf(scope);
     const startTime = new Date(data.startTime);
     const endTime = new Date(data.endTime);
     if (endTime <= startTime) throw new ValidationError('endTime must be after startTime');
+
+    const driver = await driverRepository.findById(String(data.driverId), tenantId);
+    if (!driver) throw new NotFoundError('Driver not found');
+
+    let orgUnitId: string | undefined = driver.orgUnitId;
+    if (!orgUnitId && data.vehicleId) {
+      const ownership = await resolveAlertOwnership(String(data.vehicleId), tenantId);
+      orgUnitId = ownership.orgUnitId;
+    }
 
     const overlapping = await this.repo.findOverlappingForDriver(data.driverId, startTime, endTime, tenantId);
     if (overlapping.length > 0) throw new ConflictError('Driver already has an overlapping shift scheduled');
@@ -20,6 +54,7 @@ export class SchedulingService {
     const created = await this.repo.create(
       {
         tenantId,
+        ...(orgUnitId ? { orgUnitId } : {}),
         driverId: data.driverId,
         vehicleId: data.vehicleId,
         startTime,

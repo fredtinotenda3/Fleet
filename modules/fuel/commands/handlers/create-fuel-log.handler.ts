@@ -12,6 +12,7 @@ import { ObjectId } from 'mongodb';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { FuelLoggedEvent } from '@/modules/fuel/events/FuelLoggedEvent';
 import { monitoring } from '@/infrastructure/monitoring/logger';
+import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-resolver.service';
 
 export class CreateFuelLogHandler implements ICommandHandler<CreateFuelLogCommand, FuelLog> {
   constructor(private readonly fuelRepo: FuelRepository) {}
@@ -55,13 +56,18 @@ export class CreateFuelLogHandler implements ICommandHandler<CreateFuelLogComman
     const validated = result.data;
     const db = await connectToDatabase();
 
-    const vehicle = await db.collection('tblvehicles').findOne({
-      license_plate: String(validated.license_plate).toUpperCase(),
-      isDeleted: { $ne: true },
-    });
-    if (!vehicle) {
-      throw new AppError(`Vehicle "${validated.license_plate}" not found`, 'VEHICLE_NOT_FOUND', 400);
-    }
+    /**
+     * SCOPE FIX. This lookup previously ran with neither a tenantId
+     * filter nor an org-unit check, and its result's `orgUnitId` is
+     * copied onto the fuel log below -- so a plate collision with
+     * another tenant, or a branch manager naming another branch's
+     * vehicle, silently filed this cost under a foreign org unit.
+     * See server/tenancy/write-scope.ts for the full account.
+     */
+    const vehicle = await vehicleWriteResolver.resolveForWrite(
+      validated.license_plate as string,
+      command.scope
+    );
 
     const unit = await db.collection('tblunits').findOne({ unit_id: validated.unit_id });
     if (!unit) {
@@ -132,8 +138,8 @@ export class CreateFuelLogHandler implements ICommandHandler<CreateFuelLogComman
       unit_id: String(validated.unit_id),
       cost: Number(validated.cost),
       payment_method: validated.payment_method,
-      ...((vehicle as { orgUnitId?: string }).orgUnitId && {
-        orgUnitId: (vehicle as { orgUnitId?: string }).orgUnitId,
+      ...(vehicleWriteResolver.orgUnitIdFor(vehicle) && {
+        orgUnitId: vehicleWriteResolver.orgUnitIdFor(vehicle),
       }),
       ...(validated.odometer != null ? { odometer: Number(validated.odometer) } : undefined),
       ...(validated.station_name ? { station_name: String(validated.station_name) } : undefined),

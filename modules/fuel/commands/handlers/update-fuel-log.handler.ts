@@ -12,6 +12,7 @@ import connectToDatabase from '@/infrastructure/database/mongodb';
 import { ObjectId } from 'mongodb';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { FuelLogUpdatedEvent } from '@/modules/fuel/events/FuelLogUpdatedEvent';
+import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-resolver.service';
 
 const UPDATABLE_FIELDS = [
   'license_plate',
@@ -62,15 +63,28 @@ export class UpdateFuelLogHandler implements ICommandHandler<UpdateFuelLogComman
     const db = await connectToDatabase();
 
     if (updateData.license_plate) {
-      const vehicle = await db.collection('tblvehicles').findOne({
-        license_plate: String(updateData.license_plate).toUpperCase(),
-        isDeleted: { $ne: true },
-      });
-      if (!vehicle) {
-        throw new AppError(`Vehicle "${updateData.license_plate}" not found`, 'VEHICLE_NOT_FOUND', 400);
-      }
+      /**
+       * SCOPE FIX -- see the equivalent note in create-fuel-log.handler.ts.
+       * This path is the sharper of the two: the line below REWRITES the
+       * record's orgUnitId from the newly named vehicle, so an unscoped
+       * lookup here does not merely misfile a new record, it MOVES an
+       * existing one between branches (or, on a plate collision, onto a
+       * unit belonging to another tenant entirely).
+       */
+      const vehicle = await vehicleWriteResolver.resolveForWrite(
+        String(updateData.license_plate),
+        command.scope
+      );
       updateData.license_plate = String(updateData.license_plate).toUpperCase();
-      updateData.orgUnitId = (vehicle as { orgUnitId?: string }).orgUnitId ?? null;
+      /**
+       * Kept as `?? null` rather than omitting the key: this is an
+       * update, and leaving the field out would silently retain the OLD
+       * vehicle's org unit on a record that now belongs to a different
+       * vehicle. An explicit null is the honest representation of "this
+       * vehicle has no unit yet" and matches what the scoped read treats
+       * as unassigned.
+       */
+      updateData.orgUnitId = vehicleWriteResolver.orgUnitIdFor(vehicle) ?? null;
     }
 
     if (updateData.unit_id) {
