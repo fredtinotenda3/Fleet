@@ -37,6 +37,7 @@ import { FUEL_ANALYTICS_INDEXES } from './indexes.fuel-analytics-addendum';
 import { REPORTING_INDEXES } from './indexes.reporting-addendum';
 import { RULES_INDEXES } from './indexes.rules-addendum';
 import { TELEMATICS_INDEXES } from './indexes.telematics-addendum';
+import { TRIP_GENERATION_INDEXES } from './indexes.trip-generation-addendum';
 import { OUTBOX_INDEXES } from './indexes.outbox-addendum';
 import { WORKFLOWS_INDEXES } from './indexes.workflows-addendum';
 import { ANOMALY_INDEXES } from './indexes.anomaly-addendum'
@@ -430,6 +431,10 @@ export const INDEXES = {
   ...ANOMALY_INDEXES,
   ...ATTENTION_INDEXES,
   ...FINANCE_INDEXES,
+  // Spread BEFORE the explicit tbltrips key below, whose array merges
+  // this addendum's trip indexes in by hand -- a bare spread here would
+  // be overwritten by that key.
+  tbltrip_detection_state: TRIP_GENERATION_INDEXES.tbltrip_detection_state,
   tblvehicles: [
     ...BASE_INDEXES.tblvehicles,
     ...VEHICLE_DRIVER_INDEXES.tblvehicles,
@@ -437,6 +442,7 @@ export const INDEXES = {
   tbltrips: [
     ...BASE_INDEXES.tbltrips,
     ...TRIP_ANALYTICS_INDEXES.tbltrips,             // Phase 3
+    ...TRIP_GENERATION_INDEXES.tbltrips,            // telemetry-derived trips
   ],
   tblorgunits: [
     ...BASE_INDEXES.tblorgunits,

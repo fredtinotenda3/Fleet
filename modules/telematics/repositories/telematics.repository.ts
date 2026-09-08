@@ -305,6 +305,79 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
     return collection.find(filter as any).toArray() as Promise<TelematicsAlert[]>;
   }
 
+  /**
+   * Unacknowledged alerts across the caller's whole scope, aggregated.
+   *
+   * ORG-UNIT SCOPED via the same `scopeOf(context)` predicate every
+   * other scoped read here uses. That matters more for a SUMMARY than
+   * for a list: an aggregate is exactly the shape that leaks counts
+   * after the row-level filter has been fixed, which is precisely how
+   * the anomaly severity counts and the report engine's $match both
+   * leaked in earlier rounds. The predicate is spread LAST so nothing
+   * above can override the scope key.
+   *
+   * Truncation is EXPLICIT rather than silent: `topVehicles` is capped
+   * and the response says whether it was cut, so a reader cannot mistake
+   * "the ten worst" for "all of them".
+   */
+  async getAlertSummaryInScope(
+    context: TenantContext,
+    options: { since?: Date; topVehicleLimit?: number } = {}
+  ): Promise<{
+    total: number;
+    byType: Array<{ type: string; count: number }>;
+    bySeverity: Array<{ severity: string; count: number }>;
+    topVehicles: Array<{ vehicleId: string; count: number }>;
+    topVehiclesTruncated: boolean;
+    since: Date | null;
+  }> {
+    const collection = await this.alertsCollection();
+    const topVehicleLimit = options.topVehicleLimit ?? 10;
+
+    const match: Record<string, unknown> = {
+      tenantId: context.organizationId,
+      isDeleted: { $ne: true },
+      acknowledgedAt: { $exists: false },
+      ...(options.since ? { createdAt: { $gte: options.since } } : {}),
+      ...this.scopeOf(context),
+    };
+
+    const [byType, bySeverity, topVehicles, total] = await Promise.all([
+      collection
+        .aggregate([{ $match: match }, { $group: { _id: '$type', count: { $sum: 1 } } }, { $sort: { count: -1 } }])
+        .toArray(),
+      collection
+        .aggregate([{ $match: match }, { $group: { _id: '$severity', count: { $sum: 1 } } }, { $sort: { count: -1 } }])
+        .toArray(),
+      collection
+        .aggregate([
+          { $match: match },
+          { $group: { _id: '$vehicleId', count: { $sum: 1 } } },
+          { $sort: { count: -1 } },
+          // +1 so truncation can be DETECTED rather than assumed.
+          { $limit: topVehicleLimit + 1 },
+        ])
+        .toArray(),
+      collection.countDocuments(match as never),
+    ]);
+
+    const truncated = topVehicles.length > topVehicleLimit;
+
+    return {
+      total,
+      byType: byType.map((r) => ({ type: String(r._id ?? 'unknown'), count: Number(r.count) })),
+      bySeverity: bySeverity.map((r) => ({
+        severity: String(r._id ?? 'unknown'),
+        count: Number(r.count),
+      })),
+      topVehicles: topVehicles
+        .slice(0, topVehicleLimit)
+        .map((r) => ({ vehicleId: String(r._id ?? ''), count: Number(r.count) })),
+      topVehiclesTruncated: truncated,
+      since: options.since ?? null,
+    };
+  }
+
   async acknowledgeAlert(alertId: string, userId: string, tenantId: string): Promise<boolean> {
     if (!ObjectId.isValid(alertId)) return false;
     const collection = await this.alertsCollection();

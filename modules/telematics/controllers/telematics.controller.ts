@@ -150,6 +150,37 @@ export class TelematicsController {
     }
   }
 
+  /**
+   * Aggregated unacknowledged alerts for the caller's whole scope.
+   *
+   * Uses resolveTenantContext (not just a tenantId) so the aggregate is
+   * ORG-UNIT scoped. A summary endpoint is the classic place a
+   * post-fix leak reappears: the row-level list is filtered, someone
+   * adds a count, and the count silently spans the organization. That
+   * has happened twice in this codebase already -- the anomaly severity
+   * counts and the report engine's $match.
+   *
+   * `?sinceHours=` bounds the window; omitted means all unacknowledged
+   * alerts regardless of age.
+   */
+  async getAlertSummary(req: NextRequest) {
+    try {
+      const context = await resolveTenantContext(req);
+      const sinceHoursRaw = req.nextUrl.searchParams.get('sinceHours');
+      const sinceHours = sinceHoursRaw ? Number(sinceHoursRaw) : undefined;
+
+      const since =
+        sinceHours !== undefined && Number.isFinite(sinceHours) && sinceHours > 0
+          ? new Date(Date.now() - sinceHours * 3_600_000)
+          : undefined;
+
+      const summary = await telematicsRepository.getAlertSummaryInScope(context, { since });
+      return successResponse(summary);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
   async acknowledgeAlert(req: NextRequest, alertId: string) {
     try {
       const tenantId = await getTenantFromRequest(req);

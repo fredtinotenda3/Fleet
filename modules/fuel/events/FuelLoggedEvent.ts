@@ -13,6 +13,18 @@ export class FuelLoggedEvent extends DomainEvent {
       fuel_volume: fuelLog.fuel_volume,
       cost: fuelLog.cost,
       odometer: fuelLog.odometer,
+      /**
+       * ADDED for the allocation ledger.
+       *
+       * AllocationPostingHandler dates a posting from `payload.date` and
+       * fell back to `new Date()` when it was absent -- which it always
+       * was. So a fuel log entered today for last month's refuel posted
+       * into THIS month, silently moving cost between accounting
+       * periods. The period is the whole point of the ledger.
+       */
+      date: fuelLog.date,
+      /** Currency travels with the amount, so a posting is never converted at an assumed 1:1. */
+      currency: fuelLog.currency,
       tenantId: fuelLog.tenantId,
     }, metadata);
   }

@@ -43,6 +43,16 @@ export enum JobType {
   EAGLETRACK_SYNC = 'eagletrack-sync',
   /** PHASE 4, F-12: daily telemetry rollup, so reporting outlives raw retention. */
   TELEMETRY_ROLLUP = 'telemetry-rollup',
+  /**
+   * Derives Trip records from persisted telemetry.
+   *
+   * A SWEEP over stored readings rather than a hook on ingest -- see the
+   * "WHY BATCH, NOT PER-PING" note in
+   * modules/trips/services/trip-detection.ts. Being a sweep is what makes
+   * it re-runnable after a detection fix, which a per-ping hook could
+   * never be.
+   */
+  GENERATE_TRIPS = 'generate-trips',
 
   // Cleanup
   CLEANUP_LOGS = 'cleanup-logs',
@@ -153,6 +163,7 @@ const JOB_TYPE_QUEUE_MAP: Record<JobType, QueueName> = {
   [JobType.EAGLETRACK_SYNC]: 'telemetry-jobs',
   // PHASE 4: shares the telemetry queue so its concurrency tier applies.
   [JobType.TELEMETRY_ROLLUP]: 'telemetry-jobs',
+  [JobType.GENERATE_TRIPS]: 'telemetry-jobs',
   [JobType.CLEANUP_LOGS]: 'cleanup-jobs',
   [JobType.CLEANUP_SESSIONS]: 'cleanup-jobs',
   [JobType.CLEANUP_NOTIFICATIONS]: 'cleanup-jobs',

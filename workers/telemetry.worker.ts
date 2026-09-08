@@ -97,6 +97,12 @@ export class TelemetryWorker extends BaseWorker<IngestBatchPayload | Record<stri
       return;
     }
 
+    if (jobName === 'generate-trips') {
+      await this.generateTrips();
+      telematicsObservability.recordScheduledRun(jobName, true);
+      return;
+    }
+
     if (jobName === 'detect-stale-vehicles') {
       /**
        * PHASE 7 FOLLOW-UP: publishes fleet_telematics_stale_vehicles
@@ -348,6 +354,49 @@ export class TelemetryWorker extends BaseWorker<IngestBatchPayload | Record<stri
    * backup worker, and it would have been easy to reintroduce here by
    * calling .toArray().
    */
+  /**
+   * Derives trips from telemetry for every active organization.
+   *
+   * Uses backgroundJobScopeService.forEachOrganization rather than its
+   * own tblorganizations query -- the same rule every other sweep in
+   * this worker follows, and the reason that helper exists.
+   *
+   * A per-tenant failure is logged and the sweep continues: one tenant
+   * with a corrupt reading must not stop trip generation for every other
+   * customer. That is the same reasoning the provider sync applies, and
+   * it matters more here because a missed sweep is silently a missing
+   * day of trips rather than a visible error.
+   */
+  private async generateTrips(): Promise<void> {
+    const { tripGenerationService } = await import(
+      '@/modules/trips/services/trip-generation.service'
+    );
+    const { backgroundJobScopeService } = await import(
+      '@/server/scheduler/background-job-scope.service'
+    );
+
+    await backgroundJobScopeService.forEachOrganization('generate-trips', async (scope) => {
+      const result = await tripGenerationService.generateForTenant(scope.organizationId);
+
+      if (result.tripsCreated > 0) {
+        monitoring.logInfo('[TelemetryWorker] Trips generated', {
+          tenantId: scope.organizationId,
+          created: result.tripsCreated,
+          alreadyPresent: result.tripsAlreadyPresent,
+          vehiclesWithReadings: result.vehiclesWithReadings,
+        });
+      }
+
+      if (result.errors.length > 0) {
+        monitoring.logError(
+          '[TelemetryWorker] Trip generation completed with per-vehicle errors',
+          new Error(result.errors.join('; ')),
+          { tenantId: scope.organizationId, vehicles: result.vehiclesConsidered }
+        );
+      }
+    });
+  }
+
   private async rollupPreviousDay(): Promise<void> {
     const { telematicsRepository } = await import(
       '@/modules/telematics/repositories/telematics.repository'

@@ -56,6 +56,7 @@ import { aggregateReadings } from '@/modules/telematics/services/telemetry-rollu
 import { resolveOdometer } from '@/modules/telematics/services/odometer-reconciliation';
 import { buildWorkflowIdempotencyKey } from '@/modules/workflows/services/workflow-idempotency';
 import { ndjsonLines } from '@/infrastructure/storage/backup-stream';
+import { asyncIterationBudget, syncBudget } from '../helpers/perf-calibration';
 
 /** Measures a synchronous block, in milliseconds. */
 function measure(fn: () => void): number {
@@ -104,8 +105,11 @@ describe('Performance: geofence evaluation is cheap enough for every ping', () =
       }
     });
 
-    // 500 boxes x 1000 pings = 500k comparisons. Locally ~15ms.
-    expect(elapsed).toBeLessThan(2000);
+    // 500 boxes x 1000 pings = 500k comparisons. Budget derived from
+    // this machine's own speed rather than a fixed figure -- see
+    // tests/helpers/perf-calibration.ts for why every budget in this
+    // file is relative now.
+    expect(elapsed).toBeLessThan(await syncBudget(500_000, 3));
   });
 
   it('serves a warm cache without re-invoking the loader', async () => {
@@ -125,10 +129,11 @@ describe('Performance: geofence evaluation is cheap enough for every ping', () =
     });
 
     expect(loads).toBe(1);
-    expect(elapsed).toBeLessThan(2000);
+    // 5,000 awaits. Async-iteration cost, so calibrated against that.
+    expect(elapsed).toBeLessThan(await asyncIterationBudget(5_000, 20));
   });
 
-  it('computes a bounding box in constant time regardless of polygon size', () => {
+  it('computes a bounding box in constant time regardless of polygon size', async () => {
     // Boxes are computed once per cache fill, but a pathological
     // implementation here would stall every refresh.
     const points = Array.from({ length: 10_000 }, (_, i) => ({
@@ -148,10 +153,11 @@ describe('Performance: geofence evaluation is cheap enough for every ping', () =
       for (let i = 0; i < 50; i += 1) boundingBoxFor(polygon);
     });
 
-    expect(elapsed).toBeLessThan(2000);
+    // 50 x 10,000 points visited.
+    expect(elapsed).toBeLessThan(await syncBudget(500_000, 3));
   });
 
-  it('point-in-box is effectively free', () => {
+  it('point-in-box is effectively free', async () => {
     const box = boundingBoxFor(circle(-17.82, 31.05))!;
     const elapsed = measure(() => {
       for (let i = 0; i < 1_000_000; i += 1) {
@@ -159,12 +165,14 @@ describe('Performance: geofence evaluation is cheap enough for every ping', () =
       }
     });
 
-    expect(elapsed).toBeLessThan(2000);
+    // Four float comparisons per call -- far cheaper than a calibration
+    // iteration, so a tolerance below 1 still leaves large headroom.
+    expect(elapsed).toBeLessThan(await syncBudget(1_000_000, 0.5));
   });
 });
 
 describe('Performance: telemetry normalisation runs per reading', () => {
-  it('normalises 100k values within budget', () => {
+  it('normalises 100k values within budget', async () => {
     // Called several times per reading, on every reading, from both
     // adapters.
     const elapsed = measure(() => {
@@ -174,10 +182,10 @@ describe('Performance: telemetry normalisation runs per reading', () => {
       }
     });
 
-    expect(elapsed).toBeLessThan(2000);
+    expect(elapsed).toBeLessThan(await syncBudget(200_000, 3));
   });
 
-  it('parses 50k provider timestamps within budget', () => {
+  it('parses 50k provider timestamps within budget', async () => {
     // normaliseTimestamp does regex work on the zone-less provider
     // format. A backtracking regex here would stall ingestion.
     const elapsed = measure(() => {
@@ -187,7 +195,7 @@ describe('Performance: telemetry normalisation runs per reading', () => {
       }
     });
 
-    expect(elapsed).toBeLessThan(3000);
+    expect(elapsed).toBeLessThan(await syncBudget(100_000, 5));
   });
 
   it('rejects a malformed timestamp as fast as it accepts a valid one', () => {
@@ -209,7 +217,7 @@ describe('Performance: telemetry normalisation runs per reading', () => {
 });
 
 describe('Performance: rollup aggregation scales with a fleet-day', () => {
-  it('aggregates one vehicle-day of readings within budget', () => {
+  it('aggregates one vehicle-day of readings within budget', async () => {
     // ~1,700 readings/vehicle/day at the platform's poll cadence. The
     // rollup worker flushes per vehicle, so this is the real unit of
     // work.
@@ -226,10 +234,10 @@ describe('Performance: rollup aggregation scales with a fleet-day', () => {
       aggregateReadings(readings);
     });
 
-    expect(elapsed).toBeLessThan(2000);
+    expect(elapsed).toBeLessThan(await syncBudget(1_700, 20));
   });
 
-  it('groups 50 vehicles without quadratic blow-up', () => {
+  it('groups 50 vehicles without quadratic blow-up', async () => {
     // The bucketing is a Map, so this should be linear. A nested scan
     // would show up here as a 50x cliff rather than a 50x cost.
     const readings = Array.from({ length: 50 * 200 }, (_, i) => ({
@@ -244,12 +252,12 @@ describe('Performance: rollup aggregation scales with a fleet-day', () => {
       expect(rollups).toHaveLength(50);
     });
 
-    expect(elapsed).toBeLessThan(3000);
+    expect(elapsed).toBeLessThan(await syncBudget(10_000, 20));
   });
 });
 
 describe('Performance: per-record guards', () => {
-  it('resolves 200k odometer readings within budget', () => {
+  it('resolves 200k odometer readings within budget', async () => {
     // Runs on every digital-twin read.
     const elapsed = measure(() => {
       for (let i = 0; i < 200_000; i += 1) {
@@ -257,10 +265,11 @@ describe('Performance: per-record guards', () => {
       }
     });
 
-    expect(elapsed).toBeLessThan(2000);
+    // Comparison + object construction per call.
+    expect(elapsed).toBeLessThan(await syncBudget(200_000, 3));
   });
 
-  it('builds 20k idempotency keys within budget', () => {
+  it('builds 20k idempotency keys within budget', async () => {
     // SHA-256 per automated workflow start. Not free, but must not be
     // the bottleneck in an event-handling loop.
     const elapsed = measure(() => {
@@ -275,32 +284,86 @@ describe('Performance: per-record guards', () => {
       }
     });
 
-    expect(elapsed).toBeLessThan(3000);
+    // SHA-256 is materially more expensive than a calibration
+    // iteration, hence the larger tolerance.
+    expect(elapsed).toBeLessThan(await syncBudget(20_000, 30));
   });
 });
 
 describe('Performance: the backup writer stays streaming', () => {
-  it('holds a bounded amount regardless of how much it has produced', async () => {
-    // The Phase 4 F-20 property, asserted as a budget rather than only
-    // structurally: the generator must stay lazy. If somebody
-    // reintroduced an array, producing 50k lines would balloon both time
-    // and memory instead of staying flat.
-    const docs = {
-      async *[Symbol.asyncIterator]() {
-        for (let i = 0; i < 50_000; i += 1) {
-          yield { _id: `d-${i}`, value: i, payload: 'x'.repeat(50) };
-        }
-      },
-    };
+  /**
+   * THIS TEST USED TO BE THE FLAKY ONE.
+   *
+   * It consumed 50,000 documents and asserted `elapsed < 5000`. That
+   * measured 73 ms on the CI sandbox and 8,568 ms on a developer's
+   * Windows laptop -- a 117x spread for identical, correct code. The
+   * cost is `for await` overhead (50,000 microtask ticks), which a
+   * throttled VM or an on-access virus scanner multiplies in a way a
+   * straight CPU loop never shows.
+   *
+   * The property being defended is LAZINESS -- that `ndjsonLines` stayed
+   * a generator and did not go back to building a `string[]`. Wall-clock
+   * time was only ever a proxy for that, and a bad one.
+   *
+   * So the property is now asserted DIRECTLY, and deterministically:
+   * a buffering implementation must exhaust its source before it can
+   * yield anything, so consuming ONE line from a 50,000-document source
+   * must not have pulled 50,000 documents. That assertion cannot be
+   * affected by machine speed at all.
+   *
+   * The timing check is kept as a secondary smoke test, but calibrated
+   * against this machine's own async-iteration cost rather than an
+   * absolute figure, and over 5,000 documents rather than 50,000.
+   */
+  const makeSource = (count: number, onProduce: () => void) => ({
+    async *[Symbol.asyncIterator]() {
+      for (let i = 0; i < count; i += 1) {
+        onProduce();
+        yield { _id: `d-${i}`, value: i, payload: 'x'.repeat(50) };
+      }
+    },
+  });
 
+  it('yields the first line without draining the source (the laziness property)', async () => {
+    // Deterministic. No timing. This is the assertion that actually
+    // catches the regression the whole test exists for: reintroducing
+    // `const lines: string[] = []` makes `produced` equal 50,000 here.
     let produced = 0;
+    const documents = makeSource(50_000, () => {
+      produced += 1;
+    });
+
+    for await (const line of ndjsonLines([{ name: 'tbltest', documents }])) {
+      expect(line.endsWith('\n')).toBe(true);
+      break; // take exactly one
+    }
+
+    // A generator holds one document at a time. Allow a small margin for
+    // any internal read-ahead rather than pinning it to exactly 1.
+    expect(produced).toBeLessThanOrEqual(10);
+  });
+
+  it('produces every line exactly once, within a machine-relative budget', async () => {
+    const COUNT = 5_000;
+    let produced = 0;
+    const documents = makeSource(COUNT, () => {
+      produced += 1;
+    });
+
+    let emitted = 0;
     const elapsed = await measureAsync(async () => {
-      for await (const line of ndjsonLines([{ name: 'tbltest', documents: docs }])) {
-        produced += line.length > 0 ? 1 : 0;
+      for await (const line of ndjsonLines([{ name: 'tbltest', documents }])) {
+        emitted += line.length > 0 ? 1 : 0;
       }
     });
 
-    expect(produced).toBe(50_000);
-    expect(elapsed).toBeLessThan(5000);
+    expect(emitted).toBe(COUNT);
+    expect(produced).toBe(COUNT);
+
+    // Each document costs one async iteration plus a JSON.stringify, so
+    // 20x the machine's bare async-iteration cost is generous while
+    // still catching an order-of-magnitude structural regression.
+    const budget = await asyncIterationBudget(COUNT, 20);
+    expect(elapsed).toBeLessThan(budget);
   });
 });

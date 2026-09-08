@@ -62,7 +62,20 @@ export interface AllocationPosting extends OrgUnitScopedEntity {
   allocationRule: AllocationRule;
 
   /** The originating record this posting explains -- a tblexpenses/tblfuellogs/tblreminders _id, or a synthetic id for a computed depreciation charge. */
-  sourceCollection: 'tblexpenses' | 'tblfuellogs' | 'tblreminders' | 'finance:depreciation' | 'finance:shared-cost';
+  sourceCollection:
+    | 'tblexpenses'
+    | 'tblfuellogs'
+    | 'tblreminders'
+    /**
+     * ADDED. Work-order postings were previously filed as 'tblreminders'
+     * -- so a `sourceId` documented as a reminder id actually held a
+     * work-order id, and any audit that followed the reference looked in
+     * the wrong collection and found nothing. A ledger whose provenance
+     * pointer is wrong is worse than one with no pointer.
+     */
+    | 'tblworkorders'
+    | 'finance:depreciation'
+    | 'finance:shared-cost';
   sourceId: string;
 
   description?: string;

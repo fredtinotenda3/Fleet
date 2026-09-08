@@ -36,7 +36,24 @@ export class WorkOrderPartsConsumedEvent extends DomainEvent {
 
 export class WorkOrderCompletedEvent extends DomainEvent {
   constructor(wo: WorkOrder, metadata?: Record<string, unknown>) {
-    super(WORK_ORDER_COMPLETED, { entityId: wo._id, entityType: 'work_order', license_plate: wo.license_plate, totalCost: wo.totalCost, tenantId: wo.tenantId }, metadata);
+    /**
+     * partsCost and laborCost travel separately so the ledger can post
+     * them as two entries. Parts and labour are different costs to a
+     * finance team -- one is inventory consumption, the other is time --
+     * and collapsing them into `totalCost` makes them unrecoverable.
+     * The posting idempotency key includes costCategory, so two postings
+     * from one work order do not collide.
+     */
+    super(WORK_ORDER_COMPLETED, {
+      entityId: wo._id,
+      entityType: 'work_order',
+      license_plate: wo.license_plate,
+      totalCost: wo.totalCost,
+      partsCost: wo.partsCost,
+      laborCost: wo.laborCost,
+      date: wo.completedAt,
+      tenantId: wo.tenantId,
+    }, metadata);
   }
 }
 

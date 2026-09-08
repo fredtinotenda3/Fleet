@@ -35,6 +35,19 @@ const DEFAULT_SCHEDULES: Array<{ name: string; description: string; jobType: Job
   // the day is complete, and well inside the retention window so a
   // failed run has ~90 days of retries before the raw data is gone.
   { name: 'telemetry-daily-rollup', description: 'Aggregate raw telemetry into daily per-vehicle rollups', jobType: JobType.TELEMETRY_ROLLUP, cron: '0 1 * * *' },
+  /**
+   * Every 10 minutes. A journey typically ends minutes before the sweep
+   * notices, which is irrelevant for a record whose consumers are
+   * cost-per-km, utilisation and maintenance forecasting.
+   *
+   * Deliberately SLOWER than the 2-minute provider sync: there is no
+   * value in sweeping for trips faster than readings arrive, and each
+   * run reads a window per vehicle. Overlapping runs are harmless -- the
+   * watermark skips processed readings and the partial unique index
+   * refuses a duplicate journey -- but there is no reason to pay for
+   * them.
+   */
+  { name: 'trips-generate-from-telemetry', description: 'Derive Trip records from persisted telemetry (ignition/movement detection)', jobType: JobType.GENERATE_TRIPS, cron: '*/10 * * * *' },
   { name: 'cleanup-sessions', description: 'Expire stale sessions, refresh tokens, and API keys', jobType: JobType.CLEANUP_SESSIONS, cron: '0 3 * * *' },
   { name: 'cleanup-notifications', description: 'Purge old/expired notifications', jobType: JobType.CLEANUP_NOTIFICATIONS, cron: '0 4 * * *' },
   { name: 'cleanup-outbox', description: 'Purge processed outbox events', jobType: JobType.CLEANUP_OUTBOX, cron: '0 5 * * *' },

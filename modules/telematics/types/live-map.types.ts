@@ -69,6 +69,20 @@ export interface LiveMapVehicle {
   licensePlate: string;
   make: string;
   model: string;
+  /**
+   * Free-text Vehicle.vehicle_type, passed through verbatim.
+   *
+   * The live map resolves it to a silhouette (see
+   * frontend/modules/telematics/utils/vehicle-glyph.ts). NOT normalised
+   * here: this deployment's own data contains values like
+   * `"      DAF                  "`, and the resolver is where the
+   * folding and the fallback belong -- one place that knows the mapping,
+   * rather than a normalisation the API asserts and the UI re-does.
+   *
+   * Optional, because a vehicle may genuinely have no type recorded and
+   * the map draws a generic truck for it rather than nothing.
+   */
+  vehicleType?: string;
   orgUnitId?: string;
   status: LiveMapVehicleStatus;
   /**

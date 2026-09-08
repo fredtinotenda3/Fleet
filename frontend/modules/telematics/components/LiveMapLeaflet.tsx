@@ -29,6 +29,17 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import { MapContainer, TileLayer, Marker, Tooltip, CircleMarker, Polyline, Polygon, Circle, useMap, useMapEvents } from 'react-leaflet';
 import { cn } from '@/lib/utils';
+import {
+  glyphForVehicleType,
+  glyphPathFragment,
+  glyphLabel,
+} from '../utils/vehicle-glyph';
+import {
+  planMovement,
+  advanceTracks,
+  type InterpolationTrack,
+  type MarkerPosition,
+} from '../utils/marker-interpolation';
 import type { LiveMapVehicle, LiveMapGeofence, LiveMapRoutePoint } from '../types';
 
 interface LiveMapLeafletProps {
@@ -156,8 +167,10 @@ function buildVehicleIcon(options: {
   showHeading: boolean;
   active: boolean;
   label: string;
+  /** Free-text Vehicle.vehicle_type; resolved to a silhouette. */
+  vehicleType?: string | null;
 }): L.DivIcon {
-  const { colorVar, heading, showHeading, active, label } = options;
+  const { colorVar, heading, showHeading, active, label, vehicleType } = options;
   const size = MARKER_SIZE;
   const c = size / 2;
   const hasHeading = showHeading && typeof heading === 'number' && Number.isFinite(heading);
@@ -198,6 +211,22 @@ function buildVehicleIcon(options: {
              transform="rotate(${(heading as number) % 360} ${c} ${c})" />`
     : '';
 
+  /**
+   * The vehicle silhouette, drawn OVER the disc in the RING colour so it
+   * reads as a cut-out rather than as a second coloured shape competing
+   * with the heading wedge.
+   *
+   * In its own SVG layer above the disc deliberately: inside the same
+   * <svg> as the wedge it would inherit `currentColor` and vanish
+   * against the disc it sits on.
+   */
+  const glyph = glyphForVehicleType(vehicleType);
+  const glyphSvg = `
+      <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"
+           style="position:absolute;inset:0;color:var(--map-marker-ring, #ffffff);" aria-hidden="true" focusable="false">
+        ${glyphPathFragment(glyph, size, 0.34)}
+      </svg>`;
+
   const html = `
     <div class="fleet-vehicle-marker__body" role="img" aria-label="${escapeHtml(label)}"
          style="position:relative;width:${size}px;height:${size}px;color:${colorVar};">
@@ -208,6 +237,7 @@ function buildVehicleIcon(options: {
         <circle cx="${c}" cy="${c}" r="${DISC_RADIUS}"
                 style="fill:currentColor;stroke:var(--map-marker-ring, #ffffff);stroke-width:2.5;" />
       </svg>
+      ${glyphSvg}
     </div>`;
 
   return L.divIcon({
@@ -302,6 +332,99 @@ function DeselectOnMapClick({ onSelectVehicle }: { onSelectVehicle: (vehicleId: 
   return null;
 }
 
+/**
+ * Eases every marker from where it is drawn to where the latest poll
+ * says it is.
+ *
+ * ONE requestAnimationFrame loop for the whole fleet, not a timer per
+ * marker. At 500 vehicles that is one callback per frame instead of five
+ * hundred, and the per-marker version is how a live map becomes unusable
+ * on a fleet large enough to need one.
+ *
+ * The loop only runs while something is actually moving, and cancels
+ * itself when every track finishes -- a parked fleet costs nothing.
+ *
+ * The policy (animate / snap / ignore) lives in marker-interpolation.ts
+ * as pure functions so it can be tested without a browser, a map or a
+ * clock. This hook is only the plumbing.
+ */
+function useInterpolatedPositions(
+  vehicles: LiveMapVehicle[]
+): Map<string, MarkerPosition> {
+  const [rendered, setRendered] = useState<Map<string, MarkerPosition>>(new Map());
+  const renderedRef = useRef(rendered);
+  const tracksRef = useRef<Map<string, InterpolationTrack>>(new Map());
+  const frameRef = useRef<number | null>(null);
+
+  renderedRef.current = rendered;
+
+  useEffect(() => {
+    const now = performance.now();
+    const next = new Map(renderedRef.current);
+    let changed = false;
+
+    const liveIds = new Set<string>();
+
+    for (const vehicle of vehicles) {
+      if (!vehicle.position) continue;
+      liveIds.add(vehicle.vehicleId);
+
+      const target: MarkerPosition = { lat: vehicle.position.lat, lng: vehicle.position.lng };
+      const plan = planMovement(renderedRef.current.get(vehicle.vehicleId), target, { now });
+
+      if (plan.action === 'snap') {
+        tracksRef.current.delete(vehicle.vehicleId);
+        next.set(vehicle.vehicleId, plan.to);
+        changed = true;
+      } else if (plan.action === 'animate') {
+        tracksRef.current.set(vehicle.vehicleId, plan.track);
+      }
+      // 'ignore' -- GPS jitter on a stationary vehicle. Leaving the
+      // marker exactly where it is stops a parked fleet shimmering.
+    }
+
+    // Drop state for vehicles that have left the payload, so the maps do
+    // not grow without bound across a long session.
+    for (const id of next.keys()) {
+      if (!liveIds.has(id)) {
+        next.delete(id);
+        tracksRef.current.delete(id);
+        changed = true;
+      }
+    }
+
+    if (changed) setRendered(next);
+  }, [vehicles]);
+
+  useEffect(() => {
+    if (tracksRef.current.size === 0) return;
+
+    const step = () => {
+      const { positions, finished } = advanceTracks(tracksRef.current, performance.now());
+      for (const id of finished) tracksRef.current.delete(id);
+
+      if (positions.size > 0) {
+        setRendered((current) => {
+          const merged = new Map(current);
+          for (const [id, position] of positions) merged.set(id, position);
+          return merged;
+        });
+      }
+
+      frameRef.current = tracksRef.current.size > 0 ? requestAnimationFrame(step) : null;
+    };
+
+    frameRef.current = requestAnimationFrame(step);
+
+    return () => {
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    };
+  }, [rendered]);
+
+  return rendered;
+}
+
 export function LiveMapLeaflet({
   vehicles,
   geofences,
@@ -312,6 +435,17 @@ export function LiveMapLeaflet({
 }: LiveMapLeafletProps) {
   const [hoveredVehicleId, setHoveredVehicleId] = useState<string | null>(null);
   const activeVehicle = hoveredVehicleId ?? selectedVehicleId;
+
+  /**
+   * Drawn positions, eased toward the polled ones.
+   *
+   * NEVER extrapolated past the last known fix -- see the header of
+   * marker-interpolation.ts. The marker lags reality by up to the
+   * animation duration; it never leads it, because a marker drawn
+   * somewhere the platform has no evidence the vehicle has been is a
+   * fabricated measurement rendered identically to a real one.
+   */
+  const drawnPositions = useInterpolatedPositions(vehicles);
 
   const fitPoints = useMemo(
     () => [...vehicleLatLngs(vehicles), ...geofenceLatLngs(geofences)],
@@ -356,6 +490,9 @@ export function LiveMapLeaflet({
 
       {vehicles.map((vehicle) => {
         if (!vehicle.position) return null;
+        // Falls back to the true fix on the first frame, before the
+        // interpolation state has seen this vehicle.
+        const drawn = drawnPositions.get(vehicle.vehicleId) ?? vehicle.position;
         const selected = vehicle.vehicleId === selectedVehicleId;
         const active = activeVehicle === vehicle.vehicleId;
         // Alert overrides the status colour but NOT the heading wedge --
@@ -363,6 +500,7 @@ export function LiveMapLeaflet({
         const colorVar = vehicle.alert ? ALERT_COLOR_VAR : STATUS_COLOR_VAR[vehicle.status];
         const label = [
           vehicle.licensePlate,
+          glyphLabel(glyphForVehicleType(vehicle.vehicleType)),
           STATUS_LABEL[vehicle.status],
           vehicle.alert ? `alert: ${vehicle.alert.reasons[0]}` : null,
           vehicle.stale ? 'stale fix' : null,
@@ -372,6 +510,7 @@ export function LiveMapLeaflet({
 
         const icon = buildVehicleIcon({
           colorVar,
+          vehicleType: vehicle.vehicleType,
           heading: vehicle.position.heading,
           // An offline vehicle's last-known bearing describes where it
           // WAS pointing, not where it is pointing; don't assert it.
@@ -383,7 +522,7 @@ export function LiveMapLeaflet({
         return (
           <Marker
             key={vehicle.vehicleId}
-            position={[vehicle.position.lat, vehicle.position.lng]}
+            position={[drawn.lat, drawn.lng]}
             icon={icon}
             eventHandlers={{
               click: () => onSelectVehicle(selected ? null : vehicle.vehicleId),

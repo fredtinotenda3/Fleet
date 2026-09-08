@@ -2,6 +2,7 @@
 
 import { NextRequest } from 'next/server';
 import { platformService } from '../services/platform.service';
+import { platformDirectoryService } from '../services/platform-directory.service';
 import { platformOrgStatusSchema } from '@/shared/validations/tenancy.schema';
 import { successResponse, paginatedResponse, errorResponse } from '@/server/utils/response.utils';
 import { AppError, ForbiddenError, ValidationError, isAppError, describeError } from '@/server/errors/app.errors';
@@ -82,6 +83,72 @@ export class PlatformController {
       );
 
       return successResponse(updated);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /**
+   * Cross-tenant directory reads.
+   *
+   * All three go through requirePlatformAdmin like every other method
+   * here -- the LITERAL Role.SUPER_ADMIN, not the isSuperAdmin flag,
+   * which is also true for organization_owner. Redaction lives in
+   * platform-directory.service.ts, where the projections are
+   * allow-lists.
+   */
+  async listUsers(req: NextRequest) {
+    try {
+      await requirePlatformAdmin(req);
+      const params = req.nextUrl.searchParams;
+      const { page, limit } = validatePaginationParams(params.get('page'), params.get('limit'));
+
+      const result = await platformDirectoryService.listUsers(
+        {
+          search: params.get('search') || undefined,
+          tenantId: params.get('tenantId') || undefined,
+        },
+        { page, limit }
+      );
+      return paginatedResponse(result.data, result.pagination);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async listApiKeys(req: NextRequest) {
+    try {
+      await requirePlatformAdmin(req);
+      const params = req.nextUrl.searchParams;
+      const { page, limit } = validatePaginationParams(params.get('page'), params.get('limit'));
+
+      const result = await platformDirectoryService.listApiKeys(
+        {
+          organizationId: params.get('organizationId') || undefined,
+          status: params.get('status') || undefined,
+        },
+        { page, limit }
+      );
+      return paginatedResponse(result.data, result.pagination);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async listRoles(req: NextRequest) {
+    try {
+      await requirePlatformAdmin(req);
+      const params = req.nextUrl.searchParams;
+      const { page, limit } = validatePaginationParams(params.get('page'), params.get('limit'));
+
+      const result = await platformDirectoryService.listCustomRoles(
+        {
+          organizationId: params.get('organizationId') || undefined,
+          includeDeleted: params.get('includeDeleted') === 'true',
+        },
+        { page, limit }
+      );
+      return paginatedResponse(result.data, result.pagination);
     } catch (error) {
       return this.handleError(error);
     }

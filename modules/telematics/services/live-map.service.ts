@@ -780,6 +780,9 @@ export class LiveMapService {
       licensePlate: vehicle.license_plate,
       make: vehicle.make,
       model: vehicle.model,
+      // Verbatim -- the marker glyph resolver does the folding and owns
+      // the fallback. See LiveMapVehicle.vehicleType.
+      vehicleType: vehicle.vehicle_type,
       orgUnitId: vehicle.orgUnitId,
     };
   }

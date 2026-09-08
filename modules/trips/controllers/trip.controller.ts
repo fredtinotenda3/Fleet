@@ -222,6 +222,26 @@ export class TripController {
     }
   }
 
+  /**
+   * Route playback for one trip.
+   *
+   * Scope is enforced by the service, which loads the trip under the
+   * caller's context BEFORE touching telemetry and reports an
+   * out-of-scope trip as not-found. The vehicle is taken from the trip
+   * record, never from the request, so a caller cannot aim the telemetry
+   * query at a vehicle they cannot see.
+   */
+  async getPlayback(req: NextRequest, id: string) {
+    try {
+      const context = await resolveTenantContext(req);
+      const { tripPlaybackService } = await import('../services/trip-playback.service');
+      const playback = await tripPlaybackService.getPlayback(id, context);
+      return successResponse(playback);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
   async createTrip(req: NextRequest) {
     try {
       /**

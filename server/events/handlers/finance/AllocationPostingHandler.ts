@@ -42,9 +42,18 @@
 import { IEventHandler } from '@/server/events/base/IEventHandler';
 import { DomainEvent } from '@/server/events/base/DomainEvent';
 import { monitoring } from '@/infrastructure/monitoring/logger';
-import { allocationPostingService } from '@/modules/finance/services/allocation-posting.service';
+import {
+  allocationPostingService,
+  type AutoPostSource,
+} from '@/modules/finance/services/allocation-posting.service';
 import type { AllocationCostCategory } from '@/modules/finance/types/allocation.types';
 import type { AllocationPosting } from '@/modules/finance/types/allocation.types';
+import {
+  EXPENSE_CREATED,
+  FUEL_LOGGED,
+  REMINDER_COMPLETED,
+  WORK_ORDER_COMPLETED,
+} from '@/server/events/event-names';
 
 /** What each subscribed event contributes to the ledger. */
 interface PostingSpec {
@@ -60,11 +69,38 @@ interface PostingSpec {
  * `SomethingCreated`, and "which events move money" is precisely the
  * question that should require a deliberate edit.
  */
+/**
+ * TWO OF THESE FOUR NAMES DID NOT EXIST.
+ *
+ * The map shipped as:
+ *
+ *   ExpenseCreated       -- real
+ *   FuelLogCreated       -- NOT AN EVENT. The published name is `FuelLogged`.
+ *   MaintenanceCompleted -- NOT AN EVENT. The published name is `ReminderCompleted`.
+ *   WorkOrderCompleted   -- real, but filed under sourceCollection 'tblreminders'
+ *
+ * So the ledger received EXPENSES ONLY. Fuel -- the largest operating
+ * cost in almost any fleet -- never posted, and neither did maintenance.
+ * `getCostPerKm` therefore divided a real distance by a total that was
+ * missing most of its numerator, and returned a number that looked like
+ * an answer.
+ *
+ * This is the same defect class as AIPredictionTriggerHandler reading a
+ * `payload.vehicleId` no event ever set: a handler correctly written,
+ * correctly subscribed, and keyed on names nothing publishes. Nothing
+ * throws, nothing logs, and the only symptom is a total that is too low
+ * -- which is indistinguishable from a quiet month.
+ *
+ * The names are now taken from server/events/event-names.ts constants
+ * rather than written as string literals, so a rename cannot silently
+ * un-wire them again. `allocation-posting-wiring.spec.ts` asserts every
+ * key here is a registered, published event name.
+ */
 const POSTING_EVENTS: Record<string, PostingSpec> = {
-  ExpenseCreated: { sourceCollection: 'tblexpenses', costCategory: 'other' },
-  FuelLogCreated: { sourceCollection: 'tblfuellogs', costCategory: 'fuel' },
-  MaintenanceCompleted: { sourceCollection: 'tblreminders', costCategory: 'maintenance' },
-  WorkOrderCompleted: { sourceCollection: 'tblreminders', costCategory: 'maintenance' },
+  [EXPENSE_CREATED]: { sourceCollection: 'tblexpenses', costCategory: 'expense' },
+  [FUEL_LOGGED]: { sourceCollection: 'tblfuellogs', costCategory: 'fuel' },
+  [REMINDER_COMPLETED]: { sourceCollection: 'tblreminders', costCategory: 'maintenance' },
+  [WORK_ORDER_COMPLETED]: { sourceCollection: 'tblworkorders', costCategory: 'maintenance' },
 };
 
 export class AllocationPostingHandler implements IEventHandler<DomainEvent> {
@@ -85,8 +121,15 @@ export class AllocationPostingHandler implements IEventHandler<DomainEvent> {
     }
 
     const payload = event.payload as Record<string, unknown>;
-    const source = await this.buildSource(spec, payload, tenantId);
-    if (!source) return;
+    /**
+     * A single event can produce SEVERAL postings. A completed work
+     * order is two costs -- parts consumed from inventory, and labour --
+     * which a finance team accounts for separately and which
+     * `totalCost` alone makes unrecoverable. The posting idempotency key
+     * includes costCategory, so the two never collide.
+     */
+    const sources = await this.buildSources(spec, payload, tenantId);
+    if (sources.length === 0) return;
 
     /**
      * A PLATFORM context: this handler runs from a worker with no acting
@@ -111,23 +154,22 @@ export class AllocationPostingHandler implements IEventHandler<DomainEvent> {
       isPlatformScope: false,
     } as unknown as import('@/modules/tenancy/services/tenant-context.service').TenantContext;
 
-    const outcome = await allocationPostingService.postSource(
-      context,
-      'system',
-      source
-    );
+    for (const source of sources) {
+      const outcome = await allocationPostingService.postSource(context, 'system', source);
 
-    if (outcome.status === 'refused') {
-      // Logged, not thrown. A refusal is a property of THIS record and
-      // will fail identically on every retry -- sending it round the
-      // outbox retry loop to the dead-letter queue would bury a
-      // condition an operator needs to read now.
-      monitoring.logWarn('[allocation-posting] Posting refused', {
-        eventName: event.eventName,
-        sourceCollection: source.sourceCollection,
-        sourceId: source.sourceId,
-        reason: outcome.reason,
-      });
+      if (outcome.status === 'refused') {
+        // Logged, not thrown. A refusal is a property of THIS record and
+        // will fail identically on every retry -- sending it round the
+        // outbox retry loop to the dead-letter queue would bury a
+        // condition an operator needs to read now.
+        monitoring.logWarn('[allocation-posting] Posting refused', {
+          eventName: event.eventName,
+          sourceCollection: source.sourceCollection,
+          sourceId: source.sourceId,
+          costCategory: source.costCategory,
+          reason: outcome.reason,
+        });
+      }
     }
   }
 
@@ -138,33 +180,52 @@ export class AllocationPostingHandler implements IEventHandler<DomainEvent> {
    * Every field is read from the payload or resolved from the
    * authoritative vehicle record -- nothing is defaulted into existence.
    */
-  private async buildSource(
+  private async buildSources(
     spec: PostingSpec,
     payload: Record<string, unknown>,
     tenantId: string
-  ) {
+  ): Promise<AutoPostSource[]> {
     const sourceId = String(payload.expenseId ?? payload.fuelLogId ?? payload.entityId ?? payload.id ?? '');
-    if (!sourceId) return null;
-
-    const amount = Number(payload.amount ?? payload.cost ?? payload.totalCost);
-    if (!Number.isFinite(amount)) return null;
+    if (!sourceId) return [];
 
     // Expenses and fuel logs key on license_plate, not vehicleId. The
     // identity resolver is the one place that bridges the two, so it is
     // used here rather than re-deriving the lookup.
     const vehicleId = await this.resolveVehicleId(payload, tenantId);
-    if (!vehicleId) return null;
+    if (!vehicleId) return [];
 
-    const occurredAt = payload.date ? new Date(payload.date as string) : new Date();
-    if (Number.isNaN(occurredAt.getTime())) return null;
+    /**
+     * THE POSTING PERIOD IS THE RECORD'S OWN DATE.
+     *
+     * This previously read `payload.date ? ... : new Date()`, and NO
+     * event carried a `date` -- so every posting was dated to the moment
+     * the handler happened to run. A fuel log entered today for last
+     * month's refuel posted into this month, silently moving cost
+     * between accounting periods. Since the ledger is append-only, that
+     * is not correctable by an edit.
+     *
+     * The events now carry their record's date (see FuelLoggedEvent,
+     * ReminderCompletedEvent, WorkOrderCompletedEvent). When it is still
+     * absent the posting is REFUSED rather than dated to now: a cost in
+     * the wrong period is a reconciliation failure that surfaces months
+     * later, whereas a refusal is visible today and re-postable once the
+     * source record is corrected.
+     */
+    const rawDate = payload.date ?? payload.completion_date ?? payload.completedAt;
+    if (!rawDate) {
+      monitoring.logWarn('[allocation-posting] Source carries no date; refusing to post', {
+        sourceCollection: spec.sourceCollection,
+        sourceId,
+      });
+      return [];
+    }
+    const occurredAt = new Date(rawDate as string);
+    if (Number.isNaN(occurredAt.getTime())) return [];
 
-    return {
-      sourceCollection: spec.sourceCollection,
+    const common = {
       sourceId,
       vehicleId,
-      costCategory: spec.costCategory,
       occurredAt,
-      amount,
       // Absent means the tenant's reporting currency -- the only safe
       // default, since that is what every pre-Phase-6 record implicitly
       // is. A foreign currency with no rate is refused downstream, never
@@ -173,6 +234,73 @@ export class AllocationPostingHandler implements IEventHandler<DomainEvent> {
       ...(typeof payload.fxRate === 'number' ? { fxRate: payload.fxRate } : {}),
       ...(typeof payload.driverId === 'string' ? { driverId: payload.driverId } : {}),
     };
+
+    // ── work orders: parts and labour are separate costs ────────────
+    if (spec.sourceCollection === 'tblworkorders') {
+      const parts = Number(payload.partsCost);
+      const labour = Number(payload.laborCost);
+      const out: AutoPostSource[] = [];
+
+      if (Number.isFinite(parts) && parts > 0) {
+        out.push({
+          ...common,
+          sourceCollection: spec.sourceCollection,
+          costCategory: 'maintenance' as AllocationCostCategory,
+          amount: parts,
+          description: 'Work order parts',
+        });
+      }
+      if (Number.isFinite(labour) && labour > 0) {
+        out.push({
+          ...common,
+          sourceCollection: spec.sourceCollection,
+          costCategory: 'other' as AllocationCostCategory,
+          amount: labour,
+          description: 'Work order labour',
+        });
+      }
+
+      /**
+       * Fall back to totalCost ONLY when neither component is present.
+       * Posting the total ALONGSIDE the components would double-count
+       * the work order, which on an append-only ledger needs a human
+       * reversal to undo.
+       */
+      if (out.length === 0) {
+        const total = Number(payload.totalCost);
+        if (Number.isFinite(total) && total > 0) {
+          out.push({
+            ...common,
+            sourceCollection: spec.sourceCollection,
+            costCategory: spec.costCategory,
+            amount: total,
+            description: 'Work order total (parts/labour split unavailable)',
+          });
+        }
+      }
+      return out;
+    }
+
+    const amount = Number(payload.amount ?? payload.cost ?? payload.totalCost);
+    if (!Number.isFinite(amount)) return [];
+
+    return [
+      {
+        ...common,
+        sourceCollection: spec.sourceCollection,
+        costCategory: spec.costCategory,
+        amount,
+        /**
+         * Reminder costs are ESTIMATES -- Reminder carries no actuals
+         * field (see the audit note in maintenance.types.ts). Saying so
+         * on the posting keeps a finance user from reconciling an
+         * estimate against an invoice and concluding the ledger is wrong.
+         */
+        ...(payload.cost_is_estimate === true
+          ? { description: 'Maintenance (estimated cost -- no actuals recorded)' }
+          : {}),
+      },
+    ];
   }
 
   private async resolveVehicleId(

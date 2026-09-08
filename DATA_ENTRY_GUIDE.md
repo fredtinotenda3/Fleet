@@ -157,23 +157,57 @@ consumer below is wrapped so it can never fail your save:
 | Consumer | What it does | Status |
 |---|---|---|
 | `DigitalTwinProjectionHandler` | resolves the plate → updates the vehicle's twin (`fuel.lastFuelDate`, `lastFuelVolume`, `lastFuelCost`) | works |
-| `AIPredictionTriggerHandler` | runs fuel-fraud detection for that vehicle | **fixed in this change set — was dead** |
+| `AIPredictionTriggerHandler` | runs fuel-fraud detection for that vehicle | works (was dead — read a `vehicleId` no event carries) |
 | `IntelligenceHandler` | runs tenant-wide fuel anomaly detection | works |
 | `NotificationHandler` | notifies subscribed users | works |
-| `AnalyticsHandler` | invalidates cached analytics | works (its cache-key bug was fixed in an earlier round) |
+| `AnalyticsHandler` | invalidates cached analytics | works |
+| `AllocationPostingHandler` | posts the cost into the allocation ledger | works (was keyed on a non-existent event) |
 | `WorkflowTriggerHandler` | fires any workflow with a `fuel.logged` trigger | works |
 | `WebSocketHandler` | pushes `fuel:logged` to connected clients | works |
 
-Not wired, and honestly out of scope for a fuel log: nothing posts a fuel cost
-into the **allocation ledger** automatically. Finance's cost-per-km engine
-exists and is tested, but the ingestion pass that posts fuel/expense/
-maintenance into it has not been built. Fuel costs reach reporting and
-analytics; they do not yet reach the ledger. This is recorded as a gap rather
-than papered over.
+**Fuel costs now post into the allocation ledger automatically.** That
+was previously broken in a way worth knowing about: the posting handler
+was keyed on an event name that does not exist (`FuelLogCreated`; the
+real name is `FuelLogged`), so the ledger received **expenses only** and
+cost-per-km divided real distance by a total missing most of its
+numerator. Maintenance was broken the same way.
+
+Two remaining caveats, stated rather than hidden:
+
+- **Historical records do not re-post.** Periods before the fix
+  understate cost. See `VALUE_LEDGER_AND_FINANCE_EXPLAINER.md` §7.
+- **Maintenance costs are estimates.** `Reminder` has no actual-cost
+  field, so those postings are labelled as estimates.
 
 ---
 
-## 4. Trips — and why yours are empty
+## 4. Trips — entered, imported, or generated
+
+Trips now arrive three ways, and the third one changes the picture.
+
+### Generated from telemetry (new)
+
+A scheduled sweep reads stored telemetry every 10 minutes and derives
+trips automatically:
+
+- **Ignition** is authoritative when the tracker reports it — ignition
+  off ends a trip immediately, with no timeout.
+- **Movement** is the fallback for devices that do not report ignition:
+  sustained speed starts a trip, a sustained stop ends it.
+- A **signal gap** ends the trip at the last known fix rather than
+  stretching it across the silence.
+
+Generated trips are marked `created_from: 'gps'`, carry start/end times,
+duration, distance (odometer preferred, GPS path as fallback) and the
+reason they ended. They are idempotent — re-running the sweep never
+duplicates a journey.
+
+**If your trackers report less often than hourly**, ask an administrator
+to lower `signalGapMinutes`. Left at the default with a slower cadence,
+every journey fragments into stubs that are then discarded, and you get
+**no trips at all** — silently.
+
+### Why yours were empty
 
 `tbltrips` has **zero rows**, and one reason is a defect fixed in this change
 set: both trip handlers validated the driver with
@@ -194,9 +228,32 @@ This matters beyond the Trips page, because trip distance is the input to:
 - the fallback distance the fuel KPIs use when odometer readings are missing
 - utilisation
 
-**A trip needs `start_odometer` and `end_odometer`, or an explicit
-`trip_distance`.** Without one of those the trip carries no distance and
-contributes nothing downstream, even though it saves successfully.
+**A manually entered trip needs `start_odometer` and `end_odometer`, or
+an explicit `trip_distance`.** Without one of those the trip carries no
+distance and contributes nothing downstream, even though it saves
+successfully.
+
+### Route playback
+
+Open any trip and replay it: `GET /api/trips/:id/playback` returns the
+telemetry recorded between its start and end, ordered, with each point
+offset from the trip start so a timeline can scrub it.
+
+The route is **reconstructed, not stored** — a busy vehicle produces
+~1,700 fixes a day, and a stored polyline would both duplicate the
+largest collection in the database and go stale when the provider
+backfills older readings.
+
+Three honesty properties worth knowing:
+
+- a long track is **evenly sampled** for display and says so, always
+  keeping the first and last point (dropping the tail would render the
+  trip as ending somewhere the vehicle never stopped);
+- `speed` and `heading` are **omitted when unreported**, never defaulted
+  — `heading: 0` is due north, not "unknown";
+- when there is no track the response says **why** (`no-time-window`,
+  `no-vehicle-reference`, `no-readings`) rather than returning an empty
+  array that looks like "no GPS".
 
 ---
 

@@ -239,6 +239,30 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
     confirmed: true,
   },
   {
+    module: 'trip-generation',
+    collections: ['tbltrip_detection_state'],
+    /**
+     * PLATFORM, not org-unit, and deliberately so.
+     *
+     * This collection holds no business data: one document per vehicle
+     * carrying a watermark timestamp and a partial in-flight aggregate,
+     * both derived from readings the tenant already owns. It has no read
+     * API, is never returned to a user, and is written only by the trip
+     * generation sweep.
+     *
+     * It IS tenant-scoped in the repository -- a watermark keyed only by
+     * vehicleId would let one tenant's sweep advance another's -- but
+     * there is nothing here for an org-unit predicate to protect, and
+     * registering it 'org-unit' would oblige a scoped read path that
+     * should not exist.
+     */
+    level: 'platform',
+    rationale:
+      'Sweep bookkeeping (per-vehicle watermark + in-flight trip state). Tenant-scoped ' +
+      'in the repository; no user-facing read path, so no org-unit predicate applies.',
+    confirmed: true,
+  },
+  {
     module: 'notifications',
     collections: ['tblnotifications'],
     level: 'org-unit',
@@ -510,7 +534,15 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
   },
   {
     module: 'webhooks',
-    collections: ['tblwebhooks', 'tblwebhookdeliveries'],
+    /**
+     * CORRECTED from 'tblwebhooks'. No such collection exists --
+     * WebhookSubscriptionRepository declares
+     * `collectionName = 'tblwebhooksubscriptions'`, and indexes.ts
+     * indexes that name. The registry drives the backfill and audit
+     * tooling, so a name nothing matches means this collection was
+     * simply never covered by any of it.
+     */
+    collections: ['tblwebhooksubscriptions', 'tblwebhookdeliveries'],
     level: 'organization',
     rationale: 'Subscriptions are organization-level integration config.',
     confirmed: true,

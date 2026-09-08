@@ -343,10 +343,26 @@ describe('Phase 6: architecture guards', () => {
   it('which events move money is an EXPLICIT map, not a convention', () => {
     // A naming convention would silently start posting the moment
     // somebody named a new event `SomethingCreated`.
+    //
+    // THIS TEST USED TO ASSERT `code).toContain('FuelLogCreated')`.
+    //
+    // `FuelLogCreated` is not an event. The published name is
+    // `FuelLogged`. So this assertion was PINNING THE BUG IN PLACE: the
+    // ledger received expenses only, fuel never posted, and the test
+    // suite required it to stay that way. Fixing the handler turned this
+    // test red, which is the only reason the pinning was noticed.
+    //
+    // The lesson is in the assertion shape, not the string. Checking
+    // that source text contains a literal proves the literal is present;
+    // it proves nothing about whether the literal MEANS anything. The
+    // map now uses event-name constants, and
+    // tests/security/allocation-posting-wiring.spec.ts checks the
+    // property that actually matters -- every mapped name is a
+    // registered event that something publishes.
     const code = codeOf('server/events/handlers/finance/AllocationPostingHandler.ts');
     expect(code).toContain('POSTING_EVENTS');
-    expect(code).toContain('ExpenseCreated');
-    expect(code).toContain('FuelLogCreated');
+    expect(code).toContain('EXPENSE_CREATED');
+    expect(code).toContain('FUEL_LOGGED');
   });
 
   it('expenses carry a currency field', () => {
