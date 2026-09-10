@@ -127,19 +127,17 @@ export class TripPlaybackService {
     const trip = (await tripRepository.findById(tripId, context.organizationId)) as Trip | null;
     if (!trip) throw new NotFoundError('Trip not found');
 
-    const tripOrgUnitId = trip.orgUnitId;
-    if (tripOrgUnitId && !tenantScopeService.canAccessOrgUnit(context, tripOrgUnitId)) {
-      throw new NotFoundError('Trip not found');
-    }
     /**
      * A trip with NO orgUnitId is reachable only by an org-wide role.
-     * Fail-closed, and deliberately stricter than the sibling
-     * `loadInScopeTrip` helpers, which allow it -- those predate the
-     * backfill and cannot tighten without locking everyone out of legacy
-     * rows. This is a NEW endpoint with no legacy readers, so it starts
-     * closed.
+     *
+     * This was written here as two checks because the sibling
+     * `loadInScopeTrip` helpers allowed unassigned rows and could not
+     * tighten before the backfill had run. They have since been closed,
+     * so both halves now live in one predicate --
+     * tenantScopeService.canAccessRecord -- and the whole codebase has a
+     * single answer to "may this caller touch this record".
      */
-    if (!tripOrgUnitId && context.accessibleOrgUnitIds !== null) {
+    if (!tenantScopeService.canAccessRecord(context, trip.orgUnitId)) {
       throw new NotFoundError('Trip not found');
     }
 

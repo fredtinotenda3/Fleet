@@ -13,6 +13,7 @@ import { formatCurrency } from '@/shared/utils/currency.utils';
 import { formatDate } from '@/shared/utils/date.utils';
 import { getChartColor } from '@/shared/utils/chart.utils';
 import type { CategorySummary } from '@/shared/types/expense.types';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 interface ExpenseCategoryChartProps {
   /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
@@ -80,7 +81,20 @@ export function ExpenseCategoryChart({ licensePlate }: ExpenseCategoryChartProps
     );
   }
 
-  if (error || chartData.length === 0) {
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Expense distribution</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ChartLoadError />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (chartData.length === 0) {
     return (
       <Card>
         <CardHeader>

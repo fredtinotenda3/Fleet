@@ -10,6 +10,7 @@ import { FuelLogDrawer } from './FuelLogDrawer';
 import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { MonthlyFuelConsumptionPoint } from '../types';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 interface FuelMonthlyTrendChartProps {
   /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
@@ -68,7 +69,20 @@ export function FuelMonthlyTrendChart({ licensePlate }: FuelMonthlyTrendChartPro
     );
   }
 
-  if (error || !monthlyData || monthlyData.length === 0) {
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Monthly fuel consumption</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ChartLoadError />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!monthlyData || monthlyData.length === 0) {
     return (
       <Card>
         <CardHeader>

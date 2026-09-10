@@ -2,7 +2,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/frontend/modules/auth/hooks/useAuth';
 import { useCurrentOrganization } from '../hooks/useCurrentOrganization';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
@@ -26,11 +26,47 @@ const TABS = [
   { value: 'reporting', label: 'Reporting' },
 ] as const;
 
+type TabValue = (typeof TABS)[number]['value'];
+
+function isTabValue(value: string | null): value is TabValue {
+  return TABS.some((t) => t.value === value);
+}
+
 export function OrganizationAdvancedPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user } = useAuth();
   const { organization, currentUserRole, isLoading } = useCurrentOrganization(user?.id);
-  const [tab, setTab] = useState<(typeof TABS)[number]['value']>('feature-flags');
+
+  /*
+    ?tab= WAS DECLARED AND IGNORED.
+
+    ORGANIZATION_ROUTES.advanced exposes a deep link for all five tabs
+    (`/organizations/advanced?tab=plugins` and four siblings) and this
+    page initialised `useState('feature-flags')` and never read
+    searchParams. Every one of those links silently landed on Feature
+    flags -- including the sidebar's "API Keys" entry, which pointed
+    here and therefore took an administrator to the wrong tab of a page
+    that does not contain API keys at all. (That entry now points at
+    /organizations/api-keys, where the UI actually lives.)
+
+    The parameter is also WRITTEN BACK on change, so the tab a person is
+    looking at is the tab they can bookmark, share or reload into --
+    which is what a query parameter in a route constant implies.
+    `router.replace` with `scroll: false` keeps it out of the history
+    stack: tab changes are not navigations a Back button should undo.
+  */
+  const initialTab: TabValue = isTabValue(searchParams.get('tab'))
+    ? (searchParams.get('tab') as TabValue)
+    : 'feature-flags';
+  const [tab, setTab] = useState<TabValue>(initialTab);
+
+  const selectTab = (value: TabValue) => {
+    setTab(value);
+    const next = new URLSearchParams(searchParams.toString());
+    next.set('tab', value);
+    router.replace(`${ORGANIZATION_ROUTES.advanced.root}?${next.toString()}`, { scroll: false });
+  };
 
   if (isLoading || !organization) {
     return <PageLoader label="Loading advanced administration" />;
@@ -54,7 +90,7 @@ export function OrganizationAdvancedPage() {
         description={`Feature flags, billing, plugins, AI models, and reporting defaults for ${organization.name}.`}
       />
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
+      <Tabs value={tab} onValueChange={(v) => selectTab(v as TabValue)}>
         <TabsList>
           {TABS.map((t) => (
             <TabsTrigger key={t.value} value={t.value}>

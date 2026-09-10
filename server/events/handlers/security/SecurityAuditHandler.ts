@@ -16,6 +16,7 @@ import {
 } from '../../event-names';
 import { resolveOrganization } from '@/server/tenancy/organization-resolver';
 import { resolveEventTenantOrWarn } from '../../utils/event-tenant.utils';
+import { monitoring } from '@/infrastructure/monitoring/logger';
 
 /**
  * Bridges the Slice 6c threat-detection events onto the audit ledger
@@ -52,7 +53,17 @@ export class SecurityAuditHandler implements IEventHandler<DomainEvent> {
     });
 
     if (severity === 'critical') {
-      await this.notifyOwners(event, tenantId).catch(() => undefined);
+      await this.notifyOwners(event, tenantId).catch((error: unknown) =>
+        // A CRITICAL security event -- a brute-force attempt, an account
+        // lockout, an audit-chain integrity failure. Swallowing the
+        // failure to notify the organization's owners left no record
+        // that they were never told.
+        monitoring.logError(
+          '[security-audit] Owner notification failed for a CRITICAL event',
+          error as Error,
+          { eventName: event.eventName, eventId: event.eventId, tenantId }
+        )
+      );
     }
   }
 

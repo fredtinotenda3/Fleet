@@ -4,7 +4,6 @@ import { NotificationWorker } from './notification.worker';
 import { EmailWorker } from './email.worker';
 import { SmsWorker } from './sms.worker';
 import { webhookWorker } from './webhook.worker';
-import { ReportWorker } from './report.worker';
 import { reportExecutionWorker } from './report-execution.worker';
 import { MaintenanceWorker } from './maintenance.worker';
 import { BillingWorker } from './billing.worker';
@@ -126,7 +125,22 @@ export async function bootstrapWorkers(): Promise<void> {
     new EmailWorker(),
     new SmsWorker(),
     webhookWorker,
-    new ReportWorker(),
+    /**
+     * ONE consumer on the 'export-data' queue, not two.
+     *
+     * `ReportWorker` also subscribed to this queue (`JobType.EXPORT_DATA`
+     * === 'export-data'), so BullMQ handed each job to whichever of the
+     * two happened to pick it up. ReportWorker handles only
+     * `kind: 'execution'` and RETURNS SILENTLY on anything else -- so a
+     * `kind: 'scheduled'` job landing on it was marked COMPLETED without
+     * the report ever being generated or emailed. A completed job is
+     * indistinguishable from a delivered one: no error, no retry, no
+     * dead letter. Roughly half of all scheduled reports vanished.
+     *
+     * ReportExecutionWorker is a strict superset -- it handles both
+     * kinds and THROWS on an unknown one, which is the honest behaviour
+     * -- so ReportWorker was removed rather than repaired.
+     */
     reportExecutionWorker,
     new MaintenanceWorker('check-overdue'),
     new MaintenanceWorker('process-reminders'),

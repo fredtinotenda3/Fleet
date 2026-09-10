@@ -11,6 +11,7 @@ import {
   useExpenseBreakdownWidget,
   useFuelTrendsWidget,
 } from '@/frontend/modules/dashboard/hooks/useDashboardData';
+import { fleetPresence, zeroTone } from '@/frontend/modules/onboarding/utils/empty-state-copy';
 
 /**
  * The four figures at the top of the dashboard.
@@ -64,9 +65,25 @@ export function KPIsWidget() {
         icon={<Wrench aria-hidden="true" />}
         loading={maintenance.isLoading}
         error={maintenance.isError}
-        // Tone is derived only from a value that was actually received. An
-        // absent response is neutral, never "positive" — that was the bug.
-        tone={overdueCount === undefined ? 'neutral' : overdueCount > 0 ? 'critical' : 'positive'}
+        /*
+          Tone is derived only from a value that was actually received. An
+          absent response is neutral, never "positive" — that was the
+          original bug.
+
+          EMPTY-ORGANISATION ROUND: a received 0 was still painted green
+          unconditionally, so an organisation with no vehicles was
+          congratulated on having no overdue maintenance. Zero out of
+          zero is not an achievement. `zeroTone` earns the green only
+          once there is a fleet the zero could be about; the fleet size
+          is already in hand here, so this costs no extra request.
+        */
+        tone={
+          overdueCount === undefined
+            ? 'neutral'
+            : overdueCount > 0
+              ? 'critical'
+              : zeroTone(fleetPresence(total, vehicleStats.isSuccess))
+        }
         href="/maintenance/overdue"
       />
 

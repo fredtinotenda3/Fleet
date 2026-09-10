@@ -384,7 +384,10 @@ export const NAV_SECTIONS: NavSection[] = [
       {
         key: 'api-keys',
         label: 'API Keys',
-        href: '/organizations/advanced?tab=plugins',
+        // Was '/organizations/advanced?tab=plugins': a page that ignored
+        // the tab parameter AND contains no API-key UI on any tab. The
+        // real UI now has a tenant-reachable route.
+        href: '/organizations/api-keys',
         icon: KeyRound,
         permissions: [Permission.API_KEY_MANAGE],
       },

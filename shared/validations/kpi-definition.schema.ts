@@ -11,6 +11,7 @@
 // stay in sync.
 
 import { z } from 'zod';
+import { partialForUpdate } from './update-schema.utils';
 
 const reportFilterConditionSchema = z.object({
   field: z.string().min(1),
@@ -43,7 +44,7 @@ export const kpiDefinitionCreateSchema = z.object({
   targetValue: z.number().optional(),
 });
 
-export const kpiDefinitionUpdateSchema = kpiDefinitionCreateSchema.partial();
+export const kpiDefinitionUpdateSchema = partialForUpdate(kpiDefinitionCreateSchema);
 
 export type KpiDefinitionCreateInput = z.infer<typeof kpiDefinitionCreateSchema>;
 export type KpiDefinitionUpdateInput = z.infer<typeof kpiDefinitionUpdateSchema>;

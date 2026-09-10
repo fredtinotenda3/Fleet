@@ -4,7 +4,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { AlertTriangle, ArrowLeft, Info, Network, Plus, RefreshCw } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Network, Plus, RefreshCw } from 'lucide-react';
 
 import { useAuth } from '@/frontend/modules/auth/hooks/useAuth';
 import { Permission, permissionService } from '@/server/permissions/roles';
@@ -22,13 +22,16 @@ import {
   CardTitle,
 } from '@/frontend/shared/ui/data-display/card';
 
-import { useCreateOrgUnit, useOrgUnitsForTenant, usePlatformOrganization } from '../hooks';
+import {
+  useCreateOrganizationOrgUnit,
+  useOrganizationOrgUnits,
+  usePlatformOrganization,
+} from '../hooks';
 import { OrgUnitTable } from '../components/OrgUnitTable';
 import { OrgUnitForm } from '../components/OrgUnitForm';
 import { OrganizationMembersSection } from '../components/OrganizationMembersSection';
 import { PLATFORM_ADMIN_ROUTES } from '../routes';
 import {
-  canManageOrgUnitsFor,
   formatDate,
   formatSeats,
   organizationStatusLabel,
@@ -52,25 +55,34 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
 }
 
 /**
- * One organization, plus its branches where the API can answer for them.
+ * One organization and its branch tree.
  *
- * READ THE ORG-UNIT SECTION BELOW BEFORE CHANGING IT. `/api/tenancy/
- * org-units` derives `organizationId` from the CALLER'S SESSION on both
- * GET and POST -- `OrgUnitController.listOrgUnits` passes
- * `organizationId: tenantId`, and the create path spreads
+ * ---------------------------------------------------------------
+ * WHY THE ORG-UNIT SECTION USES THE PLATFORM ROUTES
+ * ---------------------------------------------------------------
+ * This section was gated off for three rounds, and the reason is worth
+ * keeping: `/api/tenancy/org-units` derives `organizationId` from the
+ * CALLER'S SESSION on both GET and POST -- the list passes
+ * `organizationId: tenantId`, and the create spreads
  * `{ ...parsed.data, organizationId: tenantId }` with the session's
  * tenant LAST, so a body naming another organization is overridden
  * rather than honoured.
  *
- * So there is no way to list or create branches for a tenant other than
- * the caller's own. Rendering the list anyway would show a platform
- * admin THEIR OWN branches under someone else's organization name, and
- * "Add branch" there would create it in their own tenant -- with every
- * request returning 200. That is the worst available outcome: wrong
- * data that looks right and a write that lands somewhere else.
+ * Rendering that here would have shown a platform admin THEIR OWN
+ * branches under someone else's organization name, and "Add unit" would
+ * have created the unit in their own tenant -- with every request
+ * returning 200. Wrong data that looks right, and a write that lands
+ * somewhere else.
  *
- * `canManageOrgUnitsFor` therefore gates the whole section, and the
- * unavailable case explains itself instead of showing an empty table.
+ * `GET`/`POST /api/platform/organizations/:id/org-units` take the
+ * organization from the PATH, resolve it to a real organization's slug,
+ * and are guarded by PLATFORM_VIEW / PLATFORM_MANAGE plus the literal
+ * SUPER_ADMIN. So this page now shows the branches that actually belong
+ * to the customer named at the top of it.
+ *
+ * DO NOT swap these hooks back to `useOrgUnitsForTenant` /
+ * `useCreateOrgUnit`: those still hit the session-scoped routes and are
+ * correct only on the caller's own organization.
  */
 export function OrganizationDetailPage({ organizationId }: OrganizationDetailPageProps) {
   const router = useRouter();
@@ -94,12 +106,15 @@ export function OrganizationDetailPage({ organizationId }: OrganizationDetailPag
   } = usePlatformOrganization(organizationId, { enabled: hasAccess });
 
   const sessionTenantId = user?.tenantId ?? null;
-  const orgUnitsAvailable = canManageOrgUnitsFor(organization, sessionTenantId);
 
-  const orgUnits = useOrgUnitsForTenant(sessionTenantId ?? '', {
-    enabled: hasAccess && orgUnitsAvailable,
-  });
-  const createOrgUnit = useCreateOrgUnit(sessionTenantId ?? '');
+  /**
+   * Keyed by the ORGANIZATION being viewed, not by the session tenant.
+   * `/api/platform/organizations/:id/org-units` takes the organization
+   * from the path, so this page now shows the branches that actually
+   * belong to the customer whose name is at the top of it.
+   */
+  const orgUnits = useOrganizationOrgUnits(organizationId, { enabled: hasAccess });
+  const createOrgUnit = useCreateOrganizationOrgUnit(organizationId);
 
   if (!hasAccess) {
     return (
@@ -206,7 +221,7 @@ export function OrganizationDetailPage({ organizationId }: OrganizationDetailPag
       <Card>
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
           <CardTitle>Branches and units</CardTitle>
-          {orgUnitsAvailable && canManageUnits && (
+          {canManageUnits && (
             <Button type="button" size="sm" onClick={() => setCreateUnitOpen(true)}>
               <Plus className="size-4" aria-hidden="true" />
               Add unit
@@ -214,25 +229,7 @@ export function OrganizationDetailPage({ organizationId }: OrganizationDetailPag
           )}
         </CardHeader>
         <CardContent>
-          {!orgUnitsAvailable ? (
-            /*
-              The honest answer, not an empty table. See this component's
-              header: the org-unit endpoints answer only for the caller's
-              own tenant, so showing anything here would be showing the
-              wrong organization's branches.
-            */
-            <Alert>
-              <Info className="size-4" aria-hidden="true" />
-              <AlertTitle>Branches aren&apos;t available for this organization</AlertTitle>
-              <AlertDescription>
-                The org-unit API resolves the organization from the signed-in session, so it can
-                only list or create branches for your own organization
-                {sessionTenantId ? ` (${sessionTenantId})` : ''}. Managing another tenant&apos;s
-                branches from here needs a platform-scoped org-unit endpoint, which does not exist
-                yet.
-              </AlertDescription>
-            </Alert>
-          ) : orgUnits.isLoading ? (
+          {orgUnits.isLoading ? (
             <div className="space-y-2">
               <Skeleton className="h-9 w-full" />
               <Skeleton className="h-9 w-full" />
@@ -263,7 +260,7 @@ export function OrganizationDetailPage({ organizationId }: OrganizationDetailPag
         </CardContent>
       </Card>
 
-      {orgUnitsAvailable && canManageUnits && (
+      {canManageUnits && (
         <OrgUnitForm
           open={createUnitOpen}
           onClose={() => setCreateUnitOpen(false)}

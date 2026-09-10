@@ -52,6 +52,7 @@ import { Db } from 'mongodb';
 import connectToDatabase from '@/infrastructure/database/mongodb';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 import type { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { normalizeDocumentIds } from '@/server/repositories/document-id.utils';
 import type {
   AttentionDispatchRecord,
   DispatchDeps,
@@ -120,9 +121,9 @@ export class AttentionDispatchRepository implements DispatchDeps {
       ...tenantScopeService.buildFilter<AttentionDispatchRecord>(context, 'orgUnitId'),
     };
 
-    return collection
+    return normalizeDocumentIds<AttentionDispatchRecord>(await collection
       .find(query as never, { sort: { dispatchedAt: -1 }, limit })
-      .toArray() as unknown as Promise<AttentionDispatchRecord[]>;
+      .toArray());
   }
 
   /**

@@ -47,12 +47,44 @@ export class DigitalTwinProjectionHandler implements IEventHandler<DomainEvent> 
           const vehicleId = payload.entityId as string;
           const licensePlate = payload.license_plate as string;
           if (!vehicleId || !licensePlate) return;
+
+          /**
+           * THE STATUS MUST BE FOUND, NOT ASSUMED PRESENT.
+           *
+           * This read `payload.newStatus || payload.status`. The three
+           * events reaching this case do not agree on where the status
+           * lives:
+           *
+           *   VehicleCreatedEvent        -> payload.status         ✓
+           *   VehicleStatusChangedEvent  -> payload.newStatus      ✓
+           *   VehicleUpdatedEvent        -> NEITHER; a status change
+           *                                 lives inside payload.changes
+           *
+           * So every ordinary vehicle edit passed
+           * `{'currentState.status': undefined}` into the twin, clearing
+           * or corrupting a field the live map and the fleet dashboards
+           * read -- until the next VehicleStatusChanged happened to
+           * repair it.
+           *
+           * Resolved in order, and when NONE of the three carries a
+           * status the update is skipped entirely rather than written as
+           * undefined. An edit to a vehicle's colour is not a statement
+           * about its status.
+           */
+          const changes = payload.changes as Record<string, unknown> | undefined;
+          const nextStatus =
+            (payload.newStatus as string | undefined) ??
+            (changes?.status as string | undefined) ??
+            (payload.status as string | undefined);
+
+          if (nextStatus === undefined) return;
+
           await digitalTwinService.applyVehicleChange(
             vehicleId,
             licensePlate,
             tenantId,
             {
-              'currentState.status': payload.newStatus || payload.status,
+              'currentState.status': nextStatus,
             },
             event.eventName
           );

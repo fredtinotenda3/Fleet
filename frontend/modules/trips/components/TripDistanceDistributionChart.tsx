@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/fro
 import { useTripDistanceDistribution } from '../hooks/useTripAnalytics';
 import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import type { TripDrawerFilter } from './TripTransactionDrawer';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 interface TripDistanceDistributionChartProps {
   dateRange?: { startDate?: Date; endDate?: Date };
@@ -48,7 +49,20 @@ export function TripDistanceDistributionChart({ dateRange, licensePlate, onDrill
     );
   }
 
-  if (error || !data || data.length === 0) {
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Distance distribution</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ChartLoadError />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!data || data.length === 0) {
     return (
       <Card>
         <CardHeader>

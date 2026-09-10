@@ -14,6 +14,17 @@ interface StatCardProps {
   description?: string;
   icon?: React.ReactNode;
   trend?: { value: number; isPositive: boolean };
+  /**
+   * Renders "Unavailable" instead of a figure when the query behind this
+   * card failed. Forwarded to `MetricCard`, which has always supported
+   * it -- this adapter simply did not pass it on, which is why several
+   * stat rows rendered a confident 0 over a failed request.
+   */
+  error?: boolean;
+  errorMessage?: string;
+  /** Shown when `value` is null/undefined, instead of a fabricated 0. */
+  emptyValue?: string;
+  loading?: boolean;
   className?: string;
 }
 
@@ -31,13 +42,28 @@ interface StatCardProps {
  * See the note in StatsCard.tsx on why `trend.isPositive` is translated
  * rather than passed through.
  */
-export function StatisticCard({ title, value, description, icon, trend, className }: StatCardProps) {
+export function StatisticCard({
+  title,
+  value,
+  description,
+  icon,
+  trend,
+  error = false,
+  errorMessage,
+  emptyValue,
+  loading = false,
+  className,
+}: StatCardProps) {
   return (
     <MetricCard
       label={title}
       value={value}
       hint={description}
       icon={icon}
+      loading={loading}
+      error={error}
+      errorMessage={errorMessage}
+      emptyValue={emptyValue}
       className={className}
       delta={
         trend

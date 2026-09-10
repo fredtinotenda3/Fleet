@@ -20,6 +20,8 @@ interface TripModalProps {
   open: boolean;
   mode: TripModalMode;
   trip?: Trip | null;
+  /** Pre-selects the vehicle when creating. See FuelModal for the rationale. */
+  defaultLicensePlate?: string;
   onOpenChange: (open: boolean) => void;
   onSubmit: (values: TripFormValues) => Promise<unknown>;
 }
@@ -34,8 +36,11 @@ const DESCRIPTIONS: Record<TripModalMode, string> = {
   edit: "Update this trip's details.",
 };
 
-function toFormValues(trip: Trip | null | undefined): Partial<TripFormValues> | undefined {
-  if (!trip) return undefined;
+function toFormValues(
+  trip: Trip | null | undefined,
+  defaultLicensePlate?: string
+): Partial<TripFormValues> | undefined {
+  if (!trip) return defaultLicensePlate ? { license_plate: defaultLicensePlate } : undefined;
   const dateStr = typeof trip.date === 'string' ? trip.date : new Date(trip.date).toISOString();
   return {
     license_plate: trip.license_plate,
@@ -52,7 +57,14 @@ function toFormValues(trip: Trip | null | undefined): Partial<TripFormValues> | 
   };
 }
 
-export function TripModal({ open, mode, trip, onOpenChange, onSubmit }: TripModalProps) {
+export function TripModal({
+  open,
+  mode,
+  trip,
+  defaultLicensePlate,
+  onOpenChange,
+  onSubmit,
+}: TripModalProps) {
   const { data: units = [] } = useDistanceUnits();
   const unitOptions = units.map((u) => ({ value: u.unit_id, label: `${u.name} (${u.symbol})` }));
 
@@ -60,12 +72,16 @@ export function TripModal({ open, mode, trip, onOpenChange, onSubmit }: TripModa
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-form-wide">
         <DialogHeader>
-          <DialogTitle>{TITLES[mode]}</DialogTitle>
+          <DialogTitle>
+            {mode === 'create' && defaultLicensePlate
+              ? `Log a trip for ${defaultLicensePlate}`
+              : TITLES[mode]}
+          </DialogTitle>
           <DialogDescription>{DESCRIPTIONS[mode]}</DialogDescription>
         </DialogHeader>
         <TripForm
-          key={`${mode}-${trip?._id ?? 'new'}`}
-          defaultValues={toFormValues(trip)}
+          key={`${mode}-${trip?._id ?? defaultLicensePlate ?? 'new'}`}
+          defaultValues={toFormValues(trip, defaultLicensePlate)}
           unitOptions={unitOptions}
           onSubmit={async (values) => {
             await onSubmit(values);

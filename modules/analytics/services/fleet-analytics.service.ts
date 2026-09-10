@@ -25,27 +25,55 @@ export interface FleetKPIs {
 export interface OperationalMetrics {
   averageDailyDistance: number;
   averageDailyExpense: number;
-  averageCostPerVehicle: number;
-  vehicleUtilizationRate: number;
-  maintenanceCompletionRate: number;
+  /** `null` when the organisation has no vehicles -- a per-vehicle cost over zero vehicles is undefined, not 0. */
+  averageCostPerVehicle: number | null;
+  /** `null` when the organisation has no vehicles. */
+  vehicleUtilizationRate: number | null;
+  /** `null` when there are no maintenance records at all. NOT 0. */
+  maintenanceCompletionRate: number | null;
 }
 
 export interface CostBreakdown {
   byCategory: Record<string, number>;
   byVehicle: Array<{ license_plate: string; total: number }>;
-  percentageChange: number;
+  /**
+   * `null` when there is no previous period to compare against.
+   *
+   * Was `0`, which renders as "flat vs last period" -- a claim about a
+   * comparison that could not be made. A tenant in its first month saw
+   * "0% change" and read it as stability.
+   */
+  percentageChange: number | null;
 }
 
 export interface FuelEfficiencyTrend {
   month: string;
-  efficiency: number;
+  /**
+   * km per unit of fuel, or `null` when it cannot be computed.
+   *
+   * Was `0` for any month with fuel logged but no trips recorded, which
+   * plots as a catastrophic efficiency COLLAPSE rather than as a gap in
+   * the data. Same defect as fleet-health's fuelEfficiencyAverage, which
+   * was made nullable last round; this one was missed.
+   */
+  efficiency: number | null;
 }
 
 export interface MaintenanceForecast {
   license_plate: string;
   daysUntilDue: number;
-  estimatedCost: number;
-  priority: 'high' | 'medium' | 'low';
+  /**
+   * `null` when the reminder records no estimate.
+   *
+   * Was a hard-coded 500 for every reminder without one -- a fabricated
+   * number summed into a forecast a manager budgets against. Note the
+   * contrast already present in this codebase: ScheduleMaintenanceAction
+   * deliberately OMITS estimated_cost rather than zero-filling it,
+   * because "a 0 here reads as 'free', and it is an input to the
+   * maintenance forecast". A 500 is the same error in the other
+   * direction.
+   */
+  estimatedCost: number | null;
 }
 
 export class FleetAnalyticsService {
@@ -126,14 +154,18 @@ export class FleetAnalyticsService {
     return {
       averageDailyDistance: tripStats.totalDistance / daysDiff,
       averageDailyExpense: expenseStats.total / daysDiff,
+      /*
+        HONEST METRICS. Both of these divided by a vehicle count and
+        fell back to 0. "Average cost per vehicle: $0" and "Utilization
+        rate: 0%" are measurements; the honest answer for a fleet of
+        zero vehicles is that neither quantity is defined. Same
+        reasoning as costPerKm above, which was fixed in the earlier
+        round and is the model these now follow.
+      */
       averageCostPerVehicle:
-        vehicleStats.total > 0
-          ? expenseStats.total / vehicleStats.total
-          : 0,
+        vehicleStats.total > 0 ? expenseStats.total / vehicleStats.total : null,
       vehicleUtilizationRate:
-        vehicleStats.total > 0
-          ? tripStats.totalTrips / vehicleStats.total
-          : 0,
+        vehicleStats.total > 0 ? tripStats.totalTrips / vehicleStats.total : null,
       maintenanceCompletionRate: maintenanceStats.completionRate,
     };
   }
@@ -170,12 +202,13 @@ export class FleetAnalyticsService {
       .sort((a, b) => b.total - a.total)
       .slice(0, 10);
 
+    // null, not 0 -- see CostBreakdown.percentageChange.
     const percentageChange =
       previousPeriodStats.total > 0
         ? ((expenseStats.total - previousPeriodStats.total) /
             previousPeriodStats.total) *
           100
-        : 0;
+        : null;
 
     return {
       byCategory: expenseStats.byType,
@@ -200,11 +233,23 @@ export class FleetAnalyticsService {
       tripsByMonth[month] = (tripsByMonth[month] || 0) + trip.distance;
     });
 
-    return monthlyFuel.map((m) => ({
-      month: m.month,
-      efficiency:
-        m.fuel > 0 ? (tripsByMonth[m.month] || 0) / m.fuel : 0,
-    }));
+    return monthlyFuel.map((m) => {
+      const distance = tripsByMonth[m.month];
+      /**
+       * Two different unknowns, both previously reported as 0:
+       *   - no fuel logged in the month  -> nothing to divide by
+       *   - fuel logged but NO TRIPS     -> 0 / fuel = 0 km/L, which
+       *     plots as the fleet's efficiency collapsing to nothing
+       *
+       * A month with no trip distance is a gap in the record, not a
+       * measurement of zero efficiency.
+       */
+      const measurable = m.fuel > 0 && typeof distance === 'number' && distance > 0;
+      return {
+        month: m.month,
+        efficiency: measurable ? distance / m.fuel : null,
+      };
+    });
   }
 
   async getMaintenanceForecast(
@@ -213,7 +258,6 @@ export class FleetAnalyticsService {
   ): Promise<MaintenanceForecast[]> {
     const upcomingReminders =
       await maintenanceRepository.getUpcomingReminders(tenantId, 30, context);
-    const averageCost = 500;
 
     return upcomingReminders.map((reminder) => {
       const daysUntilDue = Math.ceil(
@@ -228,7 +272,16 @@ export class FleetAnalyticsService {
       return {
         license_plate: reminder.license_plate,
         daysUntilDue,
-        estimatedCost: reminder.estimated_cost || averageCost,
+        /**
+         * The reminder's OWN estimate, or null.
+         *
+         * `reminder.estimated_cost || 500` fabricated a cost for every
+         * reminder that had none -- and, because it used `||` rather
+         * than `??`, silently overwrote a genuine estimate of 0 with
+         * 500 as well.
+         */
+        estimatedCost:
+          typeof reminder.estimated_cost === 'number' ? reminder.estimated_cost : null,
         priority,
       };
     });

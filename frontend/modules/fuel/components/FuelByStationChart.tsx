@@ -22,6 +22,7 @@ import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/chart
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { FuelAnalyticsDateRange } from './FuelAnalyticsFilterBar';
 import type { FuelByStationRow } from '../types';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 type SortMode = 'spend' | 'visits';
 
@@ -112,7 +113,9 @@ export function FuelByStationChart({ dateRange, licensePlate }: FuelByStationCha
         <CardContent>
           {isLoading ? (
             <div className="rounded-lg h-60 skeleton" />
-          ) : error || sorted.length === 0 ? (
+          ) : error ? (
+            <ChartLoadError />
+          ) : sorted.length === 0 ? (
             <p className="text-sm text-muted-foreground">No station data in this range.</p>
           ) : (
             <div style={{ width: '100%', height: Math.max(260, sorted.length * 36) }}>

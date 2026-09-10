@@ -77,7 +77,7 @@ export class WorkshopBayRepository extends BaseRepository<WorkshopBay> {
       query.tenantId = context.organizationId;
     }
     Object.assign(query, tenantScopeService.buildFilter<WorkshopBay>(context, 'orgUnitId'));
-    return collection.find(query as Filter<WorkshopBay>).toArray() as Promise<WorkshopBay[]>;
+    return this.normalizeDocs<WorkshopBay>(await collection.find(query as Filter<WorkshopBay>).toArray());
   }
 }
 
@@ -105,7 +105,7 @@ export class MechanicAssignmentRepository extends BaseRepository<MechanicAssignm
       query.tenantId = context.organizationId;
     }
     Object.assign(query, tenantScopeService.buildFilter<MechanicAssignment>(context, 'orgUnitId'));
-    return collection.find(query as Filter<MechanicAssignment>).toArray() as Promise<MechanicAssignment[]>;
+    return this.normalizeDocs<MechanicAssignment>(await collection.find(query as Filter<MechanicAssignment>).toArray());
   }
 }
 

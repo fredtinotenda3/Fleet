@@ -25,6 +25,21 @@ export class FuelLoggedEvent extends DomainEvent {
       date: fuelLog.date,
       /** Currency travels with the amount, so a posting is never converted at an assumed 1:1. */
       currency: fuelLog.currency,
+      /**
+       * ADDED alongside the driver_id fix.
+       *
+       * AllocationPostingHandler already had a line reading
+       * `payload.driverId` and copying it onto the posting -- and no
+       * event in this codebase has ever published `driverId`, so the
+       * ledger's driver column has always been empty. That is the same
+       * "handler keyed on a name nothing publishes" family as the event
+       * map itself and the AI trigger before it.
+       *
+       * Published under the record's own field name, `driver_id`; the
+       * handler does the snake -> camel mapping in one documented place
+       * rather than every event guessing the ledger's spelling.
+       */
+      driver_id: fuelLog.driver_id,
       tenantId: fuelLog.tenantId,
     }, metadata);
   }

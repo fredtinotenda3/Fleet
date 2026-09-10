@@ -8,6 +8,7 @@ import { Settings, Users, Shield, FileClock } from 'lucide-react';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { PageLoader } from '@/frontend/shared/loading/PageLoader';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
+import { GetStartedPanel } from '@/frontend/modules/onboarding';
 import { useCurrentOrganization } from '../hooks/useCurrentOrganization';
 import { useOrganizationStatistics } from '../hooks/useOrganizations';
 import { OverviewStatsGrid } from '../components/dashboard/OverviewStatsGrid';
@@ -32,9 +33,11 @@ export function OrganizationDashboardPage({ currentUserId }: OrganizationDashboa
   const router = useRouter();
   const { organization, currentUserRole, isLoading, isError } =
     useCurrentOrganization(currentUserId);
-  const { data: statistics, isLoading: isStatsLoading } = useOrganizationStatistics(
-    organization?._id
-  );
+  const {
+    data: statistics,
+    isLoading: isStatsLoading,
+    isError: isStatsError,
+  } = useOrganizationStatistics(organization?._id);
 
   if (isLoading) {
     return <PageLoader label="Loading organization dashboard" />;
@@ -62,10 +65,29 @@ export function OrganizationDashboardPage({ currentUserId }: OrganizationDashboa
         description="Organization overview and key metrics"
       />
 
+      {/*
+        EMPTY-ORGANISATION FIX. `GetStartedPanel` was mounted only in
+        FleetDashboardPage -- but app/(protected)/dashboard/page.tsx routes
+        anyone holding ORG_MANAGE here instead, and the three roles that
+        hold ORG_MANAGE are exactly the roles that hold all four of the
+        checklist's anchor permissions. So on a genuinely fresh
+        organisation the setup checklist was unreachable by the ONLY
+        accounts able to act on it: the founding owner saw member counts
+        and a billing card, and nothing telling them to add a vehicle.
+
+        The panel derives its own state from real data and renders nothing
+        once setup is complete or dismissed, so mounting it here costs an
+        established organisation nothing. It sits ABOVE the stats grid
+        deliberately -- a wall of zeroes is not the first thing a new
+        customer should have to interpret.
+      */}
+      <GetStartedPanel />
+
       <OverviewStatsGrid
         statistics={statistics}
         currency={organization.settings.currency}
         isLoading={isStatsLoading}
+        isError={isStatsError}
       />
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
@@ -78,7 +100,7 @@ export function OrganizationDashboardPage({ currentUserId }: OrganizationDashboa
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        <UsageCard statistics={statistics} isLoading={isStatsLoading} />
+        <UsageCard statistics={statistics} isLoading={isStatsLoading} isError={isStatsError} />
 
         <div className="p-5 surface-card xl:col-span-2">
           <h3 className="mb-4 text-h3">Quick links</h3>

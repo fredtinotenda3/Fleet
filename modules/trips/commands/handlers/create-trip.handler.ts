@@ -9,7 +9,7 @@ import { ValidationError, AppError } from '@/server/errors/app.errors';
 import { validateWithZod } from '@/shared/utils/validation.utils';
 import connectToDatabase from '@/infrastructure/database/mongodb';
 import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-resolver.service';
-import { driverRepository } from '@/modules/drivers/repositories/driver.repository';
+import { driverWriteResolver } from '@/modules/drivers/services/driver-write-resolver.service';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { TripCreatedEvent } from '@/modules/trips/events/TripCreatedEvent';
 
@@ -134,7 +134,7 @@ export class CreateTripHandler implements ICommandHandler<CreateTripCommand, Tri
      */
     if (validated.driver_id) {
       /**
-       * TWO FIXES.
+       * THREE FIXES, ARRIVED AT OVER TWO ROUNDS.
        *
        * 1. TYPE. This was `findOne({ _id: validated.driver_id as any })`
        *    -- a STRING compared against tbldrivers._id, which Mongo
@@ -143,24 +143,23 @@ export class CreateTripHandler implements ICommandHandler<CreateTripCommand, Tri
        *    driver was rejected with DRIVER_NOT_FOUND. The `as any` is
        *    what let it compile. tbltrips being empty in this
        *    deployment is consistent with that.
-       * 2. SCOPE. There was no tenantId filter, so a driver belonging
+       * 2. TENANT. There was no tenantId filter, so a driver belonging
        *    to another tenant would have satisfied the check.
+       * 3. ORG UNIT. Fixing 1 and 2 left a branch manager able to name
+       *    a driver from another branch -- and every figure derived
+       *    from the trip (scorecard, risk, cost per driver) would then
+       *    land on a roster they cannot see. The vehicle on this same
+       *    record has been scope-checked since last round; the driver
+       *    had not been.
        *
-       * driverRepository.findById does both correctly (ObjectId.isValid
-       * guard, conversion, tenant filter), which is why this calls it
-       * rather than repairing the raw query in place.
+       * driverWriteResolver does all three, and reports an out-of-scope
+       * driver identically to a missing one so the error cannot be used
+       * to enumerate another branch's roster.
        */
-      const driver = await driverRepository.findById(
+      await driverWriteResolver.resolveForWrite(
         String(validated.driver_id),
-        command.tenantId
+        command.scope
       );
-      if (!driver) {
-        throw new AppError(
-          `Driver "${validated.driver_id}" not found`,
-          'DRIVER_NOT_FOUND',
-          400
-        );
-      }
     }
 
     const distance_calculated = calculateDistance({

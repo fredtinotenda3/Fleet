@@ -52,10 +52,10 @@ export class ExpenseTypeRepository extends BaseRepository<ExpenseType> {
     extra: Record<string, unknown> = {}
   ): Promise<ExpenseType[]> {
     const collection = await this.getCollection();
-    return collection
+    return this.normalizeDocs<ExpenseType>(await collection
       .find({ ...extra, ...this.sharedCatalogueFilter(tenantId) } as never)
       .sort({ sortOrder: 1, name: 1 })
-      .toArray() as unknown as Promise<ExpenseType[]>;
+      .toArray());
   }
 
   async findByName(name: string, tenantId: string): Promise<ExpenseType | null> {

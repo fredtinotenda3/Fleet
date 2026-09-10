@@ -42,20 +42,36 @@ export function AIRecommendationsWidget() {
       onRefresh={() => refetch()}
     >
       <div className="space-y-4">
-        {data?.fleetHealth && (
-          <div className="flex items-center gap-4 p-3 border rounded-lg border-border">
-            <div className={`text-h1 font-semibold ${scoreColor(data.fleetHealth.overallScore)}`}>
-              {data.fleetHealth.overallScore}
-              <span className="font-normal text-body-sm text-muted-foreground">/100</span>
-            </div>
-            <div>
+        {/*
+          `overallScore` is null when no vehicle was scored. Rendering it
+          through scoreColor() would paint a red 0/100 on a fleet that
+          does not exist yet -- a fabricated verdict on an absence. The
+          null branch says what is actually true and what to do about it.
+        */}
+        {data?.fleetHealth &&
+          (data.fleetHealth.overallScore === null ? (
+            <div className="p-3 border rounded-lg border-border">
               <p className="font-medium text-body-sm text-foreground">Fleet health score</p>
               <p className="text-caption text-muted-foreground">
-                Based on {data.fleetHealth.vehicleScores.length} vehicles
+                Not measured — no vehicles have been scored yet. Add a vehicle to start
+                tracking fleet health.
               </p>
             </div>
-          </div>
-        )}
+          ) : (
+            <div className="flex items-center gap-4 p-3 border rounded-lg border-border">
+              <div className={`text-h1 font-semibold ${scoreColor(data.fleetHealth.overallScore)}`}>
+                {data.fleetHealth.overallScore}
+                <span className="font-normal text-body-sm text-muted-foreground">/100</span>
+              </div>
+              <div>
+                <p className="font-medium text-body-sm text-foreground">Fleet health score</p>
+                <p className="text-caption text-muted-foreground">
+                  Based on {data.fleetHealth.vehicleScores.length}{' '}
+                  {data.fleetHealth.vehicleScores.length === 1 ? 'vehicle' : 'vehicles'}
+                </p>
+              </div>
+            </div>
+          ))}
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <div className="rounded-md border border-border p-2.5 text-center">

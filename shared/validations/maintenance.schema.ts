@@ -1,6 +1,7 @@
 // shared/validations/maintenance.schema.ts
 
 import { z } from 'zod';
+import { partialForUpdate } from './update-schema.utils';
 
 const reminderStatusSchema = z.enum(['pending', 'completed', 'overdue', 'cancelled']);
 const prioritySchema = z.enum(['low', 'medium', 'high', 'critical']);
@@ -31,7 +32,7 @@ export const reminderSchema = z.object({
 
 export const reminderCreateSchema = reminderSchema;
 
-export const reminderUpdateSchema = reminderSchema.partial().extend({
+export const reminderUpdateSchema = partialForUpdate(reminderSchema).extend({
   _id: z.string().min(1, 'Reminder ID is required'),
   status: reminderStatusSchema.optional(),
   completion_date: z.date().optional().nullable(),

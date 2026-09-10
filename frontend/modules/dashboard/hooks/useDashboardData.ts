@@ -5,7 +5,14 @@ import { dashboardApi } from '../services/dashboard.api';
 import type { FuelTrendPoint, ExpenseCategoryPoint } from '../types';
 import type { ExpenseStats } from '@/shared/types/expense.types';
 
-const dashboardKeys = {
+/**
+ * Exported so that hooks OUTSIDE this file (useSetupProgress,
+ * useFleetPresence) can reuse the exact same key and land on this
+ * module's cache entry rather than issuing a second request. They
+ * previously hand-wrote the tuple, which works right up until a key
+ * changes here and the duplicate silently becomes a separate query.
+ */
+export const dashboardKeys = {
   vehicleStats: ['dashboard', 'vehicle-stats'] as const,
   aiSummary: ['dashboard', 'ai-summary'] as const,
   needsAttention: ['dashboard', 'needs-attention'] as const,

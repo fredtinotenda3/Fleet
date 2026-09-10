@@ -10,6 +10,7 @@ import { ExpenseTransactionDrawer } from './ExpenseTransactionDrawer';
 import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { ExpenseAnalyticsDateRange } from './ExpenseAnalyticsFilterBar';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 interface ExpenseHeatmapChartProps {
   dateRange: ExpenseAnalyticsDateRange;
@@ -90,7 +91,9 @@ export function ExpenseHeatmapChart({ dateRange, licensePlate }: ExpenseHeatmapC
       <CardContent>
         {isLoading ? (
           <div className="rounded-lg h-60 skeleton" />
-        ) : error || categories.length === 0 || months.length === 0 ? (
+        ) : error ? (
+          <ChartLoadError />
+        ) : categories.length === 0 || months.length === 0 ? (
           <p className="text-sm text-muted-foreground">No expenses in this range.</p>
         ) : (
           <div className="overflow-x-auto">

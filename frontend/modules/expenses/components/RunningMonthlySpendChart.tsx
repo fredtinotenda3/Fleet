@@ -10,6 +10,7 @@ import { useExpenseDrawer } from '../hooks/useExpenseDrawer';
 import { ExpenseTransactionDrawer } from './ExpenseTransactionDrawer';
 import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 interface RunningMonthlySpendChartProps {
   /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
@@ -90,7 +91,9 @@ export function RunningMonthlySpendChart({ licensePlate }: RunningMonthlySpendCh
         <CardContent>
           {isLoading ? (
             <div className="rounded-lg h-60 skeleton" />
-          ) : error || chartData.length === 0 ? (
+          ) : error ? (
+            <ChartLoadError />
+          ) : chartData.length === 0 ? (
             <p className="text-sm text-muted-foreground">No expenses in this range.</p>
           ) : (
             <div style={{ width: '100%', height: 260 }}>

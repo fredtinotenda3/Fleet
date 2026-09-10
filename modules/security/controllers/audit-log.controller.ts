@@ -41,11 +41,28 @@ export class AuditLogController {
         tenantId?: string;
       };
 
-      // Non-super-admins only ever see their own tenant's ledger entries,
-      // regardless of what (if anything) they pass as a filter.
+      /*
+        CROSS-TENANT LEAK, FIXED.
+
+        This read `context.isSuperAdmin`, which is the DEPRECATED ALIAS
+        of `canBypassRbac` -- and canBypassRbac is true for
+        ORGANIZATION_OWNER as well as SUPER_ADMIN. The declaration of
+        that field says so in as many words: "@deprecated Alias of
+        canBypassRbac. Never use for data scoping."
+
+        The consequence: any ORGANIZATION_OWNER could pass
+        `?tenantId=<another-org-slug>` and receive that organisation's
+        entire audit ledger -- user ids, entity ids, role changes,
+        deletions. Organisation ownership is self-service (POST
+        /api/organizations carries no permission), so the attack cost
+        was one signup.
+
+        `isPlatformAdmin` is Role.SUPER_ADMIN and nothing else. It is
+        the only flag that may widen a data read beyond one tenant.
+      */
       const scopedFilters = {
         ...filters,
-        tenantId: context.isSuperAdmin ? filters.tenantId : context.tenantId,
+        tenantId: context.isPlatformAdmin ? filters.tenantId : context.tenantId,
       };
 
       const result = await auditLogRepository.findWithFilters(scopedFilters, { page, limit });
@@ -60,7 +77,10 @@ export class AuditLogController {
       const entry = await auditLogRepository.getEntry(id);
       if (!entry) throw new NotFoundError('Audit log entry not found');
 
-      if (!context.isSuperAdmin && entry.tenantId !== context.tenantId) {
+      // Same fix as list(): isSuperAdmin is true for ORGANIZATION_OWNER,
+      // so this let any org owner read any single audit entry on the
+      // platform by id.
+      if (!context.isPlatformAdmin && entry.tenantId !== context.tenantId) {
         throw new NotFoundError('Audit log entry not found');
       }
 

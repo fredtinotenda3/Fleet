@@ -15,6 +15,7 @@ import { formatDistance } from '@/shared/utils/distance.utils';
 import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import type { TripDrawerFilter } from './TripTransactionDrawer';
 import type { TripMonthlyTrendPoint } from '../types';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 interface TripMonthlyTrendChartProps {
   months?: number;
@@ -59,7 +60,20 @@ export function TripMonthlyTrendChart({ months = 12, licensePlate, onDrillDown }
     );
   }
 
-  if (error || !monthlyData || monthlyData.length === 0) {
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Monthly trip trend</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ChartLoadError />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!monthlyData || monthlyData.length === 0) {
     return (
       <Card>
         <CardHeader>

@@ -13,6 +13,7 @@ import { ObjectId } from 'mongodb';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { FuelLogUpdatedEvent } from '@/modules/fuel/events/FuelLogUpdatedEvent';
 import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-resolver.service';
+import { driverWriteResolver } from '@/modules/drivers/services/driver-write-resolver.service';
 
 const UPDATABLE_FIELDS = [
   'license_plate',
@@ -37,6 +38,25 @@ const UPDATABLE_FIELDS = [
   'driver_id',
 ] as const;
 
+/**
+ * Fields an update may explicitly REMOVE by sending an empty value.
+ *
+ * The loop below skips `''` for every other field, which is right: an
+ * empty license plate or an empty date is a malformed submission, not an
+ * instruction to blank the column. But for an optional foreign key,
+ * "skip empty values" and "you can never undo this" are the same rule.
+ * A fuel log attributed to the wrong driver could be pointed at a
+ * different driver but never returned to unattributed, which matters
+ * because the alternative -- leaving a known-wrong driver on the record
+ * -- corrupts that driver's cost and scorecard figures.
+ *
+ * Deliberately narrow. fuel_card_id is not here because clearing it
+ * while payment_method is 'fuel_card' would leave the record failing its
+ * own schema refinement; that pairing needs a UI that changes both, not
+ * a blanket clear.
+ */
+const CLEARABLE_FIELDS = new Set<string>(['driver_id']);
+
 export class UpdateFuelLogHandler implements ICommandHandler<UpdateFuelLogCommand, FuelLog> {
   constructor(private readonly fuelRepo: FuelRepository) {}
 
@@ -45,9 +65,17 @@ export class UpdateFuelLogHandler implements ICommandHandler<UpdateFuelLogComman
     const clean: Record<string, unknown> = { _id: command.fuelLogId };
 
     for (const field of UPDATABLE_FIELDS) {
-      if (raw[field] !== undefined && raw[field] !== '') {
-        clean[field] = raw[field];
+      const value = raw[field];
+      if (value === undefined) continue;
+
+      if (value === '' || value === null) {
+        // An explicit clear, but only for the fields where "empty" is a
+        // meaningful instruction rather than a malformed submission.
+        if (CLEARABLE_FIELDS.has(field)) clean[field] = null;
+        continue;
       }
+
+      clean[field] = value;
     }
 
     const result = await validateWithZod(fuelLogUpdateSchema, clean);
@@ -85,6 +113,17 @@ export class UpdateFuelLogHandler implements ICommandHandler<UpdateFuelLogComman
        * as unassigned.
        */
       updateData.orgUnitId = vehicleWriteResolver.orgUnitIdFor(vehicle) ?? null;
+    }
+
+    /**
+     * A newly named driver is resolved under the caller's scope, exactly
+     * as on create. `null` is left alone -- clearing an attribution
+     * needs no lookup, and requiring one would make an unattributable
+     * log uncorrectable.
+     */
+    if (updateData.driver_id != null) {
+      await driverWriteResolver.resolveForWrite(String(updateData.driver_id), command.scope);
+      updateData.driver_id = String(updateData.driver_id);
     }
 
     if (updateData.unit_id) {

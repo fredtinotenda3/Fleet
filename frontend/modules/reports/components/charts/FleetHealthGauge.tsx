@@ -5,7 +5,13 @@ import { ChartContainer } from '@/frontend/shared/ui/charts';
 import { Skeleton } from '@/frontend/shared/ui/feedback/skeleton';
 
 interface FleetHealthGaugeProps {
-  score: number | undefined;
+  /**
+   * `undefined` while unloaded, `null` when the engine scored no
+   * vehicles. Both are "no measurement" and render the same way -- a 0
+   * here would be a red bar reading "0% overall fleet health" for an
+   * organisation that has not added a vehicle.
+   */
+  score: number | null | undefined;
   isLoading: boolean;
   isError?: boolean;
   /** Recommendations from the AI fleet-health engine, shown under the gauge when present. */
@@ -31,10 +37,12 @@ export function FleetHealthGauge({ score, isLoading, isError, topRecommendation 
     );
   }
 
-  if (score === undefined) {
+  if (score === undefined || score === null) {
     return (
       <ChartContainer title="Fleet Health Score">
-        <p className="text-sm text-muted-foreground">No health data available.</p>
+        <p className="text-sm text-muted-foreground">
+          Not measured — no vehicles have been scored yet.
+        </p>
       </ChartContainer>
     );
   }

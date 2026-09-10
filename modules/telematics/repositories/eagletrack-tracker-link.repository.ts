@@ -55,6 +55,7 @@ import connectToDatabase from '@/infrastructure/database/mongodb';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 import { EagleTrackTrackerLink } from '../adapters/eagletrack/eagletrack.types';
+import { normalizeDocumentIds } from '@/server/repositories/document-id.utils';
 
 export class EagleTrackTrackerLinkRepository {
   private collectionName = 'tbltelematics_eagletrack_links';
@@ -107,14 +108,14 @@ export class EagleTrackTrackerLinkRepository {
   /** Links visible to this caller, for the admin screen. */
   async listInScope(context: TenantContext): Promise<EagleTrackTrackerLink[]> {
     const collection = await this.collection();
-    return collection
+    return normalizeDocumentIds<EagleTrackTrackerLink>(await collection
       .find({
         tenantId: context.organizationId,
         isDeleted: { $ne: true },
         ...this.scopeOf(context),
       } as Filter<EagleTrackTrackerLink>)
       .sort({ uin: 1 })
-      .toArray() as Promise<EagleTrackTrackerLink[]>;
+      .toArray());
   }
 
   /**

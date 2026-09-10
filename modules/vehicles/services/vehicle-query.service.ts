@@ -82,10 +82,11 @@ export class VehicleQueryService {
   async getVehicleAnalytics(
     tenantId: string,
     startDate: Date,
-    endDate: Date
+    endDate: Date,
+    context?: TenantContext
   ): Promise<Document[]> {
     return queryBus.execute<Document[]>(
-      new GetVehicleAnalyticsQuery(tenantId, startDate, endDate)
+      new GetVehicleAnalyticsQuery(tenantId, startDate, endDate, context)
     );
   }
 }

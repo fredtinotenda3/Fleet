@@ -2,6 +2,7 @@
 
 import { z } from 'zod';
 import { TRIP_STATUSES, TRIP_TYPES } from '@/shared/types/trip.types';
+import { partialForUpdate } from './update-schema.utils';
 
 const modeSchema = z.enum(['distance', 'odometer']);
 const statusSchema = z.enum(TRIP_STATUSES as [string, ...string[]]);
@@ -125,7 +126,7 @@ function applySharedRefinements(data: z.infer<typeof tripBaseSchema>, ctx: z.Ref
 
 export const tripCreateSchema = tripBaseSchema.superRefine(applySharedRefinements);
 
-export const tripUpdateSchema = tripBaseSchema.partial().extend({
+export const tripUpdateSchema = partialForUpdate(tripBaseSchema).extend({
   _id: z.string().min(1, 'Trip ID is required'),
 });
 

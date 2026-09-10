@@ -31,6 +31,7 @@ import { Db, Filter } from 'mongodb';
 import connectToDatabase from '@/infrastructure/database/mongodb';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { EagleTrackTrigger } from '../adapters/eagletrack/eagletrack.types';
+import { normalizeDocumentIds } from '@/server/repositories/document-id.utils';
 
 /** One provider trigger as stored. */
 export interface StoredEagleTrackTrigger {
@@ -155,10 +156,10 @@ export class EagleTrackTriggerRepository {
       });
     }
 
-    return collection
+    return normalizeDocumentIds<StoredEagleTrackTrigger>(await collection
       .find({ $and: conditions } as Filter<StoredEagleTrackTrigger>)
       .sort({ typeCode: 1, name: 1 })
-      .toArray() as Promise<StoredEagleTrackTrigger[]>;
+      .toArray());
   }
 
   /** One trigger by provider id, for resolving a vendor alert's `triggerId` to something readable. */

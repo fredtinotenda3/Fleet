@@ -239,7 +239,7 @@ export class BillingService {
 
     // Emit InvoicePaidEvent after successful plan upgrade
     const eventBus = EventBusFactory.getInstance();
-    await eventBus.publish(new InvoicePaidEvent(invoice, {
+    await eventBus.publish(new InvoicePaidEvent(invoice, organization.ownerId, {
       tenantId: invoice.tenantId,
       userId: organization.ownerId,
     }));

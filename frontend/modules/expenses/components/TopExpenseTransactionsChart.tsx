@@ -20,6 +20,7 @@ import { formatCurrency } from '@/shared/utils/currency.utils';
 import { formatDate } from '@/shared/utils/date.utils';
 import type { ExpenseAnalyticsDateRange } from './ExpenseAnalyticsFilterBar';
 import type { TopExpenseTransactionRow } from '@/shared/types/expense.types';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 interface TopExpenseTransactionsChartProps {
   dateRange: ExpenseAnalyticsDateRange;
@@ -64,7 +65,9 @@ export function TopExpenseTransactionsChart({ dateRange, licensePlate }: TopExpe
         <CardContent>
           {isLoading ? (
             <div className="rounded-lg h-60 skeleton" />
-          ) : error || !data || data.length === 0 ? (
+          ) : error ? (
+            <ChartLoadError />
+          ) : !data || data.length === 0 ? (
             <p className="text-sm text-muted-foreground">No expenses in this range.</p>
           ) : (
             <div className="overflow-x-auto border rounded-md border-border">

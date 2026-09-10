@@ -19,6 +19,20 @@ interface FuelModalProps {
   open: boolean;
   mode: FuelModalMode;
   fuelLog?: FuelLog | null;
+  /**
+   * Pre-selects the vehicle when creating.
+   *
+   * Mirrors ExpenseModal, which has had this since the vehicle expense
+   * history page was built. Without it, an "Add fuel" action opened from
+   * a vehicle's own page presents an empty vehicle picker and asks the
+   * operator to find, in a list of every vehicle in the fleet, the one
+   * whose page they are already standing on.
+   *
+   * Prefilled, NOT locked: the picker stays editable so a wrong turn is
+   * correctable in place. The dialog title names the vehicle so the
+   * default is never silent.
+   */
+  defaultLicensePlate?: string;
   onOpenChange: (open: boolean) => void;
   onSubmit: (values: FuelFormValues) => Promise<unknown>;
 }
@@ -35,8 +49,11 @@ const DESCRIPTIONS: Record<FuelModalMode, string> = {
   view: 'View fuel entry details.',
 };
 
-function toFormValues(log: FuelLog | null | undefined): Partial<FuelFormValues> | undefined {
-  if (!log) return undefined;
+function toFormValues(
+  log: FuelLog | null | undefined,
+  defaultLicensePlate?: string
+): Partial<FuelFormValues> | undefined {
+  if (!log) return defaultLicensePlate ? { license_plate: defaultLicensePlate } : undefined;
   return {
     license_plate: log.license_plate,
     unit_id: log.unit_id,
@@ -58,19 +75,30 @@ function toFormValues(log: FuelLog | null | undefined): Partial<FuelFormValues> 
   };
 }
 
-export function FuelModal({ open, mode, fuelLog, onOpenChange, onSubmit }: FuelModalProps) {
+export function FuelModal({
+  open,
+  mode,
+  fuelLog,
+  defaultLicensePlate,
+  onOpenChange,
+  onSubmit,
+}: FuelModalProps) {
   const readOnly = mode === 'view';
+  const title =
+    mode === 'create' && defaultLicensePlate
+      ? `Log fuel for ${defaultLicensePlate}`
+      : TITLES[mode];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-form-wide">
         <DialogHeader>
-          <DialogTitle>{TITLES[mode]}</DialogTitle>
+          <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{DESCRIPTIONS[mode]}</DialogDescription>
         </DialogHeader>
         <FuelForm
-          key={`${mode}-${fuelLog?._id ?? 'new'}`}
-          defaultValues={toFormValues(fuelLog)}
+          key={`${mode}-${fuelLog?._id ?? defaultLicensePlate ?? 'new'}`}
+          defaultValues={toFormValues(fuelLog, defaultLicensePlate)}
           onSubmit={async (values) => {
             await onSubmit(values);
             if (mode !== 'view') onOpenChange(false);

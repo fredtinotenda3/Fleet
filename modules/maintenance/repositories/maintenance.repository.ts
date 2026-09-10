@@ -343,14 +343,35 @@ export class MaintenanceRepository extends BaseRepository<Reminder> {
       { $group: { _id: null, avgDays: { $avg: '$daysDiff' } } },
     ];
     const avgResult = await collection.aggregate(completionDaysPipeline).toArray();
-    const averageCompletionDays = Math.round(avgResult[0]?.avgDays || 0);
+
+    /*
+      HONEST METRICS -- the same family as fleet-health's null metrics.
+
+      `Math.round(avgResult[0]?.avgDays || 0)` produced "0 days to
+      complete" for a fleet that has never completed a maintenance
+      record. Zero days does not mean "no data"; it means "completed the
+      day it was due", which is an exemplary figure invented from an
+      empty aggregation.
+
+      `completionRate: ... : 0` was worse, because it was rendered
+      beside a green tick: an organisation with no maintenance records
+      at all was shown a green "Completion rate 0.0%" -- simultaneously
+      alarming and false.
+
+      Both are `null` when there is nothing to average over. The single
+      consumer (MaintenanceStatsCards) renders "Not measured".
+    */
+    const averageCompletionDays =
+      avgResult.length > 0 && typeof avgResult[0]?.avgDays === 'number'
+        ? Math.round(avgResult[0].avgDays)
+        : null;
 
     return {
       total,
       completed,
       pending,
       overdue,
-      completionRate: total > 0 ? (completed / total) * 100 : 0,
+      completionRate: total > 0 ? (completed / total) * 100 : null,
       averageCompletionDays,
     };
   }

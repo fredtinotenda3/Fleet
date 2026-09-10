@@ -2,6 +2,7 @@ import { IEventHandler } from '@/server/events/base/IEventHandler';
 import { DomainEvent } from '@/server/events/base/DomainEvent';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
 import { queueService } from '@/infrastructure/queue/queue.service';
+import { monitoring } from '@/infrastructure/monitoring/logger';
 
 /**
  * Fans an ObservabilityAlertTriggered event out to:
@@ -46,6 +47,23 @@ export class AlertNotificationHandler implements IEventHandler<DomainEvent> {
         },
         'system'
       )
-      .catch(() => undefined);
+      .catch((error: unknown) =>
+        /*
+          LOGGED, not swallowed. This dispatches the outbound alert
+          (Slack, PagerDuty) for an observability event. If Redis is
+          down, `.catch(() => undefined)` made the alert vanish with no
+          trace whatsoever -- the one failure mode an alerting system
+          must never have, because the silence is indistinguishable from
+          "nothing is wrong".
+
+          Still caught rather than thrown: a failed notification must not
+          fail the event that triggered it.
+        */
+        monitoring.logError(
+          '[alert-notification] Alert dispatch failed; the alert was NOT delivered',
+          error as Error,
+          { eventName: event.eventName, eventId: event.eventId }
+        )
+      );
   }
 }

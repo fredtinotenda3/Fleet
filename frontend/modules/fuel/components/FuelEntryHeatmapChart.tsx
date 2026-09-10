@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/fro
 import { useFuelEntryHeatmap } from '../hooks/useFuel';
 import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import type { FuelAnalyticsDateRange } from './FuelAnalyticsFilterBar';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
@@ -57,7 +58,9 @@ export function FuelEntryHeatmapChart({ dateRange, licensePlate }: FuelEntryHeat
       <CardContent>
         {isLoading ? (
           <div className="rounded-lg h-60 skeleton" />
-        ) : error || !data || data.length === 0 ? (
+        ) : error ? (
+          <ChartLoadError />
+        ) : !data || data.length === 0 ? (
           <p className="text-sm text-muted-foreground">No fuel entries in this range.</p>
         ) : (
           <div className="overflow-x-auto">

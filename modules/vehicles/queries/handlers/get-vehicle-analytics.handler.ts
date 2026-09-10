@@ -14,7 +14,8 @@ export class GetVehicleAnalyticsHandler
     return this.vehicleRepo.getVehicleAnalytics(
       query.tenantId,
       query.startDate,
-      query.endDate
+      query.endDate,
+      query.context
     );
   }
 }

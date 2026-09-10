@@ -25,7 +25,22 @@ function scheduleJobName(reportDefinitionId: string): string {
  * to keep the already-shipped report-builder.service.ts untouched.
  */
 export class ReportSchedulerService {
-  async syncSchedule(definition: ReportDefinition, tenantId: string, userId: string): Promise<void> {
+  /**
+   * @param accessibleOrgUnitIds The creating user's org-unit scope, in
+   *   the platform's usual three-state form (null = org-wide, [] =
+   *   fail-closed, [ids] = narrowed). Frozen onto the job payload
+   *   because a scheduled run happens later, in a worker, with no
+   *   request and therefore no TenantContext -- and without it the
+   *   engine defaulted to organization-wide on a path that EMAILS its
+   *   output. A branch manager scheduling a cost report would have had
+   *   every branch's rows mailed to their recipient list.
+   */
+  async syncSchedule(
+    definition: ReportDefinition,
+    tenantId: string,
+    userId: string,
+    accessibleOrgUnitIds: string[] | null
+  ): Promise<void> {
     const jobName = scheduleJobName(definition._id!);
     const existing = await scheduledJobRepository.findByName(jobName);
 
@@ -41,6 +56,7 @@ export class ReportSchedulerService {
       reportDefinitionId: definition._id,
       format: definition.schedule.format,
       recipients: definition.schedule.recipients,
+      orgUnitIds: accessibleOrgUnitIds,
     };
 
     if (existing) {

@@ -18,6 +18,8 @@ import {
 import { DashboardWidget } from '@/frontend/shared/dashboards/DashboardWidget';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
 import { useNeedsAttentionWidget } from '@/frontend/modules/dashboard/hooks/useDashboardData';
+import { useFleetPresence } from '@/frontend/modules/onboarding/hooks/useFleetPresence';
+import { emptyCopy } from '@/frontend/modules/onboarding/utils/empty-state-copy';
 import { formatRelativeDate } from '@/shared/utils/date.utils';
 import type { NeedsAttentionItem, NeedsAttentionSource } from '@/modules/ai/types/needs-attention.types';
 import type { AISeverity } from '@/modules/ai/types/ai.types';
@@ -53,8 +55,11 @@ const SOURCE_ICON: Record<NeedsAttentionSource, ComponentType<{ className?: stri
 export function NeedsAttentionWidget() {
   const { data, isLoading, isError, refetch } = useNeedsAttentionWidget(6);
 
+  const presence = useFleetPresence();
+
   const items: NeedsAttentionItem[] = data?.items ?? [];
   const criticalCount = data?.bySeverity?.critical ?? 0;
+  const empty = emptyCopy('attention', presence);
 
   return (
     <DashboardWidget
@@ -79,9 +84,24 @@ export function NeedsAttentionWidget() {
       }
     >
       {items.length === 0 ? (
-        <p className="py-6 text-center text-body-sm text-muted-foreground">
-          Nothing needs attention right now &mdash; your fleet is in good shape.
-        </p>
+        /*
+          "Your fleet is in good shape" was rendered for organisations
+          with no fleet. Reassurance about a subsystem that was never
+          populated is the worst thing a monitoring widget can say --
+          see empty-state-copy.ts.
+        */
+        <div className="py-6 text-center">
+          <p className="font-medium text-body-sm text-foreground">{empty.title}</p>
+          <p className="mt-1 text-caption text-muted-foreground">{empty.description}</p>
+          {empty.action && (
+            <Link
+              href={empty.action.href}
+              className="inline-block mt-2 text-body-sm text-primary hover:underline"
+            >
+              {empty.action.label}
+            </Link>
+          )}
+        </div>
       ) : (
         <ul className="divide-y divide-border">
           {items.map((item) => {

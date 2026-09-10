@@ -79,7 +79,7 @@ export class DispatchRepository extends BaseRepository<DispatchJob> {
       query.tenantId = context.organizationId;
     }
     Object.assign(query, tenantScopeService.buildFilter<DispatchJob>(context, 'orgUnitId'));
-    return collection.find(query as Filter<DispatchJob>).sort({ priority: 1 }).toArray() as Promise<DispatchJob[]>;
+    return this.normalizeDocs<DispatchJob>(await collection.find(query as Filter<DispatchJob>).sort({ priority: 1 }).toArray());
   }
 }
 

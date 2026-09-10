@@ -1,6 +1,7 @@
 // shared/validations/expense.schema.ts
 
 import { z } from 'zod';
+import { partialForUpdate } from './update-schema.utils';
 
 export const expenseSchema = z.object({
   license_plate: z
@@ -23,7 +24,7 @@ export const expenseSchema = z.object({
 
 export const expenseCreateSchema = expenseSchema;
 
-export const expenseUpdateSchema = expenseSchema.partial().extend({
+export const expenseUpdateSchema = partialForUpdate(expenseSchema).extend({
   _id: z.string().min(1, 'Expense ID is required'),
 });
 

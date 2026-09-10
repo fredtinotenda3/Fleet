@@ -9,6 +9,7 @@ import { formatDistance } from '@/shared/utils/distance.utils';
 import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import type { TripDrawerFilter } from './TripTransactionDrawer';
 import type { TripUtilizationSort } from '../types';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 interface VehicleUtilizationChartProps {
   dateRange?: { startDate?: Date; endDate?: Date };
@@ -28,7 +29,20 @@ export function VehicleUtilizationChart({ dateRange, sortBy = 'trips', onDrillDo
     );
   }
 
-  if (error || !data || data.length === 0) {
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Vehicle utilization</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ChartLoadError />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!data || data.length === 0) {
     return (
       <Card>
         <CardHeader>

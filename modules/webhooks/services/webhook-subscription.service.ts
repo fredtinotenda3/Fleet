@@ -19,24 +19,47 @@ import { auditLog } from '@/infrastructure/monitoring/audit.logger';
 
 /**
  * Every event name a subscription declares must exist in this set.
- * Sourced statically here (rather than importing the full
- * server/events/event-names.ts barrel, which would create a dependency
- * from a "leaf" domain module back onto server-level wiring) — kept in
- * sync manually, same tradeoff PluginManifestValidatorService accepts
- * for permission-key validation via PermissionRegistry, except this list
- * is small and stable enough that a static array is simpler than a
- * runtime registry for now.
+ *
+ * ---------------------------------------------------------------------
+ * IT IS NOT "WHICH EVENTS EXIST" -- IT IS "WHICH EVENTS DELIVER"
+ * ---------------------------------------------------------------------
+ * The previous list had 30 entries and accepted 12 that could never
+ * fire, in two different ways:
+ *
+ *   NEVER PUBLISHED (8): TripCompleted, ReminderOverdue, InvoiceCreated,
+ *     OrganizationCreated, MemberRemoved, SubscriptionUpgraded,
+ *     TelematicsDataIngested, GeofenceAlert. Declared in
+ *     event-names.ts; no code emits them.
+ *
+ *   PUBLISHED BUT NOT ROUTED HERE (4): VehicleStatusChanged, and
+ *     RuleCreated/Updated/Deleted. Real events, but
+ *     WebhookDispatchHandler is subscribed only to the names in
+ *     bootstrap's `allEventNames`, and none of these four is in it.
+ *
+ * The effect on a customer is identical either way and is the worst
+ * available: the subscription VALIDATES, saves, and shows `status:
+ * active` in the UI, and no delivery ever arrives. An integration that
+ * fails loudly can be fixed; one that silently never fires is debugged
+ * against the wrong system, usually theirs.
+ *
+ * So this list now means "names that are published AND routed to
+ * WebhookDispatchHandler". Four of the removed twelve are one line of
+ * bootstrap wiring away from being real; adding them back means adding
+ * that line first. tests/security/event-wiring-conformance.spec.ts is
+ * the check that would have caught the drift.
+ *
+ * Still declared statically rather than imported, for the original
+ * reason: a leaf domain module should not depend on server-level
+ * wiring.
  */
 const KNOWN_EVENT_NAMES = new Set([
-  'VehicleCreated', 'VehicleUpdated', 'VehicleDeleted', 'VehicleStatusChanged',
+  'VehicleCreated', 'VehicleUpdated', 'VehicleDeleted',
   'ExpenseCreated', 'ExpenseUpdated', 'ExpenseDeleted',
   'FuelLogged', 'FuelLogUpdated', 'FuelLogDeleted',
-  'ReminderCreated', 'ReminderUpdated', 'ReminderDeleted', 'ReminderCompleted', 'ReminderOverdue',
-  'TripCreated', 'TripUpdated', 'TripDeleted', 'TripCompleted',
-  'RuleCreated', 'RuleUpdated', 'RuleDeleted',
-  'InvoiceCreated', 'InvoicePaid', 'SubscriptionUpgraded',
-  'OrganizationCreated', 'MemberJoined', 'MemberRemoved',
-  'TelematicsDataIngested', 'GeofenceAlert',
+  'ReminderCreated', 'ReminderUpdated', 'ReminderDeleted', 'ReminderCompleted',
+  'TripCreated', 'TripUpdated', 'TripDeleted',
+  'InvoicePaid',
+  'MemberJoined',
 ]);
 
 export class WebhookSubscriptionService {

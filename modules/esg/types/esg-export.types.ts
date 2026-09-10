@@ -26,11 +26,21 @@ export interface EsgExportOptions {
 }
 
 export interface EsgFleetHealthSection {
-  overallScore: number;
+  /**
+   * 0-100, or `null` when no vehicle was scored.
+   *
+   * A mean over an empty fleet is undefined. Printing 0 into an ESG
+   * disclosure would state, in a document handed to an insurer or an
+   * auditor, that the fleet scored the worst possible health -- an
+   * assertion about vehicles that do not exist.
+   */
+  overallScore: number | null;
   vehiclesAssessed: number;
-  averageVehicleAgeYears: number;
+  /** `null` when no vehicle records a model year. Never defaulted. */
+  averageVehicleAgeYears: number | null;
   averageMileage: number;
-  maintenanceCompletionRate: number;
+  /** `null` when the fleet has logged no maintenance -- NOT 1.0, and not 0. */
+  maintenanceCompletionRate: number | null;
   overdueMaintenanceCount: number;
   pendingMaintenanceCount: number;
   /**
@@ -84,9 +94,18 @@ export interface EsgComplianceSection {
 }
 
 export interface EsgCompositeScore {
-  /** 0-100. See esg-export.service.ts's computeCompositeScore for the weighting. */
-  value: number;
+  /**
+   * 0-100, or `null` when NO component could be measured.
+   *
+   * See esg-export.service.ts's computeCompositeScore. The weighting is
+   * over the components that were actually measurable, and
+   * `methodology` states which those were -- so the number in the PDF
+   * and the sentence under it can never disagree.
+   */
+  value: number | null;
   methodology: string;
+  /** Components excluded from the weighting because they were unmeasurable. */
+  excludedComponents: string[];
 }
 
 export interface EsgExportData {

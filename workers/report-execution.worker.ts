@@ -12,6 +12,18 @@ interface ExportDataPayload {
   format?: ExecutionFormat;
   recipients?: string[];
   tenantId?: string;
+  /**
+   * The org-unit scope of the user who CREATED the schedule, frozen
+   * onto the payload (kind: 'scheduled' only).
+   *
+   * A TenantContext cannot cross a queue boundary, and without this the
+   * query engine received `undefined` and ran the export
+   * ORGANIZATION-WIDE -- on a path whose output is emailed to a
+   * recipient list. `null` means the creator was genuinely org-wide;
+   * `undefined` (a schedule created before this field existed) is
+   * treated as fail-closed downstream, never as org-wide.
+   */
+  orgUnitIds?: string[] | null;
 }
 
 /**
@@ -48,7 +60,10 @@ export class ReportExecutionWorker extends BaseWorker<ExportDataPayload> {
         payload.reportDefinitionId,
         payload.format,
         payload.recipients ?? [],
-        payload.tenantId
+        payload.tenantId,
+        // Explicitly forwarded. `undefined` here is NOT the same as
+        // `null`: generateScheduled fails closed on the former.
+        payload.orgUnitIds
       );
       return;
     }

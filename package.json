@@ -59,7 +59,8 @@
     "db:backfill-alert-orgunits": "tsx scripts/backfill-alert-org-units.ts",
     "events:process": "tsx scripts/process-outbox.ts",
     "events:worker": "tsx scripts/process-outbox.ts --loop",
-    "db:reset-business-data": "tsx scripts/reset-business-data.ts"
+    "db:reset-business-data": "tsx scripts/reset-business-data.ts",
+    "finance:backfill-ledger": "tsx scripts/backfill-allocation-ledger.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1079.0",

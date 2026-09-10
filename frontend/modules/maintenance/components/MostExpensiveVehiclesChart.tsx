@@ -10,6 +10,7 @@ import { MaintenanceRecordDrawer } from './MaintenanceRecordDrawer';
 import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { MostExpensiveVehicleRow } from '../types';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 const BAR_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)'];
 
@@ -54,7 +55,9 @@ export function MostExpensiveVehiclesChart() {
         <CardContent>
           {isLoading ? (
             <div className="rounded-lg h-60 skeleton" />
-          ) : error || !data || data.length === 0 ? (
+          ) : error ? (
+            <ChartLoadError />
+          ) : !data || data.length === 0 ? (
             <p className="text-sm text-muted-foreground">No completed maintenance records yet.</p>
           ) : (
             <div style={{ width: '100%', height: Math.max(260, data.length * 36) }}>

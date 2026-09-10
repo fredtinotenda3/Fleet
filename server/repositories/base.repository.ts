@@ -13,6 +13,11 @@ import {
 } from 'mongodb';
 import connectToDatabase from '@/infrastructure/database/mongodb';
 import {
+  normalizeDocumentId,
+  normalizeDocumentIds,
+  toObjectId as toObjectIdUtil,
+} from './document-id.utils';
+import {
   BaseEntity,
   PaginationParams,
   PaginatedResponse,
@@ -189,17 +194,14 @@ export abstract class BaseRepository<T extends BaseEntity> {
    * `toObjectId()` is for.
    */
   protected normalizeDoc<R>(doc: unknown): R {
-    if (!doc || typeof doc !== 'object') return doc as R;
-    const raw = doc as Record<string, unknown>;
-    const id = raw._id;
-    if (id instanceof ObjectId) {
-      return { ...raw, _id: id.toHexString() } as R;
-    }
-    return doc as R;
+    // Delegated: three repositories in this codebase do NOT extend this
+    // class and need the same rule. One implementation, in
+    // document-id.utils.ts.
+    return normalizeDocumentId<R>(doc);
   }
 
   protected normalizeDocs<R>(docs: unknown[]): R[] {
-    return docs.map((d) => this.normalizeDoc<R>(d));
+    return normalizeDocumentIds<R>(docs);
   }
 
   /**
@@ -209,7 +211,7 @@ export abstract class BaseRepository<T extends BaseEntity> {
    * matches nothing there and the write silently no-ops.
    */
   protected toObjectId(id: string | ObjectId): ObjectId {
-    return id instanceof ObjectId ? id : new ObjectId(id);
+    return toObjectIdUtil(id);
   }
 
   async findById(

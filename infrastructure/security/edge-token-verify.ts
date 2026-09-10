@@ -13,13 +13,16 @@
 // fail verification by the other.
 
 import { jwtVerify } from 'jose';
+import { getAccessSecret } from './jwt-secrets';
 
 const JWT_ISSUER = process.env.JWT_ISSUER || 'fleet-platform';
 const JWT_AUDIENCE = process.env.JWT_AUDIENCE || 'fleet-platform-api';
 
 function getAccessSecretKey(): Uint8Array {
-  const secret = process.env.NEXTAUTH_SECRET || 'default-secret-change-in-production';
-  return new TextEncoder().encode(secret);
+  // Same resolver as the Node signer, so the two runtimes cannot drift
+  // -- and so this one cannot verify tokens signed with the published
+  // fallback either. It throws rather than returning a usable key.
+  return new TextEncoder().encode(getAccessSecret());
 }
 
 export interface EdgeVerifiedToken {

@@ -1,6 +1,7 @@
 // shared/validations/workflow.schema.ts
 
 import { z } from 'zod';
+import { partialForUpdate } from './update-schema.utils';
 
 const workflowStepSchema = z.object({
   id: z.string().min(1),
@@ -82,7 +83,7 @@ export const workflowCreateSchema = workflowBaseSchema.superRefine(validateStepR
 // workflowCreateSchema, so .partial() is valid here. The step-reference
 // refinement is reapplied afterward, and now tolerates a missing `steps`
 // field since partial updates may not touch steps at all.
-export const workflowUpdateSchema = workflowBaseSchema.partial().superRefine(validateStepReferences);
+export const workflowUpdateSchema = partialForUpdate(workflowBaseSchema).superRefine(validateStepReferences);
 
 export const workflowStartSchema = z.object({
   workflowId: z.string().min(1),

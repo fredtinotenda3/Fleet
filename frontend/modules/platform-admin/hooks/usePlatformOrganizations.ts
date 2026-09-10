@@ -71,8 +71,8 @@ export function usePlatformStats(options?: { enabled?: boolean }) {
  *
  * `tenantId` is the CALLER's tenant and is used only for the cache key
  * -- it is not sent, because the endpoint reads it from the session.
- * `enabled` must be driven by `canManageOrgUnitsFor` so this never
- * fires while another organization's page is open.
+ * Only correct for the caller's OWN organization; every other
+ * organization's page uses `useOrganizationOrgUnits` below.
  */
 export function useOrgUnitsForTenant(tenantId: string, options?: { enabled?: boolean }) {
   return useQuery({
@@ -80,6 +80,46 @@ export function useOrgUnitsForTenant(tenantId: string, options?: { enabled?: boo
     queryFn: () => platformAdminApi.listOrgUnits(),
     enabled: (options?.enabled ?? true) && Boolean(tenantId),
     staleTime: 60_000,
+  });
+}
+
+/**
+ * GET /api/platform/organizations/:id/org-units.
+ *
+ * Keyed by the ORGANIZATION being viewed, not by the caller's tenant.
+ * That difference is the whole point: the previous hook could only ever
+ * answer for the session's own organization, so the platform-admin page
+ * had to refuse to render the section at all rather than show one
+ * tenant's branches under another tenant's name.
+ */
+export function useOrganizationOrgUnits(organizationId: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: platformAdminKeys.orgUnits(organizationId),
+    queryFn: () => platformAdminApi.listOrganizationOrgUnits(organizationId),
+    enabled: (options?.enabled ?? true) && Boolean(organizationId),
+    staleTime: 60_000,
+  });
+}
+
+/** POST /api/platform/organizations/:id/org-units. */
+export function useCreateOrganizationOrgUnit(organizationId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: CreateOrgUnitPayload) =>
+      platformAdminApi.createOrganizationOrgUnit(organizationId, payload),
+    onSuccess: (unit) => {
+      queryClient.invalidateQueries({ queryKey: platformAdminKeys.orgUnits(organizationId) });
+      // The organizations module renders the same collection on
+      // /organizations/teams for the caller's own tenant; invalidating
+      // its key keeps the two screens from disagreeing when the platform
+      // admin happens to be editing their own organization.
+      queryClient.invalidateQueries({ queryKey: ['org-units'] });
+      toast.success(`${unit?.name ?? 'Org unit'} created`);
+    },
+    onError: (error: unknown) => {
+      toast.error(error instanceof Error ? error.message : 'Failed to create org unit');
+    },
   });
 }
 

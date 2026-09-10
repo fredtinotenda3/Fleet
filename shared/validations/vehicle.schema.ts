@@ -1,6 +1,7 @@
 // shared/validations/vehicle.schema.ts
 
 import { z } from 'zod';
+import { partialForUpdate } from './update-schema.utils';
 
 const currentYear = new Date().getFullYear();
 
@@ -37,7 +38,7 @@ export const vehicleSchema = z.object({
 
 export const vehicleCreateSchema = vehicleSchema;
 
-export const vehicleUpdateSchema = vehicleSchema.partial().extend({
+export const vehicleUpdateSchema = partialForUpdate(vehicleSchema).extend({
   _id: z.string().min(1, 'Vehicle ID is required'),
 });
 

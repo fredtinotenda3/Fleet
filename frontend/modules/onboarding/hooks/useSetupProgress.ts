@@ -5,6 +5,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { dashboardApi } from '@/frontend/modules/dashboard/services/dashboard.api';
+import { dashboardKeys } from '@/frontend/modules/dashboard/hooks/useDashboardData';
 import { Permission, permissionService } from '@/server/permissions/roles';
 import { organizationApi } from '@/frontend/modules/organizations/services/organization.api';
 import { driversApi } from '@/frontend/modules/drivers/services/drivers.api';
@@ -71,7 +72,10 @@ export function useSetupProgress(roles: string[], enabled: boolean): SetupProgre
   // Same key AND same queryFn as useVehicleStatsWidget, so this is a cache
   // hit on the dashboard rather than a second request.
   const vehicleStats = useQuery({
-    queryKey: ['dashboard', 'vehicle-stats'] as const,
+    // The exported key rather than a hand-written copy of it: the tuple
+    // was duplicated here, and a duplicate stops being a cache hit the
+    // moment the original changes.
+    queryKey: dashboardKeys.vehicleStats,
     queryFn: dashboardApi.getVehicleStats,
     staleTime: 60_000,
     enabled: on(can.vehicles),
@@ -129,7 +133,7 @@ export function useSetupProgress(roles: string[], enabled: boolean): SetupProgre
   // that dashboard.api.ts's own comment records having already been fixed
   // once.
   const expenseStats = useQuery({
-    queryKey: ['dashboard', 'expenses'] as const,
+    queryKey: dashboardKeys.expenses,
     queryFn: dashboardApi.getExpenseStats,
     staleTime: 60_000,
     enabled: on(can.operatingData),

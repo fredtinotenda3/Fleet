@@ -2,8 +2,10 @@
 
 'use client';
 
-import { CheckCircle2, Filter } from 'lucide-react';
+import { CheckCircle2, Filter, Truck } from 'lucide-react';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
+import { useFleetPresence } from '@/frontend/modules/onboarding/hooks/useFleetPresence';
+import { emptyCopy } from '@/frontend/modules/onboarding/utils/empty-state-copy';
 import { AttentionItemCard } from './AttentionItemCard';
 import type { NeedsAttentionItem } from '../types';
 
@@ -41,21 +43,46 @@ export function AttentionQueueList({
   resolvingId,
   dispatchingId,
 }: AttentionQueueListProps) {
+  const presence = useFleetPresence();
+  const empty = emptyCopy('attention', presence);
+
   if (items.length === 0) {
-    // Genuinely nothing to do. Rendered as good news, with a positive tone,
-    // because in an operations console silence must be legible as "all
-    // clear" rather than as "this screen failed to load".
     if (totalBeforeFilters === 0) {
+      /*
+        Two different empty feeds, and they were rendered identically.
+
+        On an ESTABLISHED fleet, silence is good news, and an operations
+        console must make it legible as "all clear" rather than as "this
+        screen failed to load" -- hence the positive tone and the green
+        tick.
+
+        On an organisation with NO VEHICLES, the same card enumerated
+        five subsystems as checked and clear. Nothing had been checked;
+        there was nothing to check. `useFleetPresence` supplies the one
+        fact that separates the two, and falls back to the established
+        wording whenever the vehicle count is unknown.
+      */
+      const isEmptyOrg = presence === 'empty';
       return (
         <EmptyState
-          tone="positive"
-          icon={<CheckCircle2 aria-hidden="true" />}
-          title="No active attention items"
-          description="Nothing across maintenance, fuel, expenses, compliance or driver risk currently needs a decision."
-          hints={[
-            'This queue refreshes as telemetry, fuel logs and expenses arrive.',
-            'Items are ranked by severity, cost at stake and how soon they are due.',
-          ]}
+          tone={empty.tone === 'positive' ? 'positive' : 'default'}
+          icon={isEmptyOrg ? <Truck aria-hidden="true" /> : <CheckCircle2 aria-hidden="true" />}
+          title={empty.title}
+          description={empty.description}
+          action={
+            empty.action ? { label: empty.action.label, href: empty.action.href } : undefined
+          }
+          hints={
+            isEmptyOrg
+              ? [
+                  'Attention items are derived from your vehicles, their maintenance, fuel and expenses.',
+                  'Nothing here is hidden by a filter — the queue has no fleet to draw on yet.',
+                ]
+              : [
+                  'This queue refreshes as telemetry, fuel logs and expenses arrive.',
+                  'Items are ranked by severity, cost at stake and how soon they are due.',
+                ]
+          }
         />
       );
     }

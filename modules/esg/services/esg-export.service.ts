@@ -58,11 +58,13 @@ export class EsgExportService {
 
     if (!result.success || !result.data) {
       return {
-        overallScore: 0,
+        // null, not 0 -- the "fleet health unavailable" branch, exactly
+        // like averageFuelEfficiency below. 0/100 is a verdict.
+        overallScore: null,
         vehiclesAssessed: 0,
-        averageVehicleAgeYears: 0,
+        averageVehicleAgeYears: null,
         averageMileage: 0,
-        maintenanceCompletionRate: 0,
+        maintenanceCompletionRate: null,
         overdueMaintenanceCount: 0,
         pendingMaintenanceCount: 0,
         // null, not 0 -- this is the "fleet health unavailable" branch,
@@ -189,21 +191,83 @@ export class EsgExportService {
     driverRisk: EsgDriverRiskSection,
     compliance: EsgComplianceSection
   ) {
-    const driverSafetyScore =
-      driverRisk.driversAssessed > 0
-        ? 100 -
-          ((driverRisk.distribution.high + driverRisk.distribution.critical) / driverRisk.driversAssessed) * 100
-        : 100;
+    /*
+      HONEST COMPOSITE.
 
-    const value = Math.round(
-      fleetHealth.overallScore * 0.4 + compliance.complianceRate * 0.3 + driverSafetyScore * 0.3
+      This previously read:
+
+        driverSafety = driversAssessed > 0 ? ... : 100
+        complianceRate = total > 0 ? ... : 100          (buildCompliance)
+        value = fleetHealth * 0.4 + compliance * 0.3 + driverSafety * 0.3
+
+      An organisation with no vehicles, no drivers and no compliance
+      records therefore scored 0*0.4 + 100*0.3 + 100*0.3 = 60/100, and
+      that 60 was printed into an ESG disclosure PDF as a measured
+      sustainability figure. Every one of its three inputs was invented:
+      two "perfect" scores for populations of zero, and one worst-possible
+      score for a fleet that does not exist.
+
+      A weighted mean is only defined over the terms that exist. So each
+      component contributes only when it was actually measured, the
+      weights are renormalised across those, and the methodology sentence
+      names what was included AND what was excluded -- the number and the
+      sentence beneath it cannot drift apart, because both are built here.
+      With nothing measurable the answer is `null`, not a figure.
+    */
+    const components: Array<{ label: string; weight: number; score: number | null }> = [
+      { label: 'fleet health score', weight: 0.4, score: fleetHealth.overallScore },
+      {
+        label: 'compliance rate',
+        weight: 0.3,
+        // `complianceRate` is 100 by construction when nothing was
+        // assessed; that is "nothing to comply with", not compliance.
+        score: compliance.totalRecordsAssessed > 0 ? compliance.complianceRate : null,
+      },
+      {
+        label: 'driver safety',
+        weight: 0.3,
+        score:
+          driverRisk.driversAssessed > 0
+            ? 100 -
+              ((driverRisk.distribution.high + driverRisk.distribution.critical) /
+                driverRisk.driversAssessed) *
+                100
+            : null,
+      },
+    ];
+
+    const measured = components.filter(
+      (c): c is { label: string; weight: number; score: number } => c.score !== null
     );
+    const excludedComponents = components.filter((c) => c.score === null).map((c) => c.label);
+
+    if (measured.length === 0) {
+      return {
+        value: null,
+        methodology:
+          'Not measured. None of the three inputs (fleet health, compliance rate, ' +
+          'driver safety) had any data to assess for this period.',
+        excludedComponents,
+      };
+    }
+
+    const totalWeight = measured.reduce((sum, c) => sum + c.weight, 0);
+    const weighted = measured.reduce((sum, c) => sum + c.score * c.weight, 0) / totalWeight;
+
+    const shares = measured
+      .map((c) => `${Math.round((c.weight / totalWeight) * 100)}% ${c.label}`)
+      .join(' + ');
 
     return {
-      value: Math.max(0, Math.min(100, value)),
+      value: Math.max(0, Math.min(100, Math.round(weighted))),
       methodology:
-        '40% fleet health score + 30% compliance rate + 30% driver safety ' +
-        '(100 minus the share of assessed drivers rated high/critical risk).',
+        `${shares}. Driver safety is 100 minus the share of assessed drivers rated ` +
+        'high/critical risk.' +
+        (excludedComponents.length > 0
+          ? ` Excluded as unmeasurable for this period: ${excludedComponents.join(', ')}; ` +
+            'the remaining weights were renormalised to sum to 100%.'
+          : ''),
+      excludedComponents,
     };
   }
 }

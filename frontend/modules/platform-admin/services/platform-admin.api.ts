@@ -107,8 +107,10 @@ export const platformAdminApi = {
    * TENANT-SCOPED TO THE CALLER. `OrgUnitController.listOrgUnits`
    * resolves `organizationId` from the session, so this can only ever
    * describe the caller's own organization no matter what is passed.
-   * Callers must gate on `canManageOrgUnitsFor` before rendering the
-   * result against some other organization's page.
+   *
+   * Kept for the caller's-own-organization case. Anything rendered
+   * against ANOTHER organization's page must use the platform-scoped
+   * pair below.
    */
   async listOrgUnits(params?: { type?: string; parentId?: string | null }): Promise<OrgUnitSummary[]> {
     return apiClient.get<OrgUnitSummary[]>(ORG_UNITS_BASE, {
@@ -128,10 +130,47 @@ export const platformAdminApi = {
    * TENANT-SCOPED TO THE CALLER, and emphatically so: the controller
    * builds `{ ...parsed.data, organizationId: tenantId }`, spreading the
    * session's tenant LAST. A body naming another organization is
-   * overridden silently, which is exactly why this module refuses to
-   * offer the form unless the viewed organization is the caller's own.
+   * overridden silently.
    */
   async createOrgUnit(payload: CreateOrgUnitPayload): Promise<OrgUnitSummary> {
     return apiClient.post<OrgUnitSummary>(ORG_UNITS_BASE, payload);
+  },
+
+  /**
+   * GET /api/platform/organizations/:id/org-units
+   *
+   * THE ENDPOINT THIS MODULE HAD BEEN WAITING FOR. It takes the
+   * organization from the PATH rather than the session, so a platform
+   * admin sees the branches that actually belong to the organization
+   * they are looking at.
+   *
+   * `id` is whatever the organization row is keyed by on this page (an
+   * ObjectId); the server resolves it to the organization's slug, which
+   * is what `tenantId` means everywhere in this codebase.
+   */
+  async listOrganizationOrgUnits(organizationId: string): Promise<OrgUnitSummary[]> {
+    const result = await apiClient.get<{ organizationId: string; units: OrgUnitSummary[] }>(
+      `${ORGANIZATIONS_BASE}/${organizationId}/org-units`
+    );
+    // The endpoint echoes the resolved tenant alongside the rows so a
+    // future caller can assert what it is looking at; the table only
+    // needs the rows.
+    return result?.units ?? [];
+  },
+
+  /**
+   * POST /api/platform/organizations/:id/org-units
+   *
+   * Requires PLATFORM_MANAGE, not merely PLATFORM_VIEW: this writes
+   * across a tenant boundary.
+   */
+  async createOrganizationOrgUnit(
+    organizationId: string,
+    payload: CreateOrgUnitPayload
+  ): Promise<OrgUnitSummary> {
+    return apiClient.post<OrgUnitSummary>(
+      `${ORGANIZATIONS_BASE}/${organizationId}/org-units`,
+      payload
+    );
   },
 };

@@ -9,9 +9,24 @@
 // because the failure it prevents (a route whose END is missing, reading
 // as a vehicle that stopped somewhere it did not) is silent.
 
-import { downsamplePoints, MAX_PLAYBACK_POINTS } from '../../modules/trips/services/trip-playback.service';
+jest.mock('../../modules/trips/repositories/trip.repository', () => ({
+  tripRepository: { findById: jest.fn() },
+  TripRepository: class {},
+}));
+jest.mock('../../infrastructure/database/mongodb', () => ({ __esModule: true, default: jest.fn() }));
+
+import {
+  downsamplePoints,
+  MAX_PLAYBACK_POINTS,
+  tripPlaybackService,
+} from '../../modules/trips/services/trip-playback.service';
+import { tripRepository } from '../../modules/trips/repositories/trip.repository';
+import connectToDatabase from '../../infrastructure/database/mongodb';
 import * as fs from 'fs';
 import * as path from 'path';
+
+const findById = tripRepository.findById as jest.Mock;
+const connect = connectToDatabase as unknown as jest.Mock;
 
 const ROOT = path.resolve(__dirname, '../..');
 const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -63,31 +78,102 @@ describe('downsamplePoints', () => {
   });
 });
 
+/**
+ * These three were originally source-text assertions -- they matched on
+ * `canAccessOrgUnit` and on the literal shape of the two-step no-org-unit
+ * check. That made them break when the check was consolidated into
+ * `tenantScopeService.canAccessRecord`, even though the behaviour they
+ * described got STRICTER rather than weaker.
+ *
+ * Rewritten as behavioural assertions, for the same reason the allocation
+ * suite's `expect(code).toContain('FuelLogCreated')` was: matching source
+ * text proves a literal is present, not that it means anything. What
+ * matters here is that the call refuses, and that it refuses BEFORE any
+ * telemetry is read.
+ */
 describe('trip playback: scope', () => {
-  it('loads the trip under the caller context BEFORE reading telemetry', () => {
-    // Order is the property: a telemetry read that happens before the
-    // scope check has already produced the data it was meant to protect.
-    const tripAt = serviceSrc.indexOf('tripRepository.findById');
-    const scopeAt = serviceSrc.indexOf('canAccessOrgUnit');
-    const telemetryAt = serviceSrc.indexOf("collection('tbltelematics')");
+  const HARARE = 'branch-harare';
+  const BULAWAYO = 'branch-bulawayo';
 
-    expect(tripAt).toBeGreaterThan(-1);
-    expect(scopeAt).toBeGreaterThan(tripAt);
-    expect(telemetryAt).toBeGreaterThan(scopeAt);
+  const context = (accessibleOrgUnitIds: string[] | null) =>
+    ({
+      organizationId: 'willsgrove-farm-enterprises-9e80ed',
+      organizationName: 'Willsgrove',
+      accessibleOrgUnitIds,
+      assignedOrgUnitIds: accessibleOrgUnitIds ?? [],
+      isPlatformScope: false,
+    }) as never;
+
+  const trip = (orgUnitId: string | undefined) => ({
+    _id: 'trip-1',
+    license_plate: 'AFU0078',
+    orgUnitId,
+    tenantId: 'willsgrove-farm-enterprises-9e80ed',
+    start_time: new Date('2026-09-01T06:00:00Z'),
+    end_time: new Date('2026-09-01T07:00:00Z'),
+    generation_vehicle_id: 'veh-1',
   });
 
-  it('reports an out-of-scope trip as NOT FOUND, never as forbidden', () => {
+  beforeEach(() => {
+    findById.mockReset();
+    connect.mockReset();
+    // Any telemetry read at all is a failure in these cases, so the
+    // stub throws rather than returning empty: a silent [] would let a
+    // leak pass as "no data".
+    connect.mockImplementation(() => {
+      throw new Error('telemetry must not be read for an out-of-scope trip');
+    });
+  });
+
+  it('refuses an out-of-scope trip before reading any telemetry', async () => {
+    findById.mockResolvedValue(trip(BULAWAYO));
+    await expect(
+      tripPlaybackService.getPlayback('trip-1', context([HARARE]))
+    ).rejects.toThrow('Trip not found');
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  it('reports an out-of-scope trip identically to a missing one', async () => {
     // A distinguishable "exists but hidden" response lets a
     // scope-narrowed caller enumerate another branch's trips one id at a
     // time -- the same rule vehicle-write-resolver documents.
-    expect(serviceSrc).toMatch(/canAccessOrgUnit[\s\S]{0,120}NotFoundError\('Trip not found'\)/);
+    findById.mockResolvedValueOnce(trip(BULAWAYO)).mockResolvedValueOnce(null);
+
+    const outOfScope = await tripPlaybackService
+      .getPlayback('trip-1', context([HARARE]))
+      .catch((e: Error) => e);
+    const missing = await tripPlaybackService
+      .getPlayback('trip-ghost', context([HARARE]))
+      .catch((e: Error) => e);
+
+    expect((outOfScope as Error).message).toBe((missing as Error).message);
     expect(serviceSrc).not.toMatch(/ForbiddenError/);
   });
 
-  it('fails closed on a trip with no org unit for a scoped caller', () => {
-    expect(serviceSrc).toMatch(
-      /!tripOrgUnitId && context\.accessibleOrgUnitIds !== null[\s\S]{0,80}NotFoundError/
-    );
+  it('fails closed on a trip with no org unit for a scoped caller', async () => {
+    // The row is invisible in that caller's trip LIST (a `$in` never
+    // matches a missing field), so it must be unreachable by id too.
+    findById.mockResolvedValue(trip(undefined));
+    await expect(
+      tripPlaybackService.getPlayback('trip-1', context([HARARE]))
+    ).rejects.toThrow('Trip not found');
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  it('still serves an org-wide caller a trip with no org unit', async () => {
+    // The tightening must not make unassigned rows unreadable by
+    // everyone -- an org-wide role is how an admin inspects them.
+    findById.mockResolvedValue(trip(undefined));
+    connect.mockResolvedValue({
+      collection: () => ({
+        find: () => ({
+          sort: () => ({ limit: () => ({ toArray: async () => [] }) }),
+        }),
+      }),
+    });
+
+    const playback = await tripPlaybackService.getPlayback('trip-1', context(null));
+    expect(playback.emptyReason).toBe('no-readings');
   });
 
   it('takes the vehicle from the TRIP, never from the request', () => {

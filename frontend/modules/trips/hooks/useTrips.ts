@@ -22,7 +22,26 @@ export const tripKeys = {
   kpis: (range?: string, licensePlate?: string) => [...tripKeys.all, 'kpis', range, licensePlate] as const,
   exceptions: (range?: string, zThreshold?: number, licensePlate?: string) =>
     [...tripKeys.all, 'exceptions', range, zThreshold, licensePlate] as const,
+  playback: (id: string) => [...tripKeys.all, 'playback', id] as const,
 };
+
+/**
+ * The reconstructed route for one trip.
+ *
+ * A completed trip's telemetry does not change, so this is cached
+ * indefinitely and never polled. `retry: 1` because the three failure
+ * modes worth surfacing -- out of scope, no time window, no readings --
+ * are all deterministic; retrying them just delays the explanation.
+ */
+export function useTripPlayback(id: string | undefined, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: tripKeys.playback(id ?? ''),
+    queryFn: () => tripsApi.getPlayback(id as string),
+    enabled: (options?.enabled ?? true) && Boolean(id),
+    staleTime: Infinity,
+    retry: 1,
+  });
+}
 
 export function useTripsList(params: Partial<TripListParams>) {
   return useQuery({

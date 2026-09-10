@@ -1,6 +1,7 @@
 // shared/validations/report-definition.schema.ts
 
 import { z } from 'zod';
+import { partialForUpdate } from './update-schema.utils';
 
 const filterConditionSchema = z.object({
   field: z.string().min(1),
@@ -53,7 +54,7 @@ export const reportDefinitionCreateSchema = z.object({
   schedule: scheduleConfigSchema.optional(),
 });
 
-export const reportDefinitionUpdateSchema = reportDefinitionCreateSchema.partial();
+export const reportDefinitionUpdateSchema = partialForUpdate(reportDefinitionCreateSchema);
 
 export type ReportDefinitionCreateInput = z.infer<typeof reportDefinitionCreateSchema>;
 export type ReportDefinitionUpdateInput = z.infer<typeof reportDefinitionUpdateSchema>;

@@ -128,3 +128,4 @@ export async function exportVehicles(
     `vehicles-export.${format}`
   );
 }
+export * from './vehicle-timeline';

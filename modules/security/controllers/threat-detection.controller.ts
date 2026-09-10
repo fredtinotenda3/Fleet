@@ -17,10 +17,24 @@ export class ThreatDetectionController {
         req.nextUrl.searchParams.get('limit')
       );
 
+      /*
+        CROSS-TENANT LEAK, FIXED -- and worse than the audit-log one,
+        because the fallback here is `undefined` rather than a
+        caller-supplied slug, and `findWithFilters` applies the tenant
+        predicate only when it is truthy. So an ORGANIZATION_OWNER did
+        not even have to name a target: this returned EVERY tenant's
+        security events -- failed logins, brute-force detections,
+        lockouts, with email addresses.
+
+        `isSuperAdmin` is the deprecated alias of `canBypassRbac`, which
+        is true for ORGANIZATION_OWNER. `isPlatformAdmin` is
+        SUPER_ADMIN only, and is the only flag that may widen a read
+        past one tenant.
+      */
       const result = await auditLogRepository.findWithFilters(
         {
           category: 'security',
-          tenantId: context.isSuperAdmin ? undefined : context.tenantId,
+          tenantId: context.isPlatformAdmin ? undefined : context.tenantId,
         },
         { page, limit }
       );
@@ -33,8 +47,11 @@ export class ThreatDetectionController {
 
   async listLockedAccounts(req: NextRequest, context: AuthContext) {
     try {
+      // Same fix: `listLockedAccounts(undefined)` drops the tenant
+      // predicate entirely (login-attempt.repository.ts), so this
+      // returned every locked account on the platform to any org owner.
       const accounts = await threatDetectionService.listLockedAccounts(
-        context.isSuperAdmin ? undefined : context.tenantId
+        context.isPlatformAdmin ? undefined : context.tenantId
       );
       return successResponse(accounts);
     } catch (error) {

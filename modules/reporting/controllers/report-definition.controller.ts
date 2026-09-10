@@ -126,7 +126,17 @@ export class ReportDefinitionController {
       // Deliberately called here (not inside ReportBuilderService, per that
       // service's own comment) rather than silently skipped.
       if (created.schedule) {
-        await reportSchedulerService.syncSchedule(created, context.tenantId, context.userId);
+        // The creator's org-unit scope is frozen onto the schedule: a
+        // scheduled run has no request and therefore no TenantContext,
+        // and the engine defaulted to organization-wide without it --
+        // on a path that emails its output.
+        const scheduleContext = await resolveTenantContext(req);
+        await reportSchedulerService.syncSchedule(
+          created,
+          context.tenantId,
+          context.userId,
+          scheduleContext.accessibleOrgUnitIds
+        );
       }
 
       return createdResponse(created);
@@ -143,7 +153,16 @@ export class ReportDefinitionController {
         return errorResponse('Validation failed', 'VALIDATION_ERROR', 400, result.errors);
       }
       const updated = await reportBuilderService.update(id, result.data, context.tenantId, context.userId);
-      await reportSchedulerService.syncSchedule(updated, context.tenantId, context.userId);
+      // Re-freezes the scope on every update, so a definition edited by
+      // a differently-scoped user runs under the scope of whoever last
+      // saved it -- never wider than that person could read themselves.
+      const scheduleContext = await resolveTenantContext(req);
+      await reportSchedulerService.syncSchedule(
+        updated,
+        context.tenantId,
+        context.userId,
+        scheduleContext.accessibleOrgUnitIds
+      );
       return successResponse(updated);
     } catch (error) {
       return this.handleError(error);

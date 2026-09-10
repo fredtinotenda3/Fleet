@@ -13,6 +13,7 @@ import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/chart
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { FuelAnalyticsDateRange } from './FuelAnalyticsFilterBar';
 import type { DriverFuelConsumptionRow } from '../types';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 const BAR_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)'];
 
@@ -84,7 +85,9 @@ export function FuelCostByDriverChart({ dateRange, licensePlate }: FuelCostByDri
         <CardContent>
           {isLoading ? (
             <div className="rounded-lg h-60 skeleton" />
-          ) : error || !data || data.length === 0 ? (
+          ) : error ? (
+            <ChartLoadError />
+          ) : !data || data.length === 0 ? (
             <p className="text-sm text-muted-foreground">No driver-attributed fuel entries in this range.</p>
           ) : (
             <div style={{ width: '100%', height: Math.max(260, data.length * 36) }}>

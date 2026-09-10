@@ -130,7 +130,13 @@ export interface PredictiveMaintenancePrediction extends WithAIEvidence {
 // ─── Fleet Health Score ─────────────────────────────────────────────────────
 
 export interface FleetHealthScore extends WithAIEvidence {
-  overallScore: number; // 0-100
+  /**
+   * 0-100, or `null` when no vehicle was scored.
+   *
+   * A mean over an empty fleet is undefined. It is NOT 0 -- rendering 0
+   * tells a brand-new organisation its fleet is in critical condition.
+   */
+  overallScore: number | null;
   timestamp: Date;
   vehicleScores: Array<{
     vehicleId: string;
@@ -139,12 +145,15 @@ export interface FleetHealthScore extends WithAIEvidence {
     components: Record<string, number>;
   }>;
   metrics: {
-    averageVehicleAge: number;
+    /** `null` when no vehicle records a model year -- never dated to a default. */
+    averageVehicleAge: number | null;
     averageMileage: number;
-    maintenanceCompletionRate: number;
+    /** `null` when the fleet has logged no maintenance -- NOT 1.0. */
+    maintenanceCompletionRate: number | null;
     pendingMaintenanceCount: number;
     overdueMaintenanceCount: number;
-    averageDowntime: number;
+    /** Always `null`: this platform records no downtime to average. */
+    averageDowntime: number | null;
     /**
      * Fleet km per litre. `null` when no distance has been recorded for
      * the period -- see FleetHealthService.calculateMetrics. NEVER 0:

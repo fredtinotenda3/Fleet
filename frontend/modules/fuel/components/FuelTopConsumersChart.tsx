@@ -10,6 +10,7 @@ import { FuelLogDrawer } from './FuelLogDrawer';
 import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { TopFuelConsumerRow } from '../types';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 interface FuelTopConsumersChartProps {
   /**
@@ -42,7 +43,20 @@ export function FuelTopConsumersChart({ licensePlate }: FuelTopConsumersChartPro
     );
   }
 
-  if (error || !topConsumers || topConsumers.length === 0) {
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Top Fuel Consumers</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ChartLoadError />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!topConsumers || topConsumers.length === 0) {
     return (
       <Card>
         <CardHeader>

@@ -409,7 +409,18 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
           let: { plate: '$license_plate' },
           pipeline: [
             {
-              $match: { $expr: { $eq: ['$license_plate', '$$plate'] } },
+              $match: {
+                // Same class as getVehicleAnalytics above: a $lookup
+                // sub-pipeline is a fresh query over the whole joined
+                // collection, and `license_plate` is not globally
+                // unique. Without this, a vehicle sharing a plate with
+                // another tenant's could take that tenant's latest
+                // odometer -- and this pipeline then decides whether
+                // the vehicle is due for service on it.
+                ...(isSuperAdmin ? {} : { tenantId }),
+                isDeleted: { $ne: true },
+                $expr: { $eq: ['$license_plate', '$$plate'] },
+              },
             },
             { $sort: { date: -1 } },
             { $limit: 1 },
@@ -480,6 +491,41 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
       Object.assign(baseFilter, tenantScopeService.buildFilter<Vehicle>(context, 'orgUnitId'));
     }
 
+    /*
+      ─────────────────────────────────────────────────────────────────
+      CROSS-TENANT $lookup, FIXED
+      ─────────────────────────────────────────────────────────────────
+      Both sub-pipelines below joined on `license_plate` ALONE. The
+      outer $match is tenant-scoped, but a $lookup sub-pipeline is a
+      fresh query over the whole joined collection -- the outer scope
+      does not reach into it.
+
+      `license_plate` is not globally unique. It is a registration
+      number issued by a national authority, and two tenants in the same
+      country routinely hold plates from the same series; more to the
+      point, an attacker can simply CREATE one. Steps: register an
+      organisation (self-service), add a vehicle whose plate matches the
+      target's (VEHICLE_CREATE), call GET /api/vehicles/analytics, and
+      read `totalExpenses`, `totalFuelCost` and `totalFuelVolume`
+      summed across EVERY tenant holding that plate.
+
+      The scope predicates are therefore applied INSIDE each
+      sub-pipeline. The correct pattern already exists in this codebase
+      -- app/api/meterlogs/route.ts puts `tenantId` in its sub-pipeline
+      $match -- so this is bringing an outlier back in line, not
+      inventing a rule.
+
+      ORG-UNIT scope is applied there too: without it a branch-scoped
+      caller would see their own branch's vehicles carrying costs
+      aggregated from every branch, which is a subtler leak and a
+      wrong number besides.
+    */
+    const joinScope: Record<string, unknown> = {
+      isDeleted: { $ne: true },
+      ...(isSuperAdmin ? {} : { tenantId }),
+      ...(context ? tenantScopeService.buildFilter(context, 'orgUnitId') : {}),
+    };
+
     const pipeline = [
       { $match: baseFilter },
       {
@@ -489,6 +535,7 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
           pipeline: [
             {
               $match: {
+                ...joinScope,
                 $expr: { $eq: ['$license_plate', '$$plate'] },
                 date: { $gte: startDate, $lte: endDate },
               },
@@ -505,6 +552,7 @@ export class VehicleRepository extends BaseRepository<Vehicle> {
           pipeline: [
             {
               $match: {
+                ...joinScope,
                 $expr: { $eq: ['$license_plate', '$$plate'] },
                 date: { $gte: startDate, $lte: endDate },
               },

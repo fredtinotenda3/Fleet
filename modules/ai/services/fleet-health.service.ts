@@ -77,10 +77,33 @@ export class FleetHealthService extends BaseAIService {
       // Calculate fleet metrics
       const metrics = this.calculateFleetMetrics(vehicles, maintenance, trips, fuel);
 
-      // Calculate overall score
-      const overallScore = Math.round(
-        vehicleScores.reduce((sum, v) => sum + v.score, 0) / Math.max(1, vehicleScores.length)
-      );
+      /**
+       * Calculate overall score -- or refuse to.
+       *
+       * HONEST METRICS (same family as averageVehicleAge,
+       * maintenanceCompletionRate and averageDowntime below).
+       *
+       * This was:
+       *
+       *   Math.round(sum / Math.max(1, vehicleScores.length))
+       *
+       * The `Math.max(1, ...)` guards the division by zero and then
+       * returns 0 -- which the API reports with `success: true`, and
+       * which every consumer renders as a red "0/100 fleet health" or a
+       * 5xl red "0%". An organisation that has not added its first
+       * vehicle yet was being told its fleet was in the worst possible
+       * condition. That is a fabricated measurement of nothing, and it
+       * is the single most alarming thing a new customer could see.
+       *
+       * A mean over an empty set is undefined, not zero. `null` says so,
+       * and the consumers render "Not measured" rather than a colour.
+       */
+      const overallScore =
+        vehicleScores.length === 0
+          ? null
+          : Math.round(
+              vehicleScores.reduce((sum, v) => sum + v.score, 0) / vehicleScores.length
+            );
 
       // Generate trends
       const trends = this.generateTrends(vehicleScores, maintenance);
@@ -345,13 +368,61 @@ export class FleetHealthService extends BaseAIService {
       (m) => m.status === 'overdue' || (m.due_date && m.due_date < new Date())
     );
 
+    /**
+     * THREE MORE FABRICATIONS, SAME FAMILY AS fuelEfficiencyAverage.
+     *
+     * That one was fixed last round -- `totalFuel > 0 ? ... : 0` reported
+     * 0.0 km/L for a fleet with no trips, which passed the `< 8` test
+     * and persisted an attention item recommending action on a number
+     * invented from an ABSENCE. These three had the same shape and were
+     * missed:
+     *
+     *  averageVehicleAge      `v.year || 2020` silently dated every
+     *                         vehicle with no model year to 2020, and
+     *                         the result feeds a "replacement planning"
+     *                         recommendation at > 10 years.
+     *  maintenanceCompletionRate
+     *                         defaulted to 1 -- a PERFECT score -- for a
+     *                         fleet that has logged no maintenance at
+     *                         all. The best possible answer for the
+     *                         least possible data, exactly like
+     *                         calculateFuelScore returning 100 for a
+     *                         missing odometer.
+     *  averageDowntime        the literal 5, with the comment
+     *                         "Placeholder - needs real data", rendered
+     *                         on the fleet-health screen as a measured
+     *                         figure.
+     *
+     * All three are now `null` when unmeasurable, and every consumer
+     * either renders "Not measured" or omits the recommendation. A
+     * number a customer can act on has to have come from somewhere.
+     */
+    const vehiclesWithYear = vehicles.filter(
+      (v) => typeof v.year === 'number' && Number.isFinite(v.year) && v.year > 1900
+    );
+
     return {
-      averageVehicleAge: vehicles.reduce((sum, v) => sum + (new Date().getFullYear() - (v.year || 2020)), 0) / Math.max(1, vehicles.length),
+      averageVehicleAge:
+        vehiclesWithYear.length > 0
+          ? vehiclesWithYear.reduce(
+              (sum, v) => sum + (new Date().getFullYear() - (v.year as number)),
+              0
+            ) / vehiclesWithYear.length
+          : null,
       averageMileage: totalMileage / Math.max(1, vehicles.length),
-      maintenanceCompletionRate: maintenance.length > 0 ? completedMaintenance.length / maintenance.length : 1,
+      maintenanceCompletionRate:
+        maintenance.length > 0 ? completedMaintenance.length / maintenance.length : null,
       pendingMaintenanceCount: pendingMaintenance.length,
       overdueMaintenanceCount: overdueMaintenance.length,
-      averageDowntime: 5, // Placeholder - needs real data
+      /**
+       * NOT MEASURED. There is no downtime record in this platform: a
+       * vehicle's out-of-service periods are not tracked anywhere, so
+       * there is nothing to average. Deriving it would need either a
+       * status-history collection or work-order start/finish times
+       * treated as downtime -- both product decisions, neither
+       * implemented. `null` says so; `5` said something false.
+       */
+      averageDowntime: null,
       fuelEfficiencyAverage: efficiencyMeasurable ? totalMileage / totalFuel : null,
     };
   }
@@ -492,7 +563,7 @@ export class FleetHealthService extends BaseAIService {
     }
 
     // High average age
-    if (metrics.averageVehicleAge > 10) {
+    if (metrics.averageVehicleAge !== null && metrics.averageVehicleAge > 10) {
       recommendations.push({
         priority: 'medium',
         category: 'Fleet',

@@ -10,6 +10,7 @@ import { MaintenanceRecordDrawer } from './MaintenanceRecordDrawer';
 import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { RepairFrequencyByVehicleRow } from '../types';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 function FrequencyTooltip({ active, payload }: any) {
   if (!active || !payload || !payload.length) return null;
@@ -52,7 +53,9 @@ export function RepairFrequencyByVehicleChart() {
         <CardContent>
           {isLoading ? (
             <div className="rounded-lg h-60 skeleton" />
-          ) : error || !data || data.length === 0 ? (
+          ) : error ? (
+            <ChartLoadError />
+          ) : !data || data.length === 0 ? (
             <p className="text-sm text-muted-foreground">No completed maintenance records yet.</p>
           ) : (
             <div style={{ width: '100%', height: 280 }}>

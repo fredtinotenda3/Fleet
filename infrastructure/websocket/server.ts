@@ -110,6 +110,24 @@ const SUBSCRIBABLE_TOPICS = new Set<string>([
 
 const MAX_SUBSCRIPTIONS_PER_SOCKET = 32;
 
+/**
+ * Says once, per process, that the real-time layer is off.
+ *
+ * Once rather than per emit: at 29 call sites and a 10-second live-map
+ * poll this would otherwise become the loudest line in the log and be
+ * filtered out within a day, which is how a warning stops being one.
+ */
+let realtimeWarningIssued = false;
+function warnRealtimeDisabledOnce(): void {
+  if (realtimeWarningIssued) return;
+  realtimeWarningIssued = true;
+  monitoring.logWarn(
+    '[WebSocket] Real-time delivery is DISABLED: the Socket.IO server was never initialised. ' +
+      'Every emitTo* call in this process is a no-op and clients fall back to polling. ' +
+      'See the note on emitToTenant for what turning it on requires.'
+  );
+}
+
 export class WebSocketManager {
   async initialize(server: HTTPServer): Promise<void> {
     if (io) return; // Already initialised
@@ -276,8 +294,34 @@ export class WebSocketManager {
    * with an optional argument precisely so that "which kind is this?"
    * has to be answered at every call site.
    */
+  /**
+   * ---------------------------------------------------------------
+   * THIS SERVER IS NEVER INITIALISED, AND THE SILENCE WAS TOTAL.
+   * ---------------------------------------------------------------
+   * `if (!io) return;` appears in all three emit methods, and `io` is
+   * only assigned by `initialize(server)` -- which NOTHING in this
+   * repository calls. There is also no `/api/socket` route for the
+   * client to reach, and `infrastructure/websocket/client.ts`, which is
+   * complete and correct, is imported by nothing.
+   *
+   * So all 29 `emitTo*` call sites across notifications, the live map,
+   * billing, organizations, the digital twin and AI insights have always
+   * returned immediately. Both ends of a well-built real-time subsystem
+   * are unreachable, and the early return made it look like a healthy
+   * "no connected clients" case.
+   *
+   * The app polls instead -- notifications every 60s, the live map every
+   * 10s -- which is the correct pattern for the documented deployment
+   * target: Vercel's serverless functions cannot hold a persistent
+   * Socket.IO connection. Turning this on is a HOSTING decision (a
+   * long-lived Node process for the socket server), not a code fix, so
+   * it is reported rather than silently wired.
+   *
+   * What changed here is only that the silence is now audible ONCE, at
+   * whatever log level operators already read, instead of never.
+   */
   emitToTenant(tenantId: string, event: string, payload: unknown): void {
-    if (!io) return;
+    if (!io) return void warnRealtimeDisabledOnce();
     io.to(tenantRoom(tenantId)).emit(event, {
       type: event,
       payload,
@@ -303,7 +347,7 @@ export class WebSocketManager {
     event: string,
     payload: unknown
   ): void {
-    if (!io) return;
+    if (!io) return void warnRealtimeDisabledOnce();
 
     const envelope = {
       type: event,
@@ -320,7 +364,7 @@ export class WebSocketManager {
   }
 
   emitToUser(userId: string, event: string, payload: unknown): void {
-    if (!io) return;
+    if (!io) return void warnRealtimeDisabledOnce();
     io.to(`user:${userId}`).emit(event, {
       type: event,
       payload,

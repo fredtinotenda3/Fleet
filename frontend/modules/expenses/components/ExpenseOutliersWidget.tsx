@@ -12,6 +12,7 @@ import { formatCurrency } from '@/shared/utils/currency.utils';
 import { formatDate } from '@/shared/utils/date.utils';
 import type { ExpenseAnalyticsDateRange } from './ExpenseAnalyticsFilterBar';
 import type { ExpenseOutlierRow } from '@/shared/types/expense.types';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 interface ExpenseOutliersWidgetProps {
   dateRange: ExpenseAnalyticsDateRange;
@@ -39,7 +40,20 @@ export function ExpenseOutliersWidget({ dateRange, licensePlate }: ExpenseOutlie
     );
   }
 
-  if (error || !outliers || outliers.length === 0) {
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Expense outliers</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ChartLoadError />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!outliers || outliers.length === 0) {
     return (
       <Card>
         <CardHeader>

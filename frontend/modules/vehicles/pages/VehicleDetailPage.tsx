@@ -3,6 +3,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Pencil, Trash2, Copy } from 'lucide-react';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
@@ -13,11 +14,13 @@ import { Badge } from '@/frontend/shared/ui/data-display/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/frontend/shared/ui/navigation/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/frontend/shared/ui/data-display/card';
 import { useSessionStore } from '@/frontend/shared/store/session.store';
-import { useVehicle, useVehicleActivity } from '../hooks/useVehicles';
+import { useVehicle } from '../hooks/useVehicles';
 import { useDeleteVehicle, useUpdateVehicle } from '../hooks/useVehicleMutations';
 import { VehicleModal, type VehicleModalMode } from '../components/VehicleModal';
 import { VehicleAnalyticsPanel } from '../components/analytics';
 import { DriverAssignmentPanel } from '../components/DriverAssignmentPanel';
+import { VehicleQuickActions } from '../components/operations/VehicleQuickActions';
+import { VehicleActivityTimeline } from '../components/operations/VehicleActivityTimeline';
 import { VehicleCostsPanel } from '@/frontend/modules/finance/components/VehicleCostsPanel';
 import { canAssignDriverToVehicle } from '@/frontend/modules/drivers/utils';
 import {
@@ -32,6 +35,10 @@ import {
 import { formatDate } from '@/shared/utils/date.utils';
 import { formatDistance } from '@/shared/utils/distance.utils';
 import { VEHICLE_ROUTES } from '../routes';
+import { FUEL_ROUTES } from '@/frontend/modules/fuel/routes';
+import { EXPENSE_ROUTES } from '@/frontend/modules/expenses/routes';
+import { MAINTENANCE_ROUTES } from '@/frontend/modules/maintenance/routes';
+import { WORKORDER_ROUTES } from '@/frontend/modules/workorders/routes';
 import type { VehicleFormValues } from '../schemas';
 import type { VehicleStatus } from '../types';
 import { cn } from '@/lib/utils';
@@ -58,10 +65,10 @@ export function VehicleDetailPage({ vehicleId }: VehicleDetailPageProps) {
   const canAssignDriver = canAssignDriverToVehicle(roles);
 
   const { data: vehicle, isLoading, isError } = useVehicle(vehicleId);
-  const { data: activity, isLoading: activityLoading } = useVehicleActivity(vehicleId);
   const deleteVehicle = useDeleteVehicle();
   const updateVehicle = useUpdateVehicle(vehicleId);
   const [modalOpen, setModalOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState('overview');
   const [modalMode, setModalMode] = useState<VehicleModalMode>('edit');
 
   if (isLoading) return <PageLoader label="Loading vehicle" />;
@@ -149,7 +156,15 @@ export function VehicleDetailPage({ vehicleId }: VehicleDetailPageProps) {
         )}
       </div>
 
-      <Tabs defaultValue="overview">
+      {/*
+        The operational surface. Each button opens its own module's modal
+        with this vehicle pre-selected, submits through that module's own
+        mutation, and is gated on the permission that module's endpoint
+        actually enforces -- see VehicleQuickActions.
+      */}
+      <VehicleQuickActions licensePlate={vehicle.license_plate} vehicleId={vehicle._id} />
+
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value ?? 'overview')}>
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="specifications">Specifications</TabsTrigger>
@@ -198,6 +213,62 @@ export function VehicleDetailPage({ vehicleId }: VehicleDetailPageProps) {
               </CardContent>
             </Card>
           </div>
+
+          {/*
+            A glance at what has actually happened to this vehicle,
+            reusing the Activity tab's queries so the two views share one
+            cache entry rather than fetching the same records twice.
+          */}
+          {vehicle._id && (
+            <Card className="mt-4">
+              <CardHeader>
+                <CardTitle>Recent activity</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <VehicleActivityTimeline
+                  vehicleId={vehicle._id}
+                  licensePlate={vehicle.license_plate}
+                  maxEntries={6}
+                  footer={
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setActiveTab('activity')}
+                      >
+                        See full history
+                      </Button>
+                      <Link
+                        href={FUEL_ROUTES.vehicleHistory(vehicle.license_plate)}
+                        className="inline-flex items-center rounded-md px-3 py-1.5 text-body-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                      >
+                        Fuel history
+                      </Link>
+                      <Link
+                        href={EXPENSE_ROUTES.vehicleHistory(vehicle.license_plate)}
+                        className="inline-flex items-center rounded-md px-3 py-1.5 text-body-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                      >
+                        Expense history
+                      </Link>
+                      <Link
+                        href={MAINTENANCE_ROUTES.vehicleHistory(vehicle.license_plate)}
+                        className="inline-flex items-center rounded-md px-3 py-1.5 text-body-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                      >
+                        Maintenance history
+                      </Link>
+                      <Link
+                        href={WORKORDER_ROUTES.byLicensePlate(vehicle.license_plate)}
+                        className="inline-flex items-center rounded-md px-3 py-1.5 text-body-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                      >
+                        Work orders
+                      </Link>
+                    </div>
+                  }
+                />
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         <TabsContent value="specifications" className="mt-4">
@@ -241,23 +312,24 @@ export function VehicleDetailPage({ vehicleId }: VehicleDetailPageProps) {
               <CardTitle>Activity history</CardTitle>
             </CardHeader>
             <CardContent>
-              {activityLoading ? (
-                <p className="text-body-sm text-muted-foreground">Loading activity...</p>
-              ) : !activity?.data?.length ? (
-                <p className="text-body-sm text-muted-foreground">No recorded activity for this vehicle yet.</p>
+              {/*
+                This tab used to render the AUDIT LOG and nothing else, so a
+                truck refuelled eleven times and serviced twice read
+                "Vehicle updated / Vehicle created". The timeline merges the
+                vehicle's own operational records with those record changes
+                -- see VehicleActivityTimeline for the two rules it holds to
+                (nothing fabricated; a failed fetch is never rendered as an
+                empty history).
+              */}
+              {vehicle._id ? (
+                <VehicleActivityTimeline
+                  vehicleId={vehicle._id}
+                  licensePlate={vehicle.license_plate}
+                />
               ) : (
-                <ul className="divide-y divide-border">
-                  {activity.data.map((entry) => (
-                    <li key={entry._id} className="flex items-center justify-between gap-2 py-3">
-                      <div>
-                        <p className="font-medium text-body-sm text-foreground">{entry.action}</p>
-                        <p className="text-caption text-muted-foreground">
-                          {formatDate(entry.createdAt ?? entry.recordedAt, 'MMM dd, yyyy HH:mm')}
-                        </p>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
+                <p className="text-body-sm text-muted-foreground">
+                  Activity is unavailable for this vehicle.
+                </p>
               )}
             </CardContent>
           </Card>

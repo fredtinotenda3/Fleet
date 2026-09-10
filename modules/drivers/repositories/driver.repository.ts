@@ -83,10 +83,10 @@ export class DriverRepository extends BaseRepository<Driver> {
    */
   async findAll(tenantId: string): Promise<Driver[]> {
     const collection = await this.getCollection();
-    return collection
+    return this.normalizeDocs<Driver>(await collection
       .find({ tenantId, isDeleted: { $ne: true } } as Filter<Driver>)
       .sort({ name: 1 })
-      .toArray() as Promise<Driver[]>;
+      .toArray());
   }
 
   /**
@@ -206,10 +206,10 @@ export class DriverRepository extends BaseRepository<Driver> {
     }
     conditions.push(tenantScopeService.buildFilter<Driver>(context, 'orgUnitId') as Record<string, unknown>);
 
-    return collection
+    return this.normalizeDocs<Driver>(await collection
       .find({ $and: conditions } as Filter<Driver>)
       .sort({ name: 1 })
-      .toArray() as Promise<Driver[]>;
+      .toArray());
   }
 }
 

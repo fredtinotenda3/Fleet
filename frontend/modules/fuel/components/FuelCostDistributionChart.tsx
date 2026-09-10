@@ -12,6 +12,7 @@ import { FuelLogDrawer } from './FuelLogDrawer';
 import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { FuelAnalyticsDateRange } from './FuelAnalyticsFilterBar';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 interface FuelCostDistributionChartProps {
   dateRange: FuelAnalyticsDateRange;
@@ -94,7 +95,9 @@ export function FuelCostDistributionChart({ dateRange, licensePlate }: FuelCostD
         <CardContent>
           {isLoading ? (
             <div className="rounded-lg h-60 skeleton" />
-          ) : error || chartData.length === 0 ? (
+          ) : error ? (
+            <ChartLoadError />
+          ) : chartData.length === 0 ? (
             <p className="text-sm text-muted-foreground">No fuel entries in this range.</p>
           ) : (
             <div style={{ width: '100%', height: 280 }}>

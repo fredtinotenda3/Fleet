@@ -965,6 +965,9 @@ export class TripRepository extends BaseRepository<Trip> {
   ): Promise<TripCostAnalyticsRow[]> {
     const db = await connectToDatabase();
     const tripMatch = this.buildBaseMatch(tenantId, dateRange, licensePlate, context);
+    // Mirrors buildBaseMatch's own handling: the platform sentinel
+    // tenant reads across tenants deliberately, everything else does not.
+    const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
 
     const pipeline = [
       { $match: tripMatch },
@@ -973,7 +976,26 @@ export class TripRepository extends BaseRepository<Trip> {
           from: 'tblfuellogs',
           let: { tripId: { $toString: '$_id' } },
           pipeline: [
-            { $match: { $expr: { $and: [{ $eq: ['$tripId', '$$tripId'] }, { $ne: ['$isDeleted', true] }] } } },
+            {
+              /*
+                The tenant predicate is in the sub-pipeline, not only on
+                the outer $match: a $lookup sub-pipeline is a fresh query
+                over the whole joined collection and the outer scope does
+                not reach into it.
+
+                Unlike the plate-keyed joins in vehicle.repository.ts,
+                the join key here is derived from a Mongo ObjectId, so
+                there is no practical way for an attacker to force a
+                collision -- this is defence in depth, closing the shape
+                rather than a demonstrated exploit, and it costs nothing
+                because tenantId is the leading field of the index these
+                queries already use.
+              */
+              $match: {
+                ...(isSuperAdmin ? {} : { tenantId }),
+                $expr: { $and: [{ $eq: ['$tripId', '$$tripId'] }, { $ne: ['$isDeleted', true] }] },
+              },
+            },
             { $group: { _id: null, cost: { $sum: '$cost' }, volume: { $sum: '$fuel_volume' } } },
           ],
           as: 'fuelAgg',
@@ -984,7 +1006,13 @@ export class TripRepository extends BaseRepository<Trip> {
           from: 'tblexpenses',
           let: { tripId: { $toString: '$_id' } },
           pipeline: [
-            { $match: { $expr: { $and: [{ $eq: ['$tripId', '$$tripId'] }, { $ne: ['$isDeleted', true] }] } } },
+            {
+              // See the note on the fuel join above.
+              $match: {
+                ...(isSuperAdmin ? {} : { tenantId }),
+                $expr: { $and: [{ $eq: ['$tripId', '$$tripId'] }, { $ne: ['$isDeleted', true] }] },
+              },
+            },
             { $group: { _id: null, amount: { $sum: '$amount' } } },
           ],
           as: 'expenseAgg',

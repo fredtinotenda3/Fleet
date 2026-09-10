@@ -14,6 +14,7 @@ import { DomainEvent } from '../../base/DomainEvent';
 import { anomalyDetectionService } from '@/modules/intelligence/services/anomaly-detection.service';
 import { notificationService } from '@/modules/notifications/services/notification.service';
 import { Anomaly } from '@/shared/types/anomaly.types';
+import { monitoring } from '@/infrastructure/monitoring/logger';
 
 export class IntelligenceHandler implements IEventHandler<DomainEvent> {
   async handle(event: DomainEvent): Promise<void> {
@@ -93,7 +94,13 @@ export class IntelligenceHandler implements IEventHandler<DomainEvent> {
           actionUrl: `/anomalies/${anomaly._id}`,
           actionLabel: 'Review',
         } as any)
-        .catch(() => undefined);
+        .catch((error: unknown) =>
+          monitoring.logError(
+            '[intelligence] Anomaly notification failed; the anomaly is recorded but nobody was told',
+            error as Error,
+            { anomalyId: anomaly._id, tenantId }
+          )
+        );
     }
   }
 }

@@ -1,6 +1,7 @@
 // shared/validations/rule.schema.ts
 
 import { z } from 'zod';
+import { partialForUpdate } from './update-schema.utils';
 
 const operatorSchema = z.enum([
   'eq',
@@ -61,7 +62,7 @@ export const ruleCreateSchema = z.object({
   tags: z.array(z.string().max(30)).max(20).optional(),
 });
 
-export const ruleUpdateSchema = ruleCreateSchema.partial();
+export const ruleUpdateSchema = partialForUpdate(ruleCreateSchema);
 
 export const ruleTestSchema = z.object({
   context: z.record(z.string(), z.unknown()),

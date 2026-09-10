@@ -45,6 +45,8 @@ import {
   useResolveAttentionItem,
   type ResolveAttentionInput,
 } from '../hooks/useAttentionActions';
+import { useFleetPresence } from '@/frontend/modules/onboarding/hooks/useFleetPresence';
+import { zeroTone } from '@/frontend/modules/onboarding/utils/empty-state-copy';
 import { SeverityFilterBar } from '../components/SeverityFilterBar';
 import { AttentionQueueList } from '../components/AttentionQueueList';
 import { ResolveAttentionDialog } from '../components/ResolveAttentionDialog';
@@ -76,6 +78,7 @@ export function CommandCentrePage({ embedded = false }: CommandCentrePageProps) 
   } = useMonthToDateAllocationTotal();
 
   const { canResolve, canDispatch } = useAttentionPermissions();
+  const presence = useFleetPresence();
   const resolveMutation = useResolveAttentionItem();
   const dispatchMutation = useDispatchAttentionItem();
 
@@ -171,11 +174,24 @@ export function CommandCentrePage({ embedded = false }: CommandCentrePageProps) 
               hint={truncated ? `Showing the top ${items.length}` : undefined}
               icon={<AlertOctagon aria-hidden="true" />}
             />
+            {/*
+              A green "Critical 0 / Nothing critical" was shown to
+              organisations with no vehicles -- the console asserting a
+              clean bill of health for a fleet that does not exist. The
+              green is earned only once there is something to be clear
+              OF; see empty-state-copy.ts.
+            */}
             <MetricCard
               label="Critical"
               value={critical.toLocaleString()}
-              tone={critical > 0 ? 'critical' : 'positive'}
-              hint={critical > 0 ? 'Act today' : 'Nothing critical'}
+              tone={critical > 0 ? 'critical' : zeroTone(presence)}
+              hint={
+                critical > 0
+                  ? 'Act today'
+                  : presence === 'empty'
+                    ? 'Nothing to monitor yet'
+                    : 'Nothing critical'
+              }
               icon={<ShieldAlert aria-hidden="true" />}
             />
             <MetricCard

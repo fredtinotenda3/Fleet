@@ -2,7 +2,6 @@
 
 import { BaseWorker } from '@/infrastructure/queue/worker-base.service';
 import { notificationService } from '@/modules/notifications/services/notification.service';
-import { queueService, JobType } from '@/infrastructure/queue/queue.service';
 
 interface SendNotificationPayload {
   userId: string;
@@ -25,17 +24,20 @@ export class NotificationWorker extends BaseWorker<SendNotificationPayload> {
 
   protected async process(_jobName: string, payload: SendNotificationPayload, tenantId: string): Promise<void> {
     const { userId, notification } = payload;
-    const sent = await notificationService.sendNotification(userId, tenantId, notification as any);
-    if (!sent) return;
-
-    if (sent.deliveryMethods.includes('email')) {
-      await queueService.addJob(JobType.SEND_EMAIL, {
-        type: JobType.SEND_EMAIL,
-        tenantId,
-        payload: { userId, subject: sent.title, text: sent.message },
-      });
-    }
-    // SMS delivery is opt-in per notification type via preferences;
-    // wired the same way once a phone-number-on-file field exists.
+    /**
+     * The email fan-out that used to live here now lives inside
+     * `sendNotification`.
+     *
+     * It had to move: the four production callers
+     * (NotificationHandler, IntelligenceHandler, SecurityAuditHandler,
+     * the rule engine) call `sendNotification` DIRECTLY and nothing has
+     * ever enqueued a 'send-notification' job, so this worker never ran
+     * and no email was ever sent -- while the persisted record claimed
+     * it had been. Doing it here as well would now double-send.
+     *
+     * SMS delivery is opt-in per notification type via preferences;
+     * wired the same way once a phone-number-on-file field exists.
+     */
+    await notificationService.sendNotification(userId, tenantId, notification as any);
   }
 }

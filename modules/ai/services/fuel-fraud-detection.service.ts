@@ -171,11 +171,8 @@ export class FuelFraudDetectionService extends BaseAIService {
         };
       }
 
-      if (
-        context &&
-        context.accessibleOrgUnitIds !== null &&
-        !tenantScopeService.canAccessOrgUnit(context, (vehicle as { orgUnitId?: string }).orgUnitId ?? '')
-      ) {
+      // See the matching note in predictive-maintenance.service.ts.
+      if (context && !tenantScopeService.canAccessRecord(context, (vehicle as { orgUnitId?: string }).orgUnitId)) {
         return {
           success: false,
           error: 'Vehicle not found',

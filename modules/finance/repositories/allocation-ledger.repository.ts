@@ -16,6 +16,52 @@ export interface AllocationLedgerFilters {
 }
 
 /**
+ * THE PERIOD RULE, IN ONE PLACE: FULLY CONTAINED.
+ *
+ * ---------------------------------------------------------------
+ * TWO SEMANTICS USED TO COEXIST
+ * ---------------------------------------------------------------
+ * `buildFilter` -- the LIST endpoint, i.e. the drill-down a finance
+ * user opens to see which postings make up a figure -- constrained
+ * `periodStart` alone: "starts within the window".
+ *
+ * `getNetTotalsByCategory` / `getNetTotalsByGlAccount` -- every path
+ * that produces MONEY, including cost-per-km and GL reconciliation --
+ * required both ends inside: "fully contained".
+ *
+ * They agree for every auto-posted transaction, because a dated fuel
+ * log or expense posts with `periodStart === periodEnd`. They disagree
+ * for a SPREAD posting -- depreciation, a shared cost -- whose range
+ * starts inside the window and ends after it: the drill-down listed it,
+ * the header did not count it. So the lines did not add up to the total
+ * above them, on a screen whose entire purpose is that they should.
+ *
+ * Standardised on FULLY CONTAINED, for two reasons:
+ *
+ *   1. It is what the money already used. Changing the totals instead
+ *      would retroactively restate figures a customer may have already
+ *      reconciled against their own general ledger -- the one change
+ *      that must never be made silently.
+ *   2. The alternative, "overlaps the window", double-counts: a charge
+ *      spanning January and February would appear in full in both
+ *      months, and the year would not equal the sum of its months.
+ *
+ * The cost of this choice is real and is NOT hidden: a posting spanning
+ * a window boundary appears in no report for that window.
+ * `countSpanningPostings` exists so a caller can say how many, rather
+ * than letting the exclusion be silent.
+ */
+export function buildPeriodFilter(
+  periodStart?: Date,
+  periodEnd?: Date
+): Record<string, unknown> {
+  const filter: Record<string, unknown> = {};
+  if (periodStart) filter.periodStart = { $gte: periodStart };
+  if (periodEnd) filter.periodEnd = { $lte: periodEnd };
+  return filter;
+}
+
+/**
  * APPEND-ONLY, same discipline and same reason as
  * modules/attention/repositories/value-ledger.repository.ts: a cost
  * posting that can be quietly edited or removed after the fact is not
@@ -105,8 +151,7 @@ export class AllocationLedgerRepository extends TenantScopedRepository<Allocatio
       ...this.getActiveFilter(context.organizationId),
       ...tenantScopeService.buildFilter<AllocationPosting>(context, 'orgUnitId'),
       vehicleId,
-      periodStart: { $gte: periodStart },
-      periodEnd: { $lte: periodEnd },
+      ...buildPeriodFilter(periodStart, periodEnd),
     };
 
     const rows = await collection
@@ -145,8 +190,7 @@ export class AllocationLedgerRepository extends TenantScopedRepository<Allocatio
       ...this.getActiveFilter(context.organizationId),
       ...tenantScopeService.buildFilter<AllocationPosting>(context, 'orgUnitId'),
       glAccountCode: { $exists: true, $ne: null },
-      periodStart: { $gte: periodStart },
-      periodEnd: { $lte: periodEnd },
+      ...buildPeriodFilter(periodStart, periodEnd),
     };
 
     const rows = await collection
@@ -174,13 +218,44 @@ export class AllocationLedgerRepository extends TenantScopedRepository<Allocatio
     if (filters.vehicleId) filter.vehicleId = filters.vehicleId;
     if (filters.costCategory) filter.costCategory = filters.costCategory;
     if (filters.glAccountCode) filter.glAccountCode = filters.glAccountCode;
-    if (filters.periodStart || filters.periodEnd) {
-      const periodFilter: Record<string, Date> = {};
-      if (filters.periodStart) periodFilter.$gte = filters.periodStart;
-      if (filters.periodEnd) periodFilter.$lte = filters.periodEnd;
-      filter.periodStart = periodFilter;
-    }
+    Object.assign(filter, buildPeriodFilter(filters.periodStart, filters.periodEnd));
     return filter as Filter<AllocationPosting>;
+  }
+
+  /**
+   * How many postings OVERLAP a window without being contained by it.
+   *
+   * These are the postings the window deliberately excludes -- a
+   * depreciation charge or a shared-cost allocation spread across a
+   * range that starts before the window or ends after it. Counting them
+   * is what stops the exclusion being silent: a report that quietly
+   * drops a cost is the exact failure the fully-contained rule is
+   * chosen to avoid on the other side.
+   *
+   * Zero for every auto-posted transaction, which is the common case:
+   * a dated fuel log posts with periodStart === periodEnd.
+   */
+  async countSpanningPostings(
+    context: TenantContext,
+    periodStart: Date,
+    periodEnd: Date,
+    extra: Omit<AllocationLedgerFilters, 'periodStart' | 'periodEnd'> = {}
+  ): Promise<number> {
+    const collection = await this.getCollection();
+    const base: Record<string, unknown> = {
+      tenantId: context.organizationId,
+      isDeleted: { $ne: true },
+      ...(tenantScopeService.buildFilter<AllocationPosting>(context, 'orgUnitId') as Record<string, unknown>),
+      ...(extra.vehicleId ? { vehicleId: extra.vehicleId } : {}),
+      ...(extra.costCategory ? { costCategory: extra.costCategory } : {}),
+      ...(extra.glAccountCode ? { glAccountCode: extra.glAccountCode } : {}),
+      // Overlaps the window ...
+      periodStart: { $lte: periodEnd },
+      periodEnd: { $gte: periodStart },
+      // ... but is not contained by it.
+      $or: [{ periodStart: { $lt: periodStart } }, { periodEnd: { $gt: periodEnd } }],
+    };
+    return collection.countDocuments(base as never);
   }
 
   async update(): Promise<AllocationPosting | null> {

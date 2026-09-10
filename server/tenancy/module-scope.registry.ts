@@ -654,6 +654,25 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
     confirmed: true,
   },
   {
+    module: 'search',
+    collections: [],
+    level: 'computed',
+    rationale:
+      'NO OWNED COLLECTION. globalSearchService queries six collections it does not own, so ' +
+      'its scoping decision is entirely "does every query carry the caller\'s scope". Three ' +
+      'things make that true and all three are asserted by ' +
+      'tests/security/global-search-scope.spec.ts: every source filter spreads ' +
+      'tenantScopeService.buildFilter(context, \'orgUnitId\') -- the SAME predicate every ' +
+      'module list uses, so search cannot surface a row the list hides; every source is gated ' +
+      'on the permission its own list endpoint enforces, checked BEFORE the query runs, so a ' +
+      'result the caller could not open is never returned; and a caller whose assignments ' +
+      'resolved to an empty set gets {$in: []}, which matches nothing. A cross-cutting read ' +
+      'is exactly where scope has leaked twice in this codebase (the analytics cost breakdown ' +
+      'below, and the alert-summary aggregate), which is why this module is registered rather ' +
+      'than treated as too small to declare.',
+    confirmed: true,
+  },
+  {
     module: 'analytics',
     collections: [],
     level: 'computed',

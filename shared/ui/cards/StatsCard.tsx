@@ -7,7 +7,11 @@ import { MetricCard } from '@/frontend/shared/ui/patterns/MetricCard';
 
 interface StatsCardProps {
   title: string;
-  value: string | number;
+  /**
+   * `null`/`undefined` renders `emptyValue` rather than a zero -- the
+   * distinction between "not measured" and "measured zero".
+   */
+  value: ReactNode;
   icon?: ReactNode;
   description?: string;
   trend?: {
@@ -15,6 +19,21 @@ interface StatsCardProps {
     isPositive: boolean;
   };
   loading?: boolean;
+  /**
+   * Renders "Unavailable" instead of a figure when the query behind this
+   * card failed.
+   *
+   * ADDED (empty-organisation round): this adapter forwarded neither
+   * `error` nor `emptyValue`, so every one of its call sites was
+   * structurally unable to distinguish a failed request from a real
+   * zero -- `VehicleStatsCards` printed four confident zeroes and a
+   * green "Active: 0" over a backend outage. The capability existed on
+   * `MetricCard` the whole time; only the pass-through was missing.
+   */
+  error?: boolean;
+  errorMessage?: string;
+  /** Shown when `value` is null/undefined, instead of a fabricated 0. */
+  emptyValue?: string;
   /**
    * RETAINED FOR COMPATIBILITY, NO LONGER RENDERED.
    *
@@ -54,6 +73,9 @@ export function StatsCard({
   description,
   trend,
   loading = false,
+  error = false,
+  errorMessage,
+  emptyValue,
   className,
 }: StatsCardProps) {
   return (
@@ -63,6 +85,9 @@ export function StatsCard({
       hint={description}
       icon={icon}
       loading={loading}
+      error={error}
+      errorMessage={errorMessage}
+      emptyValue={emptyValue}
       className={className}
       delta={
         trend

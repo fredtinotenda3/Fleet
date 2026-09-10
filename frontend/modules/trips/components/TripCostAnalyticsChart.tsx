@@ -19,6 +19,7 @@ import { formatDate } from '@/shared/utils/date.utils';
 import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { TRIP_ROUTES } from '../routes';
 import type { TripCostAnalyticsRow } from '../types';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 interface TripCostAnalyticsChartProps {
   dateRange?: { startDate?: Date; endDate?: Date };
@@ -43,7 +44,20 @@ export function TripCostAnalyticsChart({ dateRange, licensePlate }: TripCostAnal
     );
   }
 
-  if (error || !data || data.length === 0) {
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Cost vs. distance</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ChartLoadError />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!data || data.length === 0) {
     return (
       <Card>
         <CardHeader>

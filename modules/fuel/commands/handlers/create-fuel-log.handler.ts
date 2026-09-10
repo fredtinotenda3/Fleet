@@ -13,6 +13,7 @@ import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { FuelLoggedEvent } from '@/modules/fuel/events/FuelLoggedEvent';
 import { monitoring } from '@/infrastructure/monitoring/logger';
 import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-resolver.service';
+import { driverWriteResolver } from '@/modules/drivers/services/driver-write-resolver.service';
 
 export class CreateFuelLogHandler implements ICommandHandler<CreateFuelLogCommand, FuelLog> {
   constructor(private readonly fuelRepo: FuelRepository) {}
@@ -68,6 +69,26 @@ export class CreateFuelLogHandler implements ICommandHandler<CreateFuelLogComman
       validated.license_plate as string,
       command.scope
     );
+
+    /**
+     * The driver named on the log, resolved under the same scope as the
+     * vehicle.
+     *
+     * Until this round `driver_id` never reached the database at all
+     * (see shared/validations/fuel.schema.ts), so it had never needed
+     * validating. Now that it does, it gets the same treatment the
+     * vehicle gets: tenant-filtered, org-unit-checked, and reported as
+     * not-found when it is out of scope so a narrowed caller cannot
+     * enumerate another branch's roster.
+     *
+     * Note this validates the driver EXISTS, not that they were on
+     * shift -- the platform has no shift record for most tenants, and
+     * inventing one to police data entry would refuse true history.
+     */
+    const driverId = validated.driver_id ? String(validated.driver_id) : undefined;
+    if (driverId) {
+      await driverWriteResolver.resolveForWrite(driverId, command.scope);
+    }
 
     const unit = await db.collection('tblunits').findOne({ unit_id: validated.unit_id });
     if (!unit) {
@@ -152,9 +173,11 @@ export class CreateFuelLogHandler implements ICommandHandler<CreateFuelLogComman
         : undefined),
       ...(validated.receipt_url ? { receipt_url: String(validated.receipt_url) } : undefined),
       ...(validated.fuel_card_id ? { fuel_card_id: String(validated.fuel_card_id) } : undefined),
-      ...((validated as Record<string, unknown>).driver_id
-        ? { driver_id: String((validated as Record<string, unknown>).driver_id) }
-        : undefined),
+      // Resolved and scope-checked above. The cast that used to sit here
+      // -- `(validated as Record<string, unknown>).driver_id` -- was
+      // reading a key the schema had already stripped, so this spread
+      // was always empty.
+      ...(driverId ? { driver_id: driverId } : undefined),
       // Attach tripId only if validated
       ...(validated.tripId ? { tripId: String(validated.tripId) } : undefined),
     };

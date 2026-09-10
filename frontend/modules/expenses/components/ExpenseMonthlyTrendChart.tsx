@@ -10,6 +10,7 @@ import { useExpenseDrawer } from '../hooks/useExpenseDrawer';
 import { ExpenseTransactionDrawer } from './ExpenseTransactionDrawer';
 import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 interface ExpenseMonthlyTrendChartProps {
   /** Vehicle-Level Analytics: scope this chart to a single vehicle instead of the fleet. */
@@ -62,7 +63,20 @@ export function ExpenseMonthlyTrendChart({ licensePlate }: ExpenseMonthlyTrendCh
     );
   }
 
-  if (error || !monthlyData || monthlyData.length === 0) {
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Monthly expense trend</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ChartLoadError />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!monthlyData || monthlyData.length === 0) {
     return (
       <Card>
         <CardHeader>

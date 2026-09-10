@@ -36,10 +36,10 @@ export class ReportTemplateRepository extends BaseRepository<ReportTemplate> {
       ? { isDeleted: { $ne: true } }
       : { isDeleted: { $ne: true }, $or: [{ tenantId }, { isSystemTemplate: true }] };
 
-    return collection
+    return this.normalizeDocs<ReportTemplate>(await collection
       .find(filter as Filter<ReportTemplate>)
       .sort({ createdAt: -1 })
-      .toArray() as unknown as Promise<ReportTemplate[]>;
+      .toArray());
   }
 
   /**

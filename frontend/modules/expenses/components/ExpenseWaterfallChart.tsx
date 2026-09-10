@@ -9,6 +9,7 @@ import { ExpenseTransactionDrawer } from './ExpenseTransactionDrawer';
 import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { ExpenseAnalyticsDateRange } from './ExpenseAnalyticsFilterBar';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 interface ExpenseWaterfallChartProps {
   dateRange: ExpenseAnalyticsDateRange;
@@ -84,7 +85,9 @@ export function ExpenseWaterfallChart({ dateRange, licensePlate }: ExpenseWaterf
         <CardContent>
           {isLoading ? (
             <div className="rounded-lg h-72 skeleton" />
-          ) : error || chartData.length === 0 ? (
+          ) : error ? (
+            <ChartLoadError />
+          ) : chartData.length === 0 ? (
             <p className="text-sm text-muted-foreground">No expenses in this range.</p>
           ) : (
             <div style={{ width: '100%', height: 320 }}>

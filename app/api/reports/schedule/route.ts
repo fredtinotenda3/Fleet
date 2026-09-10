@@ -11,6 +11,7 @@ import { withAuth } from '@/server/middleware/with-auth';
 import { Permission } from '@/server/permissions/roles';
 import { reportBuilderService } from '@/modules/reporting/services/report-builder.service';
 import { reportSchedulerService } from '@/modules/reporting/services/report-scheduler.service';
+import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
 import { successResponse, errorResponse } from '@/server/utils/response.utils';
 import { AppError } from '@/server/errors/app.errors';
 import { validateWithZod } from '@/shared/utils/validation.utils';
@@ -73,7 +74,16 @@ export const POST = withAuth(
         context.tenantId,
         context.userId
       );
-      await reportSchedulerService.syncSchedule(updated, context.tenantId, context.userId);
+      // The caller's org-unit scope, frozen onto the schedule. Without
+      // it a scheduled export runs organization-wide in the worker and
+      // is emailed to the recipient list. See ReportSchedulerService.
+      const scheduleContext = await resolveTenantContext(req);
+      await reportSchedulerService.syncSchedule(
+        updated,
+        context.tenantId,
+        context.userId,
+        scheduleContext.accessibleOrgUnitIds
+      );
 
       return successResponse(updated);
     } catch (error) {

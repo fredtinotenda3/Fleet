@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/frontend/shared/ui/d
 import { useSessionStore } from '@/frontend/shared/store/session.store';
 import { useTrip } from '../hooks/useTrips';
 import { useDeleteTrip, useUpdateTrip } from '../hooks/useTripMutations';
+import { TripPlaybackPanel } from '../components/TripPlaybackPanel';
 import { TripModal, type TripModalMode } from '../components/TripModal';
 import { tripModeLabel, getTripModeBadgeClass, canManageTrips, canDeleteTrips } from '../utils';
 import { formatDate } from '@/shared/utils/date.utils';
@@ -141,6 +142,20 @@ export function TripDetailPage({ tripId }: TripDetailPageProps) {
                 value={trip.trip_distance != null ? formatDistance(trip.trip_distance) : 'N/A'}
               />
             )}
+          </CardContent>
+        </Card>
+
+        {/*
+          Full width, directly under "Route & readings" -- the card that
+          already holds the start and end locations. Playback is the same
+          question answered in more detail.
+        */}
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle>Route playback</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <TripPlaybackPanel tripId={tripId} />
           </CardContent>
         </Card>
 

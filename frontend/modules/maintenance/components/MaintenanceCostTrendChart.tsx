@@ -10,6 +10,7 @@ import { MaintenanceRecordDrawer } from './MaintenanceRecordDrawer';
 import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { MaintenanceCostTrendPoint } from '../types';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 interface MaintenanceCostTrendChartProps {
   /**
@@ -85,7 +86,9 @@ export function MaintenanceCostTrendChart({ licensePlate }: MaintenanceCostTrend
         <CardContent>
           {isLoading ? (
             <div className="rounded-lg h-60 skeleton" />
-          ) : error || !data || data.length === 0 ? (
+          ) : error ? (
+            <ChartLoadError />
+          ) : !data || data.length === 0 ? (
             <p className="text-sm text-muted-foreground">No completed maintenance in this range.</p>
           ) : (
             <div style={{ width: '100%', height: 260 }}>

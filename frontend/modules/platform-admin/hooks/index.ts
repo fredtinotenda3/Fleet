@@ -7,6 +7,8 @@ export {
   useCreateOrganization,
   useSetOrganizationStatus,
   useCreateOrgUnit,
+  useOrganizationOrgUnits,
+  useCreateOrganizationOrgUnit,
 } from './usePlatformOrganizations';
 
 export {

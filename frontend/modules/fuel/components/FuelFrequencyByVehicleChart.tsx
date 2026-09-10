@@ -12,6 +12,7 @@ import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/chart
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { FuelAnalyticsDateRange } from './FuelAnalyticsFilterBar';
 import type { FuelFrequencyByVehicleRow } from '../types';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 interface FuelFrequencyByVehicleChartProps {
   dateRange: FuelAnalyticsDateRange;
@@ -85,7 +86,9 @@ export function FuelFrequencyByVehicleChart({ dateRange, licensePlate }: FuelFre
         <CardContent>
           {isLoading ? (
             <div className="rounded-lg h-60 skeleton" />
-          ) : error || !data || data.length === 0 ? (
+          ) : error ? (
+            <ChartLoadError />
+          ) : !data || data.length === 0 ? (
             <p className="text-sm text-muted-foreground">No fuel entries in this range.</p>
           ) : (
             <div style={{ width: '100%', height: 280 }}>

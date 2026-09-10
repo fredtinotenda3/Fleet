@@ -22,12 +22,29 @@ import type { Reminder } from '../types';
 
 interface MaintenanceFormProps {
   record?: Reminder | null;
+  /**
+   * Pre-selects the vehicle on a NEW record.
+   *
+   * This form had no way to prefill anything: its react-hook-form
+   * defaults were a literal branch on `record`, so the only way to
+   * populate the vehicle was to hand it a synthetic record and switch
+   * the modal to edit mode -- which would have retitled the dialog
+   * "Edit maintenance record" for something being created. Ignored when
+   * `record` is present, since an existing record carries its own plate.
+   */
+  defaultLicensePlate?: string;
   onSubmit: (values: MaintenanceFormOutput) => Promise<void>;
   onCancel: () => void;
   isSubmitting?: boolean;
 }
 
-export function MaintenanceForm({ record, onSubmit, onCancel, isSubmitting }: MaintenanceFormProps) {
+export function MaintenanceForm({
+  record,
+  defaultLicensePlate,
+  onSubmit,
+  onCancel,
+  isSubmitting,
+}: MaintenanceFormProps) {
   const { data: vehiclesResult } = useVehiclesList({ page: 1, limit: 200 });
   const vehicles = vehiclesResult?.data ?? [];
 
@@ -53,7 +70,7 @@ export function MaintenanceForm({ record, onSubmit, onCancel, isSubmitting }: Ma
           estimated_cost: record.estimated_cost ?? undefined,
         }
       : {
-          license_plate: '',
+          license_plate: defaultLicensePlate ?? '',
           title: '',
           notes: '',
           status: 'pending',

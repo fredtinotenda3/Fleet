@@ -140,12 +140,15 @@ export interface FleetHealthScore {
   timestamp: string;
   vehicleScores: FleetHealthVehicleScore[];
   metrics: {
-    averageVehicleAge: number;
+    /** `null` when no vehicle records a model year -- never dated to a default. */
+    averageVehicleAge: number | null;
     averageMileage: number;
-    maintenanceCompletionRate: number;
+    /** `null` when the fleet has logged no maintenance -- NOT 1.0. */
+    maintenanceCompletionRate: number | null;
     pendingMaintenanceCount: number;
     overdueMaintenanceCount: number;
-    averageDowntime: number;
+    /** Always `null`: this platform records no downtime to average. */
+    averageDowntime: number | null;
     /**
      * km per litre, or `null` when the period has no recorded trip
      * distance to divide by. Mirrors FleetHealthScore['metrics'] in

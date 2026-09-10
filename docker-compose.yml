@@ -13,6 +13,12 @@ services:
       - REDIS_URL=redis://redis:6379
       - NEXTAUTH_URL=${NEXTAUTH_URL}
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      # REQUIRED. The app refuses to start without it -- see
+      # infrastructure/security/jwt-secrets.ts. Generate with
+      # `openssl rand -base64 32`, and make it DIFFERENT from
+      # NEXTAUTH_SECRET: a shared key means a leaked access secret also
+      # mints refresh tokens.
+      - REFRESH_TOKEN_SECRET=${REFRESH_TOKEN_SECRET}
     depends_on:
       - mongodb
       - redis

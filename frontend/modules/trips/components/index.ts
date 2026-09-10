@@ -18,3 +18,4 @@ export { TripTransactionDrawer } from './TripTransactionDrawer';
 export type { TripDrawerFilter } from './TripTransactionDrawer';
 export { TripSelect } from './TripSelect';
 export { TripCostAnalyticsChart } from './TripCostAnalyticsChart';
+export * from './TripPlaybackPanel';

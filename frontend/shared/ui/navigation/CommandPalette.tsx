@@ -33,9 +33,25 @@ import {
   Users,
 } from 'lucide-react';
 import { Permission, permissionService } from '@/server/permissions/roles';
+import { useGlobalSearch } from '@/frontend/modules/search/hooks/useGlobalSearch';
+import {
+  groupSearchResults,
+  isSearchable,
+  searchFootnote,
+} from '@/frontend/modules/search/utils/search-results';
 import { useSessionStore } from '@/frontend/shared/store/session.store';
 import { useUiStore } from '@/frontend/shared/store/ui.store';
 import { cn } from '@/lib/utils';
+
+/** Icon per record type, matching the sidebar's iconography. */
+const RECORD_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  vehicle: Truck,
+  driver: Users,
+  trip: Route,
+  'work-order': Wrench,
+  maintenance: Wrench,
+  expense: Wallet,
+};
 
 interface CommandEntry {
   id: string;
@@ -136,14 +152,59 @@ export function CommandPalette() {
     });
   }, [commands, query]);
 
+  /**
+   * RECORD SEARCH.
+   *
+   * The palette has always filtered a static list of NAVIGATION
+   * COMMANDS -- typing a plate into it found nothing, because no part of
+   * this product could search its own data. `/api/search` fans out over
+   * the modules the caller has permission to read, org-unit-scoped by
+   * the same filter every list uses.
+   *
+   * Merged into the SAME `filtered` array rather than rendered as a
+   * second list, so one set of arrow keys, one Enter handler and one
+   * highlight rule cover both. A second keyboard surface inside one
+   * dialog is how a palette starts feeling broken.
+   *
+   * Fetched only while the palette is open: this is six collection
+   * queries and there is no reason to run them behind a closed dialog.
+   */
+  const search = useGlobalSearch(query, { enabled: open });
+
+  const recordCommands = React.useMemo<CommandEntry[]>(() => {
+    if (!search.data) return [];
+    return groupSearchResults(search.data.results).flatMap((group) =>
+      group.items.map((item) => ({
+        id: `record-${item.kind}-${item.id}`,
+        label: item.title,
+        hint: item.subtitle,
+        group: group.group,
+        icon: RECORD_ICONS[item.kind] ?? SearchIcon,
+        action: () => navigate(item.href, item.title),
+      }))
+    );
+  }, [search.data, navigate]);
+
+  /**
+   * Records first. Someone who typed a plate wants the vehicle, not
+   * "Go to Vehicles" -- and the commands are always a short, familiar
+   * list they can scroll to.
+   */
+  const visible = React.useMemo(
+    () => [...recordCommands, ...filtered],
+    [recordCommands, filtered]
+  );
+
   const grouped = React.useMemo(() => {
     const groups = new Map<string, CommandEntry[]>();
-    for (const command of filtered) {
+    for (const command of visible) {
       if (!groups.has(command.group)) groups.set(command.group, []);
       groups.get(command.group)!.push(command);
     }
     return Array.from(groups.entries());
-  }, [filtered]);
+  }, [visible]);
+
+  const footnote = search.data ? searchFootnote(search.data) : null;
 
   React.useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
@@ -186,13 +247,13 @@ export function CommandPalette() {
   function handleKeyDown(event: React.KeyboardEvent) {
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      setActiveIndex((i) => Math.min(i + 1, filtered.length - 1));
+      setActiveIndex((i) => Math.min(i + 1, visible.length - 1));
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
       setActiveIndex((i) => Math.max(i - 1, 0));
     } else if (event.key === 'Enter') {
       event.preventDefault();
-      filtered[activeIndex]?.action();
+      visible[activeIndex]?.action();
     }
   }
 
@@ -228,8 +289,19 @@ export function CommandPalette() {
         </div>
 
         <div className="p-2 overflow-y-auto max-h-96">
-          {filtered.length === 0 ? (
-            <p className="px-2 py-8 text-sm text-center text-muted-foreground">No matching commands.</p>
+          {visible.length === 0 ? (
+            /*
+              Three different nothings, and conflating them is what makes
+              a search box feel broken: still typing, still loading, and
+              genuinely no match.
+            */
+            <p className="px-2 py-8 text-sm text-center text-muted-foreground">
+              {!isSearchable(query)
+                ? 'Keep typing to search vehicles, drivers, trips and work orders.'
+                : search.isFetching
+                ? 'Searching…'
+                : 'No matching commands or records.'}
+            </p>
           ) : (
             grouped.map(([group, entries]) => (
               <div key={group} className="mb-2 last:mb-0">
@@ -252,12 +324,29 @@ export function CommandPalette() {
                       )}
                     >
                       <Icon className="w-4 h-4 shrink-0" />
-                      {entry.label}
+                      <span className="flex-1 truncate">{entry.label}</span>
+                      {entry.hint && (
+                        <span className="shrink-0 truncate text-xs text-muted-foreground">
+                          {entry.hint}
+                        </span>
+                      )}
                     </button>
                   );
                 })}
               </div>
             ))
+          )}
+
+          {/*
+            Named, not swallowed. "Work orders aren't searched because you
+            can't view them" lets an operator tell an access question from
+            a data question -- and a source that FAILED means the absence
+            of a record proves nothing.
+          */}
+          {footnote && (
+            <p className="border-t border-border px-2 pb-1 pt-2 text-xs text-muted-foreground">
+              {footnote}
+            </p>
           )}
         </div>
       </div>

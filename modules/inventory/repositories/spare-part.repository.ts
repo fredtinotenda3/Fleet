@@ -100,7 +100,7 @@ export class SparePartRepository extends BaseRepository<SparePart> {
       query.tenantId = context.organizationId;
     }
     Object.assign(query, tenantScopeService.buildFilter<SparePart>(context, 'orgUnitId'));
-    return collection.find(query as Filter<SparePart>).toArray() as Promise<SparePart[]>;
+    return this.normalizeDocs<SparePart>(await collection.find(query as Filter<SparePart>).toArray());
   }
 }
 

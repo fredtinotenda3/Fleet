@@ -11,6 +11,14 @@ interface OverviewStatsGridProps {
   statistics: OrganizationStatistics | undefined;
   currency: string;
   isLoading: boolean;
+  /**
+   * ADDED (empty-organisation round): the grid took only `isLoading`, so
+   * `isLoading || !statistics` swallowed a FAILED request into the
+   * skeleton branch -- the organisation dashboard showed four shimmering
+   * placeholders forever, with nothing saying the request had failed and
+   * no way to tell that from a slow network.
+   */
+  isError?: boolean;
 }
 
 function percentChange(current: number, previous: number): number | undefined {
@@ -18,7 +26,23 @@ function percentChange(current: number, previous: number): number | undefined {
   return ((current - previous) / previous) * 100;
 }
 
-export function OverviewStatsGrid({ statistics, currency, isLoading }: OverviewStatsGridProps) {
+export function OverviewStatsGrid({
+  statistics,
+  currency,
+  isLoading,
+  isError = false,
+}: OverviewStatsGridProps) {
+  if (isError || (!isLoading && !statistics)) {
+    // Says so, rather than shimmering indefinitely.
+    return (
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {['Active users', 'Fleet size', 'Expenses this month', 'Seats used'].map((title) => (
+          <StatsCard key={title} title={title} value={null} error errorMessage="Unavailable" />
+        ))}
+      </div>
+    );
+  }
+
   if (isLoading || !statistics) {
     return (
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -43,10 +67,18 @@ export function OverviewStatsGrid({ statistics, currency, isLoading }: OverviewS
         title="Active users"
         value={`${statistics.activeUsers} / ${statistics.totalUsers}`}
         icon={<Users className="w-4 h-4 text-muted-foreground" aria-hidden="true" />}
+        /*
+          "All invitations resolved" was shown to an organisation that
+          has never sent one -- a completion claim about work that was
+          never started. Same family as "your fleet is up to date" on a
+          fleet of zero.
+        */
         description={
           statistics.pendingInvites > 0
             ? `${statistics.pendingInvites} invitation${statistics.pendingInvites === 1 ? '' : 's'} pending`
-            : 'All invitations resolved'
+            : statistics.totalUsers > 1
+              ? 'All invitations resolved'
+              : 'Invite your team to collaborate'
         }
       />
       <StatsCard

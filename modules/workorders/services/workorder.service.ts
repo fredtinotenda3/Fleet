@@ -20,6 +20,8 @@ import { sparePartRepository } from '@/modules/inventory/repositories/spare-part
 import connectToDatabase from '@/infrastructure/database/mongodb';
 import { WriteScope, tenantIdOf } from '@/server/tenancy/write-scope';
 import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-resolver.service';
+import type { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 
 const VALID_TRANSITIONS: Record<WorkOrderStatus, WorkOrderStatus[]> = {
   open: ['assigned', 'cancelled'],
@@ -32,6 +34,38 @@ const VALID_TRANSITIONS: Record<WorkOrderStatus, WorkOrderStatus[]> = {
 
 export class WorkOrderService {
   constructor(private readonly repo: WorkOrderRepository = workOrderRepository) {}
+
+  /**
+   * ─────────────────────────────────────────────────────────────────
+   * ORG-UNIT SCOPE ON EVERY BY-ID OPERATION
+   * ─────────────────────────────────────────────────────────────────
+   * `create` was scope-checked (its comment in the controller explains
+   * why) and every other operation in this module was not. All of them
+   * resolved a work order by `findById(id, tenantId)` and stopped
+   * there, so a workshop manager scoped to one workshop could:
+   *
+   *   GET  /api/workorders                  every branch's job queue,
+   *                                         with totalCost and partsCost
+   *   GET  /api/workorders/{id}             any branch's work order
+   *   PUT  /api/workorders/{id}/status      cancel another branch's job
+   *   POST /api/workorders/{id}/parts       consume another branch's
+   *                                         spare-part stock
+   *
+   * The data supported the check the whole time -- `create` writes
+   * `orgUnitId` onto every work order, and the repository already had a
+   * scoped list (`getFilteredInScope`) that only the attention queue
+   * used. The check simply was not performed.
+   *
+   * NOT-FOUND, deliberately, rather than FORBIDDEN: a 403 confirms the
+   * record exists, which is itself a disclosure across a boundary the
+   * caller is not supposed to see across. Mirrors `canAccessRecord`'s
+   * use at every other by-id site in the platform.
+   */
+  private assertInScope(workOrder: WorkOrder, context: TenantContext): void {
+    if (!tenantScopeService.canAccessRecord(context, (workOrder as { orgUnitId?: string }).orgUnitId)) {
+      throw new NotFoundError('Work order not found');
+    }
+  }
 
   async create(data: WorkOrderCreateDTO, scope: WriteScope, userId: string): Promise<WorkOrder> {
     const tenantId = tenantIdOf(scope);
@@ -85,9 +119,17 @@ export class WorkOrderService {
     return created;
   }
 
-  async assign(id: string, mechanicId: string, bayId: string | undefined, tenantId: string, userId: string): Promise<WorkOrder> {
+  async assign(
+    id: string,
+    mechanicId: string,
+    bayId: string | undefined,
+    context: TenantContext,
+    userId: string
+  ): Promise<WorkOrder> {
+    const tenantId = context.organizationId;
     const existing = await this.repo.findById(id, tenantId);
     if (!existing) throw new NotFoundError('Work order not found');
+    this.assertInScope(existing, context);
     this.assertTransition(existing.status, 'assigned');
 
     const updated = await this.repo.update(id, { status: 'assigned', assignedMechanicId: mechanicId, bayId }, tenantId, userId);
@@ -100,9 +142,17 @@ export class WorkOrderService {
     return updated;
   }
 
-  async changeStatus(id: string, status: WorkOrderStatus, tenantId: string, userId: string, reason?: string): Promise<WorkOrder> {
+  async changeStatus(
+    id: string,
+    status: WorkOrderStatus,
+    context: TenantContext,
+    userId: string,
+    reason?: string
+  ): Promise<WorkOrder> {
+    const tenantId = context.organizationId;
     const existing = await this.repo.findById(id, tenantId);
     if (!existing) throw new NotFoundError('Work order not found');
+    this.assertInScope(existing, context);
     this.assertTransition(existing.status, status);
 
     const updates: Partial<WorkOrder> = { status };
@@ -132,10 +182,20 @@ export class WorkOrderService {
    * (single writer of stock movements), then recalculates partsCost and
    * totalCost on the work order itself.
    */
-  async consumeParts(id: string, sparePartId: string, quantity: number, tenantId: string, userId: string): Promise<WorkOrder> {
+  async consumeParts(
+    id: string,
+    sparePartId: string,
+    quantity: number,
+    context: TenantContext,
+    userId: string
+  ): Promise<WorkOrder> {
     if (quantity <= 0) throw new ValidationError('Quantity must be positive');
+    const tenantId = context.organizationId;
     const existing = await this.repo.findById(id, tenantId);
     if (!existing) throw new NotFoundError('Work order not found');
+    // Before any stock is moved: this consumes real inventory, so the
+    // scope check has to precede the side effect, not follow it.
+    this.assertInScope(existing, context);
     if (!['assigned', 'in_progress'].includes(existing.status)) {
       throw new ConflictError('Parts can only be consumed while the work order is assigned or in progress');
     }
@@ -161,10 +221,18 @@ export class WorkOrderService {
     return updated;
   }
 
-  async recordLabor(id: string, laborHours: number, hourlyRate: number, tenantId: string, userId: string): Promise<WorkOrder> {
+  async recordLabor(
+    id: string,
+    laborHours: number,
+    hourlyRate: number,
+    context: TenantContext,
+    userId: string
+  ): Promise<WorkOrder> {
     if (laborHours <= 0) throw new ValidationError('laborHours must be positive');
+    const tenantId = context.organizationId;
     const existing = await this.repo.findById(id, tenantId);
     if (!existing) throw new NotFoundError('Work order not found');
+    this.assertInScope(existing, context);
 
     const laborCost = laborHours * hourlyRate;
     const totalCost = existing.partsCost + laborCost;
@@ -174,13 +242,33 @@ export class WorkOrderService {
     return updated;
   }
 
+  /**
+   * ORG-WIDE list. Retained for the internal, system-scoped caller that
+   * genuinely needs every unit (the attention queue's org-wide branch);
+   * it is NOT what a request should reach. Request-driven callers use
+   * `listInScope`.
+   */
   async list(filters: WorkOrderFilters, pagination: PaginationParams, tenantId: string): Promise<PaginatedResponse<WorkOrder>> {
     return this.repo.getFiltered(filters, tenantId, pagination);
   }
 
-  async get(id: string, tenantId: string): Promise<WorkOrder> {
-    const wo = await this.repo.findById(id, tenantId);
+  /**
+   * What the API serves. Delegates to the repository's scoped query --
+   * which existed already and was used only by the attention queue,
+   * while the work-order list endpoint itself ran unscoped.
+   */
+  async listInScope(
+    filters: WorkOrderFilters,
+    pagination: PaginationParams,
+    context: TenantContext
+  ): Promise<PaginatedResponse<WorkOrder>> {
+    return this.repo.getFilteredInScope(filters, context, pagination);
+  }
+
+  async get(id: string, context: TenantContext): Promise<WorkOrder> {
+    const wo = await this.repo.findById(id, context.organizationId);
     if (!wo) throw new NotFoundError('Work order not found');
+    this.assertInScope(wo, context);
     return wo;
   }
 

@@ -194,20 +194,65 @@ export default function AIReports() {
     const healthData = data.data;
     const { overallScore, metrics, recommendations } = healthData || {};
 
-    const statusColor = overallScore >= 70 ? 'text-success' : overallScore >= 50 ? 'text-warning' : 'text-danger';
+    /*
+      `overallScore` is null when the engine scored no vehicles -- the
+      mean of an empty set, not a bad score. This used to render a 5xl
+      red "0%" under "Overall Fleet Health" for an organisation that had
+      not yet added its first vehicle. Same family as the "Not measured"
+      metrics below.
+    */
+    const hasScore = typeof overallScore === 'number';
+    const statusColor = !hasScore
+      ? 'text-muted-foreground'
+      : overallScore >= 70
+        ? 'text-success'
+        : overallScore >= 50
+          ? 'text-warning'
+          : 'text-danger';
 
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-center py-6">
           <div className="text-center">
-            <div className={`text-5xl font-bold ${statusColor}`}>{overallScore}%</div>
-            <p className="text-sm text-muted-foreground">Overall Fleet Health</p>
+            <div className={`${hasScore ? 'text-5xl' : 'text-2xl'} font-bold ${statusColor}`}>
+              {hasScore ? `${overallScore}%` : 'Not measured'}
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {hasScore
+                ? 'Overall Fleet Health'
+                : 'Overall fleet health — no vehicles have been scored yet'}
+            </p>
           </div>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <StatsCard title="Avg Vehicle Age" value={`${metrics?.averageVehicleAge?.toFixed(1) || 0} yrs`} color="blue" />
+          {/*
+            "Not measured", not 0.
+            `?.toFixed(1) || 0` rendered "0.0 yrs" for a fleet whose
+            vehicles record no model year, and `(x || 0) * 100` rendered
+            "0%" maintenance completion for a fleet that has logged no
+            maintenance at all -- a number a manager would act on,
+            invented from an absence. Both figures are now null when
+            unmeasurable; this renders that rather than flattening it.
+          */}
+          <StatsCard
+            title="Avg Vehicle Age"
+            value={
+              typeof metrics?.averageVehicleAge === 'number'
+                ? `${metrics.averageVehicleAge.toFixed(1)} yrs`
+                : 'Not measured'
+            }
+            color="blue"
+          />
           <StatsCard title="Avg Mileage" value={formatNumber(metrics?.averageMileage || 0)} color="green" />
-          <StatsCard title="Maintenance Completion" value={`${((metrics?.maintenanceCompletionRate || 0) * 100).toFixed(0)}%`} color="purple" />
+          <StatsCard
+            title="Maintenance Completion"
+            value={
+              typeof metrics?.maintenanceCompletionRate === 'number'
+                ? `${(metrics.maintenanceCompletionRate * 100).toFixed(0)}%`
+                : 'Not measured'
+            }
+            color="purple"
+          />
           <StatsCard title="Overdue Tasks" value={metrics?.overdueMaintenanceCount || 0} color="red" />
         </div>
         {recommendations?.length > 0 && (

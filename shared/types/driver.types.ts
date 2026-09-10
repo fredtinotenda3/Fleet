@@ -14,6 +14,17 @@ export interface Driver extends BaseEntity {
   license_expiry?: Date;
   status: DriverStatus;
   notes?: string;
+  /**
+   * The org unit this driver belongs to.
+   *
+   * Written by DriverService.create from the SUBMITTER's scope (a driver
+   * has no vehicle to inherit from -- see the table in
+   * DATA_ENTRY_GUIDE.md), and read by every scoped list and by
+   * driver-write-resolver.service.ts. It was already being persisted and
+   * filtered on; only the type was missing it, which is why
+   * `driver.orgUnitId` did not type-check anywhere it was needed.
+   */
+  orgUnitId?: string;
 }
 
 export interface DriverCreateDTO {

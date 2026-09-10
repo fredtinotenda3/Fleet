@@ -195,10 +195,15 @@ export class VehicleController {
     );
 
     const vehicleOrgUnitId = (vehicle as any).orgUnitId as string | undefined;
-    if (
-      vehicleOrgUnitId &&
-      !tenantScopeService.canAccessOrgUnit(tenantContext, vehicleOrgUnitId)
-    ) {
+    /**
+     * FAIL-CLOSED. This was `vehicleOrgUnitId && !canAccessOrgUnit(...)`,
+     * whose leading truthiness test skipped the check entirely for a
+     * record carrying no orgUnitId -- leaving it readable, updatable
+     * and deletable by id while `buildFilter` hid it from the list.
+     * canAccessRecord mirrors buildFilter exactly, so by-id reach and
+     * by-list reach are the same set by construction.
+     */
+    if (!tenantScopeService.canAccessRecord(tenantContext, vehicleOrgUnitId)) {
       throw new NotFoundError('Vehicle not found');
     }
 
@@ -343,9 +348,43 @@ export class VehicleController {
 
   async updateVehicle(req: NextRequest, id: string) {
     try {
-      const { authContext } = await this.loadInScopeVehicle(req, id);
+      const { authContext, tenantContext } = await this.loadInScopeVehicle(req, id);
       const userId = authContext.userId;
       const body = await req.json();
+
+      /*
+        ─────────────────────────────────────────────────────────────
+        MASS ASSIGNMENT: `orgUnitId` WAS WRITABLE WITHOUT A CHECK
+        ─────────────────────────────────────────────────────────────
+        `orgUnitId` is on UpdateVehicleHandler's ALLOWED_FIELDS list and
+        was copied straight from the request body into the update. The
+        CREATE path routes the same field through
+        `resolveCreationOrgUnitId`, which refuses a unit outside the
+        caller's scope -- the update path had no equivalent, and
+        `loadInScopeVehicle` returns `tenantContext` precisely so the
+        caller can perform a second check (its own comment says so).
+        It simply was not used here.
+
+        The consequence is an integrity and availability defect rather
+        than a disclosure one -- the by-id load is still gated, so the
+        caller cannot READ into another branch -- but a branch manager
+        could move a vehicle, and its whole cost history, into a branch
+        they cannot see. To the owning branch that is indistinguishable
+        from data loss; to the receiving branch it is unexplained data
+        appearing in their scoped lists and cost allocations.
+
+        The same resolver is reused rather than a second rule written
+        here, so create and update can never disagree about what a
+        caller may do with an org unit. It is applied only when the
+        field is actually present, so an ordinary update that never
+        mentions `orgUnitId` is untouched.
+      */
+      if (body && typeof body === 'object' && 'orgUnitId' in body) {
+        (body as Record<string, unknown>).orgUnitId = resolveCreationOrgUnitId(
+          tenantContext,
+          (body as Record<string, unknown>).orgUnitId
+        );
+      }
 
       const vehicle = await vehicleCommandService.updateVehicle(
         id,
@@ -493,10 +532,27 @@ export class VehicleController {
         throw new ValidationError('startDate must not be after endDate');
       }
 
+      /*
+        ORG-UNIT SCOPE, FIXED.
+
+        `VehicleRepository.getVehicleAnalytics` has always taken an
+        optional `context` and applied `buildFilter` with it -- but the
+        CQRS path between this controller and that method had no
+        parameter to carry one, so it arrived as `undefined` and the
+        aggregate ran organization-wide. A branch manager whose vehicle
+        LIST correctly shows one branch could read every branch's
+        vehicles here, complete with total expenses and fuel cost.
+
+        This is the "list endpoint scoped, aggregate endpoint not"
+        pattern the repository's own header warns about, in the very
+        method that warns about it.
+      */
+      const tenantContext = await resolveTenantContext(req);
       const analytics = await vehicleQueryService.getVehicleAnalytics(
         tenantId,
         startDate,
-        endDate
+        endDate,
+        tenantContext
       );
       return successResponse(analytics);
     } catch (error) {
@@ -578,10 +634,15 @@ export class VehicleController {
         }
 
         const driverOrgUnitId = (driver as any).orgUnitId as string | undefined;
-        if (
-          driverOrgUnitId &&
-          !tenantScopeService.canAccessOrgUnit(tenantContext, driverOrgUnitId)
-        ) {
+        /**
+         * FAIL-CLOSED. This was `driverOrgUnitId && !canAccessOrgUnit(...)`,
+         * whose leading truthiness test skipped the check entirely for a
+         * record carrying no orgUnitId -- leaving it readable, updatable
+         * and deletable by id while `buildFilter` hid it from the list.
+         * canAccessRecord mirrors buildFilter exactly, so by-id reach and
+         * by-list reach are the same set by construction.
+         */
+        if (!tenantScopeService.canAccessRecord(tenantContext, driverOrgUnitId)) {
           // Same "404, not 403" reasoning as the vehicle scope check in
           // loadInScopeVehicle: don't confirm to a scoped caller that a
           // driver with this id exists in another branch.

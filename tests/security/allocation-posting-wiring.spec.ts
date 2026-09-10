@@ -26,12 +26,15 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { buildAllocationSources } from '../../modules/finance/services/allocation-source-builder';
+import { buildPostingIdempotencyKey } from '../../modules/finance/services/allocation-posting.service';
 
 const ROOT = path.resolve(__dirname, '../..');
 const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const HANDLER = 'server/events/handlers/finance/AllocationPostingHandler.ts';
 const handlerSrc = read(HANDLER);
+const builderSrc = read('modules/finance/services/allocation-source-builder.ts');
 const eventNamesSrc = read('server/events/event-names.ts');
 
 /** `export const FUEL_LOGGED = 'FuelLogged';` -> { FUEL_LOGGED: 'FuelLogged' } */
@@ -154,10 +157,7 @@ describe('allocation posting: the period is the record date, not "now"', () => {
     // carried a date. On an append-only ledger a cost in the wrong
     // period cannot be edited out.
     expect(handlerSrc).not.toMatch(/payload\.date\s*\?\s*new Date\([^)]*\)\s*:\s*new Date\(\)/);
-  });
-
-  it('refuses to post a source with no date', () => {
-    expect(handlerSrc).toMatch(/carries no date; refusing to post/);
+    expect(builderSrc).not.toMatch(/\?\?\s*new Date\(\)/);
   });
 
   it('the events now carry their record date', () => {
@@ -171,32 +171,183 @@ describe('allocation posting: the period is the record date, not "now"', () => {
   });
 });
 
-describe('allocation posting: a work order is two costs', () => {
-  it('posts parts and labour separately', () => {
-    expect(handlerSrc).toMatch(/Work order parts/);
-    expect(handlerSrc).toMatch(/Work order labour/);
+/**
+ * BEHAVIOURAL, NOT TEXTUAL.
+ *
+ * These four were source-text assertions on AllocationPostingHandler
+ * (`expect(handlerSrc).toMatch(/Work order parts/)` and friends). They
+ * broke the moment the posting rules were extracted into
+ * allocation-source-builder.ts so the historical backfill could produce
+ * byte-identical postings -- a refactor that made the code STRICTLY
+ * better and the tests red.
+ *
+ * That is the same weakness as the `expect(code).toContain('FuelLogCreated')`
+ * assertion that pinned the dead event name in place: matching source
+ * text proves a literal is present, not that it means anything. The
+ * rules now live in a pure function, so they are asserted by calling it.
+ */
+describe('buildAllocationSources: the rules that move money', () => {
+  const WORK_ORDER_SPEC = {
+    sourceCollection: 'tblworkorders' as const,
+    costCategory: 'maintenance' as const,
+  };
+  const REMINDER_SPEC = {
+    sourceCollection: 'tblreminders' as const,
+    costCategory: 'maintenance' as const,
+  };
+  const FUEL_SPEC = { sourceCollection: 'tblfuellogs' as const, costCategory: 'fuel' as const };
+
+  const base = { sourceId: 'src-1', vehicleId: 'veh-1' };
+
+  it('refuses a record with no date rather than dating it to now', () => {
+    const result = buildAllocationSources({
+      ...base,
+      spec: FUEL_SPEC,
+      record: { cost: 100 },
+    });
+    expect(result.sources).toEqual([]);
+    expect(result.refusal).toMatch(/no usable date/i);
+  });
+
+  it('refuses an unparseable date too', () => {
+    const result = buildAllocationSources({
+      ...base,
+      spec: FUEL_SPEC,
+      record: { cost: 100, date: 'not a date' },
+    });
+    expect(result.sources).toEqual([]);
+    expect(result.refusal).toBeTruthy();
+  });
+
+  it('takes the period from the record, to the millisecond', () => {
+    const { sources } = buildAllocationSources({
+      ...base,
+      spec: FUEL_SPEC,
+      record: { cost: 100, date: '2026-03-14T09:30:00.000Z' },
+    });
+    expect(sources[0].occurredAt.toISOString()).toBe('2026-03-14T09:30:00.000Z');
+  });
+
+  it('posts parts and labour separately, under different cost categories', () => {
+    const { sources } = buildAllocationSources({
+      ...base,
+      spec: WORK_ORDER_SPEC,
+      record: { completedAt: '2026-03-01T00:00:00Z', partsCost: 120, laborCost: 80, totalCost: 200 },
+    });
+
+    expect(sources).toHaveLength(2);
+    expect(sources.map((s) => [s.costCategory, s.amount])).toEqual([
+      ['maintenance', 120],
+      ['other', 80],
+    ]);
   });
 
   it('REGRESSION: does not post the total alongside the components', () => {
     // Posting totalCost as well would double-count the work order, and
     // an append-only ledger needs a human reversal to undo that.
-    expect(handlerSrc).toMatch(/if \(out\.length === 0\)/);
-    expect(handlerSrc).toMatch(/split unavailable/);
+    const { sources } = buildAllocationSources({
+      ...base,
+      spec: WORK_ORDER_SPEC,
+      record: { completedAt: '2026-03-01T00:00:00Z', partsCost: 120, laborCost: 80, totalCost: 200 },
+    });
+    expect(sources.reduce((sum, s) => sum + s.amount, 0)).toBe(200);
+    expect(sources.some((s) => s.amount === 200)).toBe(false);
   });
 
-  it('the two postings cannot collide on the idempotency key', () => {
-    // The key includes costCategory precisely so one source record can
-    // produce several postings.
-    const service = read('modules/finance/services/allocation-posting.service.ts');
-    expect(service).toMatch(/costCategory/);
-    expect(service).toMatch(/idempotencyKey|buildPostingIdempotencyKey/);
+  it('falls back to the total ONLY when neither component exists', () => {
+    const { sources } = buildAllocationSources({
+      ...base,
+      spec: WORK_ORDER_SPEC,
+      record: { completedAt: '2026-03-01T00:00:00Z', totalCost: 200 },
+    });
+    expect(sources).toHaveLength(1);
+    expect(sources[0].amount).toBe(200);
+    expect(sources[0].description).toMatch(/split unavailable/);
   });
-});
 
-describe('allocation posting: maintenance estimates are labelled', () => {
+  it('refuses a work order that records no money at all', () => {
+    const result = buildAllocationSources({
+      ...base,
+      spec: WORK_ORDER_SPEC,
+      record: { completedAt: '2026-03-01T00:00:00Z' },
+    });
+    expect(result.sources).toEqual([]);
+    expect(result.refusal).toBeTruthy();
+  });
+
   it('says on the posting that a reminder cost is an estimate', () => {
     // Reminder has no actuals field. A finance user reconciling an
     // estimate against an invoice must not conclude the ledger is wrong.
-    expect(handlerSrc).toMatch(/estimated cost -- no actuals recorded/);
+    const { sources } = buildAllocationSources({
+      ...base,
+      spec: REMINDER_SPEC,
+      record: { completion_date: '2026-03-01T00:00:00Z', cost: 50 },
+    });
+    expect(sources[0].description).toMatch(/estimated cost/i);
+  });
+
+  it("carries the record's own currency, and omits it when absent", () => {
+    const withCurrency = buildAllocationSources({
+      ...base,
+      spec: FUEL_SPEC,
+      record: { date: '2026-03-01T00:00:00Z', cost: 100, currency: 'ZWL' },
+    });
+    expect(withCurrency.sources[0].currency).toBe('ZWL');
+
+    const without = buildAllocationSources({
+      ...base,
+      spec: FUEL_SPEC,
+      record: { date: '2026-03-01T00:00:00Z', cost: 100 },
+    });
+    // Absent means "the tenant's reporting currency", resolved
+    // downstream. Defaulting it here would hard-code an assumption the
+    // finance settings own.
+    expect(without.sources[0]).not.toHaveProperty('currency');
+  });
+
+  it('maps driver_id onto the ledger\'s driverId, in one place', () => {
+    // The handler read only `payload.driverId`, which no event has ever
+    // published -- every operational record spells it `driver_id`. So the
+    // ledger's driver column has always been empty.
+    const { sources } = buildAllocationSources({
+      ...base,
+      spec: FUEL_SPEC,
+      record: { date: '2026-03-01T00:00:00Z', cost: 100, driver_id: 'drv-1' },
+    });
+    expect(sources[0].driverId).toBe('drv-1');
+  });
+
+  it('refuses when the vehicle could not be resolved', () => {
+    // Posting against no vehicle would produce a cost belonging to
+    // nothing, invisible to every scoped reader and still counted in
+    // totals.
+    const result = buildAllocationSources({
+      ...base,
+      vehicleId: '',
+      spec: FUEL_SPEC,
+      record: { date: '2026-03-01T00:00:00Z', cost: 100 },
+    });
+    expect(result.sources).toEqual([]);
+    expect(result.refusal).toMatch(/vehicle/i);
+  });
+
+  it('the two work-order postings cannot collide on the idempotency key', () => {
+    // The key includes costCategory precisely so one source record can
+    // produce several postings.
+    const keys = new Set(
+      buildAllocationSources({
+        ...base,
+        spec: WORK_ORDER_SPEC,
+        record: { completedAt: '2026-03-01T00:00:00Z', partsCost: 120, laborCost: 80 },
+      }).sources.map((s) =>
+        buildPostingIdempotencyKey({
+          tenantId: 't',
+          sourceCollection: s.sourceCollection,
+          sourceId: s.sourceId,
+          costCategory: s.costCategory,
+        })
+      )
+    );
+    expect(keys.size).toBe(2);
   });
 });

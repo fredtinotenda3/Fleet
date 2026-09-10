@@ -107,14 +107,12 @@ export class DVIRService {
       )
     );
 
+    // Both halves of the old two-step check (out-of-scope unit, and no
+    // unit at all) are now one predicate -- see
+    // tenantScopeService.canAccessRecord. A vehicle with no org unit is
+    // reachable only by an org-wide role.
     const vehicleOrgUnitId: string | undefined = (vehicle as any).orgUnitId;
-    if (vehicleOrgUnitId && !tenantScopeService.canAccessOrgUnit(context, vehicleOrgUnitId)) {
-      throw new ForbiddenError('You can only inspect vehicles assigned to your own branch or fleet.');
-    }
-    // A vehicle with no orgUnitId at all is only reachable by org-wide
-    // roles (accessibleOrgUnitIds === null); a scoped driver with no
-    // matching assignment must not be able to inspect it either.
-    if (!vehicleOrgUnitId && context.accessibleOrgUnitIds !== null) {
+    if (!tenantScopeService.canAccessRecord(context, vehicleOrgUnitId)) {
       throw new ForbiddenError('You can only inspect vehicles assigned to your own branch or fleet.');
     }
 

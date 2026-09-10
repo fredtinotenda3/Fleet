@@ -28,6 +28,35 @@ export interface ReportExecution extends BaseEntity {
   errorMessage?: string;
   downloadCount: number;
   isScheduledRun?: boolean;
+  /**
+   * The requester's org-unit scope, frozen at request time.
+   *
+   * ---------------------------------------------------------------
+   * WHY THIS IS PERSISTED RATHER THAN PASSED
+   * ---------------------------------------------------------------
+   * The controller resolves a full `TenantContext` and hands it to
+   * `generate()`, but generation happens LATER, in a BullMQ worker, in
+   * another process. A TenantContext cannot cross that boundary -- and
+   * because the worker had nothing to pass, the query engine received
+   * `undefined` and its `if (!context) return {}` made every export
+   * ORGANIZATION-WIDE. A branch manager's on-screen report was scoped
+   * and the file they downloaded from it was not.
+   *
+   * The context cannot be serialised, but the SCOPE DECISION can. This
+   * field carries it verbatim, with the same three-state meaning used
+   * everywhere else in the platform:
+   *
+   *   null       org-wide (the caller may see every unit)
+   *   []         fail-closed (matches nothing)
+   *   [ids...]   narrowed to these units
+   *
+   * `undefined` -- a record written before this field existed -- is
+   * treated as fail-closed by the worker, NOT as org-wide. A pending
+   * execution lives for seconds, so the cost is a re-run; the
+   * alternative is preserving the leak for exactly the rows already in
+   * flight.
+   */
+  requestedOrgUnitIds?: string[] | null;
 }
 
 export interface GenerateExecutionInput {

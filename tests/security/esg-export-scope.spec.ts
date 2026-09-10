@@ -103,13 +103,108 @@ describe('esgExportService.buildExport', () => {
     ]);
   });
 
-  it('reports the composite score alongside its methodology', async () => {
+  /*
+    ─────────────────────────────────────────────────────────────────
+    THE COMPOSITE SCORE, AND WHY THIS TEST CHANGED SHAPE
+    ─────────────────────────────────────────────────────────────────
+    This block previously asserted only `0 <= value <= 100`. Every
+    fixture in this file describes a COMPLETELY EMPTY organisation --
+    no vehicles scored, no drivers assessed, no compliance records --
+    and the old implementation answered 60/100 for it:
+
+        fleetHealth 0 * 0.4  +  compliance 100 * 0.3  +  safety 100 * 0.3
+
+    All three inputs were invented. Two were "perfect" scores for
+    populations of zero; the third was the worst possible score for a
+    fleet that does not exist. And 60 sat comfortably inside `0..100`,
+    so the assertion passed -- a range check cannot tell a measurement
+    from a fabrication. That figure is printed into an ESG disclosure
+    PDF handed to insurers and auditors.
+
+    So the assertions are now about WHICH inputs were measured, and
+    the two branches are tested separately.
+  */
+  it('refuses to score an organisation with nothing to measure', async () => {
     const context = makeScopedContext(null);
     const result = await esgExportService.buildExport(TENANT, context, { format: 'json' });
 
-    expect(result.compositeScore.value).toBeGreaterThanOrEqual(0);
-    expect(result.compositeScore.value).toBeLessThanOrEqual(100);
-    expect(result.compositeScore.methodology.length).toBeGreaterThan(0);
+    expect(result.compositeScore.value).toBeNull();
+    expect(result.compositeScore.excludedComponents.sort()).toEqual([
+      'compliance rate',
+      'driver safety',
+      'fleet health score',
+    ]);
+    expect(result.compositeScore.methodology).toMatch(/not measured/i);
+    // and the section figure it drew on is null too, not 0/100
+    expect(result.fleetHealth.overallScore).toBeNull();
+  });
+
+  it('renormalises the weights over the components that WERE measured, and says so', async () => {
+    const context = makeScopedContext(null);
+    // Drivers assessed, nothing else. Driver safety carries 30% of the
+    // published weighting; with the other two unmeasurable it must carry
+    // 100% of THIS score rather than being diluted by two invented terms.
+    mockedDriverRisk.mockResolvedValue({
+      ...emptyBatch,
+      results: [
+        { entityId: 'd1', success: true, data: { driverId: 'd1', driverName: 'A', overallScore: 20, riskLevel: 'low' } },
+        { entityId: 'd2', success: true, data: { driverId: 'd2', driverName: 'B', overallScore: 90, riskLevel: 'critical' } },
+      ],
+    });
+
+    const result = await esgExportService.buildExport(TENANT, context, { format: 'json' });
+
+    // 1 of 2 drivers high/critical -> safety = 50, and it is the only term.
+    expect(result.compositeScore.value).toBe(50);
+    expect(result.compositeScore.excludedComponents.sort()).toEqual([
+      'compliance rate',
+      'fleet health score',
+    ]);
+    expect(result.compositeScore.methodology).toContain('100% driver safety');
+    expect(result.compositeScore.methodology).toMatch(/renormalised/i);
+  });
+
+  it('scores a measurable organisation on the published weighting', async () => {
+    const context = makeScopedContext(null);
+    mockedHealthScore.mockResolvedValue({
+      success: true,
+      timestamp: new Date(),
+      data: {
+        overallScore: 80,
+        vehicleScores: [{ vehicleId: 'v1', licensePlate: 'AFU0078', score: 80, components: {} }],
+        metrics: {
+          averageVehicleAge: null,
+          averageMileage: 0,
+          maintenanceCompletionRate: null,
+          overdueMaintenanceCount: 0,
+          pendingMaintenanceCount: 0,
+          fuelEfficiencyAverage: null,
+        },
+        trends: [],
+        recommendations: [],
+        timestamp: new Date(),
+      },
+    });
+    mockedDriverRisk.mockResolvedValue({
+      ...emptyBatch,
+      results: [
+        { entityId: 'd1', success: true, data: { driverId: 'd1', driverName: 'A', overallScore: 20, riskLevel: 'low' } },
+      ],
+    });
+    mockedListRules.mockResolvedValue([{ _id: 'r1', name: 'Licence renewal' }]);
+    mockedListInScope.mockResolvedValue({
+      ...emptyPage,
+      data: [{ ruleId: 'r1', entityType: 'driver', entityId: 'd1', status: 'resolved' }],
+      pagination: { ...emptyPage.pagination, total: 1 },
+    });
+
+    const result = await esgExportService.buildExport(TENANT, context, { format: 'json' });
+
+    // health 80*0.4 + compliance 100*0.3 + safety 100*0.3 = 92
+    expect(result.compositeScore.value).toBe(92);
+    expect(result.compositeScore.excludedComponents).toEqual([]);
+    expect(result.compositeScore.methodology).toContain('40% fleet health score');
+    expect(result.compositeScore.methodology).not.toMatch(/renormalised/i);
   });
 });
 

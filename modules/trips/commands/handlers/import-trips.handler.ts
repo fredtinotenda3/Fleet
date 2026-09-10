@@ -214,11 +214,7 @@ export class ImportTripsHandler
         continue;
       }
 
-      if (
-        isScoped &&
-        context &&
-        !tenantScopeService.canAccessOrgUnit(context, vehicle.orgUnitId ?? '')
-      ) {
+      if (context && !tenantScopeService.canAccessRecord(context, vehicle.orgUnitId)) {
         // Fail-closed, same message a nonexistent vehicle gets -- an
         // out-of-scope vehicle must not be distinguishable from a
         // missing one.

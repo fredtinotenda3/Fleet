@@ -7,11 +7,17 @@ import { Wrench, ArrowUpRight } from 'lucide-react';
 import { DashboardWidget } from '@/frontend/shared/dashboards/DashboardWidget';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
 import { useMaintenanceWidget } from '@/frontend/modules/dashboard/hooks/useDashboardData';
+import { useFleetPresence } from '@/frontend/modules/onboarding/hooks/useFleetPresence';
+import { emptyCopy } from '@/frontend/modules/onboarding/utils/empty-state-copy';
 import { formatRelativeDate, isOverdue } from '@/shared/utils/date.utils';
 
 export function MaintenanceWidget() {
   const { data, isLoading, isError, refetch } = useMaintenanceWidget();
+  const presence = useFleetPresence();
   const items = data ? [...data.overdue, ...data.upcoming].slice(0, 6) : [];
+  // "Nothing due — your fleet is up to date" was shown to organisations
+  // with no vehicles at all. See empty-state-copy.ts.
+  const empty = emptyCopy('maintenance', presence);
 
   return (
     <DashboardWidget
@@ -28,9 +34,18 @@ export function MaintenanceWidget() {
       }
     >
       {items.length === 0 ? (
-        <p className="py-6 text-center text-body-sm text-muted-foreground">
-          Nothing due &mdash; your fleet is up to date.
-        </p>
+        <div className="py-6 text-center">
+          <p className="font-medium text-body-sm text-foreground">{empty.title}</p>
+          <p className="mt-1 text-caption text-muted-foreground">{empty.description}</p>
+          {empty.action && (
+            <Link
+              href={empty.action.href}
+              className="inline-block mt-2 text-body-sm text-primary hover:underline"
+            >
+              {empty.action.label}
+            </Link>
+          )}
+        </div>
       ) : (
         <ul className="divide-y divide-border">
           {items.map((reminder) => {

@@ -18,6 +18,7 @@ import type {
   TripUtilizationSort,
 } from '../types';
 import type { TripFormOutput } from '../schemas';
+import type { TripPlaybackData } from '../utils/playback';
 import type { ImportResponse } from '@/frontend/shared/import/ImportModal';
 
 const BASE = '/api/trips';
@@ -71,6 +72,22 @@ export const tripsApi = {
 
   async getById(id: string): Promise<Trip> {
     return apiClient.get<Trip>(`${BASE}/${id}`);
+  },
+
+  /**
+   * GET /api/trips/:id/playback
+   *
+   * The route is RECONSTRUCTED from telemetry, not stored -- a stored
+   * polyline would duplicate the largest collection in the database and
+   * go stale when the provider backfills.
+   *
+   * Returns TripPlaybackData, whose `timestamp` fields are ISO STRINGS.
+   * The server type declares them as `Date`; NextResponse.json turns
+   * them into strings on the way out, so importing the server type here
+   * and calling `.getTime()` on a timestamp would throw at runtime.
+   */
+  async getPlayback(id: string): Promise<TripPlaybackData> {
+    return apiClient.get<TripPlaybackData>(`${BASE}/${id}/playback`);
   },
 
   async getStats(dateRange?: { startDate?: Date; endDate?: Date }): Promise<TripStats> {

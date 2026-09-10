@@ -12,6 +12,7 @@ import { formatDate } from '@/shared/utils/date.utils';
 import { getChartColor } from '@/shared/utils/chart.utils';
 import type { ExpenseAnalyticsDateRange } from './ExpenseAnalyticsFilterBar';
 import type { CategorySummary } from '@/shared/types/expense.types';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 interface ExpenseTopCategoriesChartProps {
   dateRange: ExpenseAnalyticsDateRange;
@@ -69,7 +70,9 @@ export function ExpenseTopCategoriesChart({ dateRange, licensePlate }: ExpenseTo
         <CardContent>
           {isLoading ? (
             <div className="rounded-lg h-60 skeleton" />
-          ) : error || rows.length === 0 ? (
+          ) : error ? (
+            <ChartLoadError />
+          ) : rows.length === 0 ? (
             <p className="text-sm text-muted-foreground">No expenses in this range.</p>
           ) : (
             <div style={{ width: '100%', height: Math.max(220, rows.length * 40) }}>

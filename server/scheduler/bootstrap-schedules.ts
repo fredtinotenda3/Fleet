@@ -22,6 +22,22 @@ const DEFAULT_SCHEDULES: Array<{ name: string; description: string; jobType: Job
   { name: 'reminders-overdue-check', description: 'Mark overdue reminders and notify assignees', jobType: JobType.CHECK_OVERDUE, cron: '0 * * * *' },
   { name: 'analytics-refresh', description: 'Refresh cached fleet analytics', jobType: JobType.REFRESH_ANALYTICS, cron: '0 */6 * * *' },
   { name: 'billing-expire-invoices', description: 'Expire stale pending invoices', jobType: JobType.EXPIRE_INVOICES, cron: '0 * * * *' },
+  /**
+   * The Paynow reconciliation backstop, which had no schedule.
+   *
+   * `BillingWorker` implements 'poll-pending-payments' and documents it
+   * as "a defensive backstop to the primary webhook flow" -- but nothing
+   * enqueued it and it was absent from this list, so the backstop was
+   * unreachable. If Paynow's result-URL callback is missed (a network
+   * blip, a deploy window, a 500 from our endpoint) the invoice stayed
+   * `pending` forever: the customer had paid and the platform never
+   * noticed.
+   *
+   * Every 15 minutes. Frequent enough that a missed webhook is caught
+   * within one support call, infrequent enough not to hammer a payment
+   * provider with polling for a flow that normally completes by webhook.
+   */
+  { name: 'billing-poll-pending-payments', description: 'Reconcile invoices whose payment webhook was missed', jobType: JobType.POLL_PENDING_PAYMENTS, cron: '*/15 * * * *' },
   { name: 'security-expire-grants', description: 'Soft-delete expired ResourcePermission grants', jobType: JobType.EXPIRE_RESOURCE_GRANTS, cron: '*/15 * * * *' },
   { name: 'telemetry-offline-devices', description: 'Detect and alert on offline telematics devices', jobType: JobType.DETECT_OFFLINE_DEVICES, cron: '*/10 * * * *' },
   // PHASE 7 FOLLOW-UP: publishes fleet_telematics_stale_vehicles{provider}

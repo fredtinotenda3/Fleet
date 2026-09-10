@@ -12,6 +12,7 @@ import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/chart
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import { getChartColor } from '@/shared/utils/chart.utils';
 import type { ExpenseAnalyticsDateRange } from './ExpenseAnalyticsFilterBar';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 interface JobTripExpenseChartProps {
   dateRange: ExpenseAnalyticsDateRange;
@@ -95,7 +96,9 @@ export function JobTripExpenseChart({ dateRange, licensePlate }: JobTripExpenseC
         <CardContent>
           {isLoading ? (
             <div className="rounded-lg h-72 skeleton" />
-          ) : error || chartData.length === 0 ? (
+          ) : error ? (
+            <ChartLoadError />
+          ) : chartData.length === 0 ? (
             <p className="text-sm text-muted-foreground">No job/trip-tagged expenses in this range.</p>
           ) : (
             <div style={{ width: '100%', height: 320 }}>

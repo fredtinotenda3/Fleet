@@ -9,7 +9,7 @@ import { NotFoundError, ValidationError, AppError } from '@/server/errors/app.er
 import { validateWithZod } from '@/shared/utils/validation.utils';
 import connectToDatabase from '@/infrastructure/database/mongodb';
 import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-resolver.service';
-import { driverRepository } from '@/modules/drivers/repositories/driver.repository';
+import { driverWriteResolver } from '@/modules/drivers/services/driver-write-resolver.service';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { TripUpdatedEvent } from '@/modules/trips/events/TripUpdatedEvent';
 
@@ -112,22 +112,17 @@ export class UpdateTripHandler implements ICommandHandler<UpdateTripCommand, Tri
      */
     if (updateData.driver_id) {
       /**
-       * Same two fixes as CreateTripHandler: a string was compared
-       * against an ObjectId `_id` (so this check could never pass), and
-       * the lookup crossed tenants. driverRepository.findById handles
-       * both.
+       * Same three fixes as CreateTripHandler: a string was compared
+       * against an ObjectId `_id` (so this check could never pass), the
+       * lookup crossed tenants, and it ignored org-unit scope entirely.
+       * driverWriteResolver handles all three, and reports an
+       * out-of-scope driver as not-found so the error is not an
+       * enumeration oracle.
        */
-      const driver = await driverRepository.findById(
+      await driverWriteResolver.resolveForWrite(
         String(updateData.driver_id),
-        command.tenantId
+        command.scope
       );
-      if (!driver) {
-        throw new AppError(
-          `Driver "${updateData.driver_id}" not found`,
-          'DRIVER_NOT_FOUND',
-          400
-        );
-      }
     }
 
     const mode = updateData.mode as string | undefined;

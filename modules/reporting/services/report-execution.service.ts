@@ -81,6 +81,25 @@ export class ReportExecutionService {
         drilldownFilters: input.drilldownFilters,
         emailedTo: input.emailTo,
         downloadCount: 0,
+        /*
+          THE SCOPE, FROZEN AT REQUEST TIME.
+
+          `context` was declared on this method and never read: the
+          controller resolved it correctly (its comment says why), and
+          it was discarded one call later. Generation happens in a
+          worker, in another process, so the engine got `undefined` and
+          `orgUnitPredicate`'s `if (!context) return {}` made every
+          downloaded export ORGANIZATION-WIDE -- while the same report's
+          on-screen preview was properly scoped.
+
+          `?? null` is correct and is NOT a fail-open: `generate()` is
+          only reached through the authenticated controller, which
+          always resolves a context, so the fallback covers system
+          callers that legitimately run org-wide. The three-state
+          meaning (null / [] / [ids]) is preserved exactly, including
+          the fail-closed empty array.
+        */
+        requestedOrgUnitIds: context ? context.accessibleOrgUnitIds : null,
       },
       tenantId,
       userId
@@ -104,7 +123,14 @@ export class ReportExecutionService {
     return created;
   }
 
-  /** Called by the worker for ad-hoc executions (kind: 'execution'). */
+  /**
+   * Called by the worker for ad-hoc executions (kind: 'execution').
+   *
+   * `context` stays in the signature for the few in-process callers that
+   * have one, but the worker has none -- so when it is absent the scope
+   * is REHYDRATED from the execution record rather than left undefined.
+   * See `requestedOrgUnitIds` on ReportExecution for why.
+   */
   async executeGeneration(executionId: string, tenantId: string, userId: string, context?: TenantContext): Promise<ReportExecution> {
     const execution = await this.repo.findById(executionId, tenantId, false, true);
     if (!execution) throw new NotFoundError('Report execution not found');
@@ -112,7 +138,8 @@ export class ReportExecutionService {
     await this.repo.updateStatus(executionId, tenantId, 'processing');
 
     try {
-      const buffer = await this.buildBuffer(execution, tenantId, context);
+      const scope = context ?? this.rehydrateScope(execution, tenantId);
+      const buffer = await this.buildBuffer(execution, tenantId, scope);
 
       const stored = await storageService.uploadFile({
         tenantId,
@@ -173,7 +200,14 @@ export class ReportExecutionService {
     reportDefinitionId: string,
     format: ExecutionFormat,
     recipients: string[],
-    tenantId: string
+    tenantId: string,
+    /**
+     * The scope frozen onto the schedule when it was created. Passing
+     * `undefined` -- a schedule created before that field existed --
+     * fails CLOSED, producing an empty report rather than an org-wide
+     * one. See DEPLOYMENT: such schedules must be re-saved once.
+     */
+    requestedOrgUnitIds?: string[] | null
   ): Promise<ReportExecution> {
     const def = await reportDefinitionRepository.findById(reportDefinitionId, tenantId);
     if (!def) throw new NotFoundError('Report definition not found');
@@ -190,12 +224,41 @@ export class ReportExecutionService {
         emailedTo: recipients,
         downloadCount: 0,
         isScheduledRun: true,
+        // Carried onto the record so executeGeneration's rehydration
+        // finds it, exactly as the ad-hoc path does. Fail-closed on
+        // undefined: `?? []`, never `?? null`.
+        requestedOrgUnitIds: requestedOrgUnitIds === undefined ? [] : requestedOrgUnitIds,
       },
       tenantId,
       'system'
     );
 
     return this.executeGeneration(created._id!, tenantId, 'system');
+  }
+
+  /**
+   * Rebuilds the minimal TenantContext the query engine needs from the
+   * scope frozen onto the execution record.
+   *
+   * FAIL-CLOSED on a record written before `requestedOrgUnitIds`
+   * existed: `undefined` becomes `[]`, which matches nothing, rather
+   * than `null`, which would mean org-wide and would preserve exactly
+   * the leak this fixes for the rows already in flight. A pending
+   * execution lives seconds; the cost is a re-run.
+   *
+   * Only the two fields the engine reads are populated. Widening this
+   * into a full context would invite other consumers to trust fields
+   * that were never resolved for this process.
+   */
+  private rehydrateScope(execution: ReportExecution, tenantId: string): TenantContext {
+    const accessibleOrgUnitIds =
+      execution.requestedOrgUnitIds === undefined ? [] : execution.requestedOrgUnitIds;
+
+    return {
+      organizationId: tenantId,
+      accessibleOrgUnitIds,
+      assignedOrgUnitIds: accessibleOrgUnitIds ?? [],
+    } as TenantContext;
   }
 
   private async buildBuffer(execution: ReportExecution, tenantId: string, context?: TenantContext): Promise<Buffer> {

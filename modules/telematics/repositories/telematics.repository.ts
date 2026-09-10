@@ -302,7 +302,7 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
       acknowledgedAt: { $exists: false },
     };
 
-    return collection.find(filter as any).toArray() as Promise<TelematicsAlert[]>;
+    return this.normalizeDocs<TelematicsAlert>(await collection.find(filter as any).toArray());
   }
 
   /**
@@ -455,7 +455,7 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
       ];
     }
 
-    return collection.find(filter as any).toArray() as Promise<Geofence[]>;
+    return this.normalizeDocs<Geofence>(await collection.find(filter as any).toArray());
   }
 
   async updateGeofence(
@@ -623,14 +623,14 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
     const cutoffDate = new Date();
     cutoffDate.setMinutes(cutoffDate.getMinutes() - minutesOffline);
 
-    return collection
+    return this.normalizeDocs<TelematicsDevice>(await collection
       .find({
         tenantId,
         isDeleted: { $ne: true },
         status: 'active',
         lastPingAt: { $lt: cutoffDate },
       } as any)
-      .toArray() as Promise<TelematicsDevice[]>;
+      .toArray());
   }
 
   /**
@@ -715,7 +715,7 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
       ...this.scopeOf(context),
     };
 
-    return collection.find(filter as any).toArray() as Promise<TelematicsAlert[]>;
+    return this.normalizeDocs<TelematicsAlert>(await collection.find(filter as any).toArray());
   }
 
   /**
@@ -753,7 +753,7 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
       });
     }
 
-    return collection.find({ $and: conditions } as any).toArray() as Promise<Geofence[]>;
+    return this.normalizeDocs<Geofence>(await collection.find({ $and: conditions } as any).toArray());
   }
 
   async getOfflineDevicesInScope(
@@ -764,7 +764,7 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
     const cutoffDate = new Date();
     cutoffDate.setMinutes(cutoffDate.getMinutes() - minutesOffline);
 
-    return collection
+    return this.normalizeDocs<TelematicsDevice>(await collection
       .find({
         tenantId: context.organizationId,
         isDeleted: { $ne: true },
@@ -772,7 +772,7 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
         lastPingAt: { $lt: cutoffDate },
         ...this.scopeOf(context),
       } as any)
-      .toArray() as Promise<TelematicsDevice[]>;
+      .toArray());
   }
 
   /**

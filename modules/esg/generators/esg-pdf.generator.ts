@@ -42,7 +42,14 @@ export async function buildEsgPdfBuffer(data: EsgExportData): Promise<Buffer> {
 
     // ─── Composite score ───────────────────────────────────────────
     doc.fontSize(13).fillColor('#111').text('Composite Score');
-    doc.fontSize(24).fillColor('#111').text(`${data.compositeScore.value} / 100`);
+    doc
+      .fontSize(data.compositeScore.value === null ? 16 : 24)
+      .fillColor('#111')
+      .text(
+        data.compositeScore.value === null
+          ? 'Not measured'
+          : `${data.compositeScore.value} / 100`
+      );
     doc.fontSize(8).fillColor('#888').text(data.compositeScore.methodology, { width: 500 });
     doc.moveDown(1);
 
@@ -51,11 +58,23 @@ export async function buildEsgPdfBuffer(data: EsgExportData): Promise<Buffer> {
     doc.moveDown(0.3);
     const fh = data.fleetHealth;
     const fleetLines = [
-      `Overall health score: ${fh.overallScore} / 100`,
+      `Overall health score: ${
+        fh.overallScore === null
+          ? 'Not measured (no vehicles scored)'
+          : `${fh.overallScore} / 100`
+      }`,
       `Vehicles assessed: ${fh.vehiclesAssessed}`,
-      `Average vehicle age: ${fh.averageVehicleAgeYears.toFixed(1)} years`,
+      `Average vehicle age: ${
+        fh.averageVehicleAgeYears === null
+          ? 'Not measured (no vehicle records a model year)'
+          : `${fh.averageVehicleAgeYears.toFixed(1)} years`
+      }`,
       `Average mileage: ${fh.averageMileage.toLocaleString()}`,
-      `Maintenance completion rate: ${formatPercent(fh.maintenanceCompletionRate)}`,
+      `Maintenance completion rate: ${
+        fh.maintenanceCompletionRate === null
+          ? 'Not measured (no maintenance recorded)'
+          : formatPercent(fh.maintenanceCompletionRate)
+      }`,
       `Overdue maintenance items: ${fh.overdueMaintenanceCount}`,
       `Pending maintenance items: ${fh.pendingMaintenanceCount}`,
       `Average fuel efficiency: ${

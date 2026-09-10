@@ -63,8 +63,32 @@ export default function AnalyticsOverview() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <StatsCard title="Avg Daily Distance" value={formatDistance(metrics.averageDailyDistance, 'km', 0)} color="blue" />
           <StatsCard title="Avg Daily Expense" value={formatCurrency(metrics.averageDailyExpense)} color="red" />
-          <StatsCard title="Avg Cost per Vehicle" value={formatCurrency(metrics.averageCostPerVehicle)} color="purple" />
-          <StatsCard title="Utilization Rate" value={formatPercent(metrics.vehicleUtilizationRate)} color="green" />
+          {/*
+            Both are null for an organisation with no vehicles -- a
+            per-vehicle figure over zero vehicles is undefined, and
+            "$0" / "0%" would read as measurements. Same treatment as
+            Cost per Km above.
+          */}
+          <StatsCard
+            title="Avg Cost per Vehicle"
+            value={
+              metrics.averageCostPerVehicle != null
+                ? formatCurrency(metrics.averageCostPerVehicle)
+                : null
+            }
+            emptyValue="Not measured"
+            color="purple"
+          />
+          <StatsCard
+            title="Utilization Rate"
+            value={
+              metrics.vehicleUtilizationRate != null
+                ? formatPercent(metrics.vehicleUtilizationRate)
+                : null
+            }
+            emptyValue="Not measured"
+            color="green"
+          />
         </div>
       )}
 
@@ -112,7 +136,12 @@ export default function AnalyticsOverview() {
               filename={slugifyChartFilename('fuel-efficiency-trend')}
               sheetName="Fuel Efficiency Trend"
               headers={['Month', 'Efficiency (km/L)']}
-              rows={fuelTrend.map((f: any) => ({ Month: f.month, 'Efficiency (km/L)': f.efficiency }))}
+              rows={fuelTrend.map((f: any) => ({
+                Month: f.month,
+                // Blank, not 0. An exported spreadsheet is the artefact
+                // most likely to outlive the caveat on screen.
+                'Efficiency (km/L)': f.efficiency ?? '',
+              }))}
             />
           }
         >
@@ -121,9 +150,21 @@ export default function AnalyticsOverview() {
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="month" />
               <YAxis />
-              <Tooltip formatter={(value: number) => value.toFixed(2)} />
+              <Tooltip
+                formatter={(value: number | null) =>
+                  typeof value === 'number' ? value.toFixed(2) : 'Not measured'
+                }
+              />
               <Legend />
+              {/*
+                `connectNulls={false}` is the point of this whole change:
+                a month with fuel logged but no trips now sends `null`
+                instead of 0, and the line BREAKS there rather than
+                plunging to the axis. A gap in the record must not look
+                like a collapse in efficiency.
+              */}
               <Line
+                connectNulls={false}
                 type="monotone"
                 dataKey="efficiency"
                 stroke="var(--primary)"
@@ -153,7 +194,17 @@ export default function AnalyticsOverview() {
                   <p className="text-xs text-muted-foreground">Due in {item.daysUntilDue} days</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-sm font-semibold">{formatCurrency(item.estimatedCost)}</p>
+                  {/*
+                    Reminders carry no actuals field, and most carry no
+                    estimate either. This used to print a fabricated $500
+                    for every one of them, summed into a figure a manager
+                    budgets against.
+                  */}
+                  <p className="text-sm font-semibold">
+                    {typeof item.estimatedCost === 'number'
+                      ? formatCurrency(item.estimatedCost)
+                      : <span className="text-muted-foreground font-normal">No estimate</span>}
+                  </p>
                   <span className={`text-xs px-2 py-0.5 rounded-full ${item.priority === 'high' ? 'bg-danger-bg text-danger' : item.priority === 'medium' ? 'bg-warning-bg text-warning' : 'bg-success-bg text-success'}`}>
                     {item.priority}
                   </span>

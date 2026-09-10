@@ -229,9 +229,53 @@ describe('VehicleController.assignVehicleDriver -- cross-org-unit rejection', ()
     expect(mockedAssignDriver).toHaveBeenCalledWith('vehicle-1', 'driver-1', TENANT, USER_ID);
   });
 
-  it('a driver with no orgUnitId assigned can still be assigned by a scoped caller (only an explicit mismatch is blocked)', async () => {
+  /**
+   * THIS TEST USED TO ASSERT THE OPPOSITE, AND THE ASSERTION WAS THE BUG.
+   *
+   * It read "a driver with no orgUnitId assigned can still be assigned by
+   * a scoped caller (only an explicit mismatch is blocked)" and expected
+   * 200 -- pinning the `orgUnitId && !canAccess` fail-open in place, so
+   * that closing the hole turned the security suite red.
+   *
+   * The behaviour it protected is not defensible. A driver with no org
+   * unit does not appear in a narrowed caller's driver list, because
+   * `buildFilter` emits `{orgUnitId: {$in: [...]}}` and that never
+   * matches a missing field. So a Harare manager could assign a driver
+   * they cannot see, to their own vehicle, and then could not explain
+   * where the name on the vehicle had come from. Worse, the rows most
+   * likely to lack an org unit are the oldest ones -- the least likely to
+   * belong to the caller's branch.
+   *
+   * This is the second time a shipped test has encoded a defect as an
+   * expectation (the first was `expect(code).toContain('FuelLogCreated')`
+   * holding a dead event name in place). Both had the same shape: an
+   * assertion written from the code's behaviour rather than from the
+   * rule the code was meant to implement.
+   */
+  it('a driver with NO orgUnitId is unassignable by a scoped caller, matching what they can see', async () => {
     mockedGetVehicleById.mockResolvedValue(makeVehicle({ orgUnitId: HARARE_BRANCH }));
     mockedResolveContext.mockResolvedValue(makeTenantContext([HARARE_BRANCH]));
+    mockedDriverFindById.mockResolvedValue(makeDriver({ orgUnitId: undefined }));
+    mockedAssignDriver.mockResolvedValue(makeVehicle({ currentDriverId: 'driver-1' }));
+
+    const response = await controller.assignVehicleDriver(
+      makeRequest({ driverId: 'driver-1' }),
+      'vehicle-1'
+    );
+
+    // 404, not 403 -- an out-of-scope driver must be indistinguishable
+    // from one that does not exist.
+    expect(response.status).toBe(404);
+    expect(mockedAssignDriver).not.toHaveBeenCalled();
+  });
+
+  it('an org-wide caller may still assign a driver with no orgUnitId', async () => {
+    // The tightening must not become "unassigned drivers are unusable".
+    // An org-wide role has accessibleOrgUnitIds === null and sees every
+    // driver, so it can still put one to work -- which is also the path
+    // an admin uses to fix legacy data.
+    mockedGetVehicleById.mockResolvedValue(makeVehicle({ orgUnitId: HARARE_BRANCH }));
+    mockedResolveContext.mockResolvedValue(makeTenantContext(null));
     mockedDriverFindById.mockResolvedValue(makeDriver({ orgUnitId: undefined }));
     mockedAssignDriver.mockResolvedValue(makeVehicle({ currentDriverId: 'driver-1' }));
 

@@ -13,6 +13,7 @@ import { formatDate } from '@/shared/utils/date.utils';
 import { getChartColor } from '@/shared/utils/chart.utils';
 import type { ExpenseAnalyticsDateRange } from './ExpenseAnalyticsFilterBar';
 import type { TopVehicleExpenseRow } from '@/shared/types/expense.types';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 interface TopVehiclesByExpenseChartProps {
   dateRange: ExpenseAnalyticsDateRange;
@@ -94,7 +95,9 @@ export function TopVehiclesByExpenseChart({ dateRange, licensePlate }: TopVehicl
         <CardContent>
           {isLoading ? (
             <div className="rounded-lg h-60 skeleton" />
-          ) : error || !data || data.length === 0 ? (
+          ) : error ? (
+            <ChartLoadError />
+          ) : !data || data.length === 0 ? (
             <p className="text-sm text-muted-foreground">No expenses in this range.</p>
           ) : (
             <div style={{ width: '100%', height: Math.max(260, data.length * 36) }}>

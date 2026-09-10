@@ -227,11 +227,13 @@ export class PredictiveMaintenanceService extends BaseAIService {
         };
       }
 
-      if (
-        context &&
-        context.accessibleOrgUnitIds !== null &&
-        !tenantScopeService.canAccessOrgUnit(context, (vehicle as { orgUnitId?: string }).orgUnitId ?? '')
-      ) {
+      // canAccessRecord carries both halves of this rule: an org-wide
+      // caller passes, and a narrowed caller needs the vehicle to CARRY
+      // an accessible unit. The `?? ''` idiom this replaces was correct
+      // only by accident -- an empty string happens not to be in any
+      // accessible list -- and would have opened the hole the moment
+      // someone "cleaned it up".
+      if (context && !tenantScopeService.canAccessRecord(context, (vehicle as { orgUnitId?: string }).orgUnitId)) {
         return {
           success: false,
           error: 'Vehicle not found',

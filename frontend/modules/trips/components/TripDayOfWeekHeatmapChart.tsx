@@ -9,6 +9,7 @@ import { useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/frontend/shared/ui/data-display/card';
 import { useTripDayOfWeekHeatmap } from '../hooks/useTripAnalytics';
 import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 interface TripDayOfWeekHeatmapChartProps {
   dateRange?: { startDate?: Date; endDate?: Date };
@@ -39,7 +40,20 @@ export function TripDayOfWeekHeatmapChart({ dateRange, licensePlate }: TripDayOf
     );
   }
 
-  if (error || !data || data.length === 0) {
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Trip activity heatmap</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ChartLoadError />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!data || data.length === 0) {
     return (
       <Card>
         <CardHeader>

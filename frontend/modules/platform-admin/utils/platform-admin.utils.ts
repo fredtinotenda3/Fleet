@@ -155,17 +155,28 @@ export function isSameOrganization(
 }
 
 /**
- * Whether the org-unit section may be shown and used for `org`.
+ * Whether `org` IS the caller's own organization.
  *
- * THIS IS THE CONSTRAINT, not a UI preference. `/api/tenancy/org-units`
- * derives `organizationId` from the caller's session on both GET and
- * POST (see ../types for the exact code path), so it can only ever
- * answer for the caller's OWN organization.
+ * ---------------------------------------------------------------
+ * NO LONGER GATES ORG UNITS
+ * ---------------------------------------------------------------
+ * This existed because `/api/tenancy/org-units` derives
+ * `organizationId` from the caller's session on both GET and POST, so
+ * it could only ever answer for the caller's OWN organization --
+ * rendering another tenant's page against it would have listed the
+ * admin's own branches under someone else's name, and "Add branch"
+ * would have created it in the wrong organization, with every request
+ * returning 200.
  *
- * Returning false means the page shows an explanation. Returning true
- * where it should be false would list the admin's own branches under
- * another tenant's name and let a "create branch" land in the wrong
- * organization -- silently, since every request would succeed.
+ * `GET`/`POST /api/platform/organizations/:id/org-units` now takes the
+ * organization from the path, so the org-unit section is no longer
+ * gated and OrganizationDetailPage renders the real tree.
+ *
+ * The predicate remains because the same restriction still holds for
+ * organization MEMBERS -- `/api/organizations/[id]/members` has no GET
+ * handler at all, only POST and DELETE, so
+ * OrganizationMembersSection still needs to know whether it is looking
+ * at the caller's own tenant.
  *
  * Fails CLOSED: no session tenant, or an org that cannot be matched to
  * it, both yield false.

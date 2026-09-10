@@ -12,6 +12,7 @@
 // zod conventions as report-definition.schema.ts.
 
 import { z } from 'zod';
+import { partialForUpdate } from './update-schema.utils';
 
 const dashboardWidgetConfigSchema = z.object({
   id: z.string().min(1),
@@ -36,7 +37,7 @@ export const dashboardCreateSchema = z.object({
   widgets: z.array(dashboardWidgetConfigSchema).optional(),
 });
 
-export const dashboardUpdateSchema = dashboardCreateSchema.partial();
+export const dashboardUpdateSchema = partialForUpdate(dashboardCreateSchema);
 
 export type DashboardCreateInput = z.infer<typeof dashboardCreateSchema>;
 export type DashboardUpdateInput = z.infer<typeof dashboardUpdateSchema>;

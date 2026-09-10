@@ -17,7 +17,20 @@ export interface FuelLog extends BaseEntity {
   date: Date;
   fuel_volume: number;
   unit_id: string;
-  driver_id?: string;
+  /**
+   * The driver who took this refuel.
+   *
+   * `null` (not merely absent) is a legitimate stored value: an update
+   * that clears an incorrect attribution writes an explicit null rather
+   * than leaving the wrong id in place. Every consumer treats falsy as
+   * unattributed, and getFuelByDriver normalises null and '' into the
+   * same bucket, so the two shapes are equivalent on read.
+   *
+   * NOT the vehicle's current driver. A fuel log records who fuelled the
+   * vehicle on that date; back-filling the vehicle's present driver onto
+   * historical logs would rewrite one person's fuel spend onto another.
+   */
+  driver_id?: string | null;
   cost: number;
   odometer?: number;
   station_name?: string;

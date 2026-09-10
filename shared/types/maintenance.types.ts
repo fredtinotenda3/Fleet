@@ -58,8 +58,17 @@ export interface MaintenanceStats {
   completed: number;
   pending: number;
   overdue: number;
-  completionRate: number;
-  averageCompletionDays: number;
+  /**
+   * Percentage of records completed, or `null` when there are no
+   * maintenance records at all. NOT 0 -- a green "0.0%" on an
+   * organisation with nothing to complete is a fabricated verdict.
+   */
+  completionRate: number | null;
+  /**
+   * Mean days between due date and completion, or `null` when nothing
+   * has been completed. NOT 0, which reads as "completed on the day".
+   */
+  averageCompletionDays: number | null;
 }
 
 // ---------------------------------------------------------------------

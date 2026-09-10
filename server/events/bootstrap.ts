@@ -73,7 +73,6 @@ import {
   DISPATCH_JOB_ASSIGNED,
   DISPATCH_JOB_COMPLETED,
   BOOKING_CHECKED_IN,
-  DRIVER_SHIFT_CREATED,
   // ── Digital Twin specific event names ────────────────────────────
   VEHICLE_STATUS_CHANGED,
   TRIP_COMPLETED,
@@ -82,7 +81,11 @@ import {
   VEHICLE_DRIVER_UNASSIGNED,
 } from './event-names';
 import { OBSERVABILITY_ALERT_TRIGGERED } from '@/infrastructure/observability/event-names';
-import { allocationPostingHandler } from './handlers/finance/AllocationPostingHandler';
+import {
+  allocationPostingHandler,
+  POSTING_EVENT_NAMES,
+} from './handlers/finance/AllocationPostingHandler';
+import { DRIVER_CREATED } from '@/modules/drivers/events/DriverCreatedEvent';
 
 // ── FleetOps event handlers ────────────────────────────────────────
 import {
@@ -153,21 +156,32 @@ export function bootstrapEvents(): void {
     bus.subscribe(name, websocketHandler);
     bus.subscribe(name, auditHandler);
     bus.subscribe(name, webhookDispatchHandler);
-    /**
-     * PHASE 6 -- auto-posts financial transactions into the allocation
-     * ledger, which was complete, correct, indexed and reading an empty
-     * collection because nothing wrote to it.
-     *
-     * Subscribed to every event and filtering internally on an explicit
-     * map (POSTING_EVENTS), rather than subscribed to a hand-picked
-     * list here: "which events move money" is a finance question and
-     * belongs beside the posting logic, not in the bootstrap wiring
-     * where it would drift out of step with the handler.
-     *
-     * Idempotent by construction -- see the handler. Phase 3's delivery
-     * is at-least-once, and this ledger is append-only, so a double
-     * posting cannot be edited away.
-     */
+  }
+
+  /**
+   * PHASE 6 -- auto-posts financial transactions into the allocation
+   * ledger.
+   *
+   * SUBSCRIBED FROM THE HANDLER'S OWN MAP, not from `allEventNames`.
+   *
+   * It used to sit inside the loop above, under a comment claiming it
+   * was "subscribed to every event and filtering internally on an
+   * explicit map ... rather than a hand-picked list here". The loop IS a
+   * hand-picked list, and `WorkOrderCompleted` was never in it -- so
+   * after the posting map was corrected last round, the work-order key
+   * was still unroutable and the entire workshop cost stream stayed out
+   * of the ledger. The stated invariant was false, which is exactly why
+   * the drift was invisible.
+   *
+   * Deriving the subscription from POSTING_EVENT_NAMES makes "which
+   * events move money" ONE fact rather than two that must agree by hand.
+   * tests/security/event-wiring-conformance.spec.ts asserts it.
+   *
+   * Idempotent by construction -- see the handler. Delivery is
+   * at-least-once and this ledger is append-only, so a double posting
+   * cannot be edited away.
+   */
+  for (const name of POSTING_EVENT_NAMES) {
     bus.subscribe(name, allocationPostingHandler);
   }
 
@@ -255,7 +269,31 @@ export function bootstrapEvents(): void {
   // When a vehicle or driver is created, auto-schedule compliance records
   // for all active compliance rules that apply to that entity type.
   bus.subscribe(VEHICLE_CREATED, complianceAutoSchedulerHandler);
-  bus.subscribe(DRIVER_SHIFT_CREATED, complianceAutoSchedulerHandler);
+  /**
+   * DRIVER compliance, on the event that actually names a driver.
+   *
+   * This was subscribed to DRIVER_SHIFT_CREATED, while the handler's own
+   * docstring says it handles "VEHICLE_CREATED and DRIVER_CREATED". Two
+   * things were wrong with the shift event, and each alone was enough:
+   *
+   *   1. DriverShiftCreatedEvent sets `entityType: 'driver_shift'`, and
+   *      ComplianceAppliesTo is 'vehicle' | 'driver' | 'organization'.
+   *      So `listRules('driver_shift', tenantId)` matched zero rules,
+   *      forever, and the loop body never ran. No throw, no log.
+   *   2. Its `entityId` is the SHIFT's id, so even with a matching rule
+   *      the compliance record would have been filed against a shift
+   *      rather than against the driver.
+   *
+   * Symptom: define a "licence expiry" rule, create a driver, and no
+   * compliance record is ever generated. The compliance dashboard shows
+   * vehicles only, which reads as "driver compliance isn't supported
+   * yet" rather than as a defect.
+   *
+   * DRIVER_CREATED is a module-local name ('driver.created'), following
+   * the fuel-stations/fuel-cards convention, and its payload carries
+   * `entityType: 'driver'` and the driver's own id.
+   */
+  bus.subscribe(DRIVER_CREATED, complianceAutoSchedulerHandler);
 
   // ── Digital Twin Projection ──────────────────────────────────────
   // Subscribe to events that update the digital twin read model.

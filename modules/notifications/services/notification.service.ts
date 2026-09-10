@@ -102,6 +102,63 @@ export class NotificationService {
       userId
     );
 
+    /**
+     * EMAIL DELIVERY, WHICH WAS NEVER HAPPENING.
+     *
+     * -----------------------------------------------------------------
+     * THE BREAK
+     * -----------------------------------------------------------------
+     * The pipeline was built and complete:
+     *
+     *   queueService.addNotificationJob  ->  'send-notification' queue
+     *     -> NotificationWorker  ->  SEND_EMAIL job
+     *       -> EmailWorker  ->  emailService.send
+     *
+     * and `addNotificationJob` had ZERO callers anywhere in the
+     * repository. NotificationHandler, IntelligenceHandler,
+     * SecurityAuditHandler and the rule engine all call
+     * `sendNotification` DIRECTLY, which persisted the row -- including
+     * a `deliveryMethods` array containing 'email' and a `sentAt`
+     * timestamp -- and then only ever emitted the in-app WebSocket
+     * event. NotificationWorker never ran, so no SEND_EMAIL job was
+     * ever enqueued and EmailWorker never ran either.
+     *
+     * So every notification type whose preferences include email --
+     * maintenance_overdue, insurance_expiring, registration_expiring,
+     * fuel_anomaly, alert, report_ready -- wrote a record claiming it
+     * had been emailed, and no email left the system. The sharpest case
+     * is `organization_invite`, configured with channels ['email'] and
+     * nothing else: it produced no in-app record AND no email. An
+     * invitation that silently does nothing.
+     *
+     * -----------------------------------------------------------------
+     * WHY THE FAN-OUT MOVED HERE
+     * -----------------------------------------------------------------
+     * Rather than making four call sites enqueue instead of calling
+     * (which would have lost the synchronous return value every one of
+     * them uses), the fan-out now lives beside the persistence it
+     * describes. NotificationWorker still works for anything that
+     * enqueues, because it calls this same method.
+     *
+     * A queue failure must not fail the notification -- an in-app alert
+     * that was written is better than no alert at all -- so it is
+     * caught. But the record is then CORRECTED rather than left
+     * claiming a delivery that did not happen: a row that says it was
+     * emailed is evidence, and evidence has to be true.
+     */
+    if (deliveryMethods.includes('email')) {
+      try {
+        const { queueService, JobType } = await import('@/infrastructure/queue/queue.service');
+        await queueService.addJob(JobType.SEND_EMAIL, {
+          type: JobType.SEND_EMAIL,
+          tenantId,
+          payload: { userId, subject: notification.title, text: notification.message },
+        });
+      } catch (error) {
+        await this.recordEmailNotDispatched(savedNotification, tenantId, deliveryMethods, error);
+      }
+    }
+
     if (deliveryMethods.includes('in_app')) {
       try {
         const wsManager = await getWebSocketManager();
@@ -119,6 +176,43 @@ export class NotificationService {
     }
 
     return savedNotification;
+  }
+
+  /**
+   * Drops 'email' from a persisted notification whose email job could
+   * not be enqueued.
+   *
+   * The alternative -- leaving the row as it was written -- would keep
+   * the exact lie this fix exists to remove, just with a log line beside
+   * it. Best-effort: if even this write fails there is nothing further
+   * to do but log, and the in-app notification still stands.
+   */
+  private async recordEmailNotDispatched(
+    saved: Notification,
+    tenantId: string,
+    deliveryMethods: Notification['deliveryMethods'],
+    error: unknown
+  ): Promise<void> {
+    const { monitoring } = await import('@/infrastructure/monitoring/logger');
+    monitoring.logError(
+      '[notifications] Email delivery could not be queued; correcting the record',
+      error as Error,
+      { notificationId: saved._id, tenantId }
+    );
+
+    try {
+      await notificationRepository.update(
+        saved._id!,
+        { deliveryMethods: deliveryMethods.filter((m) => m !== 'email') },
+        tenantId
+      );
+    } catch (updateError) {
+      monitoring.logError(
+        '[notifications] Could not correct deliveryMethods after a failed email enqueue',
+        updateError as Error,
+        { notificationId: saved._id, tenantId }
+      );
+    }
   }
 
   async sendBulkNotification(

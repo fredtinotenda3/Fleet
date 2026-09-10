@@ -386,6 +386,26 @@ export const rolePermissions: Record<Role, Permission[]> = {
     Permission.TRIP_EDIT,
     Permission.FUEL_VIEW,
     Permission.FUEL_CREATE,
+    /**
+     * FUEL_EDIT, which was missing while FUEL_DELETE was present.
+     *
+     * The delete-follows-create-and-edit note below says a role that can
+     * create and edit a record must be able to remove one entered in
+     * error. This role could create and DELETE a fuel log but not
+     * CORRECT one -- so a mistyped litre count, or a log attributed to
+     * the wrong driver, could only be fixed by deleting and re-entering
+     * it. That is strictly worse than an edit: it loses the record's
+     * audit trail and orphans its allocation-ledger posting, on an
+     * append-only ledger where the posting then has to be reversed by
+     * hand.
+     *
+     * Granting edit to a role that already holds delete is not a
+     * widening in any meaningful sense -- delete strictly dominates
+     * edit. It makes the stated policy true. `branch_manager` and
+     * `accountant` were the only two roles with this asymmetry; a
+     * conformance test now asserts there are none.
+     */
+    Permission.FUEL_EDIT,
     Permission.EXPENSE_VIEW,
     Permission.EXPENSE_CREATE,
     Permission.EXPENSE_EDIT,
@@ -685,6 +705,10 @@ export const rolePermissions: Record<Role, Permission[]> = {
     Permission.EXPENSE_APPROVE,
     Permission.FUEL_VIEW,
     Permission.FUEL_CREATE,
+    // Same asymmetry as branch_manager -- see the note there. This role
+    // held FUEL_DELETE without FUEL_EDIT, so correcting a fuel log meant
+    // destroying it.
+    Permission.FUEL_EDIT,
     Permission.ANALYTICS_VIEW,
     Permission.ANALYTICS_EXPORT,
     Permission.REPORT_VIEW,

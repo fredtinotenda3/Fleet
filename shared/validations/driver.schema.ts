@@ -1,6 +1,7 @@
 // shared/validations/driver.schema.ts
 
 import { z } from 'zod';
+import { partialForUpdate } from './update-schema.utils';
 
 export const driverSchema = z.object({
   name: z.string().min(1, 'Driver name is required').max(150),
@@ -15,7 +16,7 @@ export const driverSchema = z.object({
 
 export const driverCreateSchema = driverSchema;
 
-export const driverUpdateSchema = driverSchema.partial().extend({
+export const driverUpdateSchema = partialForUpdate(driverSchema).extend({
   _id: z.string().min(1, 'Driver ID is required'),
 });
 

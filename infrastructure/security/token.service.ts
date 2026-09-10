@@ -2,6 +2,7 @@
 
 import jwt, { Algorithm, JwtPayload } from 'jsonwebtoken';
 import crypto from 'crypto';
+import { getAccessSecret, getRefreshSecret } from './jwt-secrets';
 
 export interface TokenPayload {
   userId: string;
@@ -54,21 +55,27 @@ export class TokenService {
   private readonly refreshSecret: string;
 
   constructor() {
-    this.accessSecret =
-      process.env.NEXTAUTH_SECRET || 'default-secret-change-in-production';
-    this.refreshSecret =
-      process.env.REFRESH_TOKEN_SECRET ||
-      'default-refresh-secret-change-in-production';
+    /*
+      Both secrets are resolved by the shared, edge-safe resolver, which
+      THROWS on an unset, published-placeholder or too-short value.
 
-    if (
-      process.env.NODE_ENV === 'production' &&
-      (this.accessSecret.startsWith('default-') || this.refreshSecret.startsWith('default-'))
-    ) {
-      console.error(
-        '[TokenService] FATAL: NEXTAUTH_SECRET / REFRESH_TOKEN_SECRET are unset in production. ' +
-          'Refusing to rely on default secrets for signing.'
-      );
-    }
+      This replaced:
+
+          this.accessSecret = process.env.NEXTAUTH_SECRET || 'default-secret-change-in-production';
+          ...
+          if (NODE_ENV === 'production' && startsWith('default-')) console.error('FATAL: ... Refusing ...')
+
+      The message said "Refusing" and then signed anyway. See
+      jwt-secrets.ts for why that is a full authentication bypass and
+      why the guard is no longer conditioned on NODE_ENV.
+
+      Throwing in the constructor is deliberate: `tokenService` is a
+      module-level singleton, so this fires at import time and the
+      process fails to start rather than serving requests with a
+      forgeable key.
+    */
+    this.accessSecret = getAccessSecret();
+    this.refreshSecret = getRefreshSecret();
   }
 
   generateAccessToken(payload: TokenPayload, jti: string = crypto.randomUUID()): string {

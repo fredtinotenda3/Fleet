@@ -1,6 +1,7 @@
 // shared/validations/fuel-card.schema.ts
 
 import { z } from 'zod';
+import { partialForUpdate } from './update-schema.utils';
 
 export const fuelCardSchema = z.object({
   card_last4: z.string().regex(/^\d{4}$/, 'Enter the last 4 digits only'),
@@ -16,7 +17,7 @@ export const fuelCardSchema = z.object({
 
 export const fuelCardCreateSchema = fuelCardSchema;
 
-export const fuelCardUpdateSchema = fuelCardSchema.partial().extend({
+export const fuelCardUpdateSchema = partialForUpdate(fuelCardSchema).extend({
   _id: z.string().min(1, 'Fuel card ID is required'),
 });
 

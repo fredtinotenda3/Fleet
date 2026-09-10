@@ -178,10 +178,15 @@ export class ExpenseController {
     );
 
     const expenseOrgUnitId = (expense as any).orgUnitId as string | undefined;
-    if (
-      expenseOrgUnitId &&
-      !tenantScopeService.canAccessOrgUnit(tenantContext, expenseOrgUnitId)
-    ) {
+    /**
+     * FAIL-CLOSED. This was `expenseOrgUnitId && !canAccessOrgUnit(...)`,
+     * whose leading truthiness test skipped the check entirely for a
+     * record carrying no orgUnitId -- leaving it readable, updatable
+     * and deletable by id while `buildFilter` hid it from the list.
+     * canAccessRecord mirrors buildFilter exactly, so by-id reach and
+     * by-list reach are the same set by construction.
+     */
+    if (!tenantScopeService.canAccessRecord(tenantContext, expenseOrgUnitId)) {
       throw new NotFoundError('Expense not found');
     }
 

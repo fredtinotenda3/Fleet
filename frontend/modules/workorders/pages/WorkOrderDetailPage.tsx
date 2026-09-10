@@ -4,7 +4,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { UserPlus } from 'lucide-react';
+import { UserPlus, Package, Clock } from 'lucide-react';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
@@ -15,11 +15,20 @@ import { ErrorState, describeQueryError } from '@/frontend/shared/ui/patterns';
 import { formatDate } from '@/shared/utils/date.utils';
 import { useSessionStore } from '@/frontend/shared/store/session.store';
 import { useWorkOrder } from '../hooks/useWorkOrders';
-import { useAssignMechanic } from '../hooks/useWorkOrderMutations';
+import { useAssignMechanic, useConsumeParts, useRecordLabor } from '../hooks/useWorkOrderMutations';
+import { usePartNames } from '@/frontend/modules/inventory/hooks';
 import { WorkOrderStatusBadge } from '../components/WorkOrderStatusBadge';
 import { WorkOrderStatusActions } from '../components/WorkOrderStatusActions';
 import { AssignMechanicDialog } from '../components/AssignMechanicDialog';
-import { PRIORITY_BADGE_CLASSES, getPriorityLabel, formatWorkOrderCost, canAssignWorkOrders } from '../utils';
+import { ConsumePartsDialog } from '../components/ConsumePartsDialog';
+import { RecordLaborDialog } from '../components/RecordLaborDialog';
+import {
+  PRIORITY_BADGE_CLASSES,
+  getPriorityLabel,
+  formatWorkOrderCost,
+  canAssignWorkOrders,
+  canManageWorkOrders,
+} from '../utils';
 import { WORKORDER_ROUTES } from '../routes';
 import type { AssignMechanicPayload } from '../types';
 
@@ -32,10 +41,26 @@ export function WorkOrderDetailPage({ id }: WorkOrderDetailPageProps) {
   const user = useSessionStore((s) => s.user);
   const roles = user?.roles ?? [];
   const canAssign = canAssignWorkOrders(roles);
+  /*
+    Both cost endpoints are wrapped in
+    `withAuth({permission: WORKORDER_MANAGE})`, so the buttons are gated
+    on exactly the permission the server enforces -- not on a broader
+    proxy that would render a control the API then refuses.
+  */
+  const canRecordCosts = canManageWorkOrders(roles);
 
   const { data: workOrder, isLoading, isError, error, refetch } = useWorkOrder(id);
   const assignMechanic = useAssignMechanic(id);
+  const consumeParts = useConsumeParts(id);
+  const recordLabor = useRecordLabor(id);
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
+  const [partsDialogOpen, setPartsDialogOpen] = useState(false);
+  const [laborDialogOpen, setLaborDialogOpen] = useState(false);
+
+  // Resolves the part ids on this job to names. Only fetched when there
+  // is at least one line to resolve -- see usePartNames.
+  const partIds = workOrder?.partsUsed?.map((p) => p.sparePartId) ?? [];
+  const { nameFor, partFor } = usePartNames(partIds, Boolean(workOrder));
 
   if (isLoading) return <LoadingState type="full" />;
   // The failure branch has to be checked before the not-found branch, because a
@@ -84,6 +109,26 @@ export function WorkOrderDetailPage({ id }: WorkOrderDetailPageProps) {
                 <UserPlus className="h-3.5 w-3.5" />
                 Assign mechanic
               </Button>
+            )}
+            {/*
+              Costs can only be recorded while the job is actually being
+              worked. `WorkOrderService.consumeParts` refuses any other
+              status outright, and recording labour against a completed
+              or cancelled job would silently change a figure someone has
+              already signed off. The buttons mirror the server rule
+              rather than appearing and then failing.
+            */}
+            {canRecordCosts && ['assigned', 'in_progress'].includes(workOrder.status) && (
+              <>
+                <Button variant="outline" size="sm" onClick={() => setPartsDialogOpen(true)}>
+                  <Package className="h-3.5 w-3.5" />
+                  Record parts
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setLaborDialogOpen(true)}>
+                  <Clock className="h-3.5 w-3.5" />
+                  {workOrder.laborHours ? 'Revise labour' : 'Record labour'}
+                </Button>
+              </>
             )}
             <WorkOrderStatusActions workOrder={workOrder} roles={roles} />
           </div>
@@ -176,12 +221,29 @@ export function WorkOrderDetailPage({ id }: WorkOrderDetailPageProps) {
               <div className="pt-2">
                 <p className="mb-1 text-muted-foreground">Parts used</p>
                 <ul className="space-y-1">
-                  {workOrder.partsUsed.map((part) => (
-                    <li key={part.sparePartId} className="flex justify-between">
-                      <span>{part.sparePartId}</span>
-                      <span>× {part.quantity}</span>
-                    </li>
-                  ))}
+                  {/*
+                    These rendered the raw `sparePartId` -- a 24-character
+                    ObjectId -- because nothing in the frontend could
+                    resolve a part id to a part. `nameFor` returns null
+                    rather than guessing when a part cannot be found
+                    (deleted, or outside the page it read), and the id is
+                    shown in that case: an unresolvable id is still more
+                    honest than a fabricated name, and it is what the
+                    person would need to look the part up by hand.
+                  */}
+                  {workOrder.partsUsed.map((part) => {
+                    const name = nameFor(part.sparePartId);
+                    const sku = partFor(part.sparePartId)?.sku;
+                    return (
+                      <li key={part.sparePartId} className="flex justify-between gap-2">
+                        <span className="min-w-0 truncate">
+                          {name ?? part.sparePartId}
+                          {sku && <span className="ml-1 text-muted-foreground">({sku})</span>}
+                        </span>
+                        <span className="shrink-0">× {part.quantity}</span>
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             )}
@@ -195,6 +257,22 @@ export function WorkOrderDetailPage({ id }: WorkOrderDetailPageProps) {
         onOpenChange={setAssignDialogOpen}
         onSubmit={handleAssign}
         isSubmitting={assignMechanic.isPending}
+      />
+
+      <ConsumePartsDialog
+        open={partsDialogOpen}
+        workOrder={workOrder}
+        onOpenChange={setPartsDialogOpen}
+        onSubmit={(values) => consumeParts.mutateAsync(values)}
+        isSubmitting={consumeParts.isPending}
+      />
+
+      <RecordLaborDialog
+        open={laborDialogOpen}
+        workOrder={workOrder}
+        onOpenChange={setLaborDialogOpen}
+        onSubmit={(values) => recordLabor.mutateAsync(values)}
+        isSubmitting={recordLabor.isPending}
       />
     </div>
   );

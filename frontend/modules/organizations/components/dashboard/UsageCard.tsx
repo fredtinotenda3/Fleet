@@ -8,6 +8,8 @@ import type { OrganizationStatistics } from '../../types';
 interface UsageCardProps {
   statistics: OrganizationStatistics | undefined;
   isLoading: boolean;
+  /** See OverviewStatsGrid: without this a failed request shimmers forever. */
+  isError?: boolean;
 }
 
 function UsageBar({ used, limit }: { used: number; limit: number }) {
@@ -31,7 +33,18 @@ function UsageBar({ used, limit }: { used: number; limit: number }) {
   );
 }
 
-export function UsageCard({ statistics, isLoading }: UsageCardProps) {
+export function UsageCard({ statistics, isLoading, isError = false }: UsageCardProps) {
+  if (isError || (!isLoading && !statistics)) {
+    return (
+      <div className="p-5 surface-card">
+        <h3 className="mb-2 text-h3">Resource usage</h3>
+        <p className="text-body-sm text-muted-foreground">
+          Couldn&apos;t load resource usage right now.
+        </p>
+      </div>
+    );
+  }
+
   if (isLoading || !statistics) {
     return (
       <div className="p-5 surface-card">

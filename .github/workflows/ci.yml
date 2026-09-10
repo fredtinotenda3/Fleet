@@ -148,4 +148,8 @@ jobs:
         run: npm run build
         env:
           NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+          # Required alongside NEXTAUTH_SECRET: the token service now
+          # throws at import time on a missing or placeholder secret
+          # rather than falling back to a published literal.
+          REFRESH_TOKEN_SECRET: ${{ secrets.REFRESH_TOKEN_SECRET }}
           MONGODB_URI: ${{ secrets.MONGODB_URI }}

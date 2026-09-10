@@ -13,6 +13,7 @@ import { formatDistance } from '@/shared/utils/distance.utils';
 import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
 import type { TripDrawerFilter } from './TripTransactionDrawer';
 import type { TripUtilizationSort } from '../types';
+import { ChartLoadError } from '@/frontend/shared/ui/ChartLoadError';
 
 interface DriverUtilizationChartProps {
   dateRange?: { startDate?: Date; endDate?: Date };
@@ -38,7 +39,20 @@ export function DriverUtilizationChart({
     );
   }
 
-  if (error || !data || data.length === 0) {
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Driver utilization</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ChartLoadError />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!data || data.length === 0) {
     return (
       <Card>
         <CardHeader>
