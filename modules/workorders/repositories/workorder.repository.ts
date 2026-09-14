@@ -14,7 +14,12 @@ export class WorkOrderRepository extends BaseRepository<WorkOrder> {
 
   async getFiltered(filters: WorkOrderFilters, tenantId: string, pagination: PaginationParams): Promise<PaginatedResponse<WorkOrder>> {
     const filter: Record<string, unknown> = {};
-    if (filters.license_plate) filter.license_plate = containsMatch(filters.license_plate);
+    if (filters.license_plate) {
+      // See WorkOrderFilters.exactLicensePlate's doc comment.
+      filter.license_plate = filters.exactLicensePlate
+        ? filters.license_plate.toUpperCase()
+        : containsMatch(filters.license_plate);
+    }
     if (filters.status) filter.status = filters.status;
     if (filters.priority) filter.priority = filters.priority;
     if (filters.assignedMechanicId) filter.assignedMechanicId = filters.assignedMechanicId;
@@ -35,7 +40,12 @@ export class WorkOrderRepository extends BaseRepository<WorkOrder> {
       query.tenantId = context.organizationId;
     }
 
-    if (filters.license_plate) query.license_plate = containsMatch(filters.license_plate);
+    if (filters.license_plate) {
+      // See WorkOrderFilters.exactLicensePlate's doc comment.
+      query.license_plate = filters.exactLicensePlate
+        ? filters.license_plate.toUpperCase()
+        : containsMatch(filters.license_plate);
+    }
     if (filters.status) query.status = filters.status;
     if (filters.priority) query.priority = filters.priority;
     if (filters.assignedMechanicId) query.assignedMechanicId = filters.assignedMechanicId;

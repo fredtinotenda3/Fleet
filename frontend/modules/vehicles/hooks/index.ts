@@ -2,3 +2,4 @@
 
 export * from './useVehicles';
 export * from './useVehicleMutations';
+export * from './useVehicleAttention';

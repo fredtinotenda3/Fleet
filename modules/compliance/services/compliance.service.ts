@@ -141,6 +141,26 @@ export class ComplianceService {
     return this.recordRepo.getFilteredInScope(entityType, status, context, pagination);
   }
 
+  /**
+   * WAVE 1 PART 2, item 7: org-unit-scoped open compliance records for
+   * ONE entity (e.g. a single vehicle's Needs-Attention integration).
+   *
+   * Thin wrapper -- `ComplianceRecordRepository.findOpenForEntityInScope`
+   * already existed (built alongside `findOpenForEntity`, its
+   * tenant-only sibling) but had no service-layer caller, so nothing in
+   * the app used it. This is a genuinely bounded query: `entityType` +
+   * `entityId` + the open-status set are all applied in the database
+   * filter itself, narrowed to `context`'s accessible org units by
+   * `findManyInScope` -- not a fetch-then-filter over a wider page.
+   */
+  async listOpenForEntityInScope(
+    entityType: ComplianceAppliesTo,
+    entityId: string,
+    context: TenantContext
+  ): Promise<ComplianceRecord[]> {
+    return this.recordRepo.findOpenForEntityInScope(entityType, entityId, context);
+  }
+
   /** Scoped single-record read. 404 for an out-of-scope record. */
   async getInScope(id: string, context: TenantContext): Promise<ComplianceRecord> {
     const record = await this.recordRepo.findById(id, context.organizationId);

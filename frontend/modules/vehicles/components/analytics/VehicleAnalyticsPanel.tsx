@@ -20,9 +20,11 @@ import { VehicleMaintenanceAnalyticsPanel } from './VehicleMaintenanceAnalyticsP
 
 interface VehicleAnalyticsPanelProps {
   licensePlate: string;
+  /** WAVE 1 PART 2, item 4: threaded to VehicleFuelAnalyticsPanel's reconciliation panel. */
+  isElectric: boolean;
 }
 
-export function VehicleAnalyticsPanel({ licensePlate }: VehicleAnalyticsPanelProps) {
+export function VehicleAnalyticsPanel({ licensePlate, isElectric }: VehicleAnalyticsPanelProps) {
   return (
     <Tabs defaultValue="fuel">
       <TabsList>
@@ -41,7 +43,7 @@ export function VehicleAnalyticsPanel({ licensePlate }: VehicleAnalyticsPanelPro
       </TabsList>
 
       <TabsContent value="fuel" className="mt-4">
-        <VehicleFuelAnalyticsPanel licensePlate={licensePlate} />
+        <VehicleFuelAnalyticsPanel licensePlate={licensePlate} isElectric={isElectric} />
       </TabsContent>
       <TabsContent value="expenses" className="mt-4">
         <VehicleExpenseAnalyticsPanel licensePlate={licensePlate} />

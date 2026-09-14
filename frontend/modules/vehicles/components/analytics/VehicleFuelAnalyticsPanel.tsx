@@ -26,19 +26,45 @@ import { FuelTypeDistributionChart } from '@/frontend/modules/fuel/components/Fu
 import { FuelCostDistributionChart } from '@/frontend/modules/fuel/components/FuelCostDistributionChart';
 import { FuelEntryHeatmapChart } from '@/frontend/modules/fuel/components/FuelEntryHeatmapChart';
 import { AbnormalConsumptionWidget } from '@/frontend/modules/fuel/components/AbnormalConsumptionWidget';
+import { VehicleFuelReconciliationPanel } from './VehicleFuelReconciliationPanel';
 
 interface VehicleFuelAnalyticsPanelProps {
   licensePlate: string;
+  /**
+   * WAVE 1 PART 2, item 4: gates `VehicleFuelReconciliationPanel` to a
+   * NOT-APPLICABLE state for electric vehicles, which have no fuel logs
+   * to reconcile by definition. Resolved once at `VehicleDetailPage` via
+   * `vehicleProfileFor(vehicle.vehicle_type, vehicle.fuel_type).isElectric`
+   * and threaded down rather than re-derived or re-fetched here.
+   */
+  isElectric: boolean;
 }
 
-export function VehicleFuelAnalyticsPanel({ licensePlate }: VehicleFuelAnalyticsPanelProps) {
+export function VehicleFuelAnalyticsPanel({ licensePlate, isElectric }: VehicleFuelAnalyticsPanelProps) {
   const [dateRange, setDateRange] = useState<FuelAnalyticsDateRange>({});
 
   return (
     <div className="space-y-6">
       <FuelAnalyticsFilterBar value={dateRange} onChange={setDateRange} />
 
-      <FuelKpiCards licensePlate={licensePlate} />
+      {/*
+        WAVE 1 PART 2, item 5 (FIX): `dateRange` was never threaded into
+        this card -- see FuelKpiCards.tsx's `dateRange` prop doc comment.
+        Every other chart on this tab already reacted to the filter bar
+        above; this was the one silent holdout.
+      */}
+      <FuelKpiCards licensePlate={licensePlate} dateRange={dateRange} />
+
+      {/*
+        WAVE 1 PART 2, item 4: reuses this SAME `dateRange` state rather
+        than introducing a second range control -- see
+        VehicleFuelReconciliationPanel.tsx's header comment.
+      */}
+      <VehicleFuelReconciliationPanel
+        licensePlate={licensePlate}
+        isElectric={isElectric}
+        dateRange={dateRange}
+      />
 
       <AbnormalConsumptionWidget licensePlate={licensePlate} />
 

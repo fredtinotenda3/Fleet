@@ -46,6 +46,10 @@ const MAX_TRIP_IMPORT_ROWS = 2000;
 function parseTripFilters(searchParams: URLSearchParams): TripFilters {
   return {
     license_plate: searchParams.get('license_plate') || undefined,
+    // See TripFilters.exactLicensePlate: VehicleTripHistoryPage sets
+    // this so its query can never surface another vehicle's trips
+    // through a substring-matching plate.
+    exactLicensePlate: searchParams.get('exact_plate') === 'true',
     mode: (searchParams.get('mode') as any) || undefined,
     driver_id: searchParams.get('driver_id') || undefined,
     status: (searchParams.get('status') as any) || undefined,

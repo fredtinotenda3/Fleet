@@ -150,7 +150,13 @@ export class TripRepository extends BaseRepository<Trip> {
     }
 
     if (filters.license_plate) {
-      query.license_plate = containsMatch(filters.license_plate);
+      // See TripFilters.exactLicensePlate's doc comment: substring
+      // matching is correct for the search box, wrong for a
+      // vehicle-scoped screen, where "HRE123" must never also surface
+      // "HRE1234"'s trips.
+      query.license_plate = filters.exactLicensePlate
+        ? filters.license_plate.toUpperCase()
+        : containsMatch(filters.license_plate);
     }
     if (filters.mode) query.mode = filters.mode;
     if (filters.driver_id) query.driver_id = filters.driver_id;

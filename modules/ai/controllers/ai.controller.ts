@@ -276,6 +276,16 @@ export class AIController {
    * scoring formula and per-source scoping notes -- every source it
    * reads is already org-unit scoped, so this endpoint inherits that
    * rather than adding a new unscoped read.
+   *
+   * WAVE 1 PART 2, item 7: an optional `?vehicleId=` narrows this to
+   * ONE vehicle's items, mirroring getPredictiveMaintenance's existing
+   * `?vehicleId=` branch above rather than adding a second route or a
+   * client-side filter. `needsAttentionService.getFeedForVehicle` does
+   * its own authorization (vehicle must exist AND be in `aiContext`'s
+   * scope) before reading any source, so a vehicleId a caller cannot
+   * access surfaces as a 404 via NotFoundError below -- not a 200 with
+   * an empty feed, and not another org's data. See that method's own
+   * header comment for the full per-source flow.
    */
   async getNeedsAttention(req: NextRequest) {
     try {
@@ -283,8 +293,11 @@ export class AIController {
       const aiContext = await resolveTenantContext(req);
       const limitParam = req.nextUrl.searchParams.get('limit');
       const limit = limitParam ? Math.min(200, Math.max(1, parseInt(limitParam, 10) || 50)) : 50;
+      const vehicleId = req.nextUrl.searchParams.get('vehicleId');
 
-      const feed = await needsAttentionService.getFeed(tenantId, aiContext, limit);
+      const feed = vehicleId
+        ? await needsAttentionService.getFeedForVehicle(tenantId, vehicleId, aiContext, limit)
+        : await needsAttentionService.getFeed(tenantId, aiContext, limit);
       return successResponse(feed);
     } catch (error) {
       return this.handleError(error);

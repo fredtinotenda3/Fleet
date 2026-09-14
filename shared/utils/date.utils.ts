@@ -45,13 +45,39 @@ export function isOverdue(date: Date | string): boolean {
   return parsed < new Date();
 }
 
+/**
+ * `'today'` ADDED (WAVE 1 PART 2, item 2/5): every existing member is a
+ * ROLLING trailing window ("last 7 days" including any part of today),
+ * which is the wrong shape for "today's trips" / "today's fuel spend" --
+ * those need the CALENDAR day, from local midnight to now, so a KPI
+ * scoped to it can only grow through the day rather than always
+ * spanning a fixed 24 hours that slides under it.
+ */
+/**
+ * `'7d'`/`'30d'` ADDED (WAVE 1 PART 2, item 4/5): the Vehicle Hub's
+ * range selector spec names these exactly ("Today / 7d / 30d /
+ * Custom"), and `'month'` is a calendar-month subtraction (28-31 days
+ * depending which month it lands on) -- not what a label reading
+ * exactly "30d" should mean. Precise, fixed-day-count windows, distinct
+ * from the pre-existing `'week'`/`'month'` keys (kept as-is; nothing
+ * else uses them yet, so this is purely additive).
+ */
 export function getDateRangePreset(
-  preset: 'week' | 'month' | 'quarter' | 'year'
+  preset: 'today' | '7d' | '30d' | 'week' | 'month' | 'quarter' | 'year'
 ): { start: Date; end: Date } {
   const end = new Date();
   const start = new Date();
 
   switch (preset) {
+    case 'today':
+      start.setHours(0, 0, 0, 0);
+      break;
+    case '7d':
+      start.setDate(end.getDate() - 7);
+      break;
+    case '30d':
+      start.setDate(end.getDate() - 30);
+      break;
     case 'week':
       start.setDate(end.getDate() - 7);
       break;

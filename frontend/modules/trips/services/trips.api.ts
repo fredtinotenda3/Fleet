@@ -36,6 +36,8 @@ function toIso(value: Date | string | undefined): string | undefined {
 function buildListQuery(params: Partial<TripListParams>) {
   return {
     license_plate: params.license_plate,
+    // See TripFilters.exactLicensePlate: only VehicleTripHistoryPage sets this.
+    exact_plate: params.exactLicensePlate ? 'true' : undefined,
     mode: params.mode,
     driver_id: params.driver_id,
     status: params.status,

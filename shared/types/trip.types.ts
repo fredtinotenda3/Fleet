@@ -96,6 +96,17 @@ export interface TripUpdateDTO extends Partial<TripCreateDTO> {
 
 export interface TripFilters {
   license_plate?: string;
+  /**
+   * WAVE 1 PART 2, item 3: `license_plate` alone matches as a
+   * case-insensitive SUBSTRING (see trip.repository.ts's
+   * `buildScopedQuery` / shared/utils/regex.utils.ts's `containsMatch`)
+   * -- correct for the Trips page's free-text search box, wrong for a
+   * screen whose entire contract is "only this one vehicle's trips."
+   * Plate "HRE123" would otherwise also match "HRE1234" or "XHRE123Y".
+   * Set this alongside `license_plate` to force an exact (case-folded)
+   * match instead -- see VehicleTripHistoryPage, the only caller.
+   */
+  exactLicensePlate?: boolean;
   startDate?: Date;
   endDate?: Date;
   mode?: Mode;

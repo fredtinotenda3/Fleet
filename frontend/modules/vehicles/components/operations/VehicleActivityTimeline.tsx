@@ -113,7 +113,22 @@ export function VehicleActivityTimeline({
 }: VehicleActivityTimelineProps) {
   const fuel = useVehicleFuelHistory(licensePlate, PER_SOURCE_LIMIT);
   const expenses = useVehicleExpenseHistory(licensePlate, 1, PER_SOURCE_LIMIT);
-  const trips = useTripsList({ license_plate: licensePlate, page: 1, limit: PER_SOURCE_LIMIT });
+  /*
+    WAVE 1 PART 2: `exactLicensePlate` forces an exact match rather than
+    the list endpoint's default substring search (see
+    TripFilters.exactLicensePlate's doc comment) -- without it, this
+    vehicle's activity timeline could include another vehicle's trips
+    whenever one plate is a substring of the other (e.g. "HRE123" /
+    "HRE1234"). The same defect exists for the fuel/expense/maintenance/
+    work-order queries below (none pass an exact-match equivalent), out
+    of scope for this fix -- see the Wave 1 Part 2 checkpoint report.
+  */
+  const trips = useTripsList({
+    license_plate: licensePlate,
+    exactLicensePlate: true,
+    page: 1,
+    limit: PER_SOURCE_LIMIT,
+  });
   const maintenance = useVehicleMaintenanceHistory(licensePlate, 1, PER_SOURCE_LIMIT);
   const workOrders = useWorkOrderList({
     license_plate: licensePlate,

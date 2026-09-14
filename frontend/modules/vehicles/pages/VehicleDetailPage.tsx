@@ -35,6 +35,7 @@ import {
 import { formatDate } from '@/shared/utils/date.utils';
 import { formatDistance } from '@/shared/utils/distance.utils';
 import { VEHICLE_ROUTES } from '../routes';
+import { TRIP_ROUTES } from '@/frontend/modules/trips/routes';
 import { FUEL_ROUTES } from '@/frontend/modules/fuel/routes';
 import { EXPENSE_ROUTES } from '@/frontend/modules/expenses/routes';
 import { MAINTENANCE_ROUTES } from '@/frontend/modules/maintenance/routes';
@@ -43,6 +44,10 @@ import type { VehicleFormValues } from '../schemas';
 import type { VehicleStatus } from '../types';
 import { cn } from '@/lib/utils';
 import { VehicleInstrumentCluster } from '../components/operations/VehicleInstrumentCluster';
+import { vehicleProfileFor } from '../utils/vehicle-profile';
+import { VehicleLiveMapCard } from '../components/operations/VehicleLiveMapCard';
+import { VehicleOperationalHeader } from '../components/operations/VehicleOperationalHeader';
+import { VehicleAttentionPanel } from '../components/operations/VehicleAttentionPanel';
 
 interface VehicleDetailPageProps {
   vehicleId: string;
@@ -158,6 +163,15 @@ export function VehicleDetailPage({ vehicleId }: VehicleDetailPageProps) {
       </div>
 
       {/*
+        §4.11's operational header: name/registration are already the
+        page title above; this fills in the other 11 fields the spec
+        calls for (type, state, driver, location, speed, odometer,
+        today's trips/distance/fuel spend, telemetry freshness, tracking
+        health) in one glance, regardless of which tab is open below.
+      */}
+      {vehicle._id && <VehicleOperationalHeader vehicle={vehicle} />}
+
+      {/*
         The operational surface. Each button opens its own module's modal
         with this vehicle pre-selected, submits through that module's own
         mutation, and is gated on the permission that module's endpoint
@@ -209,11 +223,43 @@ export function VehicleDetailPage({ vehicleId }: VehicleDetailPageProps) {
             problem with the record.
           */}
           {vehicle._id && (
-            <VehicleInstrumentCluster
-              vehicleId={vehicle._id}
-              vehicleType={vehicle.vehicle_type}
-              fuelType={vehicle.fuel_type}
-            />
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+              <VehicleInstrumentCluster
+                vehicleId={vehicle._id}
+                vehicleType={vehicle.vehicle_type}
+                fuelType={vehicle.fuel_type}
+              />
+              {/*
+                §4's vehicle-scoped live map, WAVE 1 PART 2 item 1. Beside
+                the gauges rather than below them: together they answer
+                "what is this vehicle doing right now" without the
+                operator scrolling past one to see the other.
+              */}
+              <VehicleLiveMapCard
+                vehicleId={vehicle._id}
+                vehicleType={vehicle.vehicle_type}
+                licensePlate={vehicle.license_plate}
+              />
+            </div>
+          )}
+
+          {/*
+            WAVE 1 PART 2, item 7: this vehicle's own slice of the
+            Needs-Attention feed -- predicted failures, fuel anomalies,
+            compliance and maintenance items, server-side authorized and
+            bounded to this vehicle. See VehicleAttentionPanel's own header
+            comment for why this is not the fleet-wide Command Centre feed
+            filtered in the browser.
+          */}
+          {vehicle._id && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Needs attention</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <VehicleAttentionPanel vehicleId={vehicle._id} />
+              </CardContent>
+            </Card>
           )}
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -280,6 +326,17 @@ export function VehicleDetailPage({ vehicleId }: VehicleDetailPageProps) {
                       >
                         See full history
                       </Button>
+                      {/*
+                        WAVE 1 PART 2, item 3: the vehicle-scoped trip
+                        history deep link, mirroring the fuel/expense/
+                        maintenance links already here.
+                      */}
+                      <Link
+                        href={TRIP_ROUTES.vehicleHistory(vehicle.license_plate)}
+                        className="inline-flex items-center rounded-md px-3 py-1.5 text-body-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                      >
+                        Trip history
+                      </Link>
                       <Link
                         href={FUEL_ROUTES.vehicleHistory(vehicle.license_plate)}
                         className="inline-flex items-center rounded-md px-3 py-1.5 text-body-sm text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -336,7 +393,10 @@ export function VehicleDetailPage({ vehicleId }: VehicleDetailPageProps) {
         </TabsContent>
 
         <TabsContent value="analytics" className="mt-4">
-          <VehicleAnalyticsPanel licensePlate={vehicle.license_plate} />
+          <VehicleAnalyticsPanel
+            licensePlate={vehicle.license_plate}
+            isElectric={vehicleProfileFor(vehicle.vehicle_type, vehicle.fuel_type).isElectric}
+          />
         </TabsContent>
 
         <TabsContent value="costs" className="mt-4">

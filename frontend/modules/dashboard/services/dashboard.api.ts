@@ -40,6 +40,23 @@ export const dashboardApi = {
     return apiClient.get<NeedsAttentionFeed>('/api/ai/needs-attention', { params: { limit } });
   },
 
+  /**
+   * WAVE 1 PART 2, item 7: the SAME endpoint as getNeedsAttention above,
+   * with `?vehicleId=` added. This is not a fleet-wide fetch filtered
+   * afterward -- the query param is read server-side by
+   * aiController.getNeedsAttention and routed to
+   * needsAttentionService.getFeedForVehicle, which authorizes the
+   * vehicle (tenant + org-unit scope) and reads all four
+   * vehicle-identifiable sources bounded to it, before this response is
+   * ever produced. An unauthorized/nonexistent vehicleId 404s (see
+   * NotFoundError in getFeedForVehicle) rather than returning an empty
+   * feed, so the caller can distinguish "this vehicle has nothing
+   * pending" from "you can't see this vehicle".
+   */
+  async getNeedsAttentionForVehicle(vehicleId: string, limit = 50): Promise<NeedsAttentionFeed> {
+    return apiClient.get<NeedsAttentionFeed>('/api/ai/needs-attention', { params: { vehicleId, limit } });
+  },
+
   async getReminders(): Promise<Reminder[]> {
     const response = await apiClient.get<Reminder[] | { data: Reminder[] }>(API_ENDPOINTS.maintenance.base);
     return unwrapList(response);

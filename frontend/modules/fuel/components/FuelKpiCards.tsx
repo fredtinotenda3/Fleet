@@ -10,10 +10,28 @@ import { formatCurrency } from '@/shared/utils/currency.utils';
 interface FuelKpiCardsProps {
   /** Vehicle-Level Analytics: scope every KPI to a single vehicle instead of the fleet. */
   licensePlate?: string;
+  /**
+   * WAVE 1 PART 2, item 5 (FIX): this prop did not exist -- `useFuelKpis`
+   * was always called with `undefined`, which the repository resolves to
+   * a rolling trailing-90-day window (fuel.repository.ts's `getFuelKpis`)
+   * REGARDLESS of any date range selected elsewhere on the page.
+   *
+   * That was silently wrong specifically on `VehicleFuelAnalyticsPanel`,
+   * which renders this component directly under a live
+   * `FuelAnalyticsFilterBar` -- selecting a date range there visibly
+   * changed every other chart on the tab except this one, and the
+   * "Abnormal consumption (THIS PERIOD)" card's own title was an explicit,
+   * self-contradicting claim of range-sensitivity it did not have.
+   *
+   * `FuelDashboardPage`'s parameterless `<FuelKpiCards />` (no filter bar
+   * on that page) is unaffected: omitting this prop still falls back to
+   * `useFuelKpis`'s own default rolling window, exactly as before.
+   */
+  dateRange?: { startDate?: Date; endDate?: Date };
 }
 
-export function FuelKpiCards({ licensePlate }: FuelKpiCardsProps = {}) {
-  const { data: kpis, isLoading, error } = useFuelKpis(undefined, licensePlate);
+export function FuelKpiCards({ licensePlate, dateRange }: FuelKpiCardsProps = {}) {
+  const { data: kpis, isLoading, error } = useFuelKpis(dateRange, licensePlate);
 
   if (isLoading) {
     return (

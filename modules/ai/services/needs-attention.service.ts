@@ -30,9 +30,12 @@ import { maintenanceQueryService } from '@/modules/maintenance/services/maintena
 import { workOrderRepository } from '@/modules/workorders/repositories/workorder.repository';
 import { workOrderService } from '@/modules/workorders/services/workorder.service';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
+import { vehicleRepository } from '@/modules/vehicles/repositories/vehicle.repository';
 import { attentionItemRepository } from '@/modules/attention/repositories/attention-item.repository';
 import { attentionOwnershipResolver } from '@/modules/attention/services/attention-ownership.resolver';
 import { monitoring } from '@/infrastructure/monitoring/logger';
+import { NotFoundError } from '@/server/errors/app.errors';
 import type { AISeverity } from '../types/ai.types';
 import type {
   NeedsAttentionFeed,
@@ -195,6 +198,416 @@ export class NeedsAttentionService {
       unavailableSources,
       generatedAt: new Date(),
     };
+  }
+
+  /**
+   * WAVE 1 PART 2, item 7: the Vehicle Detail page's vehicle-scoped
+   * Needs Attention integration.
+   *
+   * ---------------------------------------------------------------
+   * WHY THIS IS NOT "call getFeed() and filter the results"
+   * ---------------------------------------------------------------
+   * `getFeed()` aggregates fleet-wide, unbounded by any one vehicle, and
+   * returns only the TOP `limit` (default 50) items after sorting --
+   * everything past that cutoff never leaves the server, but it also
+   * never reaches this method if it were built by calling getFeed() and
+   * filtering the response. A vehicle whose one open item wasn't in the
+   * fleet's top 50 would silently show "nothing needs attention" -- the
+   * exact "fleet-wide/truncated feed filtered afterward" anti-pattern
+   * this Wave's brief rules out. So this method re-runs each relevant
+   * SOURCE narrowed to this one vehicle from the start, the same way
+   * `getFeed()` re-runs each source narrowed to the caller's tenant/
+   * org-unit scope -- never a post-hoc filter over someone else's
+   * already-cut-down result set.
+   *
+   * ---------------------------------------------------------------
+   * THE FLOW, PER SOURCE
+   * ---------------------------------------------------------------
+   * vehicle identifier -> authorization -> tenant/org-unit scope ->
+   * entity filter -> bounded database query -> response, exactly as
+   * specified:
+   *   - predictive_maintenance, fuel_fraud: `predictVehicle`/
+   *     `detectVehicleFraud` (already existing, already-tested
+   *     single-vehicle service methods) load the vehicle by id WITHIN
+   *     `tenantId`, then explicitly check
+   *     `tenantScopeService.canAccessRecord(context, vehicle.orgUnitId)`
+   *     and fail closed with "Vehicle not found" -- not a permission
+   *     error that confirms the vehicle exists, an INDISTINGUISHABLE
+   *     not-found, so probing plate/id values learns nothing. Only then
+   *     do they query fuel/trip/maintenance/telematics data, already
+   *     narrowed to `license_plate` + the org-unit scope filter.
+   *   - compliance: `complianceService.listOpenForEntityInScope('vehicle',
+   *     vehicleId, context)` -- entityType + entityId + the open-status
+   *     set are all in the Mongo filter itself, narrowed to
+   *     `context`'s accessible org units by the repository's own
+   *     `findManyInScope`. A genuinely bounded query, not a fetch-then-
+   *     filter.
+   *   - maintenance (reminders + work orders): `getOverdueReminders`/
+   *     `getUpcomingReminders` are already tenant+org-unit scoped and
+   *     bounded by date range and status (not "the whole fleet's every
+   *     historical record"); this method narrows their result to this
+   *     vehicle's plate. Work orders instead push the plate into the
+   *     query itself via `WorkOrderFilters.exactLicensePlate` (added
+   *     alongside this item -- see its doc comment) so an unauthorized
+   *     vehicle's plate matches nothing at the database level, same as
+   *     the reminders' org-unit filter already guarantees.
+   *
+   * driver_risk, expense_anomaly and fleet_health are DELIBERATELY
+   * excluded, not silently dropped: `NeedsAttentionItem.entityId` for
+   * these sources is a driver id, an expense record's own id, or absent
+   * entirely (see readDriverRisk/readExpenseAnomalies/readFleetHealth
+   * above) -- none identify a VEHICLE, so there is no safe, honest way
+   * to decide whether a given item belongs to this vehicle. Guessing
+   * would risk showing (or hiding) another entity's item under this
+   * vehicle's page, which is a worse failure than omitting the source.
+   *
+   * Unlike `getFeed()`, this method does not call `persistFeed()` --
+   * this is a narrower read of the same live sources for one page, not
+   * a second aggregator whose output should overwrite the fleet-wide
+   * persisted snapshot (and whose `orgUnitId` resolution assumes a
+   * full-fleet batch).
+   */
+  async getFeedForVehicle(
+    tenantId: string,
+    vehicleId: string,
+    context?: TenantContext,
+    limit = 50
+  ): Promise<NeedsAttentionFeed> {
+    // ---------------------------------------------------------------
+    // AUTHORIZATION, ONCE, BEFORE ANY SOURCE IS TOUCHED
+    // ---------------------------------------------------------------
+    // Deliberately does NOT accept a `licensePlate` parameter from the
+    // caller: the maintenance/work-order readers below need one, but
+    // taking it as a separate argument would let a request pass an
+    // authorized `vehicleId` alongside an UNRELATED plate (someone
+    // else's), fishing for that plate's reminders/work orders under
+    // cover of a vehicle this caller can legitimately see. Resolving
+    // the plate from the loaded, authorized vehicle record instead
+    // means the plate used below can never be anything other than the
+    // one actually owned by `vehicleId`.
+    //
+    // Same fail-closed shape as `predictVehicle`/`detectVehicleFraud`
+    // (a NotFoundError here and a "Vehicle not found" there are
+    // deliberately indistinguishable from "does not exist" to the
+    // caller) -- but resolved ONCE, up front, rather than leaving each
+    // of the four per-source readers to independently decide how to
+    // fail. `findById` fails closed on tenantId already; the org-unit
+    // check below adds the second half.
+    const vehicle = await vehicleRepository.findById(vehicleId, tenantId);
+    if (!vehicle) {
+      throw new NotFoundError('Vehicle not found');
+    }
+    if (context && !tenantScopeService.canAccessRecord(context, (vehicle as { orgUnitId?: string }).orgUnitId)) {
+      throw new NotFoundError('Vehicle not found');
+    }
+    const licensePlate = vehicle.license_plate;
+
+    const unavailableSources: NeedsAttentionSource[] = [];
+
+    const [predictiveMaintenanceItems, fuelFraudItems, maintenanceItems, complianceItems] = await Promise.all([
+      safeSource(
+        'predictive_maintenance',
+        () => this.readPredictiveMaintenanceForVehicle(tenantId, vehicleId, context),
+        unavailableSources
+      ),
+      safeSource('fuel_fraud', () => this.readFuelFraudForVehicle(tenantId, vehicleId, context), unavailableSources),
+      safeSource(
+        'maintenance',
+        () => this.readMaintenanceForVehicle(tenantId, licensePlate, context),
+        unavailableSources
+      ),
+      safeSource(
+        'compliance',
+        () => this.readComplianceForVehicle(vehicleId, context),
+        unavailableSources
+      ),
+    ]);
+
+    const items = [...predictiveMaintenanceItems, ...fuelFraudItems, ...maintenanceItems, ...complianceItems].sort(
+      (a, b) => b.priorityScore - a.priorityScore
+    );
+
+    const bySource = ALL_SOURCES.reduce((acc, source) => {
+      acc[source] = 0;
+      return acc;
+    }, {} as Record<NeedsAttentionSource, number>);
+
+    const bySeverity: Record<AISeverity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+
+    for (const item of items) {
+      bySource[item.source] += 1;
+      bySeverity[item.severity] += 1;
+    }
+
+    return {
+      items: items.slice(0, limit),
+      total: items.length,
+      bySource,
+      bySeverity,
+      unavailableSources,
+      generatedAt: new Date(),
+    };
+  }
+
+  // ─── Per-source readers, vehicle-scoped (item 7) ───────────────────────
+  // Deliberately NOT sharing a mapping helper with the fleet-wide readers
+  // below: `predictVehicle`/`detectVehicleFraud` return a single result,
+  // not a batch entry with its own `r.entityId` fallback, so the shapes
+  // genuinely differ at the call site even though the OUTPUT item is
+  // built the same way. Extracting a shared helper was judged not worth
+  // widening this fix's surface on the existing fleet-wide path -- see
+  // the Wave 1 Part 2 checkpoint report.
+
+  private async readPredictiveMaintenanceForVehicle(
+    tenantId: string,
+    vehicleId: string,
+    context?: TenantContext
+  ): Promise<NeedsAttentionItem[]> {
+    const result = await predictiveMaintenanceService.predictVehicle(vehicleId, tenantId, context);
+    if (!result.success || !result.data) return [];
+    const p = result.data;
+    const urgency: NeedsAttentionUrgency =
+      p.urgency === 'immediate' ? 'immediate' : p.urgency === 'soon' ? 'soon' : p.urgency === 'planned' ? 'planned' : 'monitor';
+    return [
+      makeItem(
+        'predictive_maintenance',
+        p.predictionId || vehicleId,
+        p.severity,
+        urgency,
+        `${p.component} may fail soon`,
+        `${p.licensePlate}: ${p.recommendedAction}`,
+        p.estimatedCost,
+        {
+          dueDate: p.predictedFailureDate,
+          entityId: p.vehicleId,
+          entityLabel: p.licensePlate,
+          ownerTarget: { kind: 'vehicle', vehicleId: p.vehicleId },
+          ...(p.evidence?.length ? { evidence: p.evidence } : {}),
+        }
+      ),
+    ];
+  }
+
+  private async readFuelFraudForVehicle(
+    tenantId: string,
+    vehicleId: string,
+    context?: TenantContext
+  ): Promise<NeedsAttentionItem[]> {
+    const result = await fuelFraudDetectionService.detectVehicleFraud(vehicleId, tenantId, context);
+    if (!result.success || !result.data) return [];
+    const alert = result.data;
+    const cost = alert.anomalies
+      .filter((a) => a.type === 'cost')
+      .reduce((sum, a) => sum + Math.abs(a.deviation), 0);
+    return [
+      makeItem(
+        'fuel_fraud',
+        alert.alertId || vehicleId,
+        alert.severity,
+        urgencyFromSeverity(alert.severity),
+        `Possible fuel fraud: ${alert.licensePlate}`,
+        alert.recommendation,
+        cost,
+        {
+          entityId: alert.vehicleId,
+          entityLabel: alert.licensePlate,
+          ownerTarget: { kind: 'vehicle', vehicleId: alert.vehicleId },
+          ...(alert.evidence?.length ? { evidence: alert.evidence } : {}),
+        }
+      ),
+    ];
+  }
+
+  private async readComplianceForVehicle(
+    vehicleId: string,
+    context?: TenantContext
+  ): Promise<NeedsAttentionItem[]> {
+    // No `context` means no org-unit scope is even meaningful to apply
+    // here (this path is only reachable from an authenticated request in
+    // practice, but fails closed rather than guessing at an unscoped
+    // read if it somehow isn't).
+    if (!context) return [];
+
+    const [rules, records] = await Promise.all([
+      complianceService.listRules('vehicle', context.organizationId),
+      complianceService.listOpenForEntityInScope('vehicle', vehicleId, context),
+    ]);
+    const ruleMap = new Map(rules.map((rule) => [rule._id, rule]));
+
+    return records
+      .filter((record) => record.status === 'overdue' || record.status === 'due_soon')
+      .map((record) => {
+        const rule = ruleMap.get(record.ruleId);
+        const severity: AISeverity = record.status === 'overdue' ? 'critical' : 'medium';
+        const urgency: NeedsAttentionUrgency = record.status === 'overdue' ? 'overdue' : 'soon';
+        return makeItem(
+          'compliance',
+          String(record._id),
+          severity,
+          urgency,
+          rule?.name || 'Compliance requirement due',
+          `${record.entityType} ${record.entityId}${rule?.description ? `: ${rule.description}` : ''}`,
+          0,
+          {
+            dueDate: record.dueDate,
+            entityId: record.entityId,
+            ownerTarget: { kind: 'org-unit-direct', orgUnitId: record.orgUnitId },
+            ...(record._id
+              ? {
+                  evidence: [
+                    {
+                      source: 'tblcompliancerecords',
+                      reference: String(record._id),
+                      ...(record.dueDate ? { observedAt: new Date(record.dueDate) } : {}),
+                    },
+                  ],
+                }
+              : {}),
+          }
+        );
+      });
+  }
+
+  private async readMaintenanceForVehicle(
+    tenantId: string,
+    licensePlate: string,
+    context?: TenantContext
+  ): Promise<NeedsAttentionItem[]> {
+    const [overdue, upcoming] = await Promise.all([
+      maintenanceQueryService.getOverdueReminders(tenantId, context),
+      maintenanceQueryService.getUpcomingReminders(tenantId, 14, context),
+    ]);
+
+    // `getOverdueReminders`/`getUpcomingReminders` are already tenant +
+    // org-unit scoped (see maintenance.repository.ts) and bounded by
+    // status/date range -- an unauthorized vehicle's reminders are
+    // already absent from these lists before this filter ever runs, not
+    // merely hidden by it. This narrows an already-scoped, already-
+    // bounded set to one plate; it is not a fetch of "everything" that
+    // this filter is the only thing standing between the caller and
+    // another vehicle's reminders.
+    const plate = licensePlate.toUpperCase();
+    const overdueForVehicle = overdue.filter((r) => r.license_plate?.toUpperCase() === plate);
+    const upcomingForVehicle = upcoming.filter((r) => r.license_plate?.toUpperCase() === plate);
+
+    const overdueItems = overdueForVehicle.map((reminder) =>
+      makeItem(
+        'maintenance',
+        String(reminder._id),
+        'critical',
+        'overdue',
+        reminder.title,
+        `${reminder.license_plate}: overdue since ${new Date(reminder.due_date).toLocaleDateString()}`,
+        reminder.estimated_cost || 0,
+        {
+          dueDate: reminder.due_date,
+          entityLabel: reminder.license_plate,
+          ownerTarget: { kind: 'org-unit-direct', orgUnitId: reminder.orgUnitId },
+          ...(reminder._id
+            ? {
+                evidence: [
+                  {
+                    source: 'tblreminders',
+                    reference: String(reminder._id),
+                    ...(reminder.due_date ? { observedAt: new Date(reminder.due_date) } : {}),
+                    ...(typeof reminder.estimated_cost === 'number' ? { value: reminder.estimated_cost } : {}),
+                  },
+                ],
+              }
+            : {}),
+        }
+      )
+    );
+
+    const upcomingItems = upcomingForVehicle.map((reminder) =>
+      makeItem(
+        'maintenance',
+        String(reminder._id),
+        'medium',
+        'soon',
+        reminder.title,
+        `${reminder.license_plate}: due ${new Date(reminder.due_date).toLocaleDateString()}`,
+        reminder.estimated_cost || 0,
+        {
+          dueDate: reminder.due_date,
+          entityLabel: reminder.license_plate,
+          ownerTarget: { kind: 'org-unit-direct', orgUnitId: reminder.orgUnitId },
+          ...(reminder._id
+            ? {
+                evidence: [
+                  {
+                    source: 'tblreminders',
+                    reference: String(reminder._id),
+                    ...(reminder.due_date ? { observedAt: new Date(reminder.due_date) } : {}),
+                    ...(typeof reminder.estimated_cost === 'number' ? { value: reminder.estimated_cost } : {}),
+                  },
+                ],
+              }
+            : {}),
+        }
+      )
+    );
+
+    const workOrderItems = await this.readOpenWorkOrdersForVehicle(tenantId, licensePlate, context);
+
+    return [...overdueItems, ...upcomingItems, ...workOrderItems];
+  }
+
+  /**
+   * Vehicle-scoped counterpart of `readOpenWorkOrders`. Pushes the
+   * entity filter into the query itself via
+   * `WorkOrderFilters.exactLicensePlate` (added alongside this item),
+   * composed with the SAME org-unit scope `getFilteredInScope` already
+   * applies -- an unauthorized vehicle's plate matches nothing at the
+   * database level, not merely nothing after the fact.
+   */
+  private async readOpenWorkOrdersForVehicle(
+    tenantId: string,
+    licensePlate: string,
+    context?: TenantContext
+  ): Promise<NeedsAttentionItem[]> {
+    try {
+      const pagination = { page: 1, limit: 100 };
+      const filters = { status: 'open' as const, license_plate: licensePlate, exactLicensePlate: true };
+      const result = context
+        ? await workOrderRepository.getFilteredInScope(filters, context, pagination)
+        : await workOrderService.list(filters, pagination, tenantId);
+
+      return result.data.map((wo) => {
+        const severity: AISeverity =
+          wo.priority === 'critical' ? 'critical' : wo.priority === 'high' ? 'high' : wo.priority === 'low' ? 'low' : 'medium';
+        const fromDvir = (wo as { source?: string }).source === 'dvir';
+        return makeItem(
+          'maintenance',
+          String(wo._id),
+          severity,
+          urgencyFromSeverity(severity),
+          wo.title,
+          `${wo.license_plate}: ${wo.description || 'Work order raised'}${fromDvir ? ' (reported by driver inspection)' : ''}`,
+          wo.totalCost || 0,
+          {
+            entityLabel: wo.license_plate,
+            href: `/workorders?license_plate=${encodeURIComponent(wo.license_plate)}`,
+            ...(wo._id
+              ? {
+                  evidence: [
+                    {
+                      source: 'tblworkorders',
+                      reference: String(wo._id),
+                      ...(wo.openedAt ? { observedAt: new Date(wo.openedAt) } : {}),
+                      ...(typeof wo.totalCost === 'number' ? { value: wo.totalCost } : {}),
+                    },
+                  ],
+                }
+              : {}),
+            ownerTarget: { kind: 'org-unit-direct', orgUnitId: wo.orgUnitId },
+          }
+        );
+      });
+    } catch (error) {
+      monitoring.logError('[needsAttentionService] readOpenWorkOrdersForVehicle failed', error as Error);
+      return [];
+    }
   }
 
   /**

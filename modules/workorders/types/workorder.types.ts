@@ -38,6 +38,20 @@ export interface WorkOrderCreateDTO {
 
 export interface WorkOrderFilters {
   license_plate?: string;
+  /**
+   * WAVE 1 PART 2, item 7: `license_plate` alone matches as a
+   * case-insensitive SUBSTRING (see workorder.repository.ts's
+   * `buildScopedQuery` / shared/utils/regex.utils.ts's `containsMatch`)
+   * -- correct for the Work Orders list page's search box (including
+   * the "view this vehicle's work orders" link, which pre-fills that
+   * same search box rather than opening a dedicated vehicle-only view),
+   * wrong for a caller whose entire contract is "only this one
+   * vehicle's work orders" -- see NeedsAttentionService.getFeedForVehicle,
+   * the first caller that needs this. Plate "HRE123" would otherwise
+   * also match "HRE1234" or "XHRE123Y". Mirrors
+   * TripFilters.exactLicensePlate exactly.
+   */
+  exactLicensePlate?: boolean;
   status?: WorkOrderStatus;
   priority?: Priority;
   assignedMechanicId?: string;
