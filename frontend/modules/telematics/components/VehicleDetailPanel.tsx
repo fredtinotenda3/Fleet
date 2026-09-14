@@ -48,7 +48,7 @@ interface VehicleDetailPanelProps {
   fuelReportLoading?: boolean;
 }
 
-const STATUS_BADGE: Record<LiveMapVehicleStatus, { label: string; className: string }> = {
+export const STATUS_BADGE: Record<LiveMapVehicleStatus, { label: string; className: string }> = {
   moving: { label: 'Moving', className: 'bg-success-bg text-success' },
   idle: { label: 'Idle', className: 'bg-warning-bg text-warning' },
   offline: { label: 'Offline', className: 'bg-muted text-muted-foreground' },
@@ -72,13 +72,20 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 
 /** Never blank: an unlabelled provider shows its id rather than nothing. */
-function sourceLabel(source: LiveMapDataSource): string {
+export function sourceLabel(source: LiveMapDataSource): string {
   return SOURCE_LABEL[source] ?? source;
 }
 
 /** A single label/value row. Renders "No data" (muted) when `value` is null/undefined rather than letting a caller accidentally pass a misleading 0. */
-/** Shown when a position was geocoded and no address could be determined. Never a guess. */
-const ADDRESS_UNAVAILABLE = 'Address unavailable';
+/**
+ * Shown when a position was geocoded and no address could be determined.
+ * Never a guess.
+ *
+ * Exported: VehicleLiveMapCard (the vehicle-scoped map on the Vehicle
+ * Operational Hub) renders the same three-state address distinction and
+ * should not re-decide the copy for it independently.
+ */
+export const ADDRESS_UNAVAILABLE = 'Address unavailable';
 
 /**
  * Totals one numeric column of a fuel report.
@@ -139,7 +146,7 @@ function Stat({ label, value }: { label: string; value: string | number | null |
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="space-y-0.5">
-      <h4 className="text-caption font-medium uppercase tracking-wide text-muted-foreground">{title}</h4>
+      <h4 className="font-medium tracking-wide uppercase text-caption text-muted-foreground">{title}</h4>
       <div className="divide-y divide-border/60">{children}</div>
     </div>
   );
@@ -165,7 +172,7 @@ function num(
 
 const oneDp = (n: number) => n.toFixed(1);
 
-function formatFixAge(seconds: number | null): string | null {
+export function formatFixAge(seconds: number | null): string | null {
   if (seconds === null) return null;
   if (seconds < 60) return `${Math.round(seconds)}s ago`;
   if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
@@ -187,12 +194,12 @@ export function VehicleDetailPanel({
     <div className={cn('surface-card p-4 space-y-4', className)}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="text-base font-medium text-foreground truncate">{vehicle.licensePlate}</h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-medium truncate text-foreground">{vehicle.licensePlate}</h3>
             <Badge className={status.className}>{status.label}</Badge>
             {vehicle.alert && (
               <Badge className="gap-1 bg-danger-bg text-danger">
-                <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                <AlertTriangle className="w-3 h-3" aria-hidden="true" />
                 Alert
               </Badge>
             )}
@@ -201,13 +208,13 @@ export function VehicleDetailPanel({
                 vehicle stopped reporting. */}
             {vehicle.stale && (
               <Badge variant="outline" className="gap-1 text-muted-foreground">
-                <Clock className="h-3 w-3" aria-hidden="true" />
+                <Clock className="w-3 h-3" aria-hidden="true" />
                 Stale fix
               </Badge>
             )}
             <Badge variant="outline">{sourceLabel(vehicle.source)}</Badge>
           </div>
-          <p className="text-body-sm text-muted-foreground truncate">
+          <p className="truncate text-body-sm text-muted-foreground">
             {vehicle.make} {vehicle.model}
           </p>
         </div>

@@ -19,13 +19,25 @@ import { formatDate } from '@/shared/utils/date.utils';
 import { formatDistance } from '@/shared/utils/distance.utils';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
 import type { PaginatedResponse } from '@/shared/types/common.types';
-import type { Trip } from '../types';
+import type { Trip, TripCostAnalyticsRow } from '../types';
 import { tripModeLabel, getTripModeBadgeClass, tripSummaryLabel } from '../utils';
+import { formatCurrency } from '@/shared/utils/currency.utils';
 import { cn } from '@/lib/utils';
 
 interface TripsTableProps {
   result: PaginatedResponse<Trip> | undefined;
   isLoading: boolean;
+  /**
+   * WAVE 1 PART 2, item 6: linked cost, keyed by trip id.
+   *
+   * A trip absent from this map has no linked fuel log or expense --
+   * see TripCostAnalyticsRow's own doc comment ("trips with neither are
+   * omitted"). That is a materially different fact from "cost is
+   * $0.00", so the Cost column renders "No linked cost" for it rather
+   * than a zero, and the caller (TripsListPage) must not paper over a
+   * missing entry with `?? { totalCost: 0, ... }`.
+   */
+  costByTripId?: Map<string, TripCostAnalyticsRow>;
   /**
    * ADDED. The table had a loading branch and no failure branch, so a failed
    * fetch fell through to the empty message — "No trips found. Try adjusting
@@ -57,6 +69,7 @@ interface TripsTableProps {
 export function TripsTable({
   result,
   isLoading,
+  costByTripId,
   isError = false,
   errorMessage,
   onRetry,
@@ -145,6 +158,29 @@ export function TripsTable({
         cell: ({ row }) => row.original.driver_id || 'Unassigned',
       },
       {
+        id: 'cost',
+        header: 'Cost',
+        cell: ({ row }) => {
+          const linked = costByTripId?.get(row.original._id ?? '');
+          if (!linked) {
+            return (
+              <span className="italic text-muted-foreground" title="No fuel log or expense is linked to this trip">
+                No linked cost
+              </span>
+            );
+          }
+          return (
+            <div className="flex flex-col leading-tight text-caption">
+              <span className="font-medium tabular-nums text-foreground">{formatCurrency(linked.totalCost)}</span>
+              <span className="text-muted-foreground tabular-nums">
+                {linked.costPerKm != null ? `${formatCurrency(linked.costPerKm)}/km` : 'Cost/km unavailable'}
+                {linked.fuelVolume > 0 ? ` · ${linked.fuelVolume.toFixed(1)} L` : ''}
+              </span>
+            </div>
+          );
+        },
+      },
+      {
         id: 'actions',
         header: '',
         cell: ({ row }) => {
@@ -181,7 +217,18 @@ export function TripsTable({
     );
 
     return cols;
-  }, [data, selectedIds, onToggleSelect, onToggleSelectAll, onView, onEdit, onDelete, canManage, canDelete]);
+  }, [
+    data,
+    selectedIds,
+    onToggleSelect,
+    onToggleSelectAll,
+    onView,
+    onEdit,
+    onDelete,
+    canManage,
+    canDelete,
+    costByTripId,
+  ]);
 
   // Two genuinely different empty states. "No trips at all" is a first-run
   // moment that should explain what the trip log unlocks and offer to start
@@ -228,7 +275,7 @@ export function TripsTable({
             <button
               type="button"
               onClick={() => onView(trip)}
-              className="text-body-sm font-medium text-primary hover:underline"
+              className="font-medium text-body-sm text-primary hover:underline"
             >
               {formatDate(trip.date)}
             </button>
@@ -243,6 +290,17 @@ export function TripsTable({
             {formatDistance(trip.distance_calculated)}
           </p>
           <p className="text-caption text-muted-foreground">{tripSummaryLabel(trip)}</p>
+          {(() => {
+            const linked = costByTripId?.get(trip._id ?? '');
+            return linked ? (
+              <p className="font-medium text-caption tabular-nums text-foreground">
+                {formatCurrency(linked.totalCost)}
+                {linked.costPerKm != null && (
+                  <span className="font-normal text-muted-foreground"> ({formatCurrency(linked.costPerKm)}/km)</span>
+                )}
+              </p>
+            ) : null;
+          })()}
         </div>
       )}
       pagination={

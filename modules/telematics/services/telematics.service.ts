@@ -11,10 +11,12 @@ import {
 import { webSocketManager } from '@/infrastructure/websocket/server';
 import { queueService, JobType } from '@/infrastructure/queue/queue.service';
 import { notificationService } from '@/modules/notifications/services/notification.service';
-import { organizationRepository } from '@/modules/organizations/repositories/organization.repository';
-import { resolveOrganization } from '@/server/tenancy/organization-resolver';
 import { deriveReadingAlerts } from './reading-alerts';
 import { resolveAlertOwnership } from './alert-ownership.resolver';
+import { getFleetManagerIds, recordAndNotifyAlert } from './telemetry-alert-writer';
+import { getTelemetryRuleEngineConfig } from './telemetry-rule-engine.config';
+import { buildTelemetryRuleContext, TELEMETRY_READING_INGESTED_TRIGGER } from './telemetry-rule-context';
+import { ruleTriggerService } from '@/modules/rules/services/rule-trigger.service';
 import {
   getCachedGeofences,
   candidatesFor,
@@ -26,10 +28,7 @@ export class TelematicsService {
   ): Promise<void> {
     await telematicsRepository.create(data, data.tenantId);
 
-    const alerts = this.checkForAlerts(data);
-    if (alerts.length > 0) {
-      await this.processAlerts(alerts, data);
-    }
+    await this.evaluateAlertsForReading(data);
 
     if (data.location) {
       // PHASE 0, F-7: scoped to the owning org unit rather than
@@ -75,13 +74,46 @@ export class TelematicsService {
     // Alerts and geofence checks still run per-item since they depend on
     // each point's individual values, but at least the write is batched.
     for (const item of dataArray) {
-      const alerts = this.checkForAlerts(item);
-      if (alerts.length > 0) {
-        await this.processAlerts(alerts, item);
-      }
+      await this.evaluateAlertsForReading(item);
       if (item.location) {
         await this.checkGeofence(item.vehicleId, item.location, item.tenantId, item.orgUnitId);
       }
+    }
+  }
+
+  /**
+   * WAVE 2 -- the ONE branch point between the legacy reading-alerts.ts
+   * path and the Rule Engine path, shared by both `ingestTelematicsData`
+   * and `bulkIngest` so the two ingestion entry points can never apply
+   * different alerting logic to the same kind of reading.
+   *
+   * THE DUPLICATE ALERT INVARIANT: exactly one of the two branches runs
+   * for a given reading, never both. See
+   * telemetry-rule-engine.config.ts for the flag, its default (off, zero
+   * behavioural change), and why flipping it is a deliberate
+   * per-environment decision made after the parity suite has run.
+   *
+   * The Rule Engine branch calls `ruleTriggerService.fireEvent`, the
+   * SAME failure-isolated, tenant-aware trigger façade every other
+   * cross-module rule invocation in this codebase uses (mirrors
+   * workflow-trigger.service.ts) -- a rule-engine failure is caught and
+   * logged there, and must never fail telemetry ingestion itself.
+   */
+  private async evaluateAlertsForReading(
+    data: Omit<TelematicsData, '_id' | 'createdAt' | 'updatedAt'> & { tenantId: string }
+  ): Promise<void> {
+    if (getTelemetryRuleEngineConfig().enabled) {
+      await ruleTriggerService.fireEvent(
+        TELEMETRY_READING_INGESTED_TRIGGER,
+        buildTelemetryRuleContext(data),
+        data.tenantId
+      );
+      return;
+    }
+
+    const alerts = this.checkForAlerts(data);
+    if (alerts.length > 0) {
+      await this.processAlerts(alerts, data);
     }
   }
 
@@ -100,69 +132,31 @@ export class TelematicsService {
     return deriveReadingAlerts(data);
   }
 
+  /**
+   * WAVE 2: bodies extracted to telemetry-alert-writer.ts's
+   * `recordAndNotifyAlert` / `getFleetManagerIds` so the legacy path
+   * here and the rule-engine's `create_telemetry_alert` action call the
+   * identical implementation -- see that file's header for why. No
+   * behaviour changed by the extraction: same per-batch ownership-
+   * resolution hoisting (still resolved via the alert writer's internal
+   * call, memoised the same way), same websocket emit, same
+   * notification gate.
+   */
   private async processAlerts(
     alerts: TelematicsAlert[],
     data: Omit<TelematicsData, '_id' | 'createdAt' | 'updatedAt'> & { tenantId: string }
   ): Promise<void> {
-    const fleetManagerIds = await this.getFleetManagerIds(data.tenantId);
-
     /**
      * BACKLOG ITEM 2 (finding N-3). Resolved ONCE for the whole batch:
      * every alert here comes from the same reading, so it is the same
      * vehicle, and the resolver's own memo would answer the rest from
      * cache anyway -- hoisting it makes that explicit rather than
      * incidental.
-     *
-     * Deliberately NOT `data.orgUnitId`, even though ingestion stamps
-     * the reading from a scope-checked vehicle lookup today. See
-     * alert-ownership.resolver.ts: taking the reading's copy makes an
-     * alert's visibility depend on which ingestion path produced it,
-     * and a future adapter that forgets to stamp would silently
-     * reintroduce this exact finding.
      */
-    const ownership = await resolveAlertOwnership(data.vehicleId, data.tenantId);
+    const fleetManagerIds = await getFleetManagerIds(data.tenantId);
 
     for (const alert of alerts) {
-      await telematicsRepository.createAlert(data.vehicleId, alert, data.tenantId, ownership);
-
-      // PHASE 0, F-7: an alert names the vehicle and the behaviour
-      // (speeding, harsh braking), so it is at least as sensitive as
-      // the position that produced it.
-      webSocketManager.emitToOrgUnit(data.tenantId, data.orgUnitId, 'vehicle:alert', {
-        vehicleId: data.vehicleId,
-        alert,
-      });
-
-      if ((alert.severity === 'critical' || alert.severity === 'high') && fleetManagerIds.length > 0) {
-        await notificationService.sendBulkNotification(fleetManagerIds, data.tenantId, {
-          type: 'alert',
-          title: `Vehicle Alert: ${alert.type}`,
-          message: alert.message,
-          priority: alert.severity === 'critical' ? 'critical' : 'high',
-          data: { vehicleId: data.vehicleId, alert },
-          actionUrl: `/vehicles/${data.vehicleId}`,
-          actionLabel: 'View Vehicle',
-        });
-      }
-    }
-  }
-
-  /**
-   * Resolves the fleet managers/owner who should receive vehicle alerts
-   * for a tenant. The original code passed an empty `userId: ''` and an
-   * empty recipient array to `sendBulkNotification`, which meant alert
-   * notifications were silently never delivered to anyone.
-   */
-  private async getFleetManagerIds(tenantId: string): Promise<string[]> {
-    try {
-      const organization = await resolveOrganization(tenantId);
-      if (!organization) return [];
-
-      return organization.members
-        .filter((m) => ['organization_owner', 'fleet_manager'].includes(m.role))
-        .map((m) => m.userId);
-    } catch {
-      return [];
+      await recordAndNotifyAlert(data.vehicleId, alert, data.tenantId, data.orgUnitId, fleetManagerIds);
     }
   }
 
@@ -385,7 +379,7 @@ export class TelematicsService {
       ownership
     );
 
-    const fleetManagerIds = await this.getFleetManagerIds(tenantId);
+    const fleetManagerIds = await getFleetManagerIds(tenantId);
     if (fleetManagerIds.length === 0) return;
 
     await notificationService.sendBulkNotification(fleetManagerIds, tenantId, {

@@ -126,17 +126,38 @@ class StartWorkflowAction implements IRuleActionExecutor {
 }
 
 /**
- * `set_variable` actions only affect the in-memory evaluation trace that
- * RuleEngineService builds while walking a rule's condition/action list
- * (e.g. surfacing a computed value for the next action in the same rule
- * to reference) and are interpreted there directly. Registering a no-op
- * here keeps `ruleActionRegistry.isRegistered('set_variable')` truthful
- * for rules that declare this action type, rather than throwing at
- * execution time for an action the engine already understands natively.
+ * WAVE 2 (instruction #7 audit finding): `set_variable` was previously
+ * registered as a silent no-op, with a comment claiming it was "handled
+ * inline by the engine". That claim is false -- RuleEngineService's
+ * `evaluate` / `evaluateAndExecute` (rule-engine.service.ts) contain no
+ * inline handling for any action type; every action, `set_variable`
+ * included, is dispatched exclusively through `ruleActionRegistry`. A
+ * rule configured with `set_variable` therefore did nothing at all while
+ * `evaluateAndExecute` recorded `{success: true}` for it -- a false
+ * "succeeded" signal for an action that had no effect whatsoever.
+ *
+ * This is exactly the defect class Wave 2 instruction #7 prohibits:
+ * "SELECTABLE + SILENTLY NO-OP". Kept registered (so
+ * `ruleActionRegistry.isRegistered('set_variable')` still reflects that
+ * this is a recognised action name, and the error below is deliberate
+ * rather than the registry's generic "did you forget to register an
+ * executor" message), but it now fails CLEARLY and OBSERVABLY:
+ * `evaluateAndExecute` records `{success: false, error: <this message>}`,
+ * which is the correct signal for "this rule needs a different action",
+ * not a false success.
+ *
+ * No rule in this codebase's schemas, seed data, or tests configures
+ * `set_variable` today (verified by repository-wide search before this
+ * change), so there is no existing behaviour this could regress.
  */
 class SetVariableAction implements IRuleActionExecutor {
   async execute(): Promise<void> {
-    /* handled inline by the engine; intentionally a no-op here */
+    throw new Error(
+      'set_variable is not implemented: no code path in RuleEngineService or any registered ' +
+        'executor applies a rule-scoped variable anywhere in this engine. Remove this action from ' +
+        'the rule, or use notify / audit_log / publish_event / start_workflow / create_work_order / ' +
+        'schedule_maintenance / create_telemetry_alert instead.'
+    );
   }
 }
 

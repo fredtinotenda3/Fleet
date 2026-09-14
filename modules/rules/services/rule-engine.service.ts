@@ -15,6 +15,7 @@ import { ruleRepository } from '../repositories/rule.repository';
 import { ruleActionRegistry } from '../registry/RuleActionRegistry';
 import { registerDefaultRuleActions } from '../actions/default-actions';
 import { registerMaintenanceRuleActions } from '../actions/maintenance-actions';
+import { registerTelematicsRuleActions } from '../actions/telematics-actions';
 import { NotFoundError, ValidationError } from '@/server/errors/app.errors';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
 import { monitoring } from '@/infrastructure/monitoring/logger';
@@ -32,10 +33,28 @@ registerDefaultRuleActions();
 // been inert. Idempotent, like the defaults.
 registerMaintenanceRuleActions();
 
+// WAVE 2: create_telemetry_alert, the action the telemetry-driven rules
+// migrated from reading-alerts.ts use to record and notify an alert.
+// Registered here for the same reason the two calls above are: the
+// engine module must be self-contained the moment anything imports it,
+// so a rule referencing this action never fails with "no executor
+// registered" purely because of import order. Idempotent, like the rest.
+registerTelematicsRuleActions();
+
 const MAX_CONDITION_DEPTH = 10;
 
-/** Resolves a dotted-path field (e.g. "vehicle.mileage") against a context object. */
-function resolveField(context: RuleEvaluationContext, path: string): unknown {
+/**
+ * Resolves a dotted-path field (e.g. "vehicle.mileage") against a
+ * context object.
+ *
+ * Exported (WAVE 2) so other consumers of a `RuleEvaluationContext` --
+ * specifically the `create_telemetry_alert` rule action, which reads the
+ * SAME observed value a rule's own condition already matched against --
+ * reuse this exact resolution logic rather than re-implementing dotted-
+ * path lookup a second time. One definition of "how a dotted field
+ * resolves against a context" for the whole rules module.
+ */
+export function resolveField(context: RuleEvaluationContext, path: string): unknown {
   return path.split('.').reduce<unknown>((acc, key) => {
     if (acc === null || acc === undefined || typeof acc !== 'object') return undefined;
     return (acc as Record<string, unknown>)[key];

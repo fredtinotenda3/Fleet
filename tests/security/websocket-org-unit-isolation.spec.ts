@@ -108,25 +108,37 @@ describe('F-7: entity events are org-unit scoped, not tenant-wide', () => {
     expect(code).not.toMatch(/:\s*\[tenantRoom\(tenantId\)\]/);
   });
 
-  it('telematics emits location, alert and geofence events through emitToOrgUnit', () => {
+  it('telematics emits location and geofence events through emitToOrgUnit', () => {
     const code = codeOf('modules/telematics/services/telematics.service.ts');
 
-    for (const event of [
-      'vehicle:location',
-      'vehicle:alert',
-      'vehicle:geofence',
-      'vehicle:geofence_inside',
-    ]) {
+    for (const event of ['vehicle:location', 'vehicle:geofence', 'vehicle:geofence_inside']) {
       expect(code).toContain(`emitToOrgUnit(`);
       expect(code).toContain(event);
     }
   });
 
+  // WAVE 2: `vehicle:alert`'s emit moved out of telematics.service.ts's
+  // processAlerts loop into telemetry-alert-writer.ts's
+  // recordAndNotifyAlert, the single implementation now shared by the
+  // legacy reading-alerts.ts path and the rule-engine
+  // create_telemetry_alert action (see that file's header for why).
+  // Same call, same event name, same emitToOrgUnit -- just relocated so
+  // it has exactly one definition instead of a future second copy.
+  it('the extracted alert writer emits vehicle:alert through emitToOrgUnit', () => {
+    const code = codeOf('modules/telematics/services/telemetry-alert-writer.ts');
+    expect(code).toContain('emitToOrgUnit(');
+    expect(code).toContain('vehicle:alert');
+  });
+
   it('NO telematics event uses emitToTenant (the original leak)', () => {
     // This is the assertion that fails if someone reintroduces a
     // tenant-wide broadcast of vehicle data.
-    const code = codeOf('modules/telematics/services/telematics.service.ts');
-    expect(code).not.toContain('emitToTenant');
+    for (const rel of [
+      'modules/telematics/services/telematics.service.ts',
+      'modules/telematics/services/telemetry-alert-writer.ts',
+    ]) {
+      expect(codeOf(rel)).not.toContain('emitToTenant');
+    }
   });
 
   it('the vehicle/expense/fuel/trip helpers are org-unit scoped', () => {
