@@ -530,12 +530,22 @@ export function mapStatusToTelematicsData(
   const fuelUsed = pickNumericIo(io, FUEL_USED_L_CODES);
 
   /**
-   * IGNITION (io["1"]). TelematicsData has no ignition field. Cartrack's
-   * adapter expresses the same signal as `ignition_on && speed === 0`
-   * -> trip.idleTime, and that is mirrored here so both providers feed
-   * the idle metric identically rather than each inventing a convention.
-   * `null` (not reported) is treated as "not idling" -- we only claim
-   * idle time when the tracker positively reports ignition on.
+   * IGNITION (io["1"]).
+   *
+   * Two separate outputs, and they are not the same thing:
+   *
+   *   * `engine.ignition` -- the RAW signal, persisted verbatim, tri-
+   *     state. `TelematicsData` now has a field for it; previously it
+   *     did not, so this boolean was used once and discarded.
+   *   * `trip.idleTime` -- a DERIVED figure (ignition on AND stopped),
+   *     mirroring Cartrack's `ignition_on && speed === 0` so both
+   *     providers feed the idle metric identically rather than each
+   *     inventing a convention.
+   *
+   * For the derived figure, `null` (not reported) is treated as "not
+   * idling" -- idle time is only claimed when the tracker positively
+   * reports ignition on. For the raw signal, `null` stays ABSENT: "this
+   * tracker does not report ignition" is not "the ignition is off".
    */
   const ignitionOn = pickBooleanIo(io, EAGLETRACK_IO.IGNITION);
   const idleTime = ignitionOn === true && speed === 0 ? 1 : 0;
@@ -596,6 +606,11 @@ export function mapStatusToTelematicsData(
    * provider and are simply never written.
    */
   const engine: TelematicsData['engine'] = {};
+  // The boolean itself is now PERSISTED, not just consumed to derive
+  // idleTime below. `pickBooleanIo` returns null for "not reported",
+  // which must stay absent rather than becoming `false` -- see the
+  // field's note on TelematicsData.engine.
+  if (typeof ignitionOn === 'boolean') engine.ignition = ignitionOn;
   if (rpm) engine.rpm = rpm.value;
   if (engineTemp) engine.coolantTemp = engineTemp.value;
   // Percent only -- litres never reach this field. See

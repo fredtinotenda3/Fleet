@@ -100,9 +100,30 @@ type ActionKey = 'fuel' | 'expense' | 'trip' | 'maintenance' | 'work-order';
 interface VehicleQuickActionsProps {
   licensePlate: string;
   vehicleId?: string;
+  /**
+   * The driver currently assigned to this vehicle, pre-selected on the
+   * forms that record work against it.
+   *
+   * ADDED because it was the most obvious piece of context the hub had
+   * and did not use: `vehicle.assignedDriver` is already on the fetched
+   * record and rendered in the Driver tab, while every quick-action
+   * form opened from the same page started with an empty driver field
+   * -- and the trip form asked for it as free text.
+   *
+   * Optional, and only ever a DEFAULT. The forms stay editable, because
+   * the assigned driver is the likely answer, not a certain one: a
+   * relief driver on one leg is exactly the case a fixed value would
+   * get wrong. Historical records are untouched -- this seeds a NEW
+   * record only.
+   */
+  currentDriverId?: string;
 }
 
-export function VehicleQuickActions({ licensePlate, vehicleId }: VehicleQuickActionsProps) {
+export function VehicleQuickActions({
+  licensePlate,
+  vehicleId,
+  currentDriverId,
+}: VehicleQuickActionsProps) {
   const user = useSessionStore((s) => s.user);
   const roles = user?.roles ?? [];
   const queryClient = useQueryClient();
@@ -200,6 +221,7 @@ export function VehicleQuickActions({ licensePlate, vehicleId }: VehicleQuickAct
           open
           mode="create"
           defaultLicensePlate={licensePlate}
+          defaultDriverId={currentDriverId}
           onOpenChange={(next) => !next && setOpenAction(null)}
           onSubmit={async (values) => {
             await createFuel.mutateAsync(values as FuelFormOutput);

@@ -209,6 +209,39 @@ export interface LiveMapVehicleDetail {
   /** Seconds since this fix was recorded; null when the vehicle has never reported a fix. */
   fixAgeSeconds: number | null;
   /**
+   * Ignition state: `true` = on, `false` = off, ABSENT = this device
+   * does not report ignition.
+   *
+   * ---------------------------------------------------------------
+   * WHY THIS FIELD WAS MISSING, AND WHY THAT MATTERED
+   * ---------------------------------------------------------------
+   * The signal existed at three points in the pipeline and was thrown
+   * away at the fourth:
+   *
+   *   * `CanonicalEngine.ignition` -- the provider contract carries it.
+   *   * `demo-simulator.service.ts` emits `ignitionOn` on every tick.
+   *   * `trip-generation.service.ts` reads it (via the exported
+   *     `extractIgnition`) and treats it as the PRIMARY trip-boundary
+   *     signal, falling back to movement only when it is absent.
+   *   * ...and `toVehicleDetail` did not carry it, so every consumer of
+   *     the live-map detail -- the fleet map panel and now the vehicle
+   *     hub -- was blind to it.
+   *
+   * The consequence is not cosmetic. Without ignition, "engine running
+   * while stationary" and "parked with the engine off" are the same
+   * observation: speed 0. That distinction IS the idle metric, it is
+   * what makes an idling-fuel-waste figure meaningful, and it is what
+   * decides whether a gauge cluster should show a live engine or a dead
+   * one. Reading it back out of `providerMetadata` at each call site
+   * would have been the third place in this codebase to re-derive one
+   * rule, so this reuses the trips module's existing helper.
+   *
+   * TRI-STATE, and the third state is load-bearing: `false` for an
+   * unreported signal would render every Cartrack vehicle as
+   * ignition-off, which is a claim the data does not support.
+   */
+  ignition?: boolean;
+  /**
    * Nearest road/locality for `location`, from reverse geocoding.
    *
    * THREE-STATE, and the distinction is the whole point:

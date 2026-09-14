@@ -42,6 +42,7 @@ import { WORKORDER_ROUTES } from '@/frontend/modules/workorders/routes';
 import type { VehicleFormValues } from '../schemas';
 import type { VehicleStatus } from '../types';
 import { cn } from '@/lib/utils';
+import { VehicleInstrumentCluster } from '../components/operations/VehicleInstrumentCluster';
 
 interface VehicleDetailPageProps {
   vehicleId: string;
@@ -162,7 +163,17 @@ export function VehicleDetailPage({ vehicleId }: VehicleDetailPageProps) {
         mutation, and is gated on the permission that module's endpoint
         actually enforces -- see VehicleQuickActions.
       */}
-      <VehicleQuickActions licensePlate={vehicle.license_plate} vehicleId={vehicle._id} />
+      <VehicleQuickActions
+        licensePlate={vehicle.license_plate}
+        vehicleId={vehicle._id}
+        /*
+          The assigned driver was already on this record (rendered in the
+          Driver tab) and was not passed to the forms opened from this
+          same page, so every one of them started with an empty driver
+          field for a vehicle whose driver the page was displaying.
+        */
+        currentDriverId={vehicle.assignedDriver?._id ?? undefined}
+      />
 
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value ?? 'overview')}>
         <TabsList>
@@ -174,7 +185,37 @@ export function VehicleDetailPage({ vehicleId }: VehicleDetailPageProps) {
           <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="overview" className="mt-4">
+        <TabsContent value="overview" className="mt-4 space-y-4">
+          {/*
+            LIVE STATE, first on the page.
+
+            §4.1's requirement, and the answer to "what is this vehicle
+            doing right now" -- which the hub could not answer at all:
+            it imported nothing from telematics, so a page about one
+            vehicle showed no position, no speed, no ignition and no
+            freshness.
+
+            The cluster is vehicle-scoped by construction. It calls the
+            per-vehicle endpoint that already existed and was only ever
+            used by the fleet map, rather than the fleet-wide list the
+            live-map page uses -- pulling every vehicle's telemetry to
+            render one is what §12.3 rules out for this screen.
+          */}
+          {/*
+            Guarded rather than made optional on the component: a vehicle
+            fetched BY ID always has one, so an absent `_id` here is a
+            data fault, not an untracked vehicle. Rendering the cluster's
+            "no telemetry" state for it would blame the tracker for a
+            problem with the record.
+          */}
+          {vehicle._id && (
+            <VehicleInstrumentCluster
+              vehicleId={vehicle._id}
+              vehicleType={vehicle.vehicle_type}
+              fuelType={vehicle.fuel_type}
+            />
+          )}
+
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Card>
               <CardHeader>

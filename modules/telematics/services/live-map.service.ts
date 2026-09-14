@@ -43,6 +43,7 @@ import { deriveReadingAlerts, maxSeverity } from './reading-alerts';
 import { reverseGeocodeService } from './reverse-geocode.service';
 import { describeIoCode, EAGLETRACK_IO } from '../adapters/eagletrack/eagletrack-io.map';
 import { resolveProviderSource } from '../providers/provider.resolve';
+import { extractIgnition } from '@/modules/trips/services/trip-generation.service';
 
 /**
  * Labels a real fix with the provider that produced it.
@@ -600,6 +601,18 @@ export class LiveMapService {
       source: providerSourceFor(latest.deviceId),
       location,
       fixAgeSeconds,
+      /*
+        Reuses the trips module's exported `extractIgnition` rather than
+        re-deriving the rule here. It already handles the three honest
+        sources an adapter can use (`engine.ignition`, a boolean in
+        `providerMetadata`, and Eagle Track's raw io["1"] integer) and
+        returns `undefined` for "not reported" -- which is the answer
+        this field needs, not `false`. Re-implementing that lookup would
+        be the third copy of one rule in this codebase; the second copy
+        is how the fuel `driver_id` and allocation-posting defects each
+        started.
+      */
+      ignition: extractIgnition(latest),
       odometer: latest.trip?.odometer,
       trip: latest.trip
         ? {
@@ -739,34 +752,76 @@ export class LiveMapService {
       deviceId,
       vehicleId,
       tenantId,
+      /*
+        ─────────────────────────────────────────────────────────────
+        THE DEMO READING NOW CARRIES ONLY WHAT IS MODELLED
+        ─────────────────────────────────────────────────────────────
+        This block previously wrote hard-coded stand-ins into the same
+        `tbltelematics` collection real Cartrack and Eagle Track data
+        lands in, where nothing downstream can tell them apart:
+
+            rpm: sim.status === 'moving' ? 1800 : 800
+            coolantTemp: 90
+            throttlePosition: ... ? 40 : 0
+            engineLoad: ... ? 50 : 5
+            altitude: 0, accuracy: 5
+            tripDistance: 0, tripDuration: 0
+            averageSpeed: sim.speed, maxSpeed: sim.speed
+            fuel: { consumptionRate: 0, instantConsumption: 0, fuelUsed: 0 }
+
+        Three distinct defects, worth separating:
+
+        1. CONSTANTS AS MEASUREMENTS. `coolantTemp: 90` is not a
+           simulation of anything; it is the number 90. A gauge built on
+           it shows a needle that never moves, and the spec's whole
+           instrument-fidelity requirement is unmeetable while the
+           source is a literal.
+
+        2. FABRICATED ZEROS. `consumptionRate: 0` and `fuelUsed: 0` are
+           the exact class this codebase has fixed repeatedly -- absent
+           must stay absent so the UI can say "No data". A demo vehicle
+           reporting 0 L/h while its engine runs also hides the idling
+           cost the product exists to surface.
+
+        3. AN INSTANTANEOUS SAMPLE AS A TRIP AGGREGATE.
+           `averageSpeed: sim.speed, maxSpeed: sim.speed` is the SAME
+           category error both real adapters were corrected for -- see
+           cartrack.adapter.ts and eagletrack.adapter.ts, which each
+           carry a long note on why they now omit these. The correction
+           never reached the demo path, so the one provider a prospect
+           actually sees kept the defect the real ones lost.
+
+        What is written now: the signals the simulator genuinely models,
+        and nothing else. `altitude`/`accuracy` are omitted because the
+        simulator has no terrain or fix-quality model; the trip
+        aggregates are omitted for the same reason the real adapters
+        omit them -- this is a point-in-time fix, not an aggregation.
+      */
       location: {
         lat: sim.lat,
         lng: sim.lng,
         speed: sim.speed,
         heading: sim.heading,
-        altitude: 0,
-        accuracy: 5,
         timestamp: now,
       },
       engine: {
-        rpm: sim.status === 'moving' ? 1800 : 800,
-        coolantTemp: 90,
+        ignition: sim.ignitionOn,
+        rpm: sim.rpm,
+        coolantTemp: sim.coolantTemp,
         fuelLevel: sim.fuelLevel,
-        throttlePosition: sim.status === 'moving' ? 40 : 0,
-        engineLoad: sim.status === 'moving' ? 50 : 5,
+        throttlePosition: sim.throttlePosition,
+        engineLoad: sim.engineLoad,
       },
       trip: {
         odometer: sim.odometerKm,
-        tripDistance: 0,
-        tripDuration: 0,
-        averageSpeed: sim.speed,
-        maxSpeed: sim.speed,
-        idleTime: sim.status === 'idle' ? 1 : 0,
+        // Idle time is a DURATION. Emitting 1 per poll measures how
+        // often we sampled, not how long the vehicle idled -- the
+        // reason cartrack.adapter.ts stopped doing exactly this. The
+        // underlying fact is recoverable from ignition + speed on the
+        // reading, both of which are now persisted.
       },
       fuel: {
-        consumptionRate: 0,
-        instantConsumption: 0,
-        fuelUsed: 0,
+        instantConsumption: sim.instantConsumptionLph,
       },
       timestamp: now,
     };

@@ -159,6 +159,35 @@ export interface TelematicsData extends BaseEntity {
    * signals at all writes `{}`.
    */
   engine: {
+    /**
+     * Ignition: `true` on, `false` off, ABSENT = this device does not
+     * report it.
+     *
+     * -------------------------------------------------------------
+     * ADDED -- the signal was being discarded at ingest
+     * -------------------------------------------------------------
+     * `CanonicalEngine.ignition` has always declared this, and both
+     * adapters read it from their provider -- Eagle Track from
+     * io["1"], Cartrack from `ignition_on`. Neither could persist it,
+     * because this type had no field for it, so each used it once to
+     * derive `trip.idleTime` and threw the boolean away.
+     *
+     * What that cost: after ingest, "engine running while stationary"
+     * and "parked with the engine off" are the same observation --
+     * speed 0. That distinction is the idle metric itself; it is what
+     * makes an idling-fuel-waste figure meaningful; and it decides
+     * whether an instrument cluster shows a live engine or a dead one.
+     * `trip-generation.service.ts` needed it badly enough to go
+     * digging in `providerMetadata` for it (see `extractIgnition`),
+     * which is the shape of a workaround for a missing field.
+     *
+     * Adding it needs NO migration: it is optional, Mongo stores no
+     * schema, and every existing reading simply continues to report
+     * "not known" -- which is true of them. `extractIgnition` already
+     * checks this field first and falls back to the metadata bag, so
+     * historical readings keep whatever fidelity they had.
+     */
+    ignition?: boolean;
     rpm?: number;
     coolantTemp?: number;
     /**

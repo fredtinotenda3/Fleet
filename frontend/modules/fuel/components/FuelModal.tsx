@@ -33,6 +33,8 @@ interface FuelModalProps {
    * default is never silent.
    */
   defaultLicensePlate?: string;
+  /** Seeds a NEW log only; an existing log keeps its own attribution. */
+  defaultDriverId?: string;
   onOpenChange: (open: boolean) => void;
   onSubmit: (values: FuelFormValues) => Promise<unknown>;
 }
@@ -51,9 +53,28 @@ const DESCRIPTIONS: Record<FuelModalMode, string> = {
 
 function toFormValues(
   log: FuelLog | null | undefined,
-  defaultLicensePlate?: string
+  defaultLicensePlate?: string,
+  defaultDriverId?: string
 ): Partial<FuelFormValues> | undefined {
-  if (!log) return defaultLicensePlate ? { license_plate: defaultLicensePlate } : undefined;
+  if (!log) {
+    /*
+      A NEW log opened from a vehicle's own page. Seeding the plate and
+      the vehicle's currently-assigned driver removes the two fields the
+      operator would otherwise re-enter for a vehicle they are already
+      looking at.
+
+      This seeds the CREATE path only. Editing an existing log returns
+      that log's own `driver_id` below, untouched -- a historical
+      attribution is never rewritten to the vehicle's current driver.
+      That distinction is the whole point of the fuel-driver fix: the
+      chart must show the driver on the log, not the driver on the
+      vehicle today.
+    */
+    const seeded: Partial<FuelFormValues> = {};
+    if (defaultLicensePlate) seeded.license_plate = defaultLicensePlate;
+    if (defaultDriverId) seeded.driver_id = defaultDriverId;
+    return Object.keys(seeded).length > 0 ? seeded : undefined;
+  }
   return {
     license_plate: log.license_plate,
     unit_id: log.unit_id,
@@ -80,6 +101,7 @@ export function FuelModal({
   mode,
   fuelLog,
   defaultLicensePlate,
+  defaultDriverId,
   onOpenChange,
   onSubmit,
 }: FuelModalProps) {
@@ -97,8 +119,10 @@ export function FuelModal({
           <DialogDescription>{DESCRIPTIONS[mode]}</DialogDescription>
         </DialogHeader>
         <FuelForm
-          key={`${mode}-${fuelLog?._id ?? defaultLicensePlate ?? 'new'}`}
-          defaultValues={toFormValues(fuelLog, defaultLicensePlate)}
+          // Remounts the form when the seeded context changes, so a
+          // modal reopened for a different vehicle or driver starts clean.
+          key={`${mode}-${fuelLog?._id ?? `${defaultLicensePlate ?? 'new'}:${defaultDriverId ?? ''}`}`}
+          defaultValues={toFormValues(fuelLog, defaultLicensePlate, defaultDriverId)}
           onSubmit={async (values) => {
             await onSubmit(values);
             if (mode !== 'view') onOpenChange(false);

@@ -169,8 +169,15 @@ export class CartrackAdapter {
      * accumulated figure measures how often we happened to sample, not
      * how long the vehicle idled. The underlying fact is still
      * recoverable from ignition + speed on the reading itself.
+     *
+     * ...and that last sentence used to be aspirational: `ignition_on`
+     * was read here and then dropped, because `TelematicsData` had no
+     * field to put it in. It now does, so the fact really is
+     * recoverable. `ignition_on` is REQUIRED on Cartrack's status
+     * payload (cartrack.types.ts:31), so unlike Eagle Track's optional
+     * io["1"] it is always present and never absent for this provider.
      */
-    const engine: TelematicsData['engine'] = {};
+    const engine: TelematicsData['engine'] = { ignition: status.ignition_on };
     if (status.fuel_level_percent !== undefined && status.fuel_level_percent !== null) {
       engine.fuelLevel = status.fuel_level_percent;
     }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Paperclip, X } from 'lucide-react';
@@ -149,6 +149,7 @@ export function FuelForm({
     control,
     handleSubmit,
     setValue,
+    getValues,
     watch,
     formState: { errors, isSubmitting },
   } = useForm<FuelFormValues>({
@@ -157,6 +158,59 @@ export function FuelForm({
     resolver: zodResolver(fuelFormSchema) as any,
     defaultValues: { ...FALLBACK_DEFAULTS, ...cleanDefaults(defaultValues) },
   });
+
+  /**
+   * Copies what the VEHICLE already knows into the form.
+   *
+   * ---------------------------------------------------------------
+   * WHY THIS IS A FUNCTION AND NOT INLINE IN onValueChange
+   * ---------------------------------------------------------------
+   * It used to be inline, which meant it only ran when the operator
+   * picked a vehicle BY HAND. Opening "Log fuel" from a vehicle's own
+   * page passes the plate as a DEFAULT VALUE -- `onValueChange` never
+   * fires -- so the one path where the vehicle is unambiguously known
+   * was the one path that auto-filled nothing. The operator was asked
+   * to re-state the fuel type of the vehicle whose page they were
+   * standing on.
+   *
+   * Extracting it means the manual path and the pre-filled path share
+   * one rule rather than two that can drift.
+   *
+   * NON-DESTRUCTIVE by design: it only writes a field the vehicle
+   * actually declares, and `shouldDirty: false` so pre-filling does not
+   * mark a pristine form as edited. Odometer is only seeded when the
+   * field is still at its default, so it can never overwrite a figure
+   * the operator has typed -- and it is seeded at all because the
+   * vehicle's last known odometer is the obvious starting point for the
+   * reading being entered.
+   */
+  const applyVehicleDefaults = useCallback(
+    (plate: string) => {
+      const vehicle = vehicles?.data?.find((x) => x.license_plate === plate);
+      if (!vehicle) return;
+
+      if (vehicle.fuel_type) {
+        setValue('fuel_type', vehicle.fuel_type, { shouldValidate: true, shouldDirty: false });
+      }
+
+      const currentOdometer = getValues('odometer');
+      if (vehicle.odometer && (!currentOdometer || currentOdometer === 0)) {
+        setValue('odometer', vehicle.odometer, { shouldValidate: false, shouldDirty: false });
+      }
+    },
+    [vehicles?.data, setValue, getValues]
+  );
+
+  /*
+    Covers the pre-filled path: the plate arrived as a default value, so
+    no change event ever fires. Runs once the vehicle list has loaded --
+    the plate is known immediately but the vehicle record it must be
+    matched against is not.
+  */
+  const prefilledPlate = watch('license_plate');
+  useEffect(() => {
+    if (prefilledPlate && vehicles?.data?.length) applyVehicleDefaults(prefilledPlate);
+  }, [prefilledPlate, vehicles?.data?.length, applyVehicleDefaults]);
 
   const paymentMethod = watch('payment_method');
   const receiptUrl = watch('receipt_url');
@@ -267,14 +321,7 @@ export function FuelForm({
                    * the genuine exception (a dual-fuel conversion, a
                    * jerrycan of something else).
                    */
-                  const vehicle = vehicles?.data?.find((x) => x.license_plate === plate);
-                  const vehicleFuelType = vehicle?.fuel_type;
-                  if (vehicleFuelType) {
-                    setValue('fuel_type', vehicleFuelType, {
-                      shouldValidate: true,
-                      shouldDirty: false,
-                    });
-                  }
+                  applyVehicleDefaults(plate);
                 }}
                 disabled={readOnly}
               >
