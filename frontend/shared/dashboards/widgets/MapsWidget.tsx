@@ -24,6 +24,16 @@ export function MapsWidget() {
   const moving = vehicles.filter((v) => v.status === 'moving').length;
   const idle = vehicles.filter((v) => v.status === 'idle').length;
   const offline = vehicles.filter((v) => v.status === 'offline').length;
+  // Stale overlaps the three status buckets above by design -- see
+  // LiveMapLegend's doc comment, which this mirrors: a vehicle reporting
+  // a fix older than the staleness threshold is still counted as
+  // moving/idle/offline by position/speed, but the dashboard card must
+  // not let a stale last-known fix read as a live one. LiveMapPage's own
+  // summary already made this same distinction (staleCount); this widget
+  // previously didn't, which meant a fleet manager glancing at the
+  // dashboard tile alone had no way to tell "3 moving" apart from
+  // "3 moving, all on 40-minute-old fixes."
+  const stale = vehicles.filter((v) => v.stale).length;
 
   return (
     <DashboardWidget
@@ -56,6 +66,7 @@ export function MapsWidget() {
           {total > 0 ? (
             <p className="text-caption text-muted-foreground">
               {moving} moving · {idle} idle · {offline} offline
+              {stale > 0 ? ` · ${stale} stale fix${stale === 1 ? '' : 'es'}` : ''}
               {data?.demoMode ? ' · demo data' : ''}
             </p>
           ) : (
