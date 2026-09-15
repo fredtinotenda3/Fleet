@@ -565,7 +565,7 @@ ________________________________________
 15.	DELIVERY RULE
 If the work exceeds what can be completed and verified in one turn, split into multiple ZIPs by wave (e.g., Fleet-part-1.zip = Waves 1–3, Fleet-part-2.zip = Waves 4–6, and so on). Do not return a ZIP with unverified sections. Do not stub any module in §7 or Part R — if a module genuinely cannot be completed (missing hardware/provider/data contract), report it as deferred with the exact dependency required, and note what safe partial implementation exists in the meantime.
 ________________________________________
-16.	VERIFICATION AND REPORTING
+16.	VERIFICATION AND REPORTING                                      
 Report honestly, covering both the Vehicle Hub/product-gap work and every Part R domain (R.0–R.15):
 17.	What already existed vs what was added
 18.	Backend / frontend / schema changes, by domain

@@ -6,9 +6,35 @@ import { successResponse, errorResponse } from '@/server/utils/response.utils';
 import { AppError, isAppError, describeError } from '@/server/errors/app.errors';
 import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
 import { DateRange } from '@/shared/types/common.types';
+import { AuthContext, hasAnyPermission } from '@/server/auth/auth-context';
+import { Permission } from '@/server/permissions/roles';
 
 export class AnalyticsController {
-  async handle(req: NextRequest) {
+  /**
+   * WAVE 3, R.3.1 FIX -- role/permission gap on the Fleet Summary source.
+   *
+   * This route is gated only by ANALYTICS_VIEW (see app/api/analytics/
+   * route.ts), which several roles hold without holding EXPENSE_VIEW or
+   * FUEL_VIEW (WORKSHOP_MANAGER is the concrete case in
+   * server/permissions/roles.ts: ANALYTICS_VIEW + REPORT_VIEW, neither
+   * EXPENSE_VIEW nor FUEL_VIEW). The 'kpis' action returned raw
+   * totalExpenses/totalFuelCost/costPerKm to every such caller with no
+   * field-level check at all -- a frontend-only omission would not have
+   * closed this (the master prompt's own rule: authorization must be
+   * server-side), and the data must never leave this handler in the first
+   * place. `authContext` (the second argument withAuth already threads to
+   * every handler; this controller simply never accepted it before) is
+   * what makes that check possible.
+   *
+   * The 'metrics' and 'cost-breakdown' actions return comparable financial
+   * figures (averageDailyExpense/averageCostPerVehicle, cost-by-category)
+   * and have the identical gap, but their only caller
+   * (AnalyticsOverview.tsx) is confirmed dead code with zero importers --
+   * out of R.3.1's scope (Fleet Summary, i.e. ExecutiveDashboard.tsx /
+   * getFleetKPIs) and left unchanged here. See the R.3.1 handoff report,
+   * "Known Limitations".
+   */
+  async handle(req: NextRequest, authContext: AuthContext) {
     try {
       /**
        * LEAK FIX. This controller drove every dashboard KPI, the expense
@@ -28,10 +54,16 @@ export class AnalyticsController {
         : undefined;
 
       switch (action) {
-        case 'kpis':
+        case 'kpis': {
+          const hasFinancialAccess = hasAnyPermission(authContext, [
+            Permission.EXPENSE_VIEW,
+            Permission.FUEL_VIEW,
+            Permission.FINANCE_VIEW,
+          ]);
           return successResponse(
-            await fleetAnalyticsService.getFleetKPIs(tenantId, dateRange, context)
+            await fleetAnalyticsService.getFleetKPIs(tenantId, dateRange, context, hasFinancialAccess)
           );
+        }
 
         case 'metrics':
           if (!dateRange) {

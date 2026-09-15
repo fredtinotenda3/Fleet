@@ -51,8 +51,25 @@ export class AnalyticsRefreshWorker extends BaseWorker<RefreshAnalyticsPayload> 
       // query-cache.service.ts for why the default is off. The call is
       // left in place rather than removed so that enabling the flag
       // restores warming without another code change.
+      //
+      // WAVE 3, R.3.1: getFleetKPIs now requires an explicit
+      // hasFinancialAccess argument (see fleet-analytics.service.ts) so a
+      // caller can never silently fail open and leak totalExpenses/
+      // totalFuelCost/costPerKm to a viewer without EXPENSE_VIEW/FUEL_VIEW/
+      // FINANCE_VIEW. This is a background system job with no acting user
+      // and no permission scope to check against -- `true` here means "the
+      // warmed value carries the full, unredacted figures", which is
+      // correct ONLY because this cache is not currently read by the live
+      // request path (confirmed: getDashboardKPIs has no caller outside
+      // this worker and its own test suite -- analytics.controller.ts
+      // reads the repositories directly, uncached). If this warm cache is
+      // ever wired into that live read path, whatever reads it MUST NOT
+      // serve this unredacted value to a request-scoped caller without
+      // re-applying that caller's own hasFinancialAccess check -- a cached
+      // blob computed here must never substitute for the per-request
+      // permission check in analytics.controller.ts.
       await queryCache.getDashboardKPIs(orgWideCacheScope(scope.organizationId), () =>
-        fleetAnalyticsService.getFleetKPIs(scope.organizationId)
+        fleetAnalyticsService.getFleetKPIs(scope.organizationId, undefined, undefined, true)
       );
     });
 

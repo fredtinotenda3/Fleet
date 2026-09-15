@@ -12,14 +12,30 @@ export interface FleetKPIs {
   totalVehicles: number;
   activeVehicles: number;
   maintenanceVehicles: number;
-  totalExpenses: number;
-  totalFuelCost: number;
+  /** `null` when the caller lacks financial view access -- see `financialAccessRestricted`. */
+  totalExpenses: number | null;
+  /** `null` when the caller lacks financial view access -- see `financialAccessRestricted`. */
+  totalFuelCost: number | null;
   totalFuelVolume: number;
   totalDistance: number;
   averageFuelEfficiency: number | null;
+  /** `null` either because there is no distance to divide by, or because the caller lacks financial view access -- see `financialAccessRestricted`. */
   costPerKm: number | null;
   pendingMaintenance: number;
   overdueMaintenance: number;
+  /**
+   * WAVE 3, R.3.1. True when totalExpenses/totalFuelCost/costPerKm were
+   * withheld because the caller has ANALYTICS_VIEW (required to reach this
+   * endpoint at all) but none of EXPENSE_VIEW/FUEL_VIEW/FINANCE_VIEW.
+   * WORKSHOP_MANAGER is the concrete role this protects today: it holds
+   * ANALYTICS_VIEW + REPORT_VIEW (so it can reach the Executive Dashboard
+   * and this endpoint) but neither EXPENSE_VIEW nor FUEL_VIEW. Distinguishes
+   * "not permitted to see this figure" from "figure is genuinely zero/
+   * unavailable" -- collapsing the two would misreport a real cost as "no
+   * cost" to a role that simply isn't authorized to see it. The frontend
+   * must render this as "Restricted", never as 0 or "N/A".
+   */
+  financialAccessRestricted: boolean;
 }
 
 export interface OperationalMetrics {
@@ -89,10 +105,19 @@ export class FleetAnalyticsService {
    * `context` is threaded through as an optional trailing parameter so
    * org-wide callers are unaffected.
    */
+  /**
+   * WAVE 3, R.3.1. `hasFinancialAccess` is mandatory (no default) so a
+   * forgotten argument at a new call site is a TypeScript error rather
+   * than a silent fail-open that leaks financial figures to a caller
+   * whose only permission is ANALYTICS_VIEW. Callers derive it from
+   * hasAnyPermission(authContext, [EXPENSE_VIEW, FUEL_VIEW, FINANCE_VIEW])
+   * -- see analytics.controller.ts.
+   */
   async getFleetKPIs(
     tenantId: string,
-    dateRange?: DateRange,
-    context?: TenantContext
+    dateRange: DateRange | undefined,
+    context: TenantContext | undefined,
+    hasFinancialAccess: boolean
   ): Promise<FleetKPIs> {
     const [vehicleStats, expenseStats, fuelStats, maintenanceStats, tripStats] =
       await Promise.all([
@@ -119,14 +144,15 @@ export class FleetAnalyticsService {
       totalVehicles: vehicleStats.total,
       activeVehicles: vehicleStats.active,
       maintenanceVehicles: vehicleStats.maintenance,
-      totalExpenses: expenseStats.total,
-      totalFuelCost: fuelStats.totalCost,
+      totalExpenses: hasFinancialAccess ? expenseStats.total : null,
+      totalFuelCost: hasFinancialAccess ? fuelStats.totalCost : null,
       totalFuelVolume,
       totalDistance,
       averageFuelEfficiency,
-      costPerKm,
+      costPerKm: hasFinancialAccess ? costPerKm : null,
       pendingMaintenance: maintenanceStats.pending,
       overdueMaintenance: maintenanceStats.overdue,
+      financialAccessRestricted: !hasFinancialAccess,
     };
   }
 
