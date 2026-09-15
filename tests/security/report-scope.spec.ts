@@ -37,8 +37,13 @@ function orgUnitPredicate(
 }
 
 describe('report data sources are scoped', () => {
-  // The five collections the report builder can target.
-  it.each(['tblvehicles', 'tblexpenses', 'tblfuellogs', 'tblreminders', 'tbltrips'])(
+  // WAVE 3, R.3.8: 'tbltelematics_alerts' added when the `alerts` report
+  // data source was registered (modules/reporting/registry/data-sources/
+  // alerts.data-source.ts) -- it was already in orgUnitScopedCollections()
+  // for the live alert-list/detail reads (Wave 2's own alert work relies
+  // on it), so the report builder inherits the same scoping automatically;
+  // this pins that inheritance explicitly rather than assuming it.
+  it.each(['tblvehicles', 'tblexpenses', 'tblfuellogs', 'tblreminders', 'tbltrips', 'tbltelematics_alerts'])(
     '%s restricts a scoped user to their own units',
     (collection) => {
       expect(orgUnitPredicate(collection, ctx(['unit-harare']))).toEqual({
@@ -72,6 +77,7 @@ describe('report data sources are scoped', () => {
     const scoped = orgUnitScopedCollections();
     expect(scoped).toContain('tblvehicles');
     expect(scoped).toContain('tblexpenses');
+    expect(scoped).toContain('tbltelematics_alerts');
     expect(scoped).not.toContain('tblfuelstations');
   });
 });

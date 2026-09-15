@@ -378,6 +378,38 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
     };
   }
 
+  /**
+   * WAVE 3, R.3.8 -- row-level alert fetch for the report builder's
+   * LEGACY `DataSourceDefinition.fetch()` fallback (used only by
+   * kpi.engine.ts; report-query.engine.ts's pushdown path queries
+   * `tbltelematics_alerts` directly and gets org-unit scoping for free
+   * from `orgUnitScopedCollections()` -- see bootstrap-data-sources.ts).
+   *
+   * Tenant-only, matching every sibling `fetch()` in
+   * bootstrap-data-sources.ts exactly (getFilteredVehicles,
+   * getFilteredExpenses, getFilteredLogs, getFilteredReminders,
+   * getFilteredTrips all scope by tenantId alone for this same legacy
+   * path) -- not a new, inconsistent restriction and not a new gap
+   * relative to the other six data sources.
+   *
+   * Deliberately NOT filtered to unacknowledged-only (unlike
+   * getActiveAlertsInScope/getAlertSummaryInScope): a report needs both
+   * active and acknowledged alerts so `acknowledgedAt` can be surfaced
+   * as an honest resolution-status column, not just the live/unresolved
+   * subset.
+   */
+  async getAlertsForTenant(
+    tenantId: string,
+    limit = 10000
+  ): Promise<Array<TelematicsAlert & { vehicleId: string }>> {
+    const collection = await this.alertsCollection();
+    const filter = { tenantId, isDeleted: { $ne: true } };
+
+    return this.normalizeDocs<TelematicsAlert & { vehicleId: string }>(
+      await collection.find(filter as any).sort({ timestamp: -1 }).limit(limit).toArray()
+    );
+  }
+
   async acknowledgeAlert(alertId: string, userId: string, tenantId: string): Promise<boolean> {
     if (!ObjectId.isValid(alertId)) return false;
     const collection = await this.alertsCollection();

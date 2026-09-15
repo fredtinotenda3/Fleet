@@ -20,6 +20,7 @@ import { maintenanceRepository } from '@/modules/maintenance/repositories/mainte
 import { tripRepository } from '@/modules/trips/repositories/trip.repository';
 import { driversDataSource } from './data-sources/drivers.data-source';
 import { organizationsDataSource } from './data-sources/organizations.data-source';
+import { alertsDataSource } from './data-sources/alerts.data-source';
 
 const LEGACY_FALLBACK_PAGE = { page: 1, limit: 10000 };
 
@@ -40,7 +41,7 @@ function tenantScoped(tenantId: string) {
  * column projection but NOT as a `$match` filter field -- filter on the
  * raw `orgUnitId` instead if you need to scope a report to one branch.
  */
-function orgUnitLookupStages(): Document[] {
+export function orgUnitLookupStages(): Document[] {
   return [
     {
       $lookup: {
@@ -178,4 +179,5 @@ export function bootstrapDataSources(): void {
 
   dataSourceRegistry.register(driversDataSource);
   dataSourceRegistry.register(organizationsDataSource);
+  dataSourceRegistry.register(alertsDataSource);
 }

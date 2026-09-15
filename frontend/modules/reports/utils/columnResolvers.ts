@@ -109,6 +109,23 @@ const ORGANIZATION_FIELDS: ResolvableField[] = [
   { field: 'managerId', label: 'Manager', dataType: 'string', groupable: true, aggregatable: false },
 ];
 
+// WAVE 3, R.3.8. Mirrors bootstrap-data-sources.ts/data-sources/alerts.data-source.ts.
+// No `driver` field: TelematicsAlert carries no stored driver association,
+// and joining to the vehicle's CURRENT driver would misattribute a
+// historical alert -- see that file's header for the full reasoning.
+const ALERT_FIELDS: ResolvableField[] = [
+  { field: 'type', label: 'Alert Type', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'severity', label: 'Severity', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'status', label: 'Status', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'message', label: 'Message', dataType: 'string', groupable: false, aggregatable: false },
+  { field: 'value', label: 'Value', dataType: 'number', groupable: false, aggregatable: true },
+  { field: 'threshold', label: 'Threshold', dataType: 'number', groupable: false, aggregatable: false },
+  { field: 'timestamp', label: 'Occurred At', dataType: 'date', groupable: false, aggregatable: false },
+  { field: 'acknowledgedAt', label: 'Acknowledged At', dataType: 'date', groupable: false, aggregatable: false },
+  { field: 'license_plate', label: 'License Plate', dataType: 'string', groupable: true, aggregatable: false },
+  ...ORG_UNIT_FIELDS,
+];
+
 const FIELD_CATALOG: Record<ReportDataSource, ResolvableField[]> = {
   vehicles: VEHICLE_FIELDS,
   trips: TRIP_FIELDS,
@@ -117,6 +134,7 @@ const FIELD_CATALOG: Record<ReportDataSource, ResolvableField[]> = {
   expenses: EXPENSE_FIELDS,
   organizations: ORGANIZATION_FIELDS,
   drivers: DRIVER_FIELDS,
+  alerts: ALERT_FIELDS,
 };
 
 export function getFieldsForDataSource(dataSource: ReportDataSource): ResolvableField[] {

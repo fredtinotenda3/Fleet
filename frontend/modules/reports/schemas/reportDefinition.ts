@@ -14,6 +14,11 @@ import { reportFilterGroupSchema } from './reportFilter';
 // 'organizations' was already listed here even though the backend had no
 // matching registration yet (see the now-resolved note in
 // columnResolvers.ts); it's now registered too, backed by tblorgunits.
+//
+// WAVE 3, R.3.8: 'alerts' added -- backed by tbltelematics_alerts (see
+// modules/reporting/registry/data-sources/alerts.data-source.ts), the
+// first Exception/Alert report data source. There was previously no way
+// to build an alert/exception report through the builder at all.
 export const REPORT_DATA_SOURCES = [
   'vehicles',
   'trips',
@@ -22,6 +27,7 @@ export const REPORT_DATA_SOURCES = [
   'expenses',
   'organizations',
   'drivers',
+  'alerts',
 ] as const;
 export type ReportDataSource = (typeof REPORT_DATA_SOURCES)[number];
 
