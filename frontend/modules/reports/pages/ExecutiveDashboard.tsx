@@ -26,6 +26,7 @@ import type { ExecutiveDashboardFilter } from '../schemas/executiveDashboard';
 import { DATE_PRESETS, defaultExecutiveDashboardFilter } from '../schemas/executiveDashboard';
 import type { DatePreset } from '../schemas/executiveDashboard';
 import { resolveFilterDateRange } from '../utils/resolveDatePreset';
+import { isForbiddenError } from '@/shared/utils/api-client.utils';
 
 // WAVE 3, R.3.1. Presets requiring an explicit 'from'/'to' pair are
 // handled by the two date inputs shown only for 'custom'; every other
@@ -81,12 +82,31 @@ export default function ExecutiveDashboard() {
   // delay or failure there shouldn't block the rest of the executive
   // dashboard from rendering. FleetHealthGauge handles its own
   // loading/error/empty states.
+  //
+  // WAVE 3, R.3.1 HARDENING. fuelTrends/expenseBreakdown/maintenanceWidget
+  // are, as of this delivery, ALSO excluded from this page-level gate, for
+  // the same reason -- and one more: their failure is very often a 403, not
+  // a system error. /api/fuellogs and /api/expenses each require their own
+  // permission (FUEL_VIEW/EXPENSE_VIEW) independent of the ANALYTICS_VIEW +
+  // REPORT_VIEW that got a caller onto this page at all. WORKSHOP_MANAGER
+  // is the concrete role that holds the latter two but neither of the
+  // former -- previously that meant EVERY section of Fleet Summary failed
+  // to render, including composition/activity figures (Total Vehicles,
+  // Active, In Maintenance, Total Distance) that role IS authorized to see,
+  // because one restricted widget's isError tripped this single page-wide
+  // gate. Each of the three now renders its own Restricted/Error/Loading
+  // state inline (see the isForbiddenError checks below and the isRestricted
+  // prop on FuelTrendChart/ExpenseBreakdownChart/MaintenanceChart) --
+  // permission failures degrade their own section, not the whole page.
+  const fuelTrendsRestricted = isForbiddenError(fuelTrends.error);
+  const expenseBreakdownRestricted = isForbiddenError(expenseBreakdown.error);
+  const maintenanceRestricted = isForbiddenError(maintenanceWidget.error);
 
-  if (isLoading || fleetKPIs.isLoading || fuelTrends.isLoading || expenseBreakdown.isLoading || maintenanceWidget.isLoading) {
+  if (isLoading || fleetKPIs.isLoading) {
     return <LoadingState />;
   }
 
-  if (isError || fleetKPIs.isError || fuelTrends.isError || expenseBreakdown.isError || maintenanceWidget.isError) {
+  if (isError || fleetKPIs.isError) {
     return (
       <div className="flex flex-col gap-4 items-center justify-center py-12">
         <p className="text-destructive">Failed to load dashboard data.</p>
@@ -268,13 +288,17 @@ export default function ExecutiveDashboard() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <FuelTrendChart
               data={fuelTrends.data?.points}
-              isLoading={false}
+              isLoading={fuelTrends.isLoading}
+              isRestricted={fuelTrendsRestricted}
+              isError={fuelTrends.isError && !fuelTrendsRestricted}
               totalVolume={fuelTrends.data?.totalVolume ?? 0}
               totalCost={fuelTrends.data?.totalCost ?? 0}
             />
             <ExpenseBreakdownChart
               data={expenseBreakdown.data?.categories}
-              isLoading={false}
+              isLoading={expenseBreakdown.isLoading}
+              isRestricted={expenseBreakdownRestricted}
+              isError={expenseBreakdown.isError && !expenseBreakdownRestricted}
               total={expenseBreakdown.data?.total ?? 0}
             />
           </div>
@@ -282,7 +306,9 @@ export default function ExecutiveDashboard() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <MaintenanceChart
               data={maintenanceChartData}
-              isLoading={false}
+              isLoading={maintenanceWidget.isLoading}
+              isRestricted={maintenanceRestricted}
+              isError={maintenanceWidget.isError && !maintenanceRestricted}
             />
             <FleetHealthGauge
               score={fleetHealth.data?.overallScore}

@@ -11,9 +11,18 @@ import { MAINTENANCE_ROUTES } from '@/frontend/modules/maintenance/routes';
 interface MaintenanceChartProps {
   data: { name: string; count: number }[] | undefined;
   isLoading: boolean;
+  /**
+   * WAVE 3, R.3.1 HARDENING. True when the caller lacks MAINTENANCE_VIEW (a
+   * 403 from the reminders endpoints this widget reads). Checked before the
+   * empty-data branch so a restricted viewer sees "Restricted", never "No
+   * maintenance data" -- that claims a real, honest zero.
+   */
+  isRestricted?: boolean;
+  /** A genuine fetch failure (network/5xx) -- distinct from isRestricted. */
+  isError?: boolean;
 }
 
-export function MaintenanceChart({ data, isLoading }: MaintenanceChartProps) {
+export function MaintenanceChart({ data, isLoading, isRestricted, isError }: MaintenanceChartProps) {
   const router = useRouter();
 
   function handleBarClick(entry: { name: string; count: number }) {
@@ -23,6 +32,22 @@ export function MaintenanceChart({ data, isLoading }: MaintenanceChartProps) {
     return (
       <ChartContainer title="Maintenance Overview">
         <Skeleton className="h-64 w-full" />
+      </ChartContainer>
+    );
+  }
+
+  if (isRestricted) {
+    return (
+      <ChartContainer title="Maintenance Overview">
+        <p className="text-sm text-muted-foreground">Restricted -- you do not have permission to view maintenance data.</p>
+      </ChartContainer>
+    );
+  }
+
+  if (isError) {
+    return (
+      <ChartContainer title="Maintenance Overview">
+        <p className="text-sm text-destructive">Couldn't load maintenance data right now.</p>
       </ChartContainer>
     );
   }

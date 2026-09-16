@@ -28,6 +28,21 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * WAVE 3, R.3.1 HARDENING. A React Query hook's `error` field surfaces
+ * whatever handleResponse() threw -- for a route wrapped in withAuth with
+ * an unmet `permission`/`anyPermission` requirement, that is always this
+ * exact shape: `errorResponse('Insufficient permissions', 'FORBIDDEN', 403)`
+ * (see server/middleware/with-auth.ts). Callers use this to distinguish
+ * "the server said no, and said so authoritatively" from every other
+ * failure (network drop, timeout, a genuine 5xx) -- the two must never be
+ * presented as the same state: a permission denial is `Restricted` and
+ * stable; a transient failure is `Error` and worth retrying.
+ */
+export function isForbiddenError(error: unknown): boolean {
+  return error instanceof ApiError && error.statusCode === 403;
+}
+
 class ApiClient {
   private baseURL: string;
   private defaultHeaders: HeadersInit;

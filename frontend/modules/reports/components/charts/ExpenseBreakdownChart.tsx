@@ -27,9 +27,18 @@ interface ExpenseBreakdownChartProps {
   data: ExpenseCategoryItem[] | undefined;
   isLoading: boolean;
   total: number;
+  /**
+   * WAVE 3, R.3.1 HARDENING. True when the caller lacks EXPENSE_VIEW (a 403
+   * from /api/expenses, e.g. WORKSHOP_MANAGER). Checked before the
+   * empty-data branch so a restricted viewer sees "Restricted", never "No
+   * expense data available" -- that claims a real, honest zero.
+   */
+  isRestricted?: boolean;
+  /** A genuine fetch failure (network/5xx) -- distinct from isRestricted. */
+  isError?: boolean;
 }
 
-export function ExpenseBreakdownChart({ data, isLoading, total }: ExpenseBreakdownChartProps) {
+export function ExpenseBreakdownChart({ data, isLoading, total, isRestricted, isError }: ExpenseBreakdownChartProps) {
   const router = useRouter();
 
   function handleSliceClick(entry: ExpenseCategoryItem) {
@@ -39,6 +48,22 @@ export function ExpenseBreakdownChart({ data, isLoading, total }: ExpenseBreakdo
     return (
       <ChartContainer title="Expense Breakdown">
         <Skeleton className="h-64 w-full" />
+      </ChartContainer>
+    );
+  }
+
+  if (isRestricted) {
+    return (
+      <ChartContainer title="Expense Breakdown">
+        <p className="text-sm text-muted-foreground">Restricted -- you do not have permission to view expense data.</p>
+      </ChartContainer>
+    );
+  }
+
+  if (isError) {
+    return (
+      <ChartContainer title="Expense Breakdown">
+        <p className="text-sm text-destructive">Couldn't load expense breakdown right now.</p>
       </ChartContainer>
     );
   }

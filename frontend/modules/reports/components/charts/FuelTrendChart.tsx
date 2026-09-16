@@ -29,9 +29,19 @@ interface FuelTrendChartProps {
   isLoading: boolean;
   totalVolume: number;
   totalCost: number;
+  /**
+   * WAVE 3, R.3.1 HARDENING. True when the caller lacks FUEL_VIEW (a 403
+   * from /api/fuellogs, e.g. WORKSHOP_MANAGER). Checked before the
+   * empty-data branch below so a restricted viewer sees "Restricted", not
+   * "No fuel data available" -- the latter claims a real, honest zero,
+   * which this is not.
+   */
+  isRestricted?: boolean;
+  /** A genuine fetch failure (network/5xx) -- distinct from isRestricted. */
+  isError?: boolean;
 }
 
-export function FuelTrendChart({ data, isLoading, totalVolume, totalCost }: FuelTrendChartProps) {
+export function FuelTrendChart({ data, isLoading, totalVolume, totalCost, isRestricted, isError }: FuelTrendChartProps) {
   const router = useRouter();
 
   function handlePointClick(row: FuelTrendPoint) {
@@ -41,6 +51,22 @@ export function FuelTrendChart({ data, isLoading, totalVolume, totalCost }: Fuel
     return (
       <ChartContainer title="Fuel Consumption & Cost">
         <Skeleton className="h-64 w-full" />
+      </ChartContainer>
+    );
+  }
+
+  if (isRestricted) {
+    return (
+      <ChartContainer title="Fuel Consumption & Cost">
+        <p className="text-sm text-muted-foreground">Restricted -- you do not have permission to view fuel data.</p>
+      </ChartContainer>
+    );
+  }
+
+  if (isError) {
+    return (
+      <ChartContainer title="Fuel Consumption & Cost">
+        <p className="text-sm text-destructive">Couldn't load fuel trend data right now.</p>
       </ChartContainer>
     );
   }

@@ -93,9 +93,20 @@ export function useMaintenanceWidget() {
   const isError = overdueQuery.isError || upcomingQuery.isError;
 
   return {
-    data: isLoading ? undefined : { overdue, upcoming, overdueCount: overdue.length },
+    // WAVE 3, R.3.1 HARDENING. Was `isLoading ? undefined : {...}` -- on a
+    // genuine failure (a 403 for a role without MAINTENANCE_VIEW, or a real
+    // 5xx) `isLoading` becomes false while `overdueQuery.data`/
+    // `upcomingQuery.data` stay undefined, so `overdue`/`upcoming` fell
+    // back through `?? []` to empty arrays and this returned a fabricated
+    // "zero overdue, zero upcoming" result -- ZERO, not ERROR. `data` is
+    // now genuinely undefined on error, matching useExpenseBreakdownWidget
+    // (which never had this bug: react-query's own `select` already
+    // short-circuits on error) and letting ExecutiveDashboard distinguish
+    // "restricted"/"error" from "successfully loaded, genuinely empty".
+    data: isLoading || isError ? undefined : { overdue, upcoming, overdueCount: overdue.length },
     isLoading,
     isError,
+    error: overdueQuery.error ?? upcomingQuery.error,
     refetch: () => {
       overdueQuery.refetch();
       upcomingQuery.refetch();
@@ -136,15 +147,22 @@ export function useFuelTrendsWidget() {
   const isError = monthlyQuery.isError || statsQuery.isError;
 
   return {
-    data: isLoading
-      ? undefined
-      : {
-          points,
-          totalVolume: statsQuery.data?.totalFuel ?? 0,
-          totalCost: statsQuery.data?.totalCost ?? 0,
-        },
+    // WAVE 3, R.3.1 HARDENING. Was `isLoading ? undefined : {...}` -- see
+    // the identical fix and full rationale on useMaintenanceWidget above.
+    // A role without FUEL_VIEW (or a genuine 5xx from /api/fuellogs) used
+    // to render as "0 L, $0.00 fuel this period", a fabricated zero
+    // presented exactly like a fleet that genuinely burned no fuel.
+    data:
+      isLoading || isError
+        ? undefined
+        : {
+            points,
+            totalVolume: statsQuery.data?.totalFuel ?? 0,
+            totalCost: statsQuery.data?.totalCost ?? 0,
+          },
     isLoading,
     isError,
+    error: monthlyQuery.error ?? statsQuery.error,
     refetch: () => {
       monthlyQuery.refetch();
       statsQuery.refetch();
