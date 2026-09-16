@@ -27,6 +27,7 @@ import {
 } from '@/shared/validations/report-definition.schema';
 import { z } from 'zod';
 import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
+import { assertDataSourceAccess } from '../utils/data-source-authorization';
 
 const drilldownRequestSchema = z.object({
   groupValues: z.record(z.string(), z.unknown()),
@@ -57,7 +58,9 @@ export class ReportDefinitionController {
       // change closes -- so it is resolved here, at the request edge,
       // rather than left to each service.
       const tenantContext = await resolveTenantContext(req);
-      return successResponse(await reportBuilderService.preview(id, context.tenantId, undefined, tenantContext));
+      return successResponse(
+        await reportBuilderService.preview(id, context.tenantId, undefined, tenantContext, context)
+      );
     } catch (error) {
       return this.handleError(error);
     }
@@ -71,7 +74,7 @@ export class ReportDefinitionController {
       // change closes -- so it is resolved here, at the request edge,
       // rather than left to each service.
       const tenantContext = await resolveTenantContext(req);
-      return successResponse(await reportBuilderService.previewPivot(id, context.tenantId, tenantContext));
+      return successResponse(await reportBuilderService.previewPivot(id, context.tenantId, tenantContext, context));
     } catch (error) {
       return this.handleError(error);
     }
@@ -92,6 +95,11 @@ export class ReportDefinitionController {
       }
 
       const definition = await reportBuilderService.get(id, context.tenantId);
+      // R.3.7 prerequisite fix: the definition is already fetched here
+      // (drillInto only needs it, not the id), so the data-source
+      // permission check is asserted at this same edge rather than
+      // threading AuthContext further into drilldown.service.ts.
+      assertDataSourceAccess(definition.dataSource, context);
       // Org-unit scope for the report engine. Without this the engine
       // falls back to organization-wide, which is exactly the leak this
       // change closes -- so it is resolved here, at the request edge,
@@ -126,6 +134,17 @@ export class ReportDefinitionController {
       // Deliberately called here (not inside ReportBuilderService, per that
       // service's own comment) rather than silently skipped.
       if (created.schedule) {
+        // R.3.7 prerequisite fix: a schedule that is actually enabled
+        // EMAILS its output on a recurring, unattended basis -- the
+        // single highest-impact path in the whole reporting surface for
+        // a data-source permission gap, so it is asserted here, before
+        // the cron job is ever created. Gated on schedule.enabled (not
+        // just the presence of a schedule object) to match
+        // syncSchedule's own internal gate -- saving a definition with a
+        // disabled schedule must not require the data-source permission.
+        if (created.schedule.enabled) {
+          assertDataSourceAccess(created.dataSource, context);
+        }
         // The creator's org-unit scope is frozen onto the schedule: a
         // scheduled run has no request and therefore no TenantContext,
         // and the engine defaulted to organization-wide without it --
@@ -153,6 +172,13 @@ export class ReportDefinitionController {
         return errorResponse('Validation failed', 'VALIDATION_ERROR', 400, result.errors);
       }
       const updated = await reportBuilderService.update(id, result.data, context.tenantId, context.userId);
+      // R.3.7 prerequisite fix -- see the identical check in create()
+      // above for the full reasoning. Gated on schedule.enabled so
+      // disabling a schedule (or editing an already-disabled one) never
+      // requires the data-source permission.
+      if (updated.schedule?.enabled) {
+        assertDataSourceAccess(updated.dataSource, context);
+      }
       // Re-freezes the scope on every update, so a definition edited by
       // a differently-scoped user runs under the scope of whoever last
       // saved it -- never wider than that person could read themselves.

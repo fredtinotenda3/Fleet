@@ -51,7 +51,18 @@ describe('report data sources are scoped', () => {
   // WorkOrderRepository.getFilteredInScope/getFilteredForExport reads, so
   // the report builder inherits the same scoping automatically; this pins
   // that inheritance explicitly rather than assuming it.
-  it.each(['tblvehicles', 'tblexpenses', 'tblfuellogs', 'tblreminders', 'tbltrips', 'tbltelematics_alerts', 'tblworkorders'])(
+  //
+  // WAVE 3, R.3.7: 'tblallocationledger' added when the `allocations`
+  // report data source was registered (modules/reporting/registry/
+  // data-sources/allocations.data-source.ts) -- it was already in
+  // orgUnitScopedCollections() (module: 'finance', orgUnitSource:
+  // 'vehicle') for the live AllocationService/AllocationLedgerRepository
+  // reads (cost-per-km, GL reconciliation), so the report builder
+  // inherits the same scoping automatically; this pins that inheritance
+  // explicitly rather than assuming it. Org-unit scope is a SEPARATE
+  // control from this source's FINANCE_VIEW permission gate -- see
+  // tests/security/report-builder-permission-gating.spec.ts for that.
+  it.each(['tblvehicles', 'tblexpenses', 'tblfuellogs', 'tblreminders', 'tbltrips', 'tbltelematics_alerts', 'tblworkorders', 'tblallocationledger'])(
     '%s restricts a scoped user to their own units',
     (collection) => {
       expect(orgUnitPredicate(collection, ctx(['unit-harare']))).toEqual({
@@ -87,6 +98,7 @@ describe('report data sources are scoped', () => {
     expect(scoped).toContain('tblexpenses');
     expect(scoped).toContain('tbltelematics_alerts');
     expect(scoped).toContain('tblworkorders');
+    expect(scoped).toContain('tblallocationledger');
     expect(scoped).not.toContain('tblfuelstations');
   });
 });

@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AuthContext } from '@/server/auth/auth-context';
 import { reportExecutionService } from '../services/report-execution.service';
+import { reportBuilderService } from '../services/report-builder.service';
 import { successResponse, paginatedResponse, errorResponse } from '@/server/utils/response.utils';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { AppError, isAppError, describeError } from '@/server/errors/app.errors';
@@ -10,6 +11,7 @@ import { validateWithZod } from '@/shared/utils/validation.utils';
 import { generateExecutionSchema } from '@/shared/validations/report-execution.schema';
 import { validatePaginationParams } from '@/shared/utils/pagination.utils';
 import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
+import { assertDataSourceAccess } from '../utils/data-source-authorization';
 
 export class ReportExecutionController {
   async list(req: NextRequest, context: AuthContext) {
@@ -40,6 +42,25 @@ export class ReportExecutionController {
       if (!result.success || !result.data) {
         return errorResponse('Validation failed', 'VALIDATION_ERROR', 400, result.errors);
       }
+
+      // R.3.7 prerequisite fix: EXPORT is the other high-impact path
+      // (alongside scheduling) a data-source permission gap reaches --
+      // a downloaded file is designed to be kept outside the platform
+      // entirely. reportExecutionService.generate() re-fetches the
+      // definition itself (for the export's `name`), so this is one
+      // extra read for the permission check, not a new query pattern.
+      // Dashboard-sourced generation (input.dashboardId) is deliberately
+      // NOT covered here -- a dashboard aggregates multiple data sources
+      // across possibly-independent widgets, and gating it correctly
+      // would mean auditing every widget type's own data access, a
+      // separate and larger prerequisite than this reporting-focused
+      // fix. Flagged as a known, deliberately out-of-scope gap in the
+      // R.3.7 handoff rather than silently expanded into.
+      if (result.data.reportDefinitionId) {
+        const definition = await reportBuilderService.get(result.data.reportDefinitionId, context.tenantId);
+        assertDataSourceAccess(definition.dataSource, context);
+      }
+
       // Org-unit scope for the report engine. Without this the engine
       // falls back to organization-wide, which is exactly the leak this
       // change closes -- so it is resolved here, at the request edge,

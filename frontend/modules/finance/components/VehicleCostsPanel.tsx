@@ -24,6 +24,8 @@ import { cn } from '@/lib/utils';
 import { useVehicleCostPerKmTrend, useVehicleAllocations, startOfMonth } from '../hooks/useFinance';
 import { COST_CATEGORY_LABELS } from '../types';
 import type { CostPerKmResponse, CostPerKmTrend, AllocationPosting } from '../types';
+import Link from 'next/link';
+import { REPORTS_ROUTES } from '@/frontend/modules/reports/routes';
 
 interface VehicleCostsPanelProps {
   /** The vehicle's MongoDB _id — NOT its license plate. */
@@ -200,6 +202,19 @@ function PostingsTable({ postings }: { postings: AllocationPosting[] }) {
       <p className="mt-3 text-caption text-muted-foreground">
         Reversals are shown, not hidden — a corrected posting nets to zero while both entries stay on record.
       </p>
+      {/*
+        R.3.7. This panel shows one vehicle's postings for the current
+        month only -- the report builder is where a finance user reaches
+        for a filtered, grouped, exportable, or scheduled cut across
+        vehicles/periods/categories instead. Requires FINANCE_VIEW,
+        enforced server-side (see allocations.data-source.ts).
+      */}
+      <Link
+        href={`${REPORTS_ROUTES.builder.new}?dataSource=allocations`}
+        className="mt-3 inline-block text-body-sm text-primary hover:underline"
+      >
+        Build a custom cost allocation report
+      </Link>
     </div>
   );
 }

@@ -25,6 +25,14 @@ import { reportFilterGroupSchema } from './reportFilter';
 // There was previously no way to build a work-order report (status/
 // priority/vehicle/workshop/technician/cost/turnaround) through the
 // builder, and no work-order KPI surface anywhere in the product.
+//
+// WAVE 3, R.3.7: 'allocations' added -- backed by tblallocationledger
+// (see modules/reporting/registry/data-sources/allocations.data-source.ts),
+// the cost-per-km engine's own ledger. This is the first data source
+// gated by a per-source permission (FINANCE_VIEW, enforced server-side
+// via modules/reporting/utils/data-source-authorization.ts) -- a user
+// without finance access sees it in this list but every preview/
+// drilldown/export/schedule call against it 403s.
 export const REPORT_DATA_SOURCES = [
   'vehicles',
   'trips',
@@ -35,6 +43,7 @@ export const REPORT_DATA_SOURCES = [
   'drivers',
   'alerts',
   'workorders',
+  'allocations',
 ] as const;
 export type ReportDataSource = (typeof REPORT_DATA_SOURCES)[number];
 

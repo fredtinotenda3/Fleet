@@ -150,6 +150,45 @@ const WORKORDER_FIELDS: ResolvableField[] = [
   ...ORG_UNIT_FIELDS,
 ];
 
+// WAVE 3, R.3.7. Mirrors bootstrap-data-sources.ts/data-sources/
+// allocations.data-source.ts. `amount`/`currency` (the ORIGINAL
+// transaction currency) and `quantity` are deliberately NOT
+// aggregatable -- they can legitimately mix currencies/units across
+// rows, and summing them would produce a fabricated figure. Only
+// `reportingAmount` (already normalized into the tenant's one
+// configured reporting currency) is aggregatable -- see that file's
+// header for the full reasoning, including the residual caveat when a
+// report spans a reporting-currency change.
+const ALLOCATION_FIELDS: ResolvableField[] = [
+  { field: 'license_plate', label: 'License Plate', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'vehicleId', label: 'Vehicle ID', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'driverName', label: 'Driver', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'driverId', label: 'Driver ID', dataType: 'string', groupable: false, aggregatable: false },
+  { field: 'costCategory', label: 'Cost Category', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'allocationRule', label: 'Allocation Rule', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'sourceCollection', label: 'Source', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'sourceId', label: 'Source Record ID', dataType: 'string', groupable: false, aggregatable: false },
+  { field: 'description', label: 'Description', dataType: 'string', groupable: false, aggregatable: false },
+  { field: 'periodStart', label: 'Period Start', dataType: 'date', groupable: false, aggregatable: false },
+  { field: 'periodEnd', label: 'Period End', dataType: 'date', groupable: false, aggregatable: false },
+  { field: 'quantity', label: 'Quantity', dataType: 'number', groupable: false, aggregatable: false },
+  { field: 'unit', label: 'Unit', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'currency', label: 'Original Currency', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'amount', label: 'Original Amount', dataType: 'currency', groupable: false, aggregatable: false },
+  { field: 'fxRate', label: 'FX Rate', dataType: 'number', groupable: false, aggregatable: false },
+  { field: 'fxRateDate', label: 'FX Rate Date', dataType: 'date', groupable: false, aggregatable: false },
+  { field: 'fxSource', label: 'FX Source', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'reportingCurrency', label: 'Reporting Currency', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'reportingAmount', label: 'Reporting Amount', dataType: 'currency', groupable: false, aggregatable: true },
+  { field: 'glAccountCode', label: 'GL Account Code', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'postedAt', label: 'Posted At', dataType: 'date', groupable: false, aggregatable: false },
+  { field: 'postedBy', label: 'Posted By (User ID)', dataType: 'string', groupable: false, aggregatable: false },
+  { field: 'isReversal', label: 'Is Reversal', dataType: 'boolean', groupable: true, aggregatable: false },
+  { field: 'reversalOfPostingId', label: 'Reverses Posting ID', dataType: 'string', groupable: false, aggregatable: false },
+  { field: 'reversalReason', label: 'Reversal Reason', dataType: 'string', groupable: false, aggregatable: false },
+  ...ORG_UNIT_FIELDS,
+];
+
 const FIELD_CATALOG: Record<ReportDataSource, ResolvableField[]> = {
   vehicles: VEHICLE_FIELDS,
   trips: TRIP_FIELDS,
@@ -160,6 +199,7 @@ const FIELD_CATALOG: Record<ReportDataSource, ResolvableField[]> = {
   drivers: DRIVER_FIELDS,
   alerts: ALERT_FIELDS,
   workorders: WORKORDER_FIELDS,
+  allocations: ALLOCATION_FIELDS,
 };
 
 export function getFieldsForDataSource(dataSource: ReportDataSource): ResolvableField[] {

@@ -22,6 +22,8 @@ import { driversDataSource } from './data-sources/drivers.data-source';
 import { organizationsDataSource } from './data-sources/organizations.data-source';
 import { alertsDataSource } from './data-sources/alerts.data-source';
 import { workordersDataSource } from './data-sources/workorders.data-source';
+import { allocationsDataSource } from './data-sources/allocations.data-source';
+import { Permission } from '@/server/permissions/roles';
 
 const LEGACY_FALLBACK_PAGE = { page: 1, limit: 10000 };
 
@@ -102,6 +104,14 @@ export function bootstrapDataSources(): void {
     collectionName: 'tblexpenses',
     baseFilter: tenantScoped,
     prePipeline: orgUnitLookupStages,
+    // R.3.7 PREREQUISITE FIX (retroactive): expenses was previously
+    // reachable through the Report Builder by anyone holding only the
+    // blanket REPORT_VIEW permission, with no EXPENSE_VIEW check
+    // anywhere in preview/drilldown/export/schedule -- see the full
+    // finding on DataSourceDefinition.requiredPermission's doc comment.
+    // This matches the same permission EXPENSE_VIEW already gates on
+    // every other expense read path (list/detail/analytics).
+    requiredPermission: Permission.EXPENSE_VIEW,
     fields: [
       { key: 'license_plate', label: 'License Plate', type: 'string', aggregatable: false, groupable: true },
       { key: 'amount', label: 'Amount', type: 'currency', aggregatable: true, groupable: false },
@@ -122,6 +132,10 @@ export function bootstrapDataSources(): void {
     collectionName: 'tblfuellogs',
     baseFilter: tenantScoped,
     prePipeline: orgUnitLookupStages,
+    // R.3.7 PREREQUISITE FIX (retroactive) -- same finding and same
+    // reasoning as 'expenses' above, matching the FUEL_VIEW permission
+    // already gating every other fuel-log read path.
+    requiredPermission: Permission.FUEL_VIEW,
     fields: [
       { key: 'license_plate', label: 'License Plate', type: 'string', aggregatable: false, groupable: true },
       { key: 'date', label: 'Date', type: 'date', aggregatable: false, groupable: false },
@@ -182,4 +196,5 @@ export function bootstrapDataSources(): void {
   dataSourceRegistry.register(organizationsDataSource);
   dataSourceRegistry.register(alertsDataSource);
   dataSourceRegistry.register(workordersDataSource);
+  dataSourceRegistry.register(allocationsDataSource);
 }

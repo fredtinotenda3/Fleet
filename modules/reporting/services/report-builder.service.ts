@@ -22,6 +22,8 @@ import {
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
 import { PaginationParams } from '@/shared/types/common.types';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { AuthContext } from '@/server/auth/auth-context';
+import { assertDataSourceAccess } from '../utils/data-source-authorization';
 
 bootstrapDataSources();
 
@@ -124,9 +126,24 @@ export class ReportBuilderService {
    * tabular preview (used by the builder UI, which paginates rather
    * than rendering every matching row at once). `pagination` defaults
    * to the engine's own preview page size when omitted.
+   *
+   * `authContext`, when supplied, is checked against the definition's
+   * data source via assertDataSourceAccess() -- see that function's
+   * doc comment and DataSourceDefinition.requiredPermission for why
+   * this is a PREREQUISITE fix, not new scope. Optional (not required)
+   * so any pre-existing in-process caller that never had an AuthContext
+   * keeps working exactly as before; every actual HTTP caller (the
+   * controller) always supplies one.
    */
-  async preview(id: string, tenantId: string, pagination?: PaginationParams, context?: TenantContext): Promise<ReportResult> {
+  async preview(
+    id: string,
+    tenantId: string,
+    pagination?: PaginationParams,
+    context?: TenantContext,
+    authContext?: AuthContext
+  ): Promise<ReportResult> {
     const definition = await this.get(id, tenantId);
+    if (authContext) assertDataSourceAccess(definition.dataSource, authContext);
     return reportQueryEngine.run(definition, tenantId, { pagination, context });
   }
 
@@ -137,8 +154,14 @@ export class ReportBuilderService {
    * bucket correctly -- pivoting only the first page would silently
    * under-count every cell.
    */
-  async previewPivot(id: string, tenantId: string, context?: TenantContext): Promise<PivotResult> {
+  async previewPivot(
+    id: string,
+    tenantId: string,
+    context?: TenantContext,
+    authContext?: AuthContext
+  ): Promise<PivotResult> {
     const definition = await this.get(id, tenantId);
+    if (authContext) assertDataSourceAccess(definition.dataSource, authContext);
     if (!definition.pivot) {
       throw new ValidationError('This report has no pivot configuration');
     }

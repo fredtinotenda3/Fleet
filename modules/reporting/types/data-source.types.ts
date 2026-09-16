@@ -1,6 +1,7 @@
 // modules/reporting/types/data-source.types.ts
 
 import type { Document, Filter } from 'mongodb';
+import type { Permission } from '@/server/permissions/roles';
 
 export type DataSourceKey =
   | 'vehicles'
@@ -11,7 +12,8 @@ export type DataSourceKey =
   | 'drivers'
   | 'organizations'
   | 'alerts'
-  | 'workorders';
+  | 'workorders'
+  | 'allocations';
 
 export interface DataSourceFieldDefinition {
   key: string;
@@ -58,4 +60,40 @@ export interface DataSourceDefinition {
    * pushdown path (`run`/`runFull`) does NOT call this.
    */
   fetch: (tenantId: string) => Promise<Array<Record<string, unknown>>>;
+
+  /**
+   * R.3.7 -- PREREQUISITE FIX, not new scope creep.
+   *
+   * When set, a caller must hold this permission (or an RBAC-bypass
+   * role) to preview, drill into, export, or schedule a report against
+   * this source -- enforced by
+   * modules/reporting/utils/data-source-authorization.ts's
+   * assertDataSourceAccess(), called from every AuthContext-available
+   * checkpoint (report-definition.controller.ts's preview/previewPivot/
+   * drilldown/create+schedule/update+schedule,
+   * report-execution.controller.ts's generate).
+   *
+   * BEFORE THIS FIELD EXISTED: every data source was reachable by
+   * anyone holding the blanket Permission.REPORT_VIEW/REPORT_CREATE
+   * gate on the /api/reports* and /api/reporting/* routes, with NO
+   * data-source-specific check anywhere in the call chain (confirmed by
+   * reading report-definition.controller.ts, report-builder.service.ts,
+   * drilldown.service.ts, report-execution.controller.ts,
+   * report-execution.service.ts, and every route file directly). A role
+   * holding only REPORT_VIEW -- e.g. AUDITOR, DEPARTMENT_MANAGER,
+   * SUPERVISOR -- could already preview/export/schedule a report over
+   * `expenses` or `fuel` with no EXPENSE_VIEW/FUEL_VIEW check at all.
+   * That gap is closed retroactively here (see bootstrap-data-sources.ts)
+   * as a prerequisite for safely registering `allocations`, a strictly
+   * more sensitive source, through the same, previously-ungated engine.
+   *
+   * Optional and additive: a source with no `requiredPermission` keeps
+   * its exact previous behaviour (gated only by the route-level
+   * REPORT_VIEW/REPORT_CREATE permission), so `vehicles`, `trips`,
+   * `maintenance`, `drivers`, `organizations`, `alerts`, and
+   * `workorders` are deliberately left unchanged -- none of them expose
+   * data with a narrower existing permission than REPORT_VIEW already
+   * implies, per the role matrix in server/permissions/roles.ts.
+   */
+  requiredPermission?: Permission;
 }
