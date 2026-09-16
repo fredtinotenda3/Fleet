@@ -13,6 +13,8 @@ export const REPORTS_ROUTES = {
   },
   exports: '/reports/exports',
   scheduled: '/reports/scheduled',
+  /** R.3.6 -- Work Order Reporting. */
+  workorders: '/reports/workorders',
 } as const;
 
 export type ReportsRoute = typeof REPORTS_ROUTES;

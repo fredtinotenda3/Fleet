@@ -43,7 +43,15 @@ describe('report data sources are scoped', () => {
   // for the live alert-list/detail reads (Wave 2's own alert work relies
   // on it), so the report builder inherits the same scoping automatically;
   // this pins that inheritance explicitly rather than assuming it.
-  it.each(['tblvehicles', 'tblexpenses', 'tblfuellogs', 'tblreminders', 'tbltrips', 'tbltelematics_alerts'])(
+  //
+  // WAVE 3, R.3.6: 'tblworkorders' added when the `workorders` report
+  // data source was registered (modules/reporting/registry/data-sources/
+  // workorders.data-source.ts) -- it was already in
+  // orgUnitScopedCollections() (orgUnitSource: 'vehicle') for the live
+  // WorkOrderRepository.getFilteredInScope/getFilteredForExport reads, so
+  // the report builder inherits the same scoping automatically; this pins
+  // that inheritance explicitly rather than assuming it.
+  it.each(['tblvehicles', 'tblexpenses', 'tblfuellogs', 'tblreminders', 'tbltrips', 'tbltelematics_alerts', 'tblworkorders'])(
     '%s restricts a scoped user to their own units',
     (collection) => {
       expect(orgUnitPredicate(collection, ctx(['unit-harare']))).toEqual({
@@ -78,6 +86,7 @@ describe('report data sources are scoped', () => {
     expect(scoped).toContain('tblvehicles');
     expect(scoped).toContain('tblexpenses');
     expect(scoped).toContain('tbltelematics_alerts');
+    expect(scoped).toContain('tblworkorders');
     expect(scoped).not.toContain('tblfuelstations');
   });
 });

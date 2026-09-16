@@ -19,6 +19,12 @@ import { reportFilterGroupSchema } from './reportFilter';
 // modules/reporting/registry/data-sources/alerts.data-source.ts), the
 // first Exception/Alert report data source. There was previously no way
 // to build an alert/exception report through the builder at all.
+//
+// WAVE 3, R.3.6: 'workorders' added -- backed by tblworkorders (see
+// modules/reporting/registry/data-sources/workorders.data-source.ts).
+// There was previously no way to build a work-order report (status/
+// priority/vehicle/workshop/technician/cost/turnaround) through the
+// builder, and no work-order KPI surface anywhere in the product.
 export const REPORT_DATA_SOURCES = [
   'vehicles',
   'trips',
@@ -28,6 +34,7 @@ export const REPORT_DATA_SOURCES = [
   'organizations',
   'drivers',
   'alerts',
+  'workorders',
 ] as const;
 export type ReportDataSource = (typeof REPORT_DATA_SOURCES)[number];
 

@@ -5,3 +5,4 @@ export { default as ReportBuilder } from './ReportBuilder';
 export { default as ReportPreview } from './ReportPreview';
 export { default as ExportCenter } from './ExportCenter';
 export { default as ScheduledReports } from './ScheduledReports';
+export { default as WorkOrderReports } from './WorkOrderReports';

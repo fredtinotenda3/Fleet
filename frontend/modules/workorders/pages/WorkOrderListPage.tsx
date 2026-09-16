@@ -41,6 +41,14 @@ export function WorkOrderListPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const licensePlateParam = searchParams.get('license_plate') ?? undefined;
+  // R.3.6 -- Work Order Reporting drill-down. WorkOrderReports.tsx's
+  // status/priority charts navigate here with `?status=`/`?priority=`
+  // (WORKORDER_ROUTES.byStatus/byPriority) -- previously only
+  // `license_plate` was read from the URL into the initial filter state,
+  // so a status/priority deep link would land on this page with every
+  // work order shown instead of the filtered set the click promised.
+  const statusParam = (searchParams.get('status') as WorkOrderFiltersType['status']) ?? undefined;
+  const priorityParam = (searchParams.get('priority') as WorkOrderFiltersType['priority']) ?? undefined;
 
   const user = useSessionStore((s) => s.user);
   const roles = user?.roles ?? [];
@@ -54,7 +62,11 @@ export function WorkOrderListPage() {
    */
   const canCreate = canCreateWorkOrders(roles);
 
-  const [filters, setFilters] = useState<WorkOrderFiltersType>({ license_plate: licensePlateParam });
+  const [filters, setFilters] = useState<WorkOrderFiltersType>({
+    license_plate: licensePlateParam,
+    status: statusParam,
+    priority: priorityParam,
+  });
   const [page, setPage] = useState(1);
   const [assignTarget, setAssignTarget] = useState<WorkOrder | null>(null);
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);

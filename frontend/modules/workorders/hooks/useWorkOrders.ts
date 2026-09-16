@@ -4,6 +4,7 @@ import { useQuery, type UseQueryOptions } from '@tanstack/react-query';
 import { workOrdersApi } from '../services/workorders.api';
 import { mechanicsApi } from '../services/mechanics.api';
 import { baysApi } from '../services/bays.api';
+import type { DateRange } from '@/shared/types/common.types';
 import type { WorkOrder, WorkOrderListParams } from '../types';
 
 export const workOrderKeys = {
@@ -55,5 +56,19 @@ export function useAvailableBays() {
     queryFn: () => baysApi.list('available'),
     staleTime: 30_000,
     select: (result) => result.data,
+  });
+}
+
+/**
+ * R.3.6 -- Work Order Reporting. Backs WorkOrderReports.tsx's KPI
+ * cards/charts. `dateRange` is included in the query key so switching
+ * date presets refetches rather than serving a stale range from cache
+ * -- same pattern useFleetKPIs (modules/analytics/hooks/useAnalytics.ts)
+ * already uses for Fleet Summary.
+ */
+export function useWorkOrderStats(dateRange?: DateRange) {
+  return useQuery({
+    queryKey: ['workorders', 'stats', dateRange],
+    queryFn: () => workOrdersApi.getStats(dateRange),
   });
 }

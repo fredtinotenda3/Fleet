@@ -31,6 +31,7 @@ const DATA_SOURCE_LABELS: Record<(typeof REPORT_DATA_SOURCES)[number], string> =
   organizations: 'Organizations',
   drivers: 'Drivers',
   alerts: 'Alerts',
+  workorders: 'Work Orders',
 };
 
 interface ReportBuilderPageProps {

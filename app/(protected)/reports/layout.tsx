@@ -15,10 +15,13 @@ interface ReportNavItem {
   href: string;
   pattern: string;
   exact?: boolean;
+  /** R.3.6. When set, the item is hidden entirely for a user who lacks this permission, rather than linking to a page that will just render its own Restricted state. REPORT_VIEW (this layout's own gate) does not imply every section's permission -- see WorkOrderReports.tsx's header comment. */
+  requires?: Permission;
 }
 
 const REPORT_NAV_ITEMS: ReportNavItem[] = [
   { label: 'Executive Dashboard', href: REPORTS_ROUTES.executive, pattern: '/reports', exact: true },
+  { label: 'Work Order Reports', href: REPORTS_ROUTES.workorders, pattern: '/reports/workorders', requires: Permission.WORKORDER_VIEW },
   { label: 'Report Builder', href: REPORTS_ROUTES.builder.root, pattern: '/reports/builder' },
   { label: 'AI Insights', href: '/reports/ai', pattern: '/reports/ai' },
   { label: 'Export Center', href: REPORTS_ROUTES.exports, pattern: '/reports/exports' },
@@ -59,7 +62,7 @@ export default function ReportsLayout({ children }: { children: React.ReactNode 
           <nav aria-label="Reports sections" className="flex gap-1 px-4 overflow-x-auto sm:px-6">
             {REPORT_NAV_ITEMS.map((item) => {
               const active = isNavItemActive(item, pathname);
-              return (
+              const link = (
                 <Link
                   key={item.href}
                   href={item.href}
@@ -73,6 +76,13 @@ export default function ReportsLayout({ children }: { children: React.ReactNode 
                 >
                   {item.label}
                 </Link>
+              );
+              return item.requires ? (
+                <PermissionGuard key={item.href} permission={item.requires}>
+                  {link}
+                </PermissionGuard>
+              ) : (
+                link
               );
             })}
           </nav>

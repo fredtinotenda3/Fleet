@@ -18,6 +18,12 @@ import type {
 import '@/modules/workorders/types/workorder.tenancy-addendum';
 import '@/modules/workorders/types/workorder.dvir-addendum';
 import type { Priority, PaginatedResponse } from '@/shared/types/common.types';
+// R.3.6 -- Work Order Reporting. Re-exports the backend's own
+// WorkOrderStats/WorkOrderKpiSummary shapes rather than hand-duplicating
+// them client-side, same pattern this file already uses for WorkOrder
+// itself -- one definition, imported on both sides of the API boundary.
+import type { WorkOrderStats } from '@/modules/workorders/repositories/workorder.repository';
+import type { WorkOrderKpiSummary } from '@/modules/workorders/services/workorder.service';
 
 export type {
   WorkOrder,
@@ -27,6 +33,8 @@ export type {
   WorkOrderPartUsage,
   Priority,
   PaginatedResponse,
+  WorkOrderStats,
+  WorkOrderKpiSummary,
 };
 
 /** WorkOrderFilters plus the pagination params the list endpoint accepts (see workorders.api.ts's list()). */

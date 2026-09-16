@@ -19,10 +19,11 @@
 
 import { apiClient } from '@/shared/utils/api-client.utils';
 import { normalizeListResponse } from '@/shared/utils/pagination.utils';
-import type { PaginatedResponse } from '@/shared/types/common.types';
+import type { DateRange, PaginatedResponse } from '@/shared/types/common.types';
 import type {
   WorkOrder,
   WorkOrderCreateDTO,
+  WorkOrderKpiSummary,
   WorkOrderListParams,
   AssignMechanicPayload,
   ChangeWorkOrderStatusPayload,
@@ -72,6 +73,21 @@ export const workOrdersApi = {
 
   async recordLabor(id: string, laborHours: number, hourlyRate: number): Promise<WorkOrder> {
     return apiClient.post<WorkOrder>(`${BASE}/${id}/labor`, { laborHours, hourlyRate });
+  },
+
+  /**
+   * R.3.6 -- Work Order Reporting. GET /api/workorders/stats, gated
+   * server-side by the same WORKORDER_VIEW permission as `list`/
+   * `getById` (see app/api/workorders/stats/route.ts) -- an aggregate
+   * view is not a lower-sensitivity read than the row list.
+   * `dateRange` follows the same startDate/endDate ISO-string
+   * convention analytics.api.ts#getFleetKPIs already established.
+   */
+  async getStats(dateRange?: DateRange): Promise<WorkOrderKpiSummary> {
+    const params: Record<string, string | undefined> = {};
+    if (dateRange?.startDate) params.startDate = dateRange.startDate.toISOString();
+    if (dateRange?.endDate) params.endDate = dateRange.endDate.toISOString();
+    return apiClient.get<WorkOrderKpiSummary>(`${BASE}/stats`, { params });
   },
 };
 

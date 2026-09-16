@@ -44,6 +44,31 @@ export class WorkOrderController {
     }
   }
 
+  /**
+   * R.3.6 -- Work Order Reporting. Same permission gate as `list`/`get`
+   * (WORKORDER_VIEW, see app/api/workorders/stats/route.ts) and the
+   * same org-unit-scoped context resolution -- this is not a new
+   * authorization boundary, it is the existing one applied to an
+   * aggregate view instead of a row list.
+   *
+   * `startDate`/`endDate` follow the exact query-param convention
+   * analytics.controller.ts already established for Fleet Summary
+   * (ISO strings, both-or-neither) rather than inventing a second date-
+   * range contract.
+   */
+  async stats(req: NextRequest) {
+    try {
+      const context = await resolveTenantContext(req);
+      const sp = req.nextUrl.searchParams;
+      const startDate = sp.get('startDate');
+      const endDate = sp.get('endDate');
+      const dateRange = startDate && endDate ? { startDate: new Date(startDate), endDate: new Date(endDate) } : undefined;
+      return successResponse(await workOrderService.getStats(context, dateRange));
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
   async create(req: NextRequest) {
     try {
       /**

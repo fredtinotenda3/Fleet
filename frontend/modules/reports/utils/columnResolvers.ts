@@ -126,6 +126,30 @@ const ALERT_FIELDS: ResolvableField[] = [
   ...ORG_UNIT_FIELDS,
 ];
 
+// WAVE 3, R.3.6. Mirrors bootstrap-data-sources.ts/data-sources/
+// workorders.data-source.ts. `source` is labeled "Origin" (not "Type")
+// -- WorkOrder has no formal category/classification field, so this is
+// the closest genuine proxy, not a renamed taxonomy. No "Overdue"/SLA
+// field: WorkOrder has no due-date/SLA field to derive one from.
+const WORKORDER_FIELDS: ResolvableField[] = [
+  { field: 'title', label: 'Title', dataType: 'string', groupable: false, aggregatable: false },
+  { field: 'status', label: 'Status', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'priority', label: 'Priority', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'source', label: 'Origin', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'license_plate', label: 'License Plate', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'bayName', label: 'Bay', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'mechanicName', label: 'Assigned Mechanic', dataType: 'string', groupable: true, aggregatable: false },
+  { field: 'openedAt', label: 'Opened At', dataType: 'date', groupable: false, aggregatable: false },
+  { field: 'startedAt', label: 'Started At', dataType: 'date', groupable: false, aggregatable: false },
+  { field: 'completedAt', label: 'Completed At', dataType: 'date', groupable: false, aggregatable: false },
+  { field: 'turnaroundHours', label: 'Turnaround (Hours)', dataType: 'number', groupable: false, aggregatable: true },
+  { field: 'laborHours', label: 'Labor Hours', dataType: 'number', groupable: false, aggregatable: true },
+  { field: 'laborCost', label: 'Labor Cost', dataType: 'currency', groupable: false, aggregatable: true },
+  { field: 'partsCost', label: 'Parts Cost', dataType: 'currency', groupable: false, aggregatable: true },
+  { field: 'totalCost', label: 'Total Cost', dataType: 'currency', groupable: false, aggregatable: true },
+  ...ORG_UNIT_FIELDS,
+];
+
 const FIELD_CATALOG: Record<ReportDataSource, ResolvableField[]> = {
   vehicles: VEHICLE_FIELDS,
   trips: TRIP_FIELDS,
@@ -135,6 +159,7 @@ const FIELD_CATALOG: Record<ReportDataSource, ResolvableField[]> = {
   organizations: ORGANIZATION_FIELDS,
   drivers: DRIVER_FIELDS,
   alerts: ALERT_FIELDS,
+  workorders: WORKORDER_FIELDS,
 };
 
 export function getFieldsForDataSource(dataSource: ReportDataSource): ResolvableField[] {

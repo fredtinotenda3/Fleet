@@ -21,6 +21,7 @@ import { tripRepository } from '@/modules/trips/repositories/trip.repository';
 import { driversDataSource } from './data-sources/drivers.data-source';
 import { organizationsDataSource } from './data-sources/organizations.data-source';
 import { alertsDataSource } from './data-sources/alerts.data-source';
+import { workordersDataSource } from './data-sources/workorders.data-source';
 
 const LEGACY_FALLBACK_PAGE = { page: 1, limit: 10000 };
 
@@ -180,4 +181,5 @@ export function bootstrapDataSources(): void {
   dataSourceRegistry.register(driversDataSource);
   dataSourceRegistry.register(organizationsDataSource);
   dataSourceRegistry.register(alertsDataSource);
+  dataSourceRegistry.register(workordersDataSource);
 }

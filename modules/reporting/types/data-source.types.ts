@@ -10,7 +10,8 @@ export type DataSourceKey =
   | 'trips'
   | 'drivers'
   | 'organizations'
-  | 'alerts';
+  | 'alerts'
+  | 'workorders';
 
 export interface DataSourceFieldDefinition {
   key: string;

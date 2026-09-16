@@ -1,10 +1,10 @@
 // modules/workorders/services/workorder.service.ts
-import { workOrderRepository, WorkOrderRepository } from '../repositories/workorder.repository';
+import { workOrderRepository, WorkOrderRepository, WorkOrderStats } from '../repositories/workorder.repository';
 import { WorkOrder, WorkOrderCreateDTO, WorkOrderFilters, WorkOrderStatus } from '../types/workorder.types';
 import '../types/workorder.tenancy-addendum';
 import '../types/workorder.dvir-addendum';
 import { AppError, ConflictError, NotFoundError, ValidationError } from '@/server/errors/app.errors';
-import { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
+import { PaginationParams, PaginatedResponse, DateRange } from '@/shared/types/common.types';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import {
   WorkOrderCreatedEvent,
@@ -31,6 +31,13 @@ const VALID_TRANSITIONS: Record<WorkOrderStatus, WorkOrderStatus[]> = {
   completed: [],
   cancelled: [],
 };
+
+/** R.3.6 -- Work Order Reporting. WorkOrderStats plus the "open/completed/cancelled" arithmetic regrouping the KPI page's stat cards ask for directly. */
+export interface WorkOrderKpiSummary extends WorkOrderStats {
+  openCount: number;
+  completedCount: number;
+  cancelledCount: number;
+}
 
 export class WorkOrderService {
   constructor(private readonly repo: WorkOrderRepository = workOrderRepository) {}
@@ -270,6 +277,30 @@ export class WorkOrderService {
     if (!wo) throw new NotFoundError('Work order not found');
     this.assertInScope(wo, context);
     return wo;
+  }
+
+  /**
+   * R.3.6 -- Work Order Reporting. Thin wrapper over the repository's
+   * scoped aggregation, matching the listInScope/get pattern: the
+   * service layer does not re-derive scope here, it delegates to the
+   * already-scoped repository call.
+   *
+   * openCount/completedCount/cancelledCount are derived from
+   * statusCounts (an open/assigned/in_progress/on_hold work order is
+   * "open" in the operational sense the report's KPI cards use) rather
+   * than adding a second Mongo pass for what is a pure arithmetic
+   * regrouping of numbers the repository already computed.
+   */
+  async getStats(context: TenantContext, dateRange?: DateRange): Promise<WorkOrderKpiSummary> {
+    const stats = await this.repo.getStatsInScope(context, dateRange);
+    const openCount =
+      stats.statusCounts.open + stats.statusCounts.assigned + stats.statusCounts.in_progress + stats.statusCounts.on_hold;
+    return {
+      ...stats,
+      openCount,
+      completedCount: stats.statusCounts.completed,
+      cancelledCount: stats.statusCounts.cancelled,
+    };
   }
 
   private assertTransition(from: WorkOrderStatus, to: WorkOrderStatus): void {
