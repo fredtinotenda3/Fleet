@@ -622,6 +622,35 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
     confirmed: false,
   },
 
+  // ── Olivine transport-cost work (Phase O1). ────────────────────────
+  {
+    module: 'transport-cost',
+    collections: ['tbltransportcostsourcerecords'],
+    level: 'org-unit',
+    /**
+     * 'explicit', matching dispatch/inventory's reasoning rather than
+     * vehicles/fuel/expenses' 'vehicle' join: these registrations belong
+     * to third-party transporters and owner-operators, not Olivine-owned
+     * vehicles in tblvehicles (audit Section F), so there is no vehicle
+     * row to inherit scope from. orgUnitId is resolved once per import
+     * batch from the IMPORTING USER's own assignment
+     * (resolveCreationOrgUnitId), never from the uploaded spreadsheet --
+     * see the handler.
+     */
+    orgUnitSource: 'explicit',
+    rationale:
+      'A transport-cost source record describes a third-party/owner-operator delivery, not ' +
+      "an Olivine-owned vehicle, so it has no vehicle row to inherit scope from; it takes the " +
+      "importing user's own org-unit assignment at import time instead, mirroring dispatch " +
+      "and inventory's 'explicit' rule. Left confirmed:false because WHICH org unit should " +
+      "own this data -- the importing user's branch, or a depot/origin named in the sheet " +
+      'itself (see audit Section R item 6, business-stream/branch attribution) -- is one of ' +
+      'the still-open client confirmations Phase O1 was deliberately scoped to not need; this ' +
+      'entry records engineering\'s interim best reading, not a settled answer. Revisit once ' +
+      'that confirmation lands, alongside the later phases (O3/O4) it actually gates.',
+    confirmed: false,
+  },
+
   // ── Registered in the Phase 0 foundation-integrity pass. ───────────
   // 'ai', 'analytics', 'esg' own no collection of their own -- confirmed
   // by grepping for `collectionName =` and any *.repository.ts file

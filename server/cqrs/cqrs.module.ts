@@ -5,6 +5,7 @@ import { registerFuelCqrsHandlers } from '@/modules/fuel/cqrs.register';
 import { registerExpenseCqrsHandlers } from '@/modules/expenses/cqrs.register';
 import { registerMaintenanceCqrsHandlers } from '@/modules/maintenance/cqrs.register';
 import { registerTripCqrsHandlers } from '@/modules/trips/cqrs.register';
+import { registerTransportCostCqrsHandlers } from '@/modules/transport-cost/cqrs.register';
 import { bootstrapEvents } from '@/server/events/bootstrap';
 
 declare global {
@@ -22,6 +23,7 @@ export function bootstrapCqrs(): void {
   registerExpenseCqrsHandlers(commandBus, queryBus);
   registerMaintenanceCqrsHandlers(commandBus, queryBus);
   registerTripCqrsHandlers(commandBus, queryBus);
+  registerTransportCostCqrsHandlers(commandBus, queryBus);
 
   bootstrapEvents();
 

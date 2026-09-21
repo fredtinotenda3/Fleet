@@ -280,6 +280,22 @@ export enum Permission {
   WORKFLOW_REJECT = 'workflow:reject',
   WORKFLOW_CANCEL = 'workflow:cancel',
 
+  // -- Transport cost source records (Olivine Phase O1) --
+  //
+  // Governs the source-evidence import pipeline only (Third Party and
+  // Vansales spreadsheets -> TransportCostSourceRecord). Deliberately
+  // its own permission pair rather than reusing EXPENSE_*/FINANCE_*:
+  // this data is NOT yet a financial record (it has not been normalized,
+  // deduplicated, or posted to the Allocation Ledger -- see the audit's
+  // Section E source-record/operational-record/ledger-posting
+  // distinction and the module's own file headers), so granting it
+  // alongside FINANCE_MANAGE would imply an accounting sign-off this
+  // phase does not perform. TRANSPORT_COST_IMPORT is a write permission
+  // (creates rows) separate from view, mirroring EXPENSE_CREATE vs
+  // EXPENSE_VIEW.
+  TRANSPORT_COST_VIEW = 'transport-cost:view',
+  TRANSPORT_COST_IMPORT = 'transport-cost:import',
+
   // -- Telematics ingestion (PHASE 0, F-5) --
   //
   // POST /api/telematics/ingest previously required only an
@@ -457,6 +473,12 @@ export const rolePermissions: Record<Role, Permission[]> = {
     // functions with organization-wide effect. FINANCE_MANAGE stays with
     // ACCOUNTANT (and org owner/admin).
     Permission.FINANCE_VIEW,
+    // Transport cost (Olivine Phase O1) -- VIEW ONLY, same reasoning as
+    // FINANCE_VIEW immediately above: a branch manager should be able to
+    // see imported transport-cost source records for their branch, but
+    // importing spreadsheets (and thereby creating the append-only
+    // evidence trail) stays with FLEET_MANAGER/ACCOUNTANT.
+    Permission.TRANSPORT_COST_VIEW,
   ],
 
   /**
@@ -596,6 +618,11 @@ export const rolePermissions: Record<Role, Permission[]> = {
     Permission.EXPENSE_CREATE,
     Permission.EXPENSE_EDIT,
     Permission.MAINTENANCE_DELETE,
+    // Transport cost (Olivine Phase O1) -- a fleet manager is the
+    // operational owner of the third-party/Vansales transporter
+    // relationships this data describes, so gets both view and import.
+    Permission.TRANSPORT_COST_VIEW,
+    Permission.TRANSPORT_COST_IMPORT,
   ],
 
   /**
@@ -729,6 +756,11 @@ export const rolePermissions: Record<Role, Permission[]> = {
     // finance settings are all accounting functions.
     Permission.FINANCE_VIEW,
     Permission.FINANCE_MANAGE,
+    // Transport cost (Olivine Phase O1) -- the accountant is this data's
+    // natural owner (it is Olivine's transport spend, ahead of the later
+    // phase that posts it to the ledger), so gets both view and import.
+    Permission.TRANSPORT_COST_VIEW,
+    Permission.TRANSPORT_COST_IMPORT,
   ],
 
   [Role.DISPATCHER]: [

@@ -225,6 +225,7 @@ describe('open decisions stay visible', () => {
       'procurement',
       'reporting',
       'sla',
+      'transport-cost',
       'vendors',
     ]);
   });

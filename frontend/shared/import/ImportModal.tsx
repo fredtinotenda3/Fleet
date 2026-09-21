@@ -65,7 +65,16 @@ interface ImportModalProps {
   title: string;
   description: string;
   columns: ImportColumnDef[];
-  onImport: (records: Array<Record<string, unknown>>) => Promise<ImportResponse>;
+  /**
+   * `fileName` is the second argument (rather than folded into
+   * `records`) so existing callers that only destructure `records` keep
+   * compiling unchanged -- TypeScript allows a function expecting fewer
+   * parameters wherever one expecting more is required. Added for
+   * importers that need provenance (which file a row came from) alongside
+   * the row data itself -- see modules/transport-cost's source-evidence
+   * records, which store this as an immutable audit-trail field.
+   */
+  onImport: (records: Array<Record<string, unknown>>, fileName: string) => Promise<ImportResponse>;
   onImportComplete?: (response: ImportResponse) => void;
   maxPreviewRows?: number;
   maxRows?: number;
@@ -191,7 +200,7 @@ export function ImportModal({
     setStage('submitting');
     try {
       const records = buildRecordsForSubmission();
-      const result = await onImport(records);
+      const result = await onImport(records, fileName ?? '');
       setResponse(result);
       setStage('report');
       onImportComplete?.(result);
