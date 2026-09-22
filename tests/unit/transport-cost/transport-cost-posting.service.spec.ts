@@ -19,7 +19,10 @@
 //  - a same-amount recompute after a correction is again a no-op
 //  - a null Amount is refused, never zero-filled
 //  - an unresolved currency / unresolvable FX rate is refused, never guessed
-//  - Vansales rows are refused in this slice (no per-row date)
+//  - Vansales posts TOTAL under transport-retainer with the declared
+//    periodMonth as periodStart/periodEnd (Option A), with the same
+//    idempotency/correction discipline as 3rd Party, and is refused
+//    (never guessed) with no TOTAL or no valid periodMonth
 //  - an unresolved vehicle identity is refused
 //  - org-unit scope is enforced (404, not silently empty)
 //  - reversing an already-reversed posting is refused (race guard)
@@ -185,6 +188,85 @@ describe('TransportCostPostingService.postSourceRecord -- happy path', () => {
   });
 });
 
+describe('TransportCostPostingService.postSourceRecord -- Vansales (periodization Option A)', () => {
+  function makeVansalesRecord(overrides: Partial<TransportCostSourceRecord> = {}) {
+    return makeSourceRecord({
+      sheetFamily: 'vansales',
+      date: null,
+      rawDate: '',
+      amount: null,
+      vansales: {
+        payerName: 'Mr Gurjit',
+        product: 'Golden Glow 2L',
+        monthlyCostBeforeVat: 1150,
+        weeklyAmounts: [300, 300, null, 300],
+        total: 1200,
+        periodMonth: '2026-01',
+      },
+      ...overrides,
+    });
+  }
+
+  it('posts TOTAL under transport-retainer, with the declared month as periodStart/periodEnd', async () => {
+    const service = buildService({ record: makeVansalesRecord() });
+    const outcome = await service.postSourceRecord(contextFor(null), 'user-1', SOURCE_ID);
+
+    expect(outcome.status).toBe('posted');
+    if (outcome.status !== 'posted') throw new Error('unreachable');
+    expect(outcome.posting.costCategory).toBe('transport-retainer');
+    expect(outcome.posting.amount).toBe(1200); // TOTAL, never monthlyCostBeforeVat or a re-summed weeklyAmounts
+    expect(outcome.posting.periodStart).toEqual(new Date(2026, 0, 1));
+    expect(outcome.posting.periodEnd).toEqual(new Date(2026, 0, 31));
+    expect(outcome.posting.description).toContain('Mr Gurjit');
+    expect(fakeCollection.docs).toHaveLength(1);
+  });
+
+  it('a second call with no change is a no-op, not a new row (same idempotency discipline as 3rd Party)', async () => {
+    const service = buildService({ record: makeVansalesRecord() });
+    const first = await service.postSourceRecord(contextFor(null), 'user-1', SOURCE_ID);
+    const second = await service.postSourceRecord(contextFor(null), 'user-1', SOURCE_ID);
+
+    expect(second.status).toBe('unchanged');
+    if (first.status !== 'posted' || second.status !== 'unchanged') throw new Error('unreachable');
+    expect(String(second.posting._id)).toBe(String(first.posting._id));
+    expect(fakeCollection.docs).toHaveLength(1);
+  });
+
+  it('a changed TOTAL reverses the original and appends a corrected posting, never mutating the original', async () => {
+    const service = buildService({ record: makeVansalesRecord() });
+    const first = await service.postSourceRecord(contextFor(null), 'user-1', SOURCE_ID);
+    if (first.status !== 'posted') throw new Error('unreachable');
+    const originalSnapshot = JSON.parse(JSON.stringify(first.posting));
+
+    const correctedService = buildService({
+      record: makeVansalesRecord({ vansales: { payerName: 'Mr Gurjit', product: 'Golden Glow 2L', monthlyCostBeforeVat: 1150, weeklyAmounts: [300, 300, null, 300], total: 1350, periodMonth: '2026-01' } }),
+    });
+    const second = await correctedService.postSourceRecord(contextFor(null), 'user-1', SOURCE_ID);
+
+    expect(second.status).toBe('corrected');
+    if (second.status !== 'corrected') throw new Error('unreachable');
+    expect(second.reversal.reversalOfPostingId).toBe(String(first.posting._id));
+    expect(second.posting.amount).toBe(1350);
+    expect(fakeCollection.docs).toHaveLength(3); // original + reversal + corrected
+    const storedOriginal = fakeCollection.docs.find((d: any) => String(d._id) === String(first.posting._id));
+    expect(JSON.parse(JSON.stringify(storedOriginal))).toMatchObject(
+      Object.fromEntries(Object.entries(originalSnapshot).filter(([k]) => k !== 'updatedAt'))
+    );
+  });
+
+  it('a 3rd Party and a Vansales posting for the same tenant never collide on idempotencyKey (different costCategory)', async () => {
+    const thirdParty = buildService({ record: makeSourceRecord() });
+    const thirdPartyOutcome = await thirdParty.postSourceRecord(contextFor(null), 'user-1', SOURCE_ID);
+
+    const vansales = buildService({ record: makeVansalesRecord() });
+    const vansalesOutcome = await vansales.postSourceRecord(contextFor(null), 'user-1', SOURCE_ID);
+
+    if (thirdPartyOutcome.status !== 'posted' || vansalesOutcome.status !== 'posted') throw new Error('unreachable');
+    expect(thirdPartyOutcome.posting.idempotencyKey).not.toBe(vansalesOutcome.posting.idempotencyKey);
+    expect(fakeCollection.docs).toHaveLength(2);
+  });
+});
+
 describe('TransportCostPostingService.postSourceRecord -- idempotent replay', () => {
   it('a second call with no change is a no-op, not a new row', async () => {
     const service = buildService({});
@@ -327,12 +409,40 @@ describe('TransportCostPostingService.postSourceRecord -- refused, never fabrica
     expect(fakeCollection.docs).toHaveLength(0);
   });
 
-  it('a Vansales row is refused in this slice (no per-row transaction date)', async () => {
-    const service = buildService({ record: makeSourceRecord({ sheetFamily: 'vansales', date: null }) });
+  it('a Vansales row with no TOTAL is refused, never zero-filled or derived from WEEK1-4', async () => {
+    const service = buildService({
+      record: makeSourceRecord({
+        sheetFamily: 'vansales',
+        date: null,
+        amount: null,
+        vansales: { payerName: 'Mr Gurjit', product: null, monthlyCostBeforeVat: null, weeklyAmounts: [null, null, null, null], total: null, periodMonth: '2026-01' },
+      }),
+    });
     const outcome = await service.postSourceRecord(contextFor(null), 'user-1', SOURCE_ID);
-    expect(outcome.status).toBe('skipped');
-    if (outcome.status !== 'skipped') throw new Error('unreachable');
-    expect(outcome.reason).toBe('unsupported-sheet-family');
+    expect(outcome).toEqual({
+      status: 'skipped',
+      reason: 'pending-amount',
+      detail: expect.stringContaining('no TOTAL recorded'),
+    });
+    expect(fakeCollection.docs).toHaveLength(0);
+  });
+
+  it('a Vansales row with no periodMonth is refused, never inferred from a sheet-tab name', async () => {
+    const service = buildService({
+      record: makeSourceRecord({
+        sheetFamily: 'vansales',
+        date: null,
+        amount: null,
+        vansales: { payerName: 'Mr Gurjit', product: null, monthlyCostBeforeVat: null, weeklyAmounts: [null, null, null, null], total: 1200, periodMonth: null },
+      }),
+    });
+    const outcome = await service.postSourceRecord(contextFor(null), 'user-1', SOURCE_ID);
+    expect(outcome).toEqual({
+      status: 'skipped',
+      reason: 'missing-period-month',
+      detail: expect.stringContaining('no valid periodMonth'),
+    });
+    expect(fakeCollection.docs).toHaveLength(0);
   });
 
   it('an unresolved vehicle identity (no confirmed ContractedVehicle yet) is refused', async () => {
@@ -357,6 +467,175 @@ describe('TransportCostPostingService.postSourceRecord -- refused, never fabrica
     expect(outcome.status).toBe('skipped');
     if (outcome.status !== 'skipped') throw new Error('unreachable');
     expect(outcome.reason).toBe('unresolved-fx-rate');
+  });
+});
+
+describe('TransportCostPostingService.postSourceRecord -- Swift (posts under third-party-transport, always skips for vehicle identity)', () => {
+  function makeSwiftRecord(overrides: Partial<TransportCostSourceRecord> = {}) {
+    return makeSourceRecord({
+      sheetFamily: 'swift',
+      date: new Date(2026, 0, 5),
+      rawDate: '2026-01-05',
+      registration: null,
+      registrationRaw: '',
+      transporterNormalized: null,
+      transporterRaw: '',
+      destinationTown: 'Bulawayo',
+      customerName: 'Olivine',
+      salesInvoiceNo: 'CN-10234',
+      amount: 4500,
+      tonnageRaw: 32,
+      // The structural fact this whole describe block exists to prove:
+      // a real Swift row NEVER has a contractedVehicleId, because the
+      // source has no registration/transporter column to resolve one
+      // from -- see SWIFT_POSTING_DECISION.md.
+      contractedVehicleId: undefined,
+      ...overrides,
+    });
+  }
+
+  it('resolves amount/date exactly like 3rd Party (amount <- Total(Incl), date <- Cons. date) -- proven via a Swift row WITH a vehicle override', async () => {
+    // A real Swift row can never carry a contractedVehicleId (see below),
+    // but resolveAmountAndPeriod's 'swift' case is exercised the same
+    // way regardless -- this test isolates that resolution from the
+    // (always-true, for real data) vehicle-identity skip, by overriding
+    // contractedVehicleId as if a future change ever let one resolve.
+    const service = buildService({ record: makeSwiftRecord({ contractedVehicleId: VEHICLE_ID }) });
+    const outcome = await service.postSourceRecord(contextFor(null), 'user-1', SOURCE_ID);
+
+    expect(outcome.status).toBe('posted');
+    if (outcome.status !== 'posted') throw new Error('unreachable');
+    expect(outcome.posting.costCategory).toBe('third-party-transport');
+    expect(outcome.posting.amount).toBe(4500);
+    expect(outcome.posting.periodStart).toEqual(new Date(2026, 0, 5));
+    expect(outcome.posting.periodEnd).toEqual(new Date(2026, 0, 5));
+    expect(fakeCollection.docs).toHaveLength(1);
+  });
+
+  it('a real Swift row (no contractedVehicleId) always skips at unresolved-vehicle-identity, never fabricating a vehicle', async () => {
+    const service = buildService({ record: makeSwiftRecord() });
+    const outcome = await service.postSourceRecord(contextFor(null), 'user-1', SOURCE_ID);
+
+    expect(outcome).toEqual({
+      status: 'skipped',
+      reason: 'unresolved-vehicle-identity',
+      detail: expect.any(String),
+    });
+    expect(fakeCollection.docs).toHaveLength(0);
+  });
+
+  it('a Swift row with no Total(Incl) is refused as pending-amount, never zero-filled (checked before the vehicle-identity skip would otherwise fire)', async () => {
+    const service = buildService({ record: makeSwiftRecord({ amount: null, contractedVehicleId: undefined }) });
+    const outcome = await service.postSourceRecord(contextFor(null), 'user-1', SOURCE_ID);
+
+    expect(outcome).toEqual({
+      status: 'skipped',
+      reason: 'pending-amount',
+      detail: expect.stringContaining('no Amount recorded'),
+    });
+    expect(fakeCollection.docs).toHaveLength(0);
+  });
+});
+
+describe('TransportCostPostingService.postSourceRecord -- Depot STO (posts under stock-transfer, DATE as-is, vehicle-identity resolvability depends on which month\'s shape the row came from)', () => {
+  function makeDepotStoRecord(overrides: Partial<TransportCostSourceRecord> = {}) {
+    return makeSourceRecord({
+      sheetFamily: 'depot-sto',
+      date: new Date(2026, 5, 15),
+      rawDate: '15.06.26',
+      registration: 'AGL8230',
+      registrationRaw: 'AGL 8230',
+      transporterNormalized: 'PRINORTH',
+      transporterRaw: 'PRINORTH',
+      amount: 4500,
+      tonnageRaw: null,
+      depotSto: {
+        stoNumber: 'STO-1042',
+        sourceLocation: 'Harare',
+        depot: 'Bulawayo',
+        commodity: 'Golden Glow 2L',
+        driver: 'T. Moyo',
+        toonnesRaw: 15,
+        signOffMrGurjit: true,
+        signOffMrInderjeet: false,
+        signOffSharmaJi: true,
+      },
+      ...overrides,
+    });
+  }
+
+  it('posts a June/July-shaped row (registration present, confirmed) under stock-transfer with DATE as-is for periodStart/periodEnd', async () => {
+    const service = buildService({ record: makeDepotStoRecord({ contractedVehicleId: VEHICLE_ID }) });
+    const outcome = await service.postSourceRecord(contextFor(null), 'user-1', SOURCE_ID);
+
+    expect(outcome.status).toBe('posted');
+    if (outcome.status !== 'posted') throw new Error('unreachable');
+    expect(outcome.posting.costCategory).toBe('stock-transfer');
+    expect(outcome.posting.amount).toBe(4500);
+    expect(outcome.posting.periodStart).toEqual(new Date(2026, 5, 15));
+    expect(outcome.posting.periodEnd).toEqual(new Date(2026, 5, 15));
+    expect(outcome.posting.description).toContain('STO-1042');
+    expect(outcome.posting.description).toContain('Golden Glow 2L');
+    expect(fakeCollection.docs).toHaveLength(1);
+  });
+
+  it('a row with no registration value (May\'s structurally-absent column, or June/July\'s present-but-empty one) skips at unresolved-vehicle-identity, never fabricating a vehicle', async () => {
+    const service = buildService({
+      record: makeDepotStoRecord({
+        registration: null,
+        registrationRaw: '',
+        contractedVehicleId: undefined,
+        depotSto: {
+          stoNumber: 'STO-2001',
+          sourceLocation: 'Harare',
+          depot: 'Bulawayo',
+          commodity: 'Puredrop 2L',
+          driver: null,
+          toonnesRaw: null,
+          signOffMrGurjit: true,
+          signOffMrInderjeet: true,
+          signOffSharmaJi: false,
+        },
+      }),
+    });
+    const outcome = await service.postSourceRecord(contextFor(null), 'user-1', SOURCE_ID);
+
+    expect(outcome).toEqual({
+      status: 'skipped',
+      reason: 'unresolved-vehicle-identity',
+      detail: expect.any(String),
+    });
+    expect(fakeCollection.docs).toHaveLength(0);
+  });
+
+  it('a March/April-shaped row (registration present but not yet confirmed to a ContractedVehicle) also skips at unresolved-vehicle-identity -- the ordinary Phase O2 gate, same as 3rd Party', async () => {
+    const service = buildService({ record: makeDepotStoRecord({ contractedVehicleId: undefined }) });
+    const outcome = await service.postSourceRecord(contextFor(null), 'user-1', SOURCE_ID);
+
+    expect(outcome.status).toBe('skipped');
+    if (outcome.status !== 'skipped') throw new Error('unreachable');
+    expect(outcome.reason).toBe('unresolved-vehicle-identity');
+  });
+
+  it('a Depot STO row with no Amount is refused as pending-amount, never zero-filled', async () => {
+    const service = buildService({ record: makeDepotStoRecord({ amount: null, contractedVehicleId: VEHICLE_ID }) });
+    const outcome = await service.postSourceRecord(contextFor(null), 'user-1', SOURCE_ID);
+
+    expect(outcome).toEqual({
+      status: 'skipped',
+      reason: 'pending-amount',
+      detail: expect.stringContaining('no Amount recorded'),
+    });
+    expect(fakeCollection.docs).toHaveLength(0);
+  });
+
+  it('never surfaces the sign-off fields in the posting description -- raw provenance only, never treated as meaningful', async () => {
+    const service = buildService({ record: makeDepotStoRecord({ contractedVehicleId: VEHICLE_ID }) });
+    const outcome = await service.postSourceRecord(contextFor(null), 'user-1', SOURCE_ID);
+
+    expect(outcome.status).toBe('posted');
+    if (outcome.status !== 'posted') throw new Error('unreachable');
+    expect(outcome.posting.description).not.toMatch(/gurjit|inderjeet|sharma/i);
   });
 });
 

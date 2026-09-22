@@ -1,0 +1,186 @@
+
+[1] Reading /home/claude/olivine-audit/TRANSPORT_COST_JANUARY_2026.xlsx
+    3rd Party: 109 data rows. Vansales: 46 data rows. Swift: 281 data rows.
+    Depot STO: March 42, April 41, May 56, June 56, July 88, August 97 raw rows across six real sheets, four shapes.
+
+[2] Importing via the real ImportTransportCostHandler...
+    3rd Party import: 90 succeeded, 12 flagged as duplicates, 7 failed validation.
+    Vansales import:   43 succeeded, 0 flagged as duplicates, 3 failed validation.
+    Swift import:      276 succeeded, 0 flagged as duplicates, 5 failed validation.
+      - row 24: Truck registration number is required
+      - row 87: Date is missing or not in a recognised format
+      - row 102: Date is missing or not in a recognised format
+      - row 107: Date is missing or not in a recognised format
+      - row 108: Date is missing or not in a recognised format
+      - row 109: Date is missing or not in a recognised format
+      - row 110: Date is missing or not in a recognised format
+      - row 280: Cons. date is missing or not in a recognised format
+      - row 281: Cons. date is missing or not in a recognised format
+      - row 282: Cons. date is missing or not in a recognised format
+      - row 283: Cons. date is missing or not in a recognised format
+      - row 284: Cons. date is missing or not in a recognised format
+
+[3] Resolving normalization review queue (confirming every distinct name as NEW)...
+    Confirmed 42 distinct transporters, 76 distinct vehicles (0 skipped for lack of a resolved transporter).
+
+[4] Posting the 3rd Party batch to the Allocation Ledger...
+    Run 1: 73 posted, 17 skipped.
+      - pending-amount: 17
+
+[4b] RE-IMPORT-TWICE CHECK: re-running the identical batch a second and third time...
+    Run 2: 73/90 unchanged (no-op). Run 3: 73/90 unchanged.
+    Ledger row count: 73 after run 1, 73 after runs 2+3.
+    PASS -- zero duplicate postings from re-importing the same batch twice more.
+
+[4c] CORRECTED-ROW CHECK: mutating one posted row's Amount and re-posting...
+    Source row 2: Amount 120 -> 121.
+    Outcome: corrected
+      reversal posting 0000000000000000000002ea: -120 USD
+      new posting      0000000000000000000002eb: 121 USD
+    PASS -- the original posting is byte-identical to before the correction (never mutated).
+    Reverted the test mutation back to 120 (outcome: corrected) so reconciliation below reflects the real workbook.
+
+[4d] Posting the Vansales batch (periodMonth: 2026-01) to the Allocation Ledger...
+    Run 1: 0 posted, 43 skipped.
+      - pending-amount: 43
+
+[4e] RE-IMPORT-TWICE CHECK (Vansales): re-running the identical batch a second and third time...
+    Run 2: 0/43 unchanged (no-op). Run 3: 0/43 unchanged.
+    Ledger row count: 77 after run 1, 77 after runs 2+3.
+    PASS -- zero duplicate Vansales postings from re-importing the same batch twice more.
+
+[4f] CORRECTED-ROW CHECK (Vansales): mutating one posted row's TOTAL and re-posting...
+    No posted Vansales row available to correct -- skipping this check.
+
+[4g] RECONCILIATION -- January 2026, Vansales sheet (TOTAL column)
+    Workbook's own January Vansales TOTAL sum (summed from the raw sheet): 55600.00
+    Posted to the Allocation Ledger for January, transport-retainer (net, reversal-aware): 0.00
+    Difference: 55600.00
+    Explained by:
+      - 45 rows with a blank TOTAL cell (never zero-filled, never posted): pending, not a discrepancy
+      - 3 rows rejected at import validation, totaling 55600.00
+      - 0 rows flagged as likely duplicates, totaling 0.00
+      - 0 rows whose vehicle identity could not be resolved to a confirmed ContractedVehicle
+    Unexplained residual after accounting for the above: 0.00 (expect ~0.00, modulo rounding)
+
+[4h] Posting the Swift batch to the Allocation Ledger...
+    Run 1: 0 posted, 276 skipped.
+      - unresolved-vehicle-identity: 276
+    PASS -- every imported Swift row skips at unresolved-vehicle-identity, exactly as SWIFT_POSTING_DECISION.md documents (no vehicle/transporter column exists in this source at all -- never fabricated).
+
+[4i] RE-IMPORT-TWICE CHECK (Swift): re-running the identical batch a second and third time...
+    Run 2: 276/276 skipped (same as run 1, no state change). Run 3: 276/276 skipped.
+    Ledger row count (whole tenant -- 3rd Party/Vansales postings from earlier steps are already in here too): 77 after run 1, 77 after runs 2+3.
+    PASS -- zero Swift postings from any of the three runs, and the ledger gained zero rows from re-running the Swift batch (idempotent no-op, not just "no duplicates").
+
+[4j] RECONCILIATION -- January 2026, Swift sheet (Total(Incl) column)
+    Sanity cross-check: the sheet's OWN trailing subtotal row (Excel row 283) totals 30588.62 -- this MATCHES the 276 genuine rows' own independently-computed sum (30588.62) exactly, confirming Excel's own subtotal and this script's row-level sum agree. That subtotal row is correctly excluded from every total below -- summing it in as well would silently double the true figure.
+    Workbook's own January Swift Total(Incl) sum (276 genuine consignment rows only -- excludes the sheet's own subtotal/blank rows): 30588.62
+    Imported successfully as source evidence: 276 rows, totaling 30588.62
+    Posted to the Allocation Ledger: 0 rows, totaling 0.00 (every imported row structurally cannot resolve a vehicle identity -- see SWIFT_POSTING_DECISION.md)
+    Explained by:
+      - 5 rows in the raw sheet that are not genuine consignment rows (the trailing blank rows + the sheet's own subtotal row) -- excluded before this reconciliation even starts, never summed as if they were shipments
+      - 0 genuine rows with a blank Total(Incl) cell (never zero-filled, never posted): pending, not a discrepancy
+      - 5 rows rejected at import validation, 0.00 of that total belonging to a genuine row (the rest are the already-excluded blank/footer rows)
+      - 0 rows flagged as likely duplicates (expected 0 -- see SWIFT_POSTING_DECISION.md's "Swift rows are never deduplicated" section: registration is always null, so the duplicate check never fires for this family), totaling 0.00 among genuine rows
+      - imported rows refused as pending-amount at posting time (blank Total(Incl) that nonetheless reached posting), totaling 0.00
+      - imported rows skipped at posting time for unresolved-vehicle-identity -- structural, not a data-quality gap: this source has no registration/transporter column at all -- totaling 30588.62
+    Unexplained residual after accounting for the above: 0.00 (expect ~0.00, modulo rounding)
+
+[4k] Importing all six real Depot STO sheets via the real ImportTransportCostHandler (one batch per sheet)...
+    March  import: 36 succeeded, 3 flagged as duplicates, 3 failed validation.
+    April  import: 33 succeeded, 0 flagged as duplicates, 8 failed validation.
+    May    import: 55 succeeded, 0 flagged as duplicates, 1 failed validation.
+    June   import: 24 succeeded, 0 flagged as duplicates, 32 failed validation.
+    July   import: 11 succeeded, 0 flagged as duplicates, 77 failed validation.
+    August import: 73 succeeded, 11 flagged as duplicates, 13 failed validation.
+
+[4l] Resolving normalization review queue for Depot STO's own new transporters/vehicles...
+    Confirmed 44 distinct transporters, 92 distinct vehicles (0 skipped for lack of a resolved transporter).
+
+[4m] Posting all six Depot STO batches to the Allocation Ledger...
+    March : 36 posted, 0 skipped (none).
+    April : 33 posted, 0 skipped (none).
+    May   : 0 posted, 55 skipped (unresolved-vehicle-identity=55).
+    June  : 0 posted, 24 skipped (unresolved-vehicle-identity=21, pending-amount=3).
+    July  : 0 posted, 11 skipped (unresolved-vehicle-identity=11).
+    August: 72 posted, 1 skipped (unresolved-vehicle-identity=1).
+    PASS -- a mix of posted and unresolved-vehicle-identity-skipped rows, matching DEPOT_STO_DECISION.md's per-month table (March/April/August rows carry a real, populated registration and post normally; May/June/July rows do not, in the real data, and correctly skip).
+
+[4n] RE-POST CHECK (Depot STO): re-running every batch's posting a second time...
+    Ledger row count (whole tenant): 218 after run 1, 218 after re-posting all six batches.
+    PASS -- zero additional Depot STO postings and zero ledger row change from re-posting all six batches (idempotent no-op).
+
+[4o] RECONCILIATION -- all six real Depot STO sheets (Amount/COSTS/COST column)
+    Six sheets' own combined Amount/COSTS/COST sum (319 genuine rows only -- excludes March's own "TOTAL VAT EXCL" subtotal row and each sheet's trailing blank/padding rows): 308429.00
+    Posted to the Allocation Ledger: 141 rows, totaling 135628.00
+    Explained by:
+      - 11 genuine rows with a blank Amount/COSTS/COST cell (never zero-filled, never posted): pending, not a discrepancy
+      - 65 rows rejected at import validation (missing/unparseable DATE -- this is most of July's 72 undated rows, see DEPOT_STO_DECISION.md -- or a known-invalid transporter label), totaling 75363.00
+      - 14 rows flagged as likely duplicates, totaling 5399.00
+      - imported rows refused as pending-amount at posting time, totaling 0.00
+      - imported rows skipped at posting time for unresolved-vehicle-identity (May: no registration column at all; June/July: the column exists but is essentially never populated in the real data -- see DEPOT_STO_DECISION.md's "Vehicle identity" table), totaling 92039.00
+    Unexplained residual after accounting for the above: 0.00 (expect ~0.00, modulo rounding)
+
+    Per-month breakdown:
+      March : 36 imported, 36 posted (39403.00), skips: none
+      April : 33 imported, 33 posted (36942.00), skips: none
+      May   : 55 imported, 0 posted (0.00), skips: unresolved-vehicle-identity=55
+      June  : 24 imported, 0 posted (0.00), skips: unresolved-vehicle-identity=21, pending-amount=3
+      July  : 11 imported, 0 posted (0.00), skips: unresolved-vehicle-identity=11
+      August: 73 imported, 72 posted (59283.00), skips: unresolved-vehicle-identity=1
+
+[5] RECONCILIATION -- January 2026, 3rd Party sheet
+    Workbook's own January 3rd Party Amount total (summed from the raw sheet): 67812.00 (currency not stated in source -- see README)
+    Posted to the Allocation Ledger for January (net, reversal-aware):          29242.00 USD
+    Difference: 38570.00
+    Explained by:
+      - 30 rows with a blank Amount cell (never zero-filled, never posted): pending, not a discrepancy
+      - 7 rows rejected at import validation (bad date/registration/known-invalid transporter), totaling 35283.00
+      - 12 rows flagged as likely duplicates of an already-imported row, totaling 627.00
+      - 0 rows whose vehicle identity could not be resolved to a confirmed ContractedVehicle
+      - 4 rows posted successfully but their Date cell parses outside January 2026 (likely a year-entry typo on the source sheet, e.g. "31.01.25"), totaling 2660.00 -- posted to their own literal period, not to January, and not fabricated into this month
+          row 93: rawDate="30.01.25", amount=642
+          row 96: rawDate="31.01.25", amount=688
+          row 97: rawDate="31.01.25", amount=1070
+          row 105: rawDate="31.01.25", amount=260
+    Unexplained residual after accounting for the above: 0.00 (expect ~0.00, modulo rounding)
+
+[5b] ITEMIZED: the 7 rejected January 2026 3rd Party rows
+    row | raw date       | raw registration | raw transporter        | amount     | rejected because
+    ----+----------------+-------------------+-------------------------+------------+------------------------------------------
+     24 | 07.01.26       | (blank)           | IONCITY                 | (blank)    | Truck registration number is required
+     87 | 27..01.26      | AGL6073           | EXPRESS TRANSPORT       | 1070       | Date is missing or not in a recognised format
+    102 | 31..01.26      | AFL4761           | NAZZOCRAFT              | 307        | Date is missing or not in a recognised format
+    107 | (blank)        | (blank)           | (blank)                 | (blank)    | Date is missing or not in a recognised format
+    108 | (blank)        | (blank)           | (blank)                 | (blank)    | Date is missing or not in a recognised format
+    109 | (blank)        | (blank)           | (blank)                 | 33906      | Date is missing or not in a recognised format
+    110 | (blank)        | (blank)           | (blank)                 | (blank)    | Date is missing or not in a recognised format
+
+[5c] ITEM 6 CHECK: TransportCostReportService.getDataQualityExceptions for January 2026
+    rejected=7, duplicates=12, periodOutliers=4
+    PASS -- getDataQualityExceptions finds the same number of rejected rows as the import result itself.
+    PASS -- getDataQualityExceptions finds the same number of period-outlier (year-typo) postings as the manual scan above.
+
+[6] O4 report for January 2026 (Business Stream -> Vehicle):
+    Pending banner: SHOWN -- 17 rows in this period still have no Amount
+    unattributed: 29242.00 USD across 42 vehicle(s), 73 posting(s)
+
+    Top 5 vehicles by posted total:
+      AGL8230      SIGHTSCORE           3182.00 USD (7 postings)
+      AGJ6242      SIGHTSCORE           1904.00 USD (5 postings)
+      AGL2725      FROST                1674.00 USD (2 postings)
+      AFJ5203      SHARMIC              1070.00 USD (1 postings)
+      AFJ4791      SHARMIC              1070.00 USD (1 postings)
+
+    Drill-down for AGL8230 (SIGHTSCORE, stream: unattributed):
+      2026-01-04         837 USD  SIGHTSCORE / AGL8230 -> BULAWAYO (invoice 662)
+      2026-01-08         120 USD  SIGHTSCORE / AGL8230 -> HARARE (invoice 7973919709)
+      2026-01-11         539 USD  SIGHTSCORE / AGL8230 -> MUTARE (invoice 670)
+      2026-01-13         120 USD  SIGHTSCORE / AGL8230 -> HARARE (invoice 7973919998)
+      2026-01-18          87 USD  SIGHTSCORE / AGL8230 -> HARARE (invoice 7973920274)
+      2026-01-22         837 USD  SIGHTSCORE / AGL8230 -> BULAWAYO (invoice 688)
+      2026-01-29         642 USD  SIGHTSCORE / AGL8230 -> GWERU (invoice 695)
+
+Done.
+

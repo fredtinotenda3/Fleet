@@ -1,6 +1,21 @@
-# Decision needed: how should a Vansales row be periodized when posted?
+# Decision: how a Vansales row is periodized when posted
 
-**Status: escalated, not decided.** This is a product/business decision about how Olivine's own data should be represented in the ledger, not an engineering implementation detail — it is not implemented here, and no periodization logic has been written. `TransportCostPostingService` currently refuses every Vansales row with `status: 'skipped', reason: 'unsupported-sheet-family'` (see that service's header) rather than guessing.
+**Status: SHIPPED — Option A, `TOTAL` as the posted amount.** Authorized in the "OLIVINE GROUP — CONTINUATION FROM PHASE O2/O3/O4" brief ("Vansales: cost category = transport-retainer. Choose the most standard, least-invasive periodization rule... Do not block implementation waiting for Olivine"), which explicitly reversed the earlier escalation and authorized an autonomous choice. `TransportCostPostingService` now posts Vansales rows under `transport-retainer`; see `PHASE_O2_O3_O4_SUMMARY.md`'s Vansales-posting section for the file list, test results, and the January 2026 reconciliation run.
+
+## Real-data finding from the January 2026 reconciliation (read this before assuming Vansales is "live" for Olivine)
+
+Running the shipped implementation against the real `TRANSPORT_COST_JANUARY_2026.xlsx` posted **$0.00** for January — not a bug, a fact about the source data. Of the sheet's 46 Vansales rows, only **one** has a `TOTAL` cell populated (row 47, `55,600`), and that one row is otherwise blank (no payer, no truck) so it fails import validation for an unrelated reason and never reaches posting. Meanwhile **42 of the 46 rows have `MONTHLY COST BEFORE VAT` populated**, and 44 have at least one `WEEK1`–`WEEK4` cell populated — real retainer figures sitting in the sheet that Option A, by design, never posts, because `TOTAL` specifically was decided as the only authoritative figure (see the Decision above and Section I of the original audit).
+
+This is not a reason to silently start posting `MONTHLY COST BEFORE VAT` instead — that would reopen and reverse the already-made "TOTAL is authoritative" decision unilaterally, exactly what this document exists to avoid. It IS a reason to flag, explicitly: as implemented, Vansales posting will report ~$0 for every month whose `TOTAL` column is this sparse, which may not be the useful outcome Olivine expects from "post the retainer cost." Two honest paths forward, neither implemented here:
+- Confirm with Olivine that `TOTAL` should in fact be populated going forward (a source-data fix, not a code fix) — the sheet's own column layout suggests `TOTAL` is meant to be a formula/rollup that simply wasn't filled in for most of January's rows.
+- Or revisit this decision entirely (a new Decision/Reason/Assumption/Reversibility entry, not a silent code change) if Olivine confirms `MONTHLY COST BEFORE VAT` is in practice the more reliable column.
+
+Either way, the plumbing is fully verified and correct — see the reconciliation run below, which explains 100% of the workbook's Vansales TOTAL sum with zero unexplained residual. The $0 posted result is `pending-amount`/`rejected`, faithfully reported, never a fabricated number.
+
+**Decision:** one `AllocationPosting` per Vansales row per calendar month, with the month supplied explicitly at import time (a required `periodMonth` field, e.g. `'2026-01'` — never inferred from the sheet-tab's free-text name), `amount` = the row's own `TOTAL` column (not `MONTHLY COST BEFORE VAT`, not a re-summed `WEEK1`–`WEEK4`, since those weekly cells are a known merged-cell artifact per the original audit).
+**Reason:** matches how a retainer is actually paid — a monthly commitment, not a per-shipment charge (the audit's own Section B framing) — reuses the existing posting machinery with no new `AllocationRule` or schema change, and never fabricates a period the way a calendar-week decomposition would have to.
+**Assumption:** the person running a Vansales import batch knows and states which month it covers, at the same trust level `sourceFileName` already carries. If this assumption turns out wrong in practice (batches spanning partial months, say), it is the next thing to revisit.
+**Reversibility:** a posting made against the wrong `periodMonth` reverses and re-posts through the existing `allocationService.reversePosting()` path, identical to any other correction in this ledger — no schema-breaking change, no historical mutation.
 
 ## Why this needs a decision at all
 
@@ -20,10 +35,10 @@ Each week's amount posts separately, with `periodStart`/`periodEnd` set to an as
 Leaves things exactly as they are today: Vansales rows import cleanly (Phase O1) and are visible via `GET /api/transport-cost/source-records`, but never post to the ledger.
 *Trade-off:* zero risk of fabrication, but the retainer cost never appears in any ledger-sourced total or the O4 report — a real cost Olivine is paying stays permanently invisible to the platform.
 
-## Recommendation
+## Why Option A over B or C
 
-**Option A.** It matches how a retainer is actually paid (a monthly commitment, not a per-shipment charge — the audit's own Section B framing), reuses the existing posting machinery with no new `AllocationRule` or schema change, and — critically — never fabricates a period the way Option B's calendar-week guess would. It costs one small addition: a required "which month does this batch cover" input at Vansales import time, shown to and confirmed by the person doing the import, the same way `sourceFileName` already is. Option C is the safe fallback if Olivine would rather leave Vansales as evidence-only for now; it requires no further engineering work either way.
+Option A was the recommendation before this was escalated, and is what's now decided. Option B (four weekly sub-postings) was rejected because it requires INVENTING calendar week boundaries the source data never states, on top of the already-known merged-cell artifact in the `WEEK1`–`WEEK4` cells — a decomposition fragile enough to risk silently misdating or under-posting real cost, for no reporting benefit (cost-per-km/cost-per-tonne is excluded from this category regardless of periodization granularity). Option C (evidence-only, never post) remains the safe fallback if this decision is ever revisited, but leaves a real cost Olivine is paying permanently invisible to the ledger and the O4 report — Option A gets the same safety without that cost.
 
-## What we need from you
+## Implementation notes for the next slice
 
-Pick A, B, or C (or propose a variant) — and if A, confirm that `TOTAL` (not `MONTHLY COST BEFORE VAT` or a re-summed `WEEK1`–`WEEK4`) is the figure that should post as `amount`. Once decided, this is a small, independently reviewable slice on top of the existing `TransportCostPostingService` — no other part of O2/O3/O4 depends on it.
+This is a small, independently reviewable slice on top of the existing `TransportCostPostingService` — no other part of O2/O3/O4 depends on it. It needs: a required `periodMonth` field on the Vansales import path (command/handler/UI), posting logic in `TransportCostPostingService` for the `transport-retainer` category structurally parallel to the existing 3rd Party posting path (not a copy — see that service's header for how it documents each divergence), and a January 2026 Vansales reconciliation against the workbook's own Vansales total, the same discipline used for 3rd Party in `DATA_QUALITY_REPORT_JANUARY_2026.md`.

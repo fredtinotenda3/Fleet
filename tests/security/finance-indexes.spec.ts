@@ -101,6 +101,13 @@ describe('Phase 0: finance collection indexes', () => {
     expect(hasGlAccountIndex).toBe(true);
   });
 
+  it('Command Centre cross-vehicle aggregations (getNetTotalsByCategoryAcrossVehicles, widened findRawByCategoryInScope) are backed by a {tenantId, costCategory, periodStart} index on tblallocationledger', () => {
+    const hasCategoryPeriodIndex = FINANCE_INDEXES.tblallocationledger.some(
+      (index) => JSON.stringify(index.key) === JSON.stringify({ tenantId: 1, costCategory: 1, periodStart: 1 })
+    );
+    expect(hasCategoryPeriodIndex).toBe(true);
+  });
+
   it('findByVehicleInScope is backed by a {tenantId, vehicleId, ...} index on tbldepreciationprofiles', () => {
     const hasVehicleIndex = FINANCE_INDEXES.tbldepreciationprofiles.some(
       (index) => Object.keys(index.key)[0] === 'tenantId' && Object.keys(index.key)[1] === 'vehicleId'

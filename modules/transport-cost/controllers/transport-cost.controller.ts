@@ -33,6 +33,7 @@ export class TransportCostController {
       const body = await req.json();
       const rows = (body as any)?.rows as TransportCostImportRow[] | undefined;
       const sourceFileName = (body as any)?.sourceFileName;
+      const periodMonth = (body as any)?.periodMonth as string | undefined;
 
       if (!Array.isArray(rows) || rows.length === 0) {
         throw new ValidationError('No rows to import');
@@ -45,13 +46,22 @@ export class TransportCostController {
       if (typeof sourceFileName !== 'string' || !sourceFileName.trim()) {
         throw new ValidationError('sourceFileName is required');
       }
+      // Vansales periodization Option A -- the handler re-validates this
+      // authoritatively (every ImportTransportCostCommand caller, not
+      // just this HTTP route, must go through it), but failing fast here
+      // with a field-specific message is better UX than a generic 400
+      // from deeper in the CQRS stack.
+      if (sheetFamily === 'vansales' && (typeof periodMonth !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(periodMonth))) {
+        throw new ValidationError('periodMonth ("YYYY-MM") is required for a Vansales import. See VANSALES_PERIODIZATION_DECISION.md.');
+      }
 
       const result = await transportCostCommandService.importTransportCost(
         sheetFamily,
         rows,
         userWriteScope(context),
         sourceFileName.trim(),
-        userId
+        userId,
+        periodMonth
       );
       return successResponse(result);
     } catch (error) {
@@ -67,6 +77,16 @@ export class TransportCostController {
   /** POST /api/transport-cost/import/vansales */
   async importVansales(req: NextRequest) {
     return this.handleImport(req, 'vansales');
+  }
+
+  /** POST /api/transport-cost/import/swift */
+  async importSwift(req: NextRequest) {
+    return this.handleImport(req, 'swift');
+  }
+
+  /** POST /api/transport-cost/import/depot-sto */
+  async importDepotSto(req: NextRequest) {
+    return this.handleImport(req, 'depot-sto');
   }
 
   /**

@@ -21,7 +21,7 @@
 //    (a known merged-cell artifact, not a rejection)
 
 import { ImportTransportCostHandler } from '../../../modules/transport-cost/commands/handlers/import-transport-cost.handler';
-import { ImportTransportCostCommand, ThirdPartyImportRow, VansalesImportRow } from '../../../modules/transport-cost/commands/import-transport-cost.command';
+import { ImportTransportCostCommand, ThirdPartyImportRow, VansalesImportRow, SwiftImportRow, DepotStoImportRow } from '../../../modules/transport-cost/commands/import-transport-cost.command';
 import { userWriteScope, systemWriteScope } from '../../../server/tenancy/write-scope';
 import type { TenantContext } from '../../../modules/tenancy/services/tenant-context.service';
 
@@ -99,6 +99,42 @@ function vansalesRow(overrides: Partial<VansalesImportRow> = {}): VansalesImport
     week3: '300',
     week4: '300',
     total: '1200',
+    ...overrides,
+  };
+}
+
+function swiftRow(overrides: Partial<SwiftImportRow> = {}): SwiftImportRow {
+  return {
+    rowNumber: 2,
+    consDate: '2026-01-05',
+    consNumber: 'CN-10234',
+    shipperReference: 'SR-4471',
+    receiversName: 'Olivine',
+    destinationLocation: 'Bulawayo',
+    actualWeight: '32',
+    totalExcl: '3900',
+    taxAmount: '600',
+    totalIncl: '4500',
+    ...overrides,
+  };
+}
+
+function depotStoRow(overrides: Partial<DepotStoImportRow> = {}): DepotStoImportRow {
+  return {
+    rowNumber: 2,
+    date: '15.06.26',
+    sto: 'STO-1042',
+    source: 'Harare',
+    depot: 'Bulawayo',
+    commodity: 'Golden Glow 2L',
+    transporter: 'PRINORTH',
+    registration: 'AGL8230',
+    driver: 'T. Moyo',
+    toonnes: '15',
+    amount: '4500',
+    mrGurjit: true,
+    mrInderjeet: false,
+    sharmaJi: true,
     ...overrides,
   };
 }
@@ -240,7 +276,8 @@ describe('ImportTransportCostHandler -- vansales validation', () => {
         TENANT,
         userWriteScope(makeContext()),
         'may-vansales.xlsx',
-        USER_ID
+        USER_ID,
+        '2026-01'
       )
     );
 
@@ -261,7 +298,8 @@ describe('ImportTransportCostHandler -- vansales validation', () => {
         TENANT,
         userWriteScope(makeContext()),
         'may-vansales.xlsx',
-        USER_ID
+        USER_ID,
+        '2026-01'
       )
     );
 
@@ -280,7 +318,8 @@ describe('ImportTransportCostHandler -- vansales validation', () => {
         TENANT,
         userWriteScope(makeContext()),
         'may-vansales.xlsx',
-        USER_ID
+        USER_ID,
+        '2026-01'
       )
     );
 
@@ -298,7 +337,8 @@ describe('ImportTransportCostHandler -- vansales validation', () => {
         TENANT,
         userWriteScope(makeContext()),
         'may-vansales.xlsx',
-        USER_ID
+        USER_ID,
+        '2026-01'
       )
     );
 
@@ -307,6 +347,478 @@ describe('ImportTransportCostHandler -- vansales validation', () => {
     expect(record.vansales.total).toBe(1200);
     // A Vansales retainer is never written to the shared `amount` field.
     expect(record.amount).toBeNull();
+  });
+});
+
+describe('ImportTransportCostHandler -- Vansales periodization Option A (periodMonth)', () => {
+  it('rejects the WHOLE BATCH before inserting any row when periodMonth is missing', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    await expect(
+      handler.execute(
+        new ImportTransportCostCommand(
+          'vansales',
+          [vansalesRow(), vansalesRow({ rowNumber: 3 })],
+          TENANT,
+          userWriteScope(makeContext()),
+          'may-vansales.xlsx',
+          USER_ID
+          // periodMonth omitted
+        )
+      )
+    ).rejects.toThrow(/periodMonth/);
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects the whole batch for a malformed periodMonth (not "YYYY-MM")', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    await expect(
+      handler.execute(
+        new ImportTransportCostCommand(
+          'vansales',
+          [vansalesRow()],
+          TENANT,
+          userWriteScope(makeContext()),
+          'may-vansales.xlsx',
+          USER_ID,
+          'January 2026' // free text -- never accepted, never parsed
+        )
+      )
+    ).rejects.toThrow(/periodMonth/);
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it('stamps the declared periodMonth onto every row in the batch, never inferring per row', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    await handler.execute(
+      new ImportTransportCostCommand(
+        'vansales',
+        [vansalesRow({ rowNumber: 2 }), vansalesRow({ rowNumber: 3, payerName: 'Mr Inderjeet' })],
+        TENANT,
+        userWriteScope(makeContext()),
+        'may-vansales.xlsx',
+        USER_ID,
+        '2026-05'
+      )
+    );
+
+    expect(repo.create).toHaveBeenCalledTimes(2);
+    for (const [record] of repo.create.mock.calls) {
+      expect(record.vansales.periodMonth).toBe('2026-05');
+    }
+  });
+
+  it('a 3rd Party import never requires periodMonth (it is unused for that family)', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    const result = await handler.execute(
+      new ImportTransportCostCommand(
+        'third-party',
+        [thirdPartyRow()],
+        TENANT,
+        userWriteScope(makeContext()),
+        'jan-3rd-party.xlsx',
+        USER_ID
+        // periodMonth omitted -- must not be required for this family
+      )
+    );
+
+    expect(result.summary.succeeded).toBe(1);
+  });
+});
+
+describe('ImportTransportCostHandler -- Swift validation (one tolerant parser, required-column subset)', () => {
+  it('imports a valid Swift row successfully, mapping Total(Incl) to amount and Cons. date to date', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    const result = await handler.execute(
+      new ImportTransportCostCommand(
+        'swift',
+        [swiftRow()],
+        TENANT,
+        userWriteScope(makeContext()),
+        'jan-swift.xlsx',
+        USER_ID
+        // no periodMonth -- Swift rows are dated per-row, not a retainer
+      )
+    );
+
+    expect(result.summary).toEqual({ total: 1, succeeded: 1, duplicates: 0, failed: 0 });
+    const [record] = repo.create.mock.calls[0];
+    expect(record.sheetFamily).toBe('swift');
+    expect(record.amount).toBe(4500);
+    expect(record.date).toEqual(new Date(2026, 0, 5));
+    expect(record.salesInvoiceNo).toBe('CN-10234');
+    expect(record.destinationTown).toBe('Bulawayo');
+    expect(record.customerName).toBe('Olivine');
+    expect(record.tonnageRaw).toBe(32);
+    // No registration/transporter column exists in the source at all --
+    // never fabricated, always null/blank, same shape as any other
+    // family's genuinely blank cell.
+    expect(record.registration).toBeNull();
+    expect(record.transporterNormalized).toBeNull();
+  });
+
+  it('rejects a row with a missing/unparseable Cons. date and does not insert it', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    const result = await handler.execute(
+      new ImportTransportCostCommand(
+        'swift',
+        [swiftRow({ consDate: 'not-a-date' })],
+        TENANT,
+        userWriteScope(makeContext()),
+        'jan-swift.xlsx',
+        USER_ID
+      )
+    );
+
+    expect(result.results[0]).toMatchObject({ success: false, column: 'consDate' });
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects a row with a missing Cons. Number (this is what excludes a footer/subtotal row)', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    const result = await handler.execute(
+      new ImportTransportCostCommand(
+        'swift',
+        // A real footer/subtotal row: every identity column is blank.
+        [swiftRow({ consNumber: undefined, receiversName: undefined, destinationLocation: undefined })],
+        TENANT,
+        userWriteScope(makeContext()),
+        'jan-swift.xlsx',
+        USER_ID
+      )
+    );
+
+    expect(result.results[0]).toMatchObject({ success: false, column: 'consNumber' });
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it('tolerates every optional column being missing at once -- only Cons. date/Cons. Number are required', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    const result = await handler.execute(
+      new ImportTransportCostCommand(
+        'swift',
+        [
+          swiftRow({
+            shipperReference: undefined,
+            receiversName: undefined,
+            destinationLocation: undefined,
+            actualWeight: undefined,
+            totalExcl: undefined,
+            taxAmount: undefined,
+            totalIncl: undefined,
+          }),
+        ],
+        TENANT,
+        userWriteScope(makeContext()),
+        'jan-swift.xlsx',
+        USER_ID
+      )
+    );
+
+    expect(result.summary).toEqual({ total: 1, succeeded: 1, duplicates: 0, failed: 0 });
+    const [record] = repo.create.mock.calls[0];
+    // Never coerced to 0 -- a blank Total(Incl) means "not invoiced yet".
+    expect(record.amount).toBeNull();
+    expect(record.destinationTown).toBeUndefined();
+    expect(record.customerName).toBeUndefined();
+  });
+
+  it('preserves the full raw row (Shipper reference, Total(Excl), Tax amount) in rawRow even though they have no dedicated typed field', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    await handler.execute(
+      new ImportTransportCostCommand(
+        'swift',
+        [swiftRow()],
+        TENANT,
+        userWriteScope(makeContext()),
+        'jan-swift.xlsx',
+        USER_ID
+      )
+    );
+
+    const [record] = repo.create.mock.calls[0];
+    expect(record.rawRow.shipperReference).toBe('SR-4471');
+    expect(record.rawRow.totalExcl).toBe('3900');
+    expect(record.rawRow.taxAmount).toBe('600');
+  });
+
+  it('a Swift import never requires periodMonth (it is unused for that family, like 3rd Party)', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    const result = await handler.execute(
+      new ImportTransportCostCommand(
+        'swift',
+        [swiftRow()],
+        TENANT,
+        userWriteScope(makeContext()),
+        'jan-swift.xlsx',
+        USER_ID
+        // periodMonth omitted -- must not be required for this family
+      )
+    );
+
+    expect(result.summary.succeeded).toBe(1);
+  });
+});
+
+describe('ImportTransportCostHandler -- Depot STO validation (one tolerant parser over four real drifted shapes)', () => {
+  it('imports a June/July-shaped row successfully (DATE, STO/SOURCE/DEPOT/Commodity, REG/DRIVER/TOONNES, COST, sign-offs all present)', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    const result = await handler.execute(
+      new ImportTransportCostCommand(
+        'depot-sto',
+        [depotStoRow()],
+        TENANT,
+        userWriteScope(makeContext()),
+        'june-deport-sto.xlsx',
+        USER_ID
+      )
+    );
+
+    expect(result.summary).toEqual({ total: 1, succeeded: 1, duplicates: 0, failed: 0 });
+    const [record] = repo.create.mock.calls[0];
+    expect(record.sheetFamily).toBe('depot-sto');
+    expect(record.amount).toBe(4500);
+    expect(record.registration).toBe('AGL8230');
+    expect(record.depotSto.stoNumber).toBe('STO-1042');
+    expect(record.depotSto.sourceLocation).toBe('Harare');
+    expect(record.depotSto.depot).toBe('Bulawayo');
+    expect(record.depotSto.commodity).toBe('Golden Glow 2L');
+    expect(record.depotSto.driver).toBe('T. Moyo');
+    expect(record.depotSto.toonnesRaw).toBe(15);
+    expect(record.depotSto.signOffMrGurjit).toBe(true);
+    expect(record.depotSto.signOffMrInderjeet).toBe(false);
+    expect(record.depotSto.signOffSharmaJi).toBe(true);
+  });
+
+  it('imports a March/April-shaped row successfully (same 8 columns as 3rd Party, no STO/SOURCE/DEPOT/Commodity/TOONNES/sign-offs at all)', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    const result = await handler.execute(
+      new ImportTransportCostCommand(
+        'depot-sto',
+        [
+          depotStoRow({
+            date: '05.03.26',
+            sto: undefined,
+            source: undefined,
+            depot: undefined,
+            commodity: undefined,
+            driver: undefined,
+            toonnes: undefined,
+            mrGurjit: undefined,
+            mrInderjeet: undefined,
+            sharmaJi: undefined,
+            customerName: 'Olivine',
+            salesInvoiceNo: 'INV-1024',
+            tonnage: '32',
+            destinationTown: 'Bulawayo',
+          }),
+        ],
+        TENANT,
+        userWriteScope(makeContext()),
+        'march-deport-sto.xlsx',
+        USER_ID
+      )
+    );
+
+    expect(result.summary).toEqual({ total: 1, succeeded: 1, duplicates: 0, failed: 0 });
+    const [record] = repo.create.mock.calls[0];
+    expect(record.customerName).toBe('Olivine');
+    expect(record.salesInvoiceNo).toBe('INV-1024');
+    expect(record.tonnageRaw).toBe(32);
+    expect(record.destinationTown).toBe('Bulawayo');
+    // The columns this month's real sheet never had -- honestly null/absent, never fabricated.
+    expect(record.depotSto.stoNumber).toBeNull();
+    expect(record.depotSto.commodity).toBeNull();
+    expect(record.depotSto.toonnesRaw).toBeNull();
+    expect(record.depotSto.signOffMrGurjit).toBeNull();
+  });
+
+  it('imports a row with no registration value present successfully (registration honestly null, not rejected) -- covers both May\'s structurally-absent column and June/July\'s real-but-empty one', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    const result = await handler.execute(
+      new ImportTransportCostCommand(
+        'depot-sto',
+        [depotStoRow({ registration: undefined, driver: undefined, toonnes: undefined })],
+        TENANT,
+        userWriteScope(makeContext()),
+        'may-deport-sto.xlsx',
+        USER_ID
+      )
+    );
+
+    expect(result.summary).toEqual({ total: 1, succeeded: 1, duplicates: 0, failed: 0 });
+    const [record] = repo.create.mock.calls[0];
+    expect(record.registration).toBeNull();
+  });
+
+  it('rejects a row with a missing/unparseable DATE and does not insert it -- the only required column', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    const result = await handler.execute(
+      new ImportTransportCostCommand(
+        'depot-sto',
+        [depotStoRow({ date: 'not-a-date' })],
+        TENANT,
+        userWriteScope(makeContext()),
+        'june-deport-sto.xlsx',
+        USER_ID
+      )
+    );
+
+    expect(result.results[0]).toMatchObject({ success: false, column: 'date' });
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects a known-invalid transporter label the same way 3rd Party does', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    const result = await handler.execute(
+      new ImportTransportCostCommand(
+        'depot-sto',
+        [depotStoRow({ transporter: 'VAT EXCL' })],
+        TENANT,
+        userWriteScope(makeContext()),
+        'june-deport-sto.xlsx',
+        USER_ID
+      )
+    );
+
+    expect(result.results[0]).toMatchObject({ success: false, column: 'transporter' });
+  });
+
+  it('keeps TOONNES (June/July) and Tonnage (March/April) as two separate fields, never merged into one figure', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    await handler.execute(
+      new ImportTransportCostCommand(
+        'depot-sto',
+        [depotStoRow({ toonnes: '15', tonnage: '99' })],
+        TENANT,
+        userWriteScope(makeContext()),
+        'june-deport-sto.xlsx',
+        USER_ID
+      )
+    );
+
+    const [record] = repo.create.mock.calls[0];
+    expect(record.depotSto.toonnesRaw).toBe(15);
+    expect(record.tonnageRaw).toBe(99);
+  });
+
+  it("captures May's per-product quantity columns as their own keyed object, since several can be populated on the same row at once", async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    await handler.execute(
+      new ImportTransportCostCommand(
+        'depot-sto',
+        [
+          depotStoRow({
+            sto: 'STO-2001',
+            registration: undefined,
+            driver: undefined,
+            toonnes: undefined,
+            goldenGlow2L: 1600,
+            puredrop2L: 800,
+            // Olivine 2L / Pure drop 5l / Pure Drop 750 left unset on
+            // this row, same as a real May row that only shipped two
+            // of the five products.
+          }),
+        ],
+        TENANT,
+        userWriteScope(makeContext()),
+        'may-deport-sto.xlsx',
+        USER_ID
+      )
+    );
+
+    const [record] = repo.create.mock.calls[0];
+    expect(record.depotSto.mayProductQuantities).toEqual({ 'Golden Glow 2L': 1600, 'Puredrop 2L': 800 });
+  });
+
+  it('stores mayProductQuantities as null, not {}, for a row with none of the five product columns', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    await handler.execute(
+      new ImportTransportCostCommand(
+        'depot-sto',
+        [depotStoRow()],
+        TENANT,
+        userWriteScope(makeContext()),
+        'june-deport-sto.xlsx',
+        USER_ID
+      )
+    );
+
+    const [record] = repo.create.mock.calls[0];
+    expect(record.depotSto.mayProductQuantities).toBeNull();
+  });
+
+  it('never coerces a blank Amount to 0', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    await handler.execute(
+      new ImportTransportCostCommand(
+        'depot-sto',
+        [depotStoRow({ amount: undefined })],
+        TENANT,
+        userWriteScope(makeContext()),
+        'june-deport-sto.xlsx',
+        USER_ID
+      )
+    );
+
+    const [record] = repo.create.mock.calls[0];
+    expect(record.amount).toBeNull();
+  });
+
+  it('a Depot STO import never requires periodMonth (DATE is used as-is, not a declared retainer month)', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    const result = await handler.execute(
+      new ImportTransportCostCommand(
+        'depot-sto',
+        [depotStoRow()],
+        TENANT,
+        userWriteScope(makeContext()),
+        'june-deport-sto.xlsx',
+        USER_ID
+        // periodMonth omitted -- must not be required for this family
+      )
+    );
+
+    expect(result.summary.succeeded).toBe(1);
   });
 });
 

@@ -7,7 +7,7 @@
 // so a reader can see exactly what an unconfigured sheet family gets --
 // rather than a guess buried inside the posting service.
 //
-// currency: 'USD' for BOTH sheet families is an ENGINEERING DEFAULT,
+// currency: 'USD' for every sheet family is an ENGINEERING DEFAULT,
 // authorized specifically so Phase O3 can post real postings and Phase
 // O4 can show real reconciled numbers for the client demo now, not a
 // value Olivine has confirmed. No currency column exists anywhere in
@@ -34,7 +34,15 @@
 // not guessed: the Vansales sheet has its own "MONTHLY COST BEFORE VAT"
 // column (audit Section B), so 'exclusive' is a finding, not a default.
 // 3rd Party has no equivalent column anywhere -- 'unknown' stays
-// 'unknown' until Olivine confirms it, never guessed either way.
+// 'unknown' until Olivine confirms it, never guessed either way. Swift
+// is a finding too, the other direction: the real sheet has its own
+// "Total(Incl)" AND "Total(Excl)" columns side by side, and the posted
+// `amount` is Total(Incl) (see SwiftImportRow's doc comment), so
+// 'inclusive' is evidenced directly by which column was chosen, not a
+// guess about Swift's real-world billing practice. Depot STO is back to
+// 'unknown', like 3rd Party -- none of its four drifted real shapes
+// (see DEPOT_STO_DECISION.md) name an inclusive/exclusive column either
+// way, so there is no evidence here to read a default from.
 
 import { TransportCostSheetFamily } from '@/shared/types/transport-cost.types';
 import { ResolvedTransportCostVatConfig } from '@/shared/types/transport-cost-vat-config.types';
@@ -50,5 +58,18 @@ export const TRANSPORT_COST_VAT_CONFIG_DEFAULTS: Record<
   vansales: {
     currency: 'USD',
     vatBasis: 'exclusive',
+  },
+  swift: {
+    currency: 'USD',
+    vatBasis: 'inclusive',
+  },
+  'depot-sto': {
+    currency: 'USD',
+    // Unlike Vansales/Swift, no real Depot STO column name (Amount/
+    // COSTS/COST, across its four drifted shapes) hints at inclusive vs
+    // exclusive VAT either way -- 'unknown' stays 'unknown' until
+    // Olivine confirms it, the same as 3rd Party's own default, never
+    // guessed from a column name that isn't there.
+    vatBasis: 'unknown',
   },
 };

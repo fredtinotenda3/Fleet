@@ -38,7 +38,8 @@
 // above.
 //
 // ---------------------------------------------------------------------
-// SCOPE OF THIS SLICE: THIRD-PARTY ROWS ONLY
+// SCOPE: THIRD-PARTY, VANSALES, SWIFT, AND DEPOT STO ROWS -- ALL FOUR
+// SOURCE FAMILIES.
 // ---------------------------------------------------------------------
 // A Vansales row's `date` is ALWAYS null (see import-transport-cost
 // .handler.ts's validateAndBuildVansales) -- it is a fixed weekly/
@@ -46,13 +47,50 @@
 // transaction, and the real cost lives in `vansales.total` /
 // `monthlyCostBeforeVat`, never in `amount` (which O1 deliberately
 // leaves null for every Vansales row -- audit Section B). Posting a
-// Vansales row would require INVENTING a periodStart/periodEnd from
-// something other than the row itself (e.g. parsing "JAN-26 Vansales"
-// out of a sheet name the import command does not even currently
-// capture) -- exactly the kind of fabrication the hard constraints
-// forbid. Rather than guess a period, this slice posts THIRD-PARTY rows
-// only and leaves Vansales posting as an explicitly OPEN ITEM (see the
-// delivery README) -- a scope note, not a silently missing feature.
+// Vansales row therefore cannot reuse `source.date` as its period the
+// way a 3rd Party row does. It used to be an explicitly OPEN ITEM for
+// exactly that reason -- see VANSALES_PERIODIZATION_DECISION.md for the
+// full decision record -- and is now implemented as Option A there:
+// `source.vansales.periodMonth` (required at import time, "YYYY-MM",
+// NEVER inferred from a sheet-tab name) supplies the period explicitly,
+// `source.vansales.total` supplies the amount, and `resolveAmountAndPeriod`
+// below is where the source families' rules diverge before falling
+// into the shared posting/idempotency/reversal logic that follows it.
+//
+// Swift rows post under 'third-party-transport' (same amount/date shape
+// as 3rd Party -- `amount` from Total(Incl), `date` from Cons. date,
+// both resolved at import time -- see validateAndBuildSwift), so
+// resolveAmountAndPeriod's 'swift' case is identical to 'third-party'.
+// BUT a Swift row can NEVER resolve `contractedVehicleId`: the source
+// sheet has no registration/transporter column at all (verified against
+// the real "JAN-26 Swift" workbook -- see TransportCostSheetFamily's doc
+// comment in shared/types/transport-cost.types.ts). This is not a gap in
+// this service -- every Swift row will post-time-skip at the existing
+// `unresolved-vehicle-identity` check above with ZERO new code, exactly
+// the same as a 3rd Party row whose registration was never confirmed
+// through the Phase O2 normalization review queue. No vehicle is ever
+// fabricated to work around this. See SWIFT_POSTING_DECISION.md.
+//
+// Depot STO rows post under 'stock-transfer' (see DEPOT_STO_DECISION.md
+// for the full record -- six real months across four genuinely
+// different column layouts, one tolerant parser covering all of them,
+// `DATE` used as-is for periodStart/periodEnd, same as 3rd Party's own
+// per-row dating, never Vansales's declared-month convention). Unlike
+// Swift, vehicle-identity resolution is possible for SOME Depot STO
+// rows, but which ones is determined by the REAL DATA, not just by
+// which months' schema happens to include a registration-shaped
+// column -- March/April/August rows carry a real, populated
+// registration in practice (100%/100%/98.8% of real rows); May has no
+// registration column in the schema at all; June/July DO have a `REG`
+// column in the schema but it is populated in essentially none of the
+// real rows (0/24 and 1/84) -- so in practice they skip exactly like
+// May does, just for a data reason rather than a schema reason. See
+// DEPOT_STO_DECISION.md's "Vehicle identity" section for the full
+// per-month table (this was corrected once already, before delivery,
+// after counting real population rates rather than assuming from
+// column presence). Net effect either way: a Depot STO row's
+// `unresolved-vehicle-identity` skip rate is data-dependent, not
+// universal the way Swift's always is.
 //
 // ---------------------------------------------------------------------
 // ITEM 3 -- INVARIANT-BY-INVARIANT vs AllocationService.postAllocation,
@@ -89,10 +127,14 @@
 //     and "driver-allocated needs a driverId" branches can never fire
 //     for a call this service makes. Reimplementing a check that can
 //     never trip would be dead code, not an invariant.
-//   - periodEnd >= periodStart validation -- this service always sets
+//   - periodEnd >= periodStart validation -- for a 3rd Party row,
 //     periodStart === periodEnd === source.date (a single dated
-//     transaction, never a spread range), so the invariant it protects
-//     cannot be violated by construction.
+//     transaction, never a spread range); for a Vansales row,
+//     periodStart/periodEnd are the first/last day of the SAME
+//     `vansales.periodMonth` (parsePeriodMonth always returns a start
+//     <= end pair for a valid month -- see normalization.utils.ts). In
+//     both cases the invariant it protects cannot be violated by this
+//     service's own construction, so it stays unreimplemented.
 //
 // DELIBERATELY REPLACED, with a different but equally-deliberate
 // contract for THIS service's batch-processing caller (postImportBatch
@@ -172,7 +214,7 @@ import { allocationService, AllocationService } from '@/modules/finance/services
 import { financeSettingsService, FinanceSettingsService } from '@/modules/finance/services/finance-settings.service';
 import { resolveFxContext, roundCurrency } from '@/modules/finance/utils/fx-conversion.utils';
 import { buildPostingIdempotencyKey } from '@/modules/finance/services/allocation-posting.service';
-import type { AllocationPosting } from '@/modules/finance/types/allocation.types';
+import type { AllocationPosting, AllocationCostCategory } from '@/modules/finance/types/allocation.types';
 
 import {
   transportCostSourceRecordRepository,
@@ -186,18 +228,25 @@ import {
   transportCostVatConfigService,
   TransportCostVatConfigService,
 } from './transport-cost-vat-config.service';
+import { parsePeriodMonth } from '../utils/normalization.utils';
+import type { TransportCostSourceRecord } from '@/shared/types/transport-cost.types';
 
 import type { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { NotFoundError, ConflictError } from '@/server/errors/app.errors';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
 import { monitoring } from '@/infrastructure/monitoring/logger';
 
-// 'third-party-transport', not the retired single 'transport-cost'
-// category -- see allocation.types.ts's AllocationCostCategory for the
-// Section R2 split into third-party-transport / transport-retainer
-// (Vansales, not yet posted here) / stock-transfer (Depot STO, Phase
-// O5). This service posts the first of the three only.
-const COST_CATEGORY = 'third-party-transport' as const;
+// See allocation.types.ts's AllocationCostCategory for the Section R2
+// split into third-party-transport / transport-retainer / stock-transfer.
+// This service posts two source families under 'third-party-transport'
+// (3rd Party, Swift), one under 'transport-retainer' (Vansales), and one
+// under 'stock-transfer' (Depot STO -- see DEPOT_STO_DECISION.md).
+const COST_CATEGORY_BY_FAMILY: Record<'third-party' | 'vansales' | 'swift' | 'depot-sto', AllocationCostCategory> = {
+  'third-party': 'third-party-transport',
+  vansales: 'transport-retainer',
+  swift: 'third-party-transport',
+  'depot-sto': 'stock-transfer',
+};
 const SOURCE_COLLECTION = 'tbltransportcostsourcerecords' as const;
 
 export type PostSourceRecordOutcome =
@@ -218,6 +267,12 @@ export type SkipReason =
   | 'unresolved-currency'
   | 'unresolved-fx-rate'
   | 'missing-date'
+  /** Vansales only: `source.vansales.periodMonth` is missing or not a
+   *  valid "YYYY-MM" -- see VANSALES_PERIODIZATION_DECISION.md. Expected
+   *  only for a row imported before this field existed; every row
+   *  imported through the current handler always has a valid one (the
+   *  whole batch is rejected at import time otherwise). */
+  | 'missing-period-month'
   /** postImportBatch only: an unexpected error posting this specific row (see its detail message). */
   | 'error';
 
@@ -265,40 +320,11 @@ export class TransportCostPostingService {
       throw new NotFoundError(`Transport cost source record "${sourceRecordId}" not found.`);
     }
 
-    if (source.sheetFamily !== 'third-party') {
-      return {
-        status: 'skipped',
-        reason: 'unsupported-sheet-family',
-        detail:
-          'Vansales rows are not posted in this slice -- they carry no per-row transaction ' +
-          'date (see this service\'s header). Deferred, not dropped: still visible via ' +
-          'GET /api/transport-cost/source-records.',
-      };
+    const resolved = this.resolveAmountAndPeriod(source);
+    if (!resolved.ok) {
+      return { status: 'skipped', reason: resolved.reason, detail: resolved.detail };
     }
-
-    // Never coerce a missing Amount to 0 -- see import-transport-cost
-    // .handler.ts's header for why a blank cell means "not invoiced
-    // yet", not "zero cost".
-    if (source.amount === null) {
-      return {
-        status: 'skipped',
-        reason: 'pending-amount',
-        detail: `Row ${source.sourceRowNumber} of ${source.sourceFileName} has no Amount recorded yet.`,
-      };
-    }
-
-    if (!source.date) {
-      // Defensive: third-party rows fail import validation without a
-      // parseable date (see the handler), so this should be unreachable
-      // in practice. Guarded explicitly rather than asserted with `!`,
-      // because a periodStart/periodEnd this service invented would be
-      // exactly the fabrication the hard constraints forbid.
-      return {
-        status: 'skipped',
-        reason: 'missing-date',
-        detail: `Row ${source.sourceRowNumber} of ${source.sourceFileName} has no parseable date.`,
-      };
-    }
+    const { costCategory, amount: sourceAmount, periodStart, periodEnd } = resolved;
 
     if (!source.contractedVehicleId) {
       return {
@@ -340,12 +366,12 @@ export class TransportCostPostingService {
 
     const settings = await this.settingsService.resolve(context.organizationId);
     const fx = resolveFxContext({
-      amount: source.amount,
+      amount: sourceAmount,
       currency: vatConfig.currency.toUpperCase(),
       reportingCurrency: settings.reportingCurrency,
       fxPolicy: settings.fxPolicy,
-      transactionDate: source.date,
-      periodEnd: source.date,
+      transactionDate: periodEnd,
+      periodEnd,
     });
     if (!fx) {
       return {
@@ -357,17 +383,22 @@ export class TransportCostPostingService {
       };
     }
 
-    const targetAmount = roundCurrency(source.amount);
+    const targetAmount = roundCurrency(sourceAmount);
     const targetCurrency = vatConfig.currency.toUpperCase();
 
     // The whole posting history for this source -- see
     // AllocationLedgerRepository.findBySource's doc comment for why this
     // (not a single idempotencyKey lookup) is what "already posted, and
-    // is it still current" has to be derived from.
+    // is it still current" has to be derived from. Scoped by costCategory
+    // as well as sourceId/sourceCollection so a 3rd Party and a Vansales
+    // posting derived from two DIFFERENT source records never collide --
+    // each source record only ever resolves to one costCategory (see
+    // resolveAmountAndPeriod), so this is a defensive scope, not a
+    // functional requirement today.
     const history = await this.ledgerRepo.findBySource(
       SOURCE_COLLECTION,
       sourceRecordId,
-      COST_CATEGORY,
+      costCategory,
       context
     );
     const originals = history.filter((p) => !p.reversalOfPostingId);
@@ -410,7 +441,7 @@ export class TransportCostPostingService {
       tenantId: context.organizationId,
       sourceCollection: SOURCE_COLLECTION,
       sourceId: sourceRecordId,
-      costCategory: COST_CATEGORY,
+      costCategory,
     })}:v${version}`;
 
     let posting: AllocationPosting;
@@ -419,13 +450,13 @@ export class TransportCostPostingService {
         {
           orgUnitId: source.orgUnitId,
           vehicleId: source.contractedVehicleId,
-          costCategory: COST_CATEGORY,
+          costCategory,
           allocationRule: 'direct',
           sourceCollection: SOURCE_COLLECTION,
           sourceId: sourceRecordId,
           description: this.describePosting(source, vehicle),
-          periodStart: source.date,
-          periodEnd: source.date,
+          periodStart,
+          periodEnd,
           currency: targetCurrency,
           amount: targetAmount,
           fxRate: fx.fxRate,
@@ -515,11 +546,169 @@ export class TransportCostPostingService {
     return { total: records.length, outcomes };
   }
 
+  /**
+   * The one place the two source families' posting rules actually
+   * diverge -- everything from vehicle resolution onward in
+   * postSourceRecord is shared. Returns the costCategory/amount/period
+   * to post, or a skip reason, NEVER a fabricated value: a Vansales row
+   * with no `total` or no valid `periodMonth` is skipped, exactly like a
+   * 3rd Party row with no `amount` or no parseable `date` always has been.
+   */
+  private resolveAmountAndPeriod(
+    source: TransportCostSourceRecord
+  ):
+    | { ok: true; costCategory: AllocationCostCategory; amount: number; periodStart: Date; periodEnd: Date }
+    | { ok: false; reason: SkipReason; detail: string } {
+    switch (source.sheetFamily) {
+      case 'third-party':
+      case 'swift':
+      case 'depot-sto': {
+        // Swift and Depot STO rows are both mapped onto the same shared
+        // amount/date fields as 3rd Party at import time (Swift: amount
+        // <- Total(Incl), date <- Cons. date -- see validateAndBuildSwift;
+        // Depot STO: amount <- Amount/COSTS/COST (whichever the month's
+        // sheet used), date <- DATE, used as-is per the user's own
+        // instruction -- see validateAndBuildDepotSto and
+        // DEPOT_STO_DECISION.md), so the same amount/date resolution
+        // applies unchanged to all three families here. What differs
+        // per family is entirely downstream of this method:
+        //  - Swift: every row has contractedVehicleId unset (no
+        //    registration column exists in the source at all) and will
+        //    skip at postSourceRecord's `unresolved-vehicle-identity`
+        //    check above -- see this file's header and
+        //    SWIFT_POSTING_DECISION.md.
+        //  - Depot STO: which rows resolve a vehicle identity is a
+        //    DATA fact, not purely a schema fact -- May has no
+        //    registration column at all and always skips; June/July's
+        //    `REG` column exists in the schema but is populated in
+        //    essentially none of the real rows (0/24, 1/84), so those
+        //    also skip in practice; March/April/August rows carry a
+        //    real, populated registration (100%/100%/98.8% of real
+        //    rows) and resolve normally through Phase O2's review
+        //    queue, same as 3rd Party -- see DEPOT_STO_DECISION.md's
+        //    "Vehicle identity" section for the full per-month table.
+        //
+        // Never coerce a missing Amount to 0 -- see import-transport-cost
+        // .handler.ts's header for why a blank cell means "not invoiced
+        // yet", not "zero cost".
+        if (source.amount === null) {
+          return {
+            ok: false,
+            reason: 'pending-amount',
+            detail: `Row ${source.sourceRowNumber} of ${source.sourceFileName} has no Amount recorded yet.`,
+          };
+        }
+        if (!source.date) {
+          // Defensive: all three families fail import validation without
+          // a parseable date (see the handler), so this should be
+          // unreachable in practice. Guarded explicitly rather than
+          // asserted with `!`, because a periodStart/periodEnd this
+          // service invented would be exactly the fabrication the hard
+          // constraints forbid.
+          return {
+            ok: false,
+            reason: 'missing-date',
+            detail: `Row ${source.sourceRowNumber} of ${source.sourceFileName} has no parseable date.`,
+          };
+        }
+        return {
+          ok: true,
+          costCategory: COST_CATEGORY_BY_FAMILY[source.sheetFamily],
+          amount: source.amount,
+          periodStart: source.date,
+          periodEnd: source.date,
+        };
+      }
+      case 'vansales': {
+        // Vansales periodization Option A (VANSALES_PERIODIZATION_DECISION.md):
+        // `total` is the ONLY figure ever posted -- never re-summed from
+        // weeklyAmounts (a known merged-cell artifact) and never
+        // monthlyCostBeforeVat (a pre-VAT figure this service is not
+        // responsible for reconciling against TOTAL).
+        const total = source.vansales?.total ?? null;
+        if (total === null) {
+          return {
+            ok: false,
+            reason: 'pending-amount',
+            detail:
+              `Row ${source.sourceRowNumber} of ${source.sourceFileName} has no TOTAL recorded yet ` +
+              '(never derived from WEEK1-4 or MONTHLY COST BEFORE VAT -- see VANSALES_PERIODIZATION_DECISION.md).',
+          };
+        }
+        const period = parsePeriodMonth(source.vansales?.periodMonth ?? null);
+        if (!period) {
+          return {
+            ok: false,
+            reason: 'missing-period-month',
+            detail:
+              `Row ${source.sourceRowNumber} of ${source.sourceFileName} has no valid periodMonth ` +
+              '("YYYY-MM") -- see VANSALES_PERIODIZATION_DECISION.md. Re-import this batch with a ' +
+              'declared period month; the period is never inferred.',
+          };
+        }
+        return {
+          ok: true,
+          costCategory: COST_CATEGORY_BY_FAMILY.vansales,
+          amount: total,
+          periodStart: period.periodStart,
+          periodEnd: period.periodEnd,
+        };
+      }
+      default:
+        // Defensive: TransportCostSheetFamily has exactly the four
+        // members handled above today -- this branch is unreachable in
+        // practice, kept only so a future fifth family fails loudly
+        // here instead of silently falling through to a fabricated
+        // amount/period.
+        return {
+          ok: false,
+          reason: 'unsupported-sheet-family',
+          detail: `Sheet family "${source.sheetFamily}" is not supported for posting.`,
+        };
+    }
+  }
+
+  /**
+   * Swift falls through to the 3rd-Party-shaped branch below (its
+   * destinationTown/salesInvoiceNo ARE populated at import time -- see
+   * validateAndBuildSwift). In practice this is never reached for a
+   * Swift row: every Swift row lacks a contractedVehicleId and always
+   * returns at postSourceRecord's `unresolved-vehicle-identity` check
+   * before `vehicle` (this method's 2nd argument) is ever resolved. Kept
+   * branch-correct anyway rather than left to throw, in case a future
+   * change (e.g. a manual vehicle override) ever lets a Swift row reach
+   * this far.
+   *
+   * Depot STO gets its OWN branch (unlike Swift): unlike Swift, a Depot
+   * STO row genuinely CAN reach this method with a resolved vehicle --
+   * March/April/August rows carry a real, populated registration in
+   * the actual data (June/July have a `REG` column in the schema but
+   * it's populated in essentially none of the real rows -- see
+   * DEPOT_STO_DECISION.md's "Vehicle identity" table) -- so the
+   * description is worth being accurate for real postings, not just
+   * defensively branch-complete. Uses only
+   * `depotSto.stoNumber/sourceLocation/depot/commodity` -- never the
+   * sign-off fields, which stay raw provenance only, never surfaced as
+   * if they meant something in a human-readable description.
+   */
   private describePosting(
-    source: { transporterNormalized: string | null; transporterRaw: string; destinationTown?: string; salesInvoiceNo?: string },
+    source: Pick<TransportCostSourceRecord, 'sheetFamily' | 'transporterNormalized' | 'transporterRaw' | 'destinationTown' | 'salesInvoiceNo' | 'vansales' | 'depotSto'>,
     vehicle: { registration: string }
   ): string {
     const transporter = source.transporterNormalized ?? source.transporterRaw;
+    if (source.sheetFamily === 'vansales') {
+      const payer = source.vansales?.payerName ?? 'payer unspecified';
+      const product = source.vansales?.product ?? 'product unspecified';
+      const period = source.vansales?.periodMonth ?? 'period unspecified';
+      return `Vansales retainer: ${payer} / ${transporter} / ${vehicle.registration} -> ${product} (${period})`;
+    }
+    if (source.sheetFamily === 'depot-sto') {
+      const sto = source.depotSto?.stoNumber ?? 'STO unspecified';
+      const from = source.depotSto?.sourceLocation ?? 'source unspecified';
+      const to = source.depotSto?.depot ?? 'depot unspecified';
+      const commodity = source.depotSto?.commodity ?? 'commodity unspecified';
+      return `Depot STO ${sto}: ${transporter} / ${vehicle.registration} -> ${from} to ${to} (${commodity})`;
+    }
     const destination = source.destinationTown ?? 'destination unspecified';
     const invoice = source.salesInvoiceNo ? ` (invoice ${source.salesInvoiceNo})` : '';
     return `${transporter} / ${vehicle.registration} -> ${destination}${invoice}`;

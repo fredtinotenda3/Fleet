@@ -78,11 +78,14 @@ export type AllocationCostCategory =
    */
   | 'transport-retainer'
   /**
-   * A Depot STO (May-August StockTransferRecord) movement. Reserved,
-   * NOT yet posted by any service -- Depot STO import/posting is
-   * deferred to Phase O5 (see the delivery README's phase-plan
-   * update); its own schema and sourceCollection do not exist yet.
-   * Declared now for the same reason as 'transport-retainer' above.
+   * A Depot STO (March-August, `TransportCostSourceRecord.sheetFamily
+   * === 'depot-sto'`) stock movement, posted from a confirmed source
+   * record with `DATE` used as-is for periodStart/periodEnd. Live as of
+   * the Depot STO/O5 slice -- see DEPOT_STO_DECISION.md for the full
+   * decision record, including why this covers March-August (six real
+   * months across four drifted column layouts) rather than "May-August"
+   * as an earlier version of this comment assumed before the real
+   * workbook was inspected directly.
    */
   | 'stock-transfer';
 

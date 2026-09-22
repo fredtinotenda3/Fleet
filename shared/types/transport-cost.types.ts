@@ -12,19 +12,75 @@
 // on) come back from Olivine. See modules/transport-cost/commands/
 // handlers/import-transport-cost.handler.ts for why this shape is what
 // it is.
+//
+// PHASE O2 / O3 ADDITIVE FIELDS (see "Phase O2 Spec" / "Phase O3 Spec"
+// tabs on the audit doc): every field added below is optional and
+// unset on every existing O1 row until a later phase's own write path
+// (the O2 normalization matcher, the O3 posting service, the O3
+// currency/VAT backfill) resolves it. Nothing here breaks O1's own
+// compiled callers.
 
 import { OrgUnitScopedEntity } from '@/server/repositories/tenant-scoped.repository';
 
 /**
- * Which Olivine sheet family a row came from. Only the two structurally
- * stable families are handled in Phase O1. Swift, PODs, and Depot STO
- * are deliberately excluded -- the audit found their schemas drift
- * month to month (Swift) or change meaning entirely partway through the
- * year (Depot STO), and their join keys to these two families are
- * unverified (Section D: a full overlap check found ~0 shared values
- * between Sales invoice no, Shipper reference, and POD No.).
+ * Which Olivine sheet family a row came from.
+ *
+ * 'swift' added in the Swift-import slice (see import-transport-cost
+ * .handler.ts's validateAndBuildSwift): the audit's original concern was
+ * that Swift's schema drifts month to month, which is answered here by
+ * ONE tolerant parser over a small required-column subset (Cons. date +
+ * Cons. Number) rather than a parser per month -- an optional column
+ * missing or reordered in a later month's sheet does not break import,
+ * only a genuinely required one does, with an explicit per-row reason.
+ * Swift's SOURCE DATA carries no registration/transporter column at all
+ * (verified against the real "JAN-26 Swift" sheet: Cons. date, Cons.
+ * Number, Shipper reference, Receivers Name, Destination location,
+ * Actual weight, Total(Excl), Tax amount, Total(Incl) -- nine columns,
+ * none of them a vehicle identifier), so a Swift row can be imported and
+ * even posted to the ledger, but can NEVER resolve a contractedVehicleId
+ * -- see TransportCostPostingService's header for why that is a
+ * structural, permanent fact about this source data, not a gap to close
+ * by inventing one.
+ *
+ * 'depot-sto' added in the Depot STO/O5 slice (see import-transport-cost
+ * .handler.ts's validateAndBuildDepotSto and DEPOT_STO_DECISION.md for
+ * the full record). The audit's original concern -- that Depot STO's
+ * schema changes meaning partway through the year -- turned out to
+ * understate the real drift once the actual workbook was inspected:
+ * SIX real months exist (March-August, not just "May-August" as an
+ * earlier doc comment assumed), across FOUR genuinely different column
+ * layouts (March/April share 3rd Party's own 8-column shape; May adds
+ * per-product quantity columns plus three sign-off columns; June/July
+ * replace those with a free-text Commodity column plus REG/DRIVER/
+ * TOONNES; August drops TOONNES/DRIVER again). One tolerant parser
+ * still covers this, the same way it covers Swift: only `DATE` is
+ * required (the one column every real variant has), everything else is
+ * optional and stored when present. A stock-transfer's cost is posted
+ * under `stock-transfer` (never `third-party-transport`), using DATE
+ * as-is for both periodStart/periodEnd -- a dated stock movement, not a
+ * fixed retainer (never Vansales's declared-periodMonth convention).
+ * Depot STO's vehicle-identity resolvability is a DATA fact, not just a
+ * schema fact: March/April/August rows carry a real, populated
+ * registration in practice (100%/100%/98.8% of real rows); May's sheet
+ * has no registration column at all; June/July DO have a `REG` column
+ * in the schema but it's populated in essentially none of the real
+ * rows (0/24, 1/84) -- so, unlike Swift, vehicle-identity resolution is
+ * possible for SOME Depot STO rows, not none, but "possible" tracks the
+ * real data, not merely which months' header row includes a
+ * registration-shaped column; see DEPOT_STO_DECISION.md's "Vehicle
+ * identity" table.
+ *
+ * PODs remain out of scope entirely -- Section D's join-key finding
+ * (below) applies to them, not to whether Swift/Depot STO can be
+ * imported.
+ *
+ * The audit's Section D join-key finding (~0 shared values between Sales
+ * invoice no, Shipper reference, and POD No. across families) is why
+ * Swift/3rd Party/Depot STO/PODs are never hard-joined anywhere in this
+ * codebase -- each source family's rows are independent evidence, not
+ * rows to be reconciled against each other's identifiers.
  */
-export type TransportCostSheetFamily = 'third-party' | 'vansales';
+export type TransportCostSheetFamily = 'third-party' | 'vansales' | 'swift' | 'depot-sto';
 
 /**
  * Vansales-specific fields, kept in their own nested object rather than
@@ -46,6 +102,85 @@ export interface VansalesSourceFields {
    *  treating this as authoritative rather than re-summing weeklyAmounts,
    *  since blank weekly cells are a known merged-cell artifact. */
   total: number | null;
+  /**
+   * VANSALES PERIODIZATION DECISION (see VANSALES_PERIODIZATION_DECISION.md,
+   * Option A): the calendar month this row's retainer covers, as
+   * "YYYY-MM" -- required at import time, supplied explicitly by the
+   * person running the import, and NEVER inferred from the sheet-tab's
+   * free-text name (e.g. "JAN-26 Vansales"). null only for a row
+   * imported before this field existed; TransportCostPostingService
+   * treats that the same as a missing period and skips posting it
+   * (`status: 'skipped', reason: 'missing-period-month'`) rather than
+   * guessing. Copied from ImportTransportCostCommand.periodMonth onto
+   * every row in the batch at import time (see the handler), so posting
+   * never has to re-derive it from batch metadata later.
+   */
+  periodMonth: string | null;
+}
+
+/**
+ * Depot STO-specific fields (Phase O5, see DEPOT_STO_DECISION.md), kept
+ * in their own nested object for the same reason `VansalesSourceFields`
+ * is: these concepts (a stock-transfer number, a source/destination
+ * depot, a free-text commodity, three named sign-off columns, a raw
+ * tonnage figure) don't exist for any other sheet family and mixing
+ * them onto the shared record would misrepresent this as an ordinary
+ * delivery.
+ */
+export interface DepotStoSourceFields {
+  /** "STO" -- the stock-transfer order number/reference, when present. */
+  stoNumber: string | null;
+  /** "SOURCE" -- the originating depot/location, when present. */
+  sourceLocation: string | null;
+  /** "DEPOT" -- the destination depot, when present. */
+  depot: string | null;
+  /** "Commodity" (June onward) -- free text; May's sheet instead spreads
+   *  quantity across five named per-product columns -- see
+   *  `mayProductQuantities` below for how those are preserved. */
+  commodity: string | null;
+  /** "DRIVER" (June/July only). */
+  driver: string | null;
+  /**
+   * May's sheet has five named per-product quantity columns instead of
+   * one `Commodity` figure ("Golden Glow 2L", "Olivine 2L", "Puredrop
+   * 2L", "Pure drop 5l", "Pure Drop 750") -- each an unconverted raw
+   * number, keyed by the source column's own literal header text
+   * (verbatim, not normalized), present only for a genuine May row.
+   * Preserved as its own object, rather than silently dropped, because
+   * this is the one case in the whole Depot STO shape where a real
+   * source column has no single canonical field to fold into --
+   * unlike `amount` (Amount/COSTS/COST, one column per month, same
+   * meaning) these are five DIFFERENT columns that can appear
+   * SIMULTANEOUSLY on one row, so collapsing them into one field would
+   * lose real data rather than just rename it. Never summed, never
+   * read by any computation -- raw provenance only, same discipline as
+   * `toonnesRaw`/the sign-off fields below. null when the row's month
+   * has no such columns (every month except May).
+   */
+  mayProductQuantities: Record<string, number> | null;
+  /**
+   * "TOONNES" (June/July only -- this spelling, not a typo introduced
+   * here, is the real source column's own literal header). Unconverted,
+   * same raw-storage convention as `tonnageRaw` on the shared record --
+   * no computation anywhere in this codebase reads it yet. See
+   * DEPOT_STO_DECISION.md's "normalize only for computation" note.
+   */
+  toonnesRaw: number | null;
+  /**
+   * The three named sign-off columns ("Mr Gurjit", "Mr Inderjeet",
+   * "Sharma Ji"), present from May onward. Stored EXACTLY as the source
+   * cell held it -- real values observed are booleans, but this is
+   * typed to also accept a string so a future month's free-text value
+   * (an initial, a date, anything else) is preserved rather than
+   * coerced or dropped. NEVER interpreted: this codebase does not know,
+   * and does not guess, what true/false or presence/absence means for
+   * any of these three -- see DEPOT_STO_DECISION.md. null when the
+   * source sheet for this row's month has no such column at all
+   * (March/April), never fabricated as false.
+   */
+  signOffMrGurjit: boolean | string | null;
+  signOffMrInderjeet: boolean | string | null;
+  signOffSharmaJi: boolean | string | null;
 }
 
 /**
@@ -151,7 +286,39 @@ export interface TransportCostSourceRecord extends OrgUnitScopedEntity {
   tonnageRaw: number | null;
 
   vansales?: VansalesSourceFields;
+  depotSto?: DepotStoSourceFields;
+
+  // --- Phase O2 additive fields (see "Phase O2 Spec" tab). Unset on
+  // every existing O1 row and every new import until the O2 matching
+  // step (auto-suggest + confirmed NormalizationReviewItem) resolves
+  // it -- never written directly, see normalization-review.types.ts's
+  // header for why. ---
+
+  /** Set once resolved via a confirmed NormalizationReviewItem. -> TransportPartner._id */
+  transporterPartnerId?: string;
+  /** Set once resolved via a confirmed NormalizationReviewItem (including a confirmed multi-plate row). -> ContractedVehicle._id */
+  contractedVehicleId?: string;
+
+  // --- Phase O3 additive fields (see "Phase O3 Spec" tab). Unset on
+  // every existing O1 row until the O3 currency/VAT backfill script or
+  // a fresh import populates it -- amount above stays the source-of-
+  // record cost; these describe what that number IS, never replace it. ---
+
+  /** ISO 4217, when known. Unset (not "guessed") until the backfill or a per-import VAT config resolves it -- see TransportCostImportVatConfig. */
+  currency?: string;
+  /** Whether `amount` (and rawRow's own total) is VAT-inclusive, VAT-exclusive, or not yet determined for this row's sheet/period. */
+  vatBasis?: VatBasis;
+  /** Derived net (ex-VAT) figure, only once vatBasis is known -- null, never 0, when VAT-exclusive-ness can't be derived from this row alone. */
+  netAmount?: number | null;
+  /** Derived gross (incl-VAT) figure, same null-vs-0 rule as netAmount. */
+  grossAmount?: number | null;
 }
+
+/** Whether a row's `amount` is VAT-inclusive, VAT-exclusive, or not yet
+ *  determined. 'unknown' is the default for every O1 row and stays
+ *  'unknown' until a TransportCostImportVatConfig or explicit backfill
+ *  resolves it -- never inferred by guessing. */
+export type VatBasis = 'inclusive' | 'exclusive' | 'unknown';
 
 export interface TransportCostSourceRecordFilters {
   sheetFamily?: TransportCostSheetFamily;

@@ -62,6 +62,23 @@ export function buildPeriodFilter(
 }
 
 /**
+ * ADDED, Vansales posting slice. A single caller (TransportCostReportService)
+ * now needs "postings for ANY of these cost categories" (third-party-transport
+ * OR transport-retainer) rather than exactly one -- see that service's own
+ * header for why the transport-cost report reads across both categories.
+ * `costCategory` stays a plain equality match for every other existing
+ * caller (a single category is still valid input, just the common case of
+ * this now-slightly-wider type), so nothing about this is a breaking change
+ * for gl-reconciliation.service.ts, allocation.controller.ts, or any other
+ * caller of the four methods below that still passes one category.
+ */
+function costCategoryMatch(
+  costCategory: AllocationCostCategory | AllocationCostCategory[]
+): AllocationCostCategory | { $in: AllocationCostCategory[] } {
+  return Array.isArray(costCategory) ? { $in: costCategory } : costCategory;
+}
+
+/**
  * APPEND-ONLY, same discipline and same reason as
  * modules/attention/repositories/value-ledger.repository.ts: a cost
  * posting that can be quietly edited or removed after the fact is not
@@ -255,7 +272,7 @@ export class AllocationLedgerRepository extends TenantScopedRepository<Allocatio
    * mapping is a separate, later confirmation).
    */
   async getNetTotalsByVehicleForCategory(
-    costCategory: AllocationCostCategory,
+    costCategory: AllocationCostCategory | AllocationCostCategory[],
     periodStart: Date,
     periodEnd: Date,
     context: TenantContext
@@ -264,7 +281,7 @@ export class AllocationLedgerRepository extends TenantScopedRepository<Allocatio
     const match: Record<string, unknown> = {
       ...this.getActiveFilter(context.organizationId),
       ...tenantScopeService.buildFilter<AllocationPosting>(context, 'orgUnitId'),
-      costCategory,
+      costCategory: costCategoryMatch(costCategory),
       ...buildPeriodFilter(periodStart, periodEnd),
     };
 
@@ -307,10 +324,15 @@ export class AllocationLedgerRepository extends TenantScopedRepository<Allocatio
    * operators) rather than requiring a live Mongo instance to test at
    * all.
    */
-  async getDistinctPostedMonths(costCategory: AllocationCostCategory, context: TenantContext): Promise<Date[]> {
-    const postings = await this.findManyInScope({ costCategory } as Filter<AllocationPosting>, context, {
-      limit: 100000,
-    });
+  async getDistinctPostedMonths(
+    costCategory: AllocationCostCategory | AllocationCostCategory[],
+    context: TenantContext
+  ): Promise<Date[]> {
+    const postings = await this.findManyInScope(
+      { costCategory: costCategoryMatch(costCategory) } as Filter<AllocationPosting>,
+      context,
+      { limit: 100000 }
+    );
 
     const months = new Set<string>();
     for (const posting of postings) {
@@ -340,13 +362,13 @@ export class AllocationLedgerRepository extends TenantScopedRepository<Allocatio
    * importBatchId) -- a total has nothing to resolve.
    */
   async findRawByCategoryInScope(
-    costCategory: AllocationCostCategory,
+    costCategory: AllocationCostCategory | AllocationCostCategory[],
     periodStart: Date,
     periodEnd: Date,
     context: TenantContext
   ): Promise<AllocationPosting[]> {
     return this.findManyInScope(
-      { costCategory, ...buildPeriodFilter(periodStart, periodEnd) } as Filter<AllocationPosting>,
+      { costCategory: costCategoryMatch(costCategory), ...buildPeriodFilter(periodStart, periodEnd) } as Filter<AllocationPosting>,
       context,
       { limit: 100000 }
     );
@@ -374,12 +396,12 @@ export class AllocationLedgerRepository extends TenantScopedRepository<Allocatio
    */
   async findBySourceIdsForCategory(
     sourceIds: string[],
-    costCategory: AllocationCostCategory,
+    costCategory: AllocationCostCategory | AllocationCostCategory[],
     context: TenantContext
   ): Promise<AllocationPosting[]> {
     if (sourceIds.length === 0) return [];
     return this.findManyInScope(
-      { costCategory, sourceId: { $in: sourceIds } } as Filter<AllocationPosting>,
+      { costCategory: costCategoryMatch(costCategory), sourceId: { $in: sourceIds } } as Filter<AllocationPosting>,
       context,
       { limit: 100000 }
     );

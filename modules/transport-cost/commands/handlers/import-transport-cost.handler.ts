@@ -30,12 +30,53 @@
 //     ImportTripsHandler's own duplicate guard. It is deliberately not
 //     used to silently merge or silently drop -- see the audit's
 //     Section I duplicate-record-risk discussion.
+//   - A Vansales import requires `command.periodMonth` ("YYYY-MM"),
+//     validated for the WHOLE BATCH before any row is inserted (see
+//     execute() below) and stamped onto every row's `vansales.periodMonth`
+//     -- Vansales periodization Option A, VANSALES_PERIODIZATION_DECISION.md.
+//     Never inferred from a sheet-tab name or any other free text.
+//   - A Swift row requires only "Cons. date" (parseable) and "Cons.
+//     Number" (non-blank) -- ONE tolerant parser over that small
+//     required-column subset, not a parser per month, so an optional
+//     column being missing or reordered in a later month's sheet does
+//     not break import. Swift's source data has no registration/
+//     transporter column at all (verified against the real workbook),
+//     so a Swift row's registration/transporterNormalized are always
+//     null -- never fabricated -- which means it can never resolve a
+//     contractedVehicleId at posting time either; see
+//     TransportCostPostingService's header for why that is structural,
+//     not a bug.
+//   - A Depot STO row requires only `date` (parseable) -- ONE tolerant
+//     parser over the UNION of every column seen across six real
+//     months' worth of genuinely different sheet layouts (see
+//     DEPOT_STO_DECISION.md). Unlike Swift, registration MAY be
+//     present, but whether it actually is depends on the real data,
+//     not just on which months' schema includes a registration-shaped
+//     column: March/April/August rows carry a real, populated
+//     registration in practice (100%/100%/98.8% of real rows); May's
+//     sheet has no registration column at all; June/July's sheets DO
+//     have a `REG` column but it's populated in essentially none of
+//     the real rows (0/24, 1/84) -- see DEPOT_STO_DECISION.md's
+//     "Vehicle identity" table. Whichever the reason, an unresolved
+//     row always maps registration to null, honestly, never
+//     fabricated -- the same non-fabrication discipline as every
+//     other family. The three sign-off columns ("Mr Gurjit", "Mr
+//     Inderjeet", "Sharma Ji") and TOONNES are stored as raw provenance
+//     only -- see DepotStoSourceFields' doc comment for why their
+//     meaning is never interpreted here. May's sheet also has five
+//     named per-product quantity columns that can all be populated on
+//     one row simultaneously -- preserved in their own
+//     `mayProductQuantities` object (keyed by literal header text),
+//     never folded into one field the way Amount/COSTS/COST are, since
+//     doing so would lose real data rather than just rename it.
 
 import { ICommandHandler } from '@/server/cqrs/command';
 import {
   ImportTransportCostCommand,
   ThirdPartyImportRow,
   VansalesImportRow,
+  SwiftImportRow,
+  DepotStoImportRow,
 } from '../import-transport-cost.command';
 import { TransportCostSourceRecordRepository } from '@/modules/transport-cost/repositories/transport-cost-source-record.repository';
 import {
@@ -45,7 +86,7 @@ import {
 import { TransportCostSourceRecord } from '@/shared/types/transport-cost.types';
 import { TransportCostImportExceptionKind } from '@/shared/types/transport-cost-import-exception.types';
 import { resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
-import { ForbiddenError } from '@/server/errors/app.errors';
+import { ForbiddenError, ValidationError } from '@/server/errors/app.errors';
 import { randomUUID } from 'crypto';
 import {
   parseSourceDate,
@@ -53,6 +94,7 @@ import {
   normalizeRegistration,
   normalizeTransporter,
   isKnownInvalidTransporter,
+  parsePeriodMonth,
 } from '@/modules/transport-cost/utils/normalization.utils';
 import {
   NormalizationMatcherService,
@@ -114,6 +156,21 @@ export class ImportTransportCostHandler
   ) {}
 
   async execute(command: ImportTransportCostCommand): Promise<ImportTransportCostResult> {
+    // Vansales periodization Option A (VANSALES_PERIODIZATION_DECISION.md):
+    // periodMonth is validated for the WHOLE BATCH before any row is
+    // inserted, not per row -- a Vansales import always covers one
+    // declared month, and rejecting the batch up front (rather than
+    // silently accepting rows TransportCostPostingService will later
+    // skip with 'missing-period-month') gives the importer an immediate,
+    // actionable error instead of a delayed, confusing one.
+    if (command.sheetFamily === 'vansales' && !parsePeriodMonth(command.periodMonth)) {
+      throw new ValidationError(
+        `A Vansales import requires periodMonth as "YYYY-MM" (the calendar month this batch's ` +
+          `retainer rows cover) -- got ${command.periodMonth === undefined ? 'nothing' : JSON.stringify(command.periodMonth)}. ` +
+          'See VANSALES_PERIODIZATION_DECISION.md.'
+      );
+    }
+
     const importBatchId = randomUUID();
     const results: ImportRowResult[] = [];
 
@@ -138,23 +195,21 @@ export class ImportTransportCostHandler
     for (const row of command.rows) {
       const rowNum = row.rowNumber;
 
-      if (command.sheetFamily === 'third-party') {
-        const result = this.validateAndBuildThirdParty(row as ThirdPartyImportRow, rowNum);
-        if (!result.ok) {
-          results.push(result.error);
-          await this.logException('rejected', { ...row }, rowNum, command, importBatchId, orgUnitId, result.error);
-          continue;
-        }
-        await this.insertOrFlag(result.record, command, importBatchId, results, rowNum, orgUnitId);
-      } else {
-        const result = this.validateAndBuildVansales(row as VansalesImportRow, rowNum);
-        if (!result.ok) {
-          results.push(result.error);
-          await this.logException('rejected', { ...row }, rowNum, command, importBatchId, orgUnitId, result.error);
-          continue;
-        }
-        await this.insertOrFlag(result.record, command, importBatchId, results, rowNum, orgUnitId);
+      const result =
+        command.sheetFamily === 'third-party'
+          ? this.validateAndBuildThirdParty(row as ThirdPartyImportRow, rowNum)
+          : command.sheetFamily === 'swift'
+          ? this.validateAndBuildSwift(row as SwiftImportRow, rowNum)
+          : command.sheetFamily === 'depot-sto'
+          ? this.validateAndBuildDepotSto(row as DepotStoImportRow, rowNum)
+          : this.validateAndBuildVansales(row as VansalesImportRow, rowNum, command.periodMonth!);
+
+      if (!result.ok) {
+        results.push(result.error);
+        await this.logException('rejected', { ...row }, rowNum, command, importBatchId, orgUnitId, result.error);
+        continue;
       }
+      await this.insertOrFlag(result.record, command, importBatchId, results, rowNum, orgUnitId);
     }
 
     const succeeded = results.filter((r) => r.success).length;
@@ -242,9 +297,208 @@ export class ImportTransportCostHandler
     };
   }
 
+  /**
+   * ONE tolerant parser over a small required-column subset -- see this
+   * file's header and TransportCostSheetFamily's doc comment for why
+   * that answers the audit's "Swift's schema drifts month to month"
+   * concern without a parser per month. Only "Cons. date" and "Cons.
+   * Number" are required; every other column is stored as provided (or
+   * left unset) -- a later month's sheet losing an optional column, or
+   * gaining a new one that ends up in `rawRow` only, does not break
+   * import.
+   *
+   * registration/transporterNormalized are always null/blank here --
+   * NEVER fabricated. Swift's real source data has no vehicle or
+   * transporter column at all (verified against the real workbook), so
+   * this is the honest, structural truth about the row, not a validation
+   * gap: normalizeRegistration(undefined)/normalizeTransporter(undefined)
+   * are called for real, the same functions every other family uses, so
+   * this row's shape stays identical to a 3rd Party row that happens to
+   * have a blank registration/transporter cell -- no special-casing.
+   */
+  private validateAndBuildSwift(
+    row: SwiftImportRow,
+    rowNum: number
+  ):
+    | { ok: true; record: Omit<TransportCostSourceRecord, '_id' | 'tenantId' | 'createdAt' | 'updatedAt' | 'isDeleted' | 'deletedAt' | 'importBatchId' | 'sourceFileName' | 'orgUnitId'> }
+    | { ok: false; error: ImportRowResult } {
+    const rawDate = (row.consDate ?? '').toString();
+    const date = parseSourceDate(rawDate);
+    if (!date) {
+      return {
+        ok: false,
+        error: {
+          row: rowNum,
+          success: false,
+          column: 'consDate',
+          invalidValue: rawDate,
+          error: 'Cons. date is missing or not in a recognised format',
+          suggestedFix: 'Use DD.MM.YY, DD.MM.YYYY, or YYYY-MM-DD.',
+        },
+      };
+    }
+
+    const consNumber = row.consNumber !== undefined && row.consNumber !== null ? String(row.consNumber).trim() : '';
+    if (!consNumber) {
+      return {
+        ok: false,
+        error: {
+          row: rowNum,
+          success: false,
+          column: 'consNumber',
+          invalidValue: '',
+          error: 'Cons. Number is required',
+          suggestedFix: 'Provide this row\'s consignment number -- a row with no Cons. Number is treated as a non-data row (e.g. a sheet subtotal), not a shipment.',
+        },
+      };
+    }
+
+    const { normalized: registration, raw: registrationRaw } = normalizeRegistration(undefined);
+    const { normalized: transporterNormalized, raw: transporterRaw } = normalizeTransporter(undefined);
+
+    return {
+      ok: true,
+      record: {
+        sheetFamily: 'swift',
+        sourceRowNumber: rowNum,
+        importedAt: new Date(),
+        rawRow: { ...row },
+        date,
+        rawDate,
+        registration,
+        registrationRaw,
+        transporterNormalized,
+        transporterRaw,
+        destinationTown: row.destinationLocation?.trim() || undefined,
+        customerName: row.receiversName?.trim() || undefined,
+        salesInvoiceNo: consNumber,
+        amount: parseAmount(row.totalIncl),
+        tonnageRaw: parseAmount(row.actualWeight),
+      },
+    };
+  }
+
+  /**
+   * ONE tolerant parser over the UNION of every real column seen across
+   * six months' worth of genuinely different Depot STO sheet layouts --
+   * see DEPOT_STO_DECISION.md for the full drift record. Only `date` is
+   * required; every other field is optional and simply absent for
+   * whichever month's shape didn't carry it (never fabricated). Unlike
+   * Swift, a Depot STO row's registration/transporter MAY be present --
+   * in the real data, March/April/August rows carry one and June/July's
+   * `REG` column exists but is populated in essentially none of the
+   * real rows, and May has no such column at all (see
+   * DEPOT_STO_DECISION.md's "Vehicle identity" table) --
+   * normalizeRegistration is called on whatever `row.registration`
+   * holds, honestly null whenever the source cell is empty (whether
+   * because the month's shape has no such column, or because the
+   * column exists but this particular row's cell is blank) rather than
+   * treated as a validation failure, since this family's
+   * required-column subset deliberately does not include it.
+   */
+  private validateAndBuildDepotSto(
+    row: DepotStoImportRow,
+    rowNum: number
+  ):
+    | { ok: true; record: Omit<TransportCostSourceRecord, '_id' | 'tenantId' | 'createdAt' | 'updatedAt' | 'isDeleted' | 'deletedAt' | 'importBatchId' | 'sourceFileName' | 'orgUnitId'> }
+    | { ok: false; error: ImportRowResult } {
+    const rawDate = (row.date ?? '').toString();
+    const date = parseSourceDate(rawDate);
+    if (!date) {
+      return {
+        ok: false,
+        error: {
+          row: rowNum,
+          success: false,
+          column: 'date',
+          invalidValue: rawDate,
+          error: 'Date is missing or not in a recognised format',
+          suggestedFix: 'Use DD.MM.YY, DD.MM.YYYY, or YYYY-MM-DD.',
+        },
+      };
+    }
+
+    const { normalized: registration, raw: registrationRaw } = normalizeRegistration(row.registration);
+    const { normalized: transporterNormalized, raw: transporterRaw } = normalizeTransporter(row.transporter);
+    if (isKnownInvalidTransporter(transporterNormalized)) {
+      return {
+        ok: false,
+        error: {
+          row: rowNum,
+          success: false,
+          column: 'transporter',
+          invalidValue: transporterRaw,
+          error: `"${transporterRaw}" looks like a mis-entered label, not a transporter name`,
+          suggestedFix: 'Check this row\'s Transporter cell in the source file.',
+        },
+      };
+    }
+
+    // May's five named per-product quantity columns -- each can be
+    // populated SIMULTANEOUSLY on one row (unlike every other Depot STO
+    // column, which is one renamed column per month), so they cannot be
+    // folded into one canonical field the way Amount/COSTS/COST are.
+    // Keyed by the source column's own literal header text; omitted
+    // entirely (never a key with a null/0 value) when absent, so the
+    // object's own key set tells a reader exactly which columns this
+    // particular row's sheet actually had. null (not {}) when the row's
+    // month has no such columns at all -- see
+    // DepotStoSourceFields.mayProductQuantities' doc comment.
+    const productEntries: Array<[string, number]> = [];
+    if (row.goldenGlow2L !== undefined) productEntries.push(['Golden Glow 2L', Number(row.goldenGlow2L)]);
+    if (row.olivine2L !== undefined) productEntries.push(['Olivine 2L', Number(row.olivine2L)]);
+    if (row.puredrop2L !== undefined) productEntries.push(['Puredrop 2L', Number(row.puredrop2L)]);
+    if (row.pureDrop5l !== undefined) productEntries.push(['Pure drop 5l', Number(row.pureDrop5l)]);
+    if (row.pureDrop750 !== undefined) productEntries.push(['Pure Drop 750', Number(row.pureDrop750)]);
+    const mayProductQuantities = productEntries.length > 0 ? Object.fromEntries(productEntries) : null;
+
+    return {
+      ok: true,
+      record: {
+        sheetFamily: 'depot-sto',
+        sourceRowNumber: rowNum,
+        importedAt: new Date(),
+        rawRow: { ...row },
+        date,
+        rawDate,
+        registration,
+        registrationRaw,
+        transporterNormalized,
+        transporterRaw,
+        destinationTown: row.destinationTown?.trim() || undefined,
+        customerName: row.customerName?.trim() || undefined,
+        salesInvoiceNo: row.salesInvoiceNo !== undefined ? String(row.salesInvoiceNo).trim() : undefined,
+        // "Tonnage" (March/April) -- a different real column from
+        // "TOONNES" (June/July, see depotSto.toonnesRaw below). Kept
+        // separate deliberately: they are two distinct columns in two
+        // different months' sheets, never merged into one figure.
+        amount: parseAmount(row.amount),
+        tonnageRaw: parseAmount(row.tonnage),
+        depotSto: {
+          stoNumber: row.sto?.trim() || null,
+          sourceLocation: row.source?.trim() || null,
+          depot: row.depot?.trim() || null,
+          commodity: row.commodity?.trim() || null,
+          driver: row.driver?.trim() || null,
+          mayProductQuantities,
+          toonnesRaw: parseAmount(row.toonnes),
+          // Raw provenance only -- never coerced, never interpreted.
+          // undefined (column absent for this month's shape) becomes
+          // null, exactly like every other optional field here; a
+          // present false is stored as false, never conflated with
+          // "absent".
+          signOffMrGurjit: row.mrGurjit ?? null,
+          signOffMrInderjeet: row.mrInderjeet ?? null,
+          signOffSharmaJi: row.sharmaJi ?? null,
+        },
+      },
+    };
+  }
+
   private validateAndBuildVansales(
     row: VansalesImportRow,
-    rowNum: number
+    rowNum: number,
+    periodMonth: string
   ):
     | { ok: true; record: Omit<TransportCostSourceRecord, '_id' | 'tenantId' | 'createdAt' | 'updatedAt' | 'isDeleted' | 'deletedAt' | 'importBatchId' | 'sourceFileName' | 'orgUnitId'> }
     | { ok: false; error: ImportRowResult } {
@@ -328,6 +582,9 @@ export class ImportTransportCostHandler
           monthlyCostBeforeVat: parseAmount(row.monthlyCostBeforeVat),
           weeklyAmounts,
           total: parseAmount(row.total),
+          // Already validated for the whole batch in execute() above --
+          // every row in a Vansales batch shares the one declared month.
+          periodMonth,
         },
       },
     };

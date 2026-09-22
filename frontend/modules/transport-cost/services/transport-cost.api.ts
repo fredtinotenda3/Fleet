@@ -39,9 +39,33 @@ export const transportCostApi = {
     return apiClient.post<ImportResponse>(`${BASE}/import/third-party`, { rows, sourceFileName });
   },
 
-  /** POST /api/transport-cost/import/vansales */
-  async importVansales(rows: Array<Record<string, unknown>>, sourceFileName: string): Promise<ImportResponse> {
-    return apiClient.post<ImportResponse>(`${BASE}/import/vansales`, { rows, sourceFileName });
+  /** POST /api/transport-cost/import/vansales. `periodMonth` ("YYYY-MM")
+   *  is required -- Vansales periodization Option A, see
+   *  VANSALES_PERIODIZATION_DECISION.md -- the calendar month this
+   *  whole batch's retainer rows cover. */
+  async importVansales(
+    rows: Array<Record<string, unknown>>,
+    sourceFileName: string,
+    periodMonth: string
+  ): Promise<ImportResponse> {
+    return apiClient.post<ImportResponse>(`${BASE}/import/vansales`, { rows, sourceFileName, periodMonth });
+  },
+
+  /** POST /api/transport-cost/import/swift. One tolerant parser over a
+   *  small required-column subset (Cons. date + Cons. Number) -- see
+   *  validateAndBuildSwift's header. No periodMonth: Swift rows are
+   *  dated per-row like 3rd Party, not a fixed monthly retainer. */
+  async importSwift(rows: Array<Record<string, unknown>>, sourceFileName: string): Promise<ImportResponse> {
+    return apiClient.post<ImportResponse>(`${BASE}/import/swift`, { rows, sourceFileName });
+  },
+
+  /** POST /api/transport-cost/import/depot-sto. One tolerant parser over
+   *  the union of every real column seen across six months' worth of
+   *  drifted Depot STO sheet layouts -- see validateAndBuildDepotSto's
+   *  header and DEPOT_STO_DECISION.md. No periodMonth: DATE is used
+   *  as-is per row, like 3rd Party/Swift, not a declared retainer month. */
+  async importDepotSto(rows: Array<Record<string, unknown>>, sourceFileName: string): Promise<ImportResponse> {
+    return apiClient.post<ImportResponse>(`${BASE}/import/depot-sto`, { rows, sourceFileName });
   },
 
   /** GET /api/transport-cost/source-records -- verification/review listing only. */
