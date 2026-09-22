@@ -622,10 +622,27 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
     confirmed: false,
   },
 
-  // ── Olivine transport-cost work (Phase O1). ────────────────────────
+  // ── Olivine transport-cost work (Phase O1/O2). ──────────────────────
   {
     module: 'transport-cost',
-    collections: ['tbltransportcostsourcerecords'],
+    collections: [
+      'tbltransportcostsourcerecords',
+      // Phase O2 additions -- see the rationale's "MIXED-LEVEL MODULE"
+      // paragraph below. Deliberately kept in this one entry rather than
+      // a second 'transport-cost' entry: the conformance suite requires
+      // a unique entry per module (see "declares a unique entry per
+      // module" in module-scope-conformance.spec.ts), and finance's
+      // tblglsubmissions already establishes the precedent of
+      // documenting a level exception for one collection in prose
+      // rather than fragmenting the module's entry.
+      'tbltransportpartners',
+      'tblcontractedvehicles',
+      'tblnormalizationreviewitems',
+      // Phase O3 addition -- currency/VAT-basis configuration, same
+      // organization-level reasoning as the three above (see the
+      // "MIXED-LEVEL MODULE" paragraph below).
+      'tbltransportcostvatconfigs',
+    ],
     level: 'org-unit',
     /**
      * 'explicit', matching dispatch/inventory's reasoning rather than
@@ -635,7 +652,8 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
      * row to inherit scope from. orgUnitId is resolved once per import
      * batch from the IMPORTING USER's own assignment
      * (resolveCreationOrgUnitId), never from the uploaded spreadsheet --
-     * see the handler.
+     * see the handler. Applies to tbltransportcostsourcerecords only --
+     * see MIXED-LEVEL MODULE below for the other three collections.
      */
     orgUnitSource: 'explicit',
     rationale:
@@ -647,7 +665,25 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
       'itself (see audit Section R item 6, business-stream/branch attribution) -- is one of ' +
       'the still-open client confirmations Phase O1 was deliberately scoped to not need; this ' +
       'entry records engineering\'s interim best reading, not a settled answer. Revisit once ' +
-      'that confirmation lands, alongside the later phases (O3/O4) it actually gates.',
+      'that confirmation lands, alongside the later phases (O3/O4) it actually gates. ' +
+      'MIXED-LEVEL MODULE (Phase O2/O3): tbltransportpartners, tblcontractedvehicles, ' +
+      'tblnormalizationreviewitems, and tbltransportcostvatconfigs are ORGANIZATION-level, ' +
+      'not org-unit -- a third-party transporter or a contracted vehicle is not owned by ' +
+      'one branch, it can serve several over its life, and currency/VAT-basis configuration ' +
+      'is per sheet family/import, not per branch, so none has a single orgUnitId to filter ' +
+      "by. This is confirmed:true (engineering's own architectural call, not a client " +
+      "business-rule question) even though the module entry as a whole stays confirmed:false: " +
+      'their repositories (transport-partner.repository.ts, contracted-vehicle.repository.ts, ' +
+      'normalization-review.repository.ts, transport-cost-vat-config.repository.ts) ' +
+      'deliberately extend plain BaseRepository, not TenantScopedRepository, and their entity ' +
+      "types carry no orgUnitId field -- see each file's own header. This mirrors finance's " +
+      "tblglsubmissions, which documents its own level exception in prose within finance's " +
+      "single 'org-unit' entry rather than fragmenting that module across two registry " +
+      'entries. Allocation postings created by TransportCostPostingService for this module\'s ' +
+      'data live in tblallocationledger (finance\'s own registry entry above), NOT here -- ' +
+      'see that service\'s header for why their orgUnitId is copied from the source record\'s ' +
+      'own (already org-unit-scoped) orgUnitId rather than inherited from a vehicle, the ' +
+      "'vehicle' orgUnitSource finance's entry otherwise declares.",
     confirmed: false,
   },
 

@@ -72,6 +72,19 @@ export const FINANCE_INDEXES = {
       unique: true,
       partialFilterExpression: { idempotencyKey: { $exists: true } },
     },
+    {
+      // ADDED, Phase O3. AllocationLedgerRepository.findBySource:
+      // {tenantId, sourceCollection, sourceId, costCategory} --
+      // TransportCostPostingService's own idempotent-replay/correction
+      // check, run on every postSourceRecord call. Not served by the
+      // idempotencyKey unique index above: that index answers "does THIS
+      // exact key exist", this query answers "what is the whole posting
+      // history for this source", which a correction's version-suffixed
+      // key cannot answer alone (see that repository method's own doc
+      // comment).
+      key: { tenantId: 1, sourceCollection: 1, sourceId: 1, costCategory: 1 },
+      name: 'idx_allocationledger_tenant_source',
+    },
   ],
   tbldepreciationprofiles: [
     {

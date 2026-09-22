@@ -234,6 +234,16 @@ export enum Permission {
    * branch-operations one, and finance settings (reporting currency, FX
    * policy) are organization-level -- a branch changing them would
    * silently restate every other branch's reported costs.
+   *
+   * Phase O3 (Olivine transport cost) reuses this SAME permission to
+   * gate TransportCostPostingService.postSourceRecord rather than
+   * inventing a TRANSPORT_COST_POST permission -- posting a transport
+   * cost to the Allocation Ledger is the identical accounting act as
+   * posting a fuel/expense allocation, just via a different source
+   * collection (see that service's own header). DEFAULT/provisional
+   * choice, same status as TRANSPORT_COST_NORMALIZE above -- flagged in
+   * the delivery README pending the client's own sign-off on who should
+   * be able to post transport costs.
    */
   FINANCE_MANAGE = 'finance:manage',
 
@@ -295,6 +305,20 @@ export enum Permission {
   // EXPENSE_VIEW.
   TRANSPORT_COST_VIEW = 'transport-cost:view',
   TRANSPORT_COST_IMPORT = 'transport-cost:import',
+  // Phase O2: confirming a fuzzy-match suggestion or a new transporter/
+  // vehicle identity in the normalization review queue. A separate
+  // permission from TRANSPORT_COST_IMPORT rather than folded into it --
+  // importing a spreadsheet and adjudicating "are PRINORTH and PRI NORTH
+  // the same company" are different kinds of judgment call, and O2's
+  // NormalizationReviewItem writes master data (TransportPartner /
+  // ContractedVehicle) that every future import and, eventually, every
+  // O3 ledger posting resolves against -- a mistaken confirmation here
+  // has a much longer blast radius than one mis-imported row. DEFAULT
+  // grant (FLEET_MANAGER + ACCOUNTANT, same pairing as
+  // TRANSPORT_COST_IMPORT) -- flagged provisional in the delivery
+  // README pending the client's own sign-off on who should adjudicate
+  // this queue.
+  TRANSPORT_COST_NORMALIZE = 'transport-cost:normalize',
 
   // -- Telematics ingestion (PHASE 0, F-5) --
   //
@@ -623,6 +647,10 @@ export const rolePermissions: Record<Role, Permission[]> = {
     // relationships this data describes, so gets both view and import.
     Permission.TRANSPORT_COST_VIEW,
     Permission.TRANSPORT_COST_IMPORT,
+    // Phase O2 -- same operational-ownership reasoning extends to
+    // adjudicating the normalization review queue. DEFAULT/provisional,
+    // see the permission's own definition above.
+    Permission.TRANSPORT_COST_NORMALIZE,
   ],
 
   /**
@@ -761,6 +789,10 @@ export const rolePermissions: Record<Role, Permission[]> = {
     // phase that posts it to the ledger), so gets both view and import.
     Permission.TRANSPORT_COST_VIEW,
     Permission.TRANSPORT_COST_IMPORT,
+    // Phase O2 -- same natural-ownership reasoning extends to
+    // adjudicating the normalization review queue. DEFAULT/provisional,
+    // see the permission's own definition above.
+    Permission.TRANSPORT_COST_NORMALIZE,
   ],
 
   [Role.DISPATCHER]: [

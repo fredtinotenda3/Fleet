@@ -8,6 +8,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { UploadCloud } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
@@ -112,18 +113,23 @@ export function TransportCostImportPage() {
         description="Import Olivine's 3rd Party and Vansales transport-cost spreadsheets as source evidence. This does not post to the finance ledger or compute cost per tonne -- see the fit-gap assessment for why."
         breadcrumbs={[{ label: 'Transport cost' }, { label: 'Import' }]}
         actions={
-          canImport ? (
-            <div className="flex items-center gap-2">
-              <Button size="sm" onClick={() => setThirdPartyModalOpen(true)}>
-                <UploadCloud className="h-3.5 w-3.5" />
-                Import 3rd Party
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => setVansalesModalOpen(true)}>
-                <UploadCloud className="h-3.5 w-3.5" />
-                Import Vansales
-              </Button>
-            </div>
-          ) : undefined
+          <div className="flex items-center gap-2">
+            {canImport && (
+              <>
+                <Button size="sm" onClick={() => setThirdPartyModalOpen(true)}>
+                  <UploadCloud className="h-3.5 w-3.5" />
+                  Import 3rd Party
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setVansalesModalOpen(true)}>
+                  <UploadCloud className="h-3.5 w-3.5" />
+                  Import Vansales
+                </Button>
+              </>
+            )}
+            <Link href="/transport-cost/report" className="text-body-sm text-primary hover:underline">
+              View report &rarr;
+            </Link>
+          </div>
         }
       />
 

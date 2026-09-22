@@ -3,6 +3,9 @@
 // Phase O1 client: two import endpoints (one per sheet family -- see
 // the backend command's header for why they are not merged into one)
 // and one read endpoint for verifying an import landed correctly.
+// Phase O4 adds the three read-only report endpoints (GET-only, never
+// posts anything -- posting stays behind TRANSPORT_COST_IMPORT/
+// FINANCE_MANAGE on the import page, not this one).
 
 import { apiClient } from '@/shared/utils/api-client.utils';
 import type { PaginatedResponse } from '@/shared/types/common.types';
@@ -11,6 +14,7 @@ import type {
   TransportCostSheetFamily,
 } from '@/shared/types/transport-cost.types';
 import type { ImportResponse } from '@/frontend/shared/import/ImportModal';
+import type { TransportCostAllocationReport, PostingDrillDown } from '../types';
 
 const BASE = '/api/transport-cost';
 
@@ -53,6 +57,29 @@ export const transportCostApi = {
         page: params.page,
         limit: params.limit,
       },
+    });
+  },
+
+  /** GET /api/transport-cost/report -- Phase O4: Business Stream -> Vehicle totals for a period. */
+  async getAllocationReport(periodStart: Date, periodEnd: Date): Promise<TransportCostAllocationReport> {
+    return apiClient.get<TransportCostAllocationReport>(`${BASE}/report`, {
+      params: { periodStart: periodStart.toISOString(), periodEnd: periodEnd.toISOString() },
+    });
+  },
+
+  /** GET /api/transport-cost/report/months -- Phase O4: the month picker's own data source. */
+  async getAvailableMonths(): Promise<Date[]> {
+    return apiClient.get<Date[]>(`${BASE}/report/months`);
+  },
+
+  /** GET /api/transport-cost/report/vehicles/:id -- Phase O4: drill-down to individual postings. */
+  async getPostingsForVehicle(
+    contractedVehicleId: string,
+    periodStart: Date,
+    periodEnd: Date
+  ): Promise<PostingDrillDown> {
+    return apiClient.get<PostingDrillDown>(`${BASE}/report/vehicles/${contractedVehicleId}`, {
+      params: { periodStart: periodStart.toISOString(), periodEnd: periodEnd.toISOString() },
     });
   },
 };

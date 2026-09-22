@@ -116,6 +116,35 @@ export class AllocationLedgerRepository extends TenantScopedRepository<Allocatio
   }
 
   /**
+   * Every posting (original AND reversal) for one source record's one
+   * cost category, oldest first.
+   *
+   * ADDED, Phase O3. This is TransportCostPostingService's own
+   * "have I already posted this, and is the last posting still current"
+   * check -- see that service's header for the correction algorithm this
+   * feeds. Deliberately reads the WHOLE history rather than trusting a
+   * single idempotencyKey lookup: a correction's re-post cannot reuse the
+   * original's idempotencyKey (the unique index would reject it -- the
+   * original row is never deleted), so each version after the first gets
+   * its own key, and "what is the current live version" has to be
+   * derived from the append-only history itself -- the same
+   * findReversalOf-by-query philosophy as the rest of this repository,
+   * never a mutable pointer.
+   */
+  async findBySource(
+    sourceCollection: AllocationPosting['sourceCollection'],
+    sourceId: string,
+    costCategory: AllocationCostCategory,
+    context: TenantContext
+  ): Promise<AllocationPosting[]> {
+    return this.findManyInScope(
+      { sourceCollection, sourceId, costCategory } as Filter<AllocationPosting>,
+      context,
+      { sortBy: 'postedAt', sortOrder: 'asc' }
+    );
+  }
+
+  /**
    * Whether `postingId` has already been reversed -- discovered by
    * querying for a posting whose reversalOfPostingId points at it,
    * never by a mutable flag on the original (see the type's doc
@@ -211,6 +240,90 @@ export class AllocationLedgerRepository extends TenantScopedRepository<Allocatio
       netReportingAmount: row.netReportingAmount,
       postingCount: row.postingCount,
     }));
+  }
+
+  /**
+   * ADDED, Phase O3. Net (post-reversal) reporting-currency totals PER
+   * VEHICLE for one cost category over a period -- TransportCostReportService's
+   * Stream -> Vehicle drill-down level. Same fully-contained period rule
+   * and same currency-grouping-not-summing discipline as
+   * getNetTotalsByGlAccount immediately below (this method's closest
+   * relative: "one platform-wide aggregation, grouped, over a period"),
+   * just grouped by vehicleId and additionally filtered to one
+   * costCategory rather than requiring glAccountCode to exist -- a
+   * transport-cost posting carries no glAccountCode (Olivine's GL
+   * mapping is a separate, later confirmation).
+   */
+  async getNetTotalsByVehicleForCategory(
+    costCategory: AllocationCostCategory,
+    periodStart: Date,
+    periodEnd: Date,
+    context: TenantContext
+  ): Promise<Array<{ vehicleId: string; reportingCurrency: string; netReportingAmount: number; postingCount: number }>> {
+    const collection = await this.getCollection();
+    const match: Record<string, unknown> = {
+      ...this.getActiveFilter(context.organizationId),
+      ...tenantScopeService.buildFilter<AllocationPosting>(context, 'orgUnitId'),
+      costCategory,
+      ...buildPeriodFilter(periodStart, periodEnd),
+    };
+
+    const rows = await collection
+      .aggregate([
+        { $match: match },
+        {
+          $group: {
+            _id: { vehicleId: '$vehicleId', reportingCurrency: '$reportingCurrency' },
+            netReportingAmount: { $sum: '$reportingAmount' },
+            postingCount: { $sum: 1 },
+          },
+        },
+      ])
+      .toArray();
+
+    return rows.map((row: any) => ({
+      vehicleId: row._id.vehicleId,
+      reportingCurrency: row._id.reportingCurrency,
+      netReportingAmount: row.netReportingAmount,
+      postingCount: row.postingCount,
+    }));
+  }
+
+  /**
+   * ADDED, Phase O3. Distinct calendar months (1st-of-month, UTC) that
+   * have at least one posting for a cost category -- the O4 screen's
+   * "switch to any imported month" control. Derived from the LEDGER
+   * (postings), not from raw source records: this report only ever
+   * reads what O3 actually posted, per the hard "sourced from postings,
+   * never raw source records" requirement, so the month picker cannot
+   * offer a month that has no postings to show.
+   *
+   * Deliberately NOT a `$group`-by-year/month aggregation: the number of
+   * distinct months for one tenant's transport-cost data is small (this
+   * is a calendar dimension, not a row count), so reducing in
+   * application code over a plain scoped find is both simpler and
+   * exercisable against tests/helpers/fake-collection.ts's minimal
+   * aggregate (which does not implement Mongo's $year/$month date
+   * operators) rather than requiring a live Mongo instance to test at
+   * all.
+   */
+  async getDistinctPostedMonths(costCategory: AllocationCostCategory, context: TenantContext): Promise<Date[]> {
+    const postings = await this.findManyInScope({ costCategory } as Filter<AllocationPosting>, context, {
+      limit: 100000,
+    });
+
+    const months = new Set<string>();
+    for (const posting of postings) {
+      const d = new Date(posting.periodStart);
+      months.add(`${d.getUTCFullYear()}-${d.getUTCMonth()}`);
+    }
+
+    return Array.from(months)
+      .map((key) => {
+        const [year, month] = key.split('-').map(Number);
+        return new Date(Date.UTC(year, month, 1));
+      })
+      .sort((a, b) => a.getTime() - b.getTime());
   }
 
   private buildFilter(filters: AllocationLedgerFilters): Filter<AllocationPosting> {

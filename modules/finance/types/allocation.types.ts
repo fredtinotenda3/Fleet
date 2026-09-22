@@ -46,7 +46,17 @@ export type AllocationCostCategory =
   | 'expense'
   | 'depreciation'
   | 'insurance'
-  | 'other';
+  | 'other'
+  /**
+   * ADDED, Phase O3 ("Phase O3 Spec" tab). A third-party/contracted-
+   * vehicle transport cost posted from a confirmed TransportCostSourceRecord
+   * -- see TransportCostPostingService. Its own category rather than
+   * 'other' or 'expense' because it is explicitly excluded from
+   * cost-per-km (no fuel/cost-per-km anywhere for this data yet, per the
+   * audit) and must be filterable out of that engine without a
+   * free-text description match.
+   */
+  | 'transport-cost';
 
 /** Where the fx_rate for this posting came from -- see finance-currency addendum for the same enum applied to source transactions. */
 export type FxSource = 'transaction' | 'period-average' | 'manual' | 'organization-default';
@@ -75,7 +85,17 @@ export interface AllocationPosting extends OrgUnitScopedEntity {
      */
     | 'tblworkorders'
     | 'finance:depreciation'
-    | 'finance:shared-cost';
+    | 'finance:shared-cost'
+    /**
+     * ADDED, Phase O3. A confirmed TransportCostSourceRecord (Olivine
+     * 3rd Party sheet family only in this slice -- Vansales retainer
+     * rows carry no per-row transaction date and are deliberately NOT
+     * posted yet; see TransportCostPostingService's header). vehicleId
+     * on such a posting is a ContractedVehicle._id, NOT a tblvehicles
+     * _id -- see that service's header for why this never goes through
+     * AllocationService.postAllocation's resolveVehicleInScope.
+     */
+    | 'tbltransportcostsourcerecords';
   sourceId: string;
 
   description?: string;

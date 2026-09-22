@@ -131,11 +131,44 @@ export class FakeCollection {
     this.docs = docs.map((d) => ({ _id: nextId(), ...d })) as FakeDoc[];
   }
 
+  /**
+   * `_id` needs its own normalization pass before `matches()` runs:
+   * ObjectId instances compare by reference, not value, so a filter's
+   * `_id: someObjectId` must become `_id: "<hex>"` to compare equal to
+   * this store's own string ids. That is a genuinely different shape
+   * from an operator filter like `_id: {$in: [objectId1, objectId2]}`
+   * -- both are `typeof === 'object'`, so a single blanket
+   * `String(normalized._id)` stringifies the *whole* `{$in: [...]}`
+   * object into the literal text "[object Object]", which then never
+   * equals any real id and silently matches zero documents. Every
+   * operator case is handled explicitly (recursing into each operand)
+   * so an id filter this doesn't yet understand throws instead of
+   * quietly returning nothing, matching this file's stated policy for
+   * every other operator.
+   */
+  private normalizeIdValue(value: unknown): unknown {
+    if (value === null || value === undefined) return value;
+    if (Array.isArray(value)) return value.map((v) => this.normalizeIdValue(v));
+    if (typeof value === 'object') {
+      const keys = Object.keys(value as object);
+      if (keys.some((k) => k.startsWith('$'))) {
+        const ops = value as Record<string, unknown>;
+        const normalizedOps: Record<string, unknown> = {};
+        for (const [op, operand] of Object.entries(ops)) {
+          normalizedOps[op] = this.normalizeIdValue(operand);
+        }
+        return normalizedOps;
+      }
+      return String(value);
+    }
+    return value;
+  }
+
   private select(filter: Record<string, unknown>): FakeDoc[] {
     this.seenFilters.push(filter);
     const normalized = { ...filter };
-    if (normalized._id && typeof normalized._id === 'object') {
-      normalized._id = String(normalized._id);
+    if (normalized._id !== undefined) {
+      normalized._id = this.normalizeIdValue(normalized._id);
     }
     return this.docs.filter((d) => matches(d, normalized));
   }
@@ -171,24 +204,82 @@ export class FakeCollection {
     return { insertedId: withId._id };
   }
 
+  /**
+   * Update-operator surface shared by updateOne/updateMany/
+   * findOneAndUpdate: `$set` (overwrite/add fields) and `$addToSet`
+   * (append to an array field, only if not already present --
+   * matching Mongo's own dedup semantics, not a `$each` batch form,
+   * since no caller in this codebase uses `$addToSet` with `$each`).
+   * An update carrying any OTHER top-level operator throws rather
+   * than silently applying only the operators this happens to
+   * recognize -- the same "throw loudly instead of quietly doing the
+   * wrong thing" policy this file's header states for query operators.
+   * This one actually matters: NormalizationReviewRepository.
+   * appendSourceRecordId and TransportPartnerRepository's alias-add
+   * both rely on `$addToSet` to accumulate onto an existing array
+   * across repeated calls, and a fake that quietly dropped it would
+   * make every call after the first a silent no-op.
+   */
+  private applyUpdate(
+    target: FakeDoc,
+    update: { $set?: Record<string, unknown>; $addToSet?: Record<string, unknown> }
+  ): void {
+    const knownOps = new Set(['$set', '$addToSet']);
+    for (const op of Object.keys(update)) {
+      if (!knownOps.has(op)) {
+        throw new Error(
+          `fake-collection: unsupported update operator "${op}". Extend the fake ` +
+            'rather than letting a caller\'s update silently partially apply.'
+        );
+      }
+    }
+    Object.assign(target, update.$set ?? {});
+    for (const [field, value] of Object.entries(update.$addToSet ?? {})) {
+      const current = Array.isArray(target[field]) ? (target[field] as unknown[]) : [];
+      if (!current.includes(value)) {
+        target[field] = [...current, value];
+      } else if (!Array.isArray(target[field])) {
+        target[field] = current;
+      }
+    }
+  }
+
   async findOneAndUpdate(
     filter: Record<string, unknown>,
-    update: { $set?: Record<string, unknown> }
+    update: { $set?: Record<string, unknown>; $addToSet?: Record<string, unknown> }
   ): Promise<FakeDoc | null> {
     const target = this.select(filter)[0];
     if (!target) return null;
-    Object.assign(target, update.$set ?? {});
+    this.applyUpdate(target, update);
     return target;
   }
 
   async updateOne(
     filter: Record<string, unknown>,
-    update: { $set?: Record<string, unknown> }
+    update: { $set?: Record<string, unknown>; $addToSet?: Record<string, unknown> }
   ) {
     const target = this.select(filter)[0];
     if (!target) return { modifiedCount: 0 };
-    Object.assign(target, update.$set ?? {});
+    this.applyUpdate(target, update);
     return { modifiedCount: 1 };
+  }
+
+  /**
+   * Minimal updateMany supporting exactly the shape
+   * TransportCostSourceRecordRepository.bulkSetField emits: a filter
+   * (typically `_id: {$in: [...]}` plus a tenant predicate) and a
+   * `$set`/`$addToSet` update, applied per-doc via the same
+   * applyUpdate() every other update method uses.
+   */
+  async updateMany(
+    filter: Record<string, unknown>,
+    update: { $set?: Record<string, unknown>; $addToSet?: Record<string, unknown> }
+  ) {
+    const targets = this.select(filter);
+    for (const target of targets) {
+      this.applyUpdate(target, update);
+    }
+    return { modifiedCount: targets.length, matchedCount: targets.length };
   }
 
   async deleteOne(filter: Record<string, unknown>) {

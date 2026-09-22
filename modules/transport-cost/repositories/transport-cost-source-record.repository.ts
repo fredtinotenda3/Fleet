@@ -12,7 +12,7 @@ import { TenantScopedRepository } from '@/server/repositories/tenant-scoped.repo
 import { TransportCostSourceRecord, TransportCostSheetFamily } from '@/shared/types/transport-cost.types';
 import { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
-import { Filter } from 'mongodb';
+import { Filter, ObjectId } from 'mongodb';
 
 export class TransportCostSourceRecordRepository extends TenantScopedRepository<TransportCostSourceRecord> {
   protected collectionName = 'tbltransportcostsourcerecords';
@@ -79,6 +79,32 @@ export class TransportCostSourceRecordRepository extends TenantScopedRepository<
     return this.findWithPaginationInScope(filter, pagination, context);
   }
 
+  /**
+   * ADDED, Phase O4. Third-party rows in a period with no Amount
+   * recorded yet -- what drives the report screen's "this total includes
+   * pending rows, do not present it as final" banner. Deliberately
+   * scoped to the CALLER's org-unit visibility (findManyInScope), not a
+   * raw count: the banner must reflect what pending evidence the viewer
+   * themselves can see, the same scoping discipline as every other
+   * report path in this codebase.
+   */
+  async countPendingAmount(
+    periodStart: Date,
+    periodEnd: Date,
+    context: TenantContext
+  ): Promise<number> {
+    const rows = await this.findManyInScope(
+      {
+        sheetFamily: 'third-party',
+        amount: null,
+        date: { $gte: periodStart, $lte: periodEnd },
+      } as Filter<TransportCostSourceRecord>,
+      context,
+      { limit: 100000 }
+    );
+    return rows.length;
+  }
+
   async countByImportBatch(importBatchId: string, tenantId: string): Promise<number> {
     const collection = await this.getCollection();
     return collection.countDocuments({
@@ -86,6 +112,51 @@ export class TransportCostSourceRecordRepository extends TenantScopedRepository<
       tenantId,
       isDeleted: { $ne: true },
     } as Filter<TransportCostSourceRecord>);
+  }
+
+  /**
+   * Phase O2: fans a confirmed review decision out to every source
+   * record that was waiting on it. Called ONLY from
+   * confirm-review-match.handler.ts / confirm-review-new.handler.ts --
+   * see normalization-review.types.ts's central rule. `sourceRecordIds`
+   * comes from a NormalizationReviewItem, never from user input
+   * directly, so no additional validation of the ids' provenance is
+   * done here beyond tenant scoping.
+   */
+  async bulkSetTransporterPartner(
+    sourceRecordIds: string[],
+    transporterPartnerId: string,
+    tenantId: string
+  ): Promise<number> {
+    return this.bulkSetField(sourceRecordIds, 'transporterPartnerId', transporterPartnerId, tenantId);
+  }
+
+  async bulkSetContractedVehicle(
+    sourceRecordIds: string[],
+    contractedVehicleId: string,
+    tenantId: string
+  ): Promise<number> {
+    return this.bulkSetField(sourceRecordIds, 'contractedVehicleId', contractedVehicleId, tenantId);
+  }
+
+  private async bulkSetField(
+    sourceRecordIds: string[],
+    field: 'transporterPartnerId' | 'contractedVehicleId',
+    value: string,
+    tenantId: string
+  ): Promise<number> {
+    const validIds = sourceRecordIds.filter((id) => ObjectId.isValid(id)).map((id) => this.toObjectId(id));
+    if (validIds.length === 0) return 0;
+
+    const collection = await this.getCollection();
+    const filter: Record<string, unknown> = {
+      ...this.getTenantFilter(tenantId),
+      _id: { $in: validIds },
+    };
+    const result = await collection.updateMany(filter as Filter<TransportCostSourceRecord>, {
+      $set: { [field]: value, updatedAt: new Date() },
+    } as any);
+    return result.modifiedCount;
   }
 }
 
