@@ -13,7 +13,6 @@ import { TransportCostSourceRecord, TransportCostSheetFamily } from '@/shared/ty
 import { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { Filter, ObjectId } from 'mongodb';
-import { parsePeriodMonth } from '../utils/normalization.utils';
 
 export class TransportCostSourceRecordRepository extends TenantScopedRepository<TransportCostSourceRecord> {
   protected collectionName = 'tbltransportcostsourcerecords';
@@ -115,81 +114,29 @@ export class TransportCostSourceRecordRepository extends TenantScopedRepository<
   }
 
   /**
-   * ADDED, Phase O4. Rows in a period with no Amount recorded yet --
-   * what drives the report screen's "this total includes pending rows,
-   * do not present it as final" banner. Deliberately scoped to the
-   * CALLER's org-unit visibility (findManyInScope), not a raw count:
-   * the banner must reflect what pending evidence the viewer themselves
-   * can see, the same scoping discipline as every other report path in
-   * this codebase.
-   *
-   * WIDENED, Command Centre Slice A0. Originally hardcoded to
-   * `sheetFamily: 'third-party'` -- the only family the O4 report
-   * screen read. Now accepts any family or set of families so the
-   * Command Centre's cross-family missing-cost breakdown (Slice C) can
-   * ask the same "how much pending evidence exists" question for
-   * Vansales/Swift/Depot STO too, not just 3rd Party. Defaults to
-   * `'third-party'` so every pre-existing caller (the O4 report screen)
-   * is unaffected.
-   *
-   * VANSALES IS HANDLED SEPARATELY, ON PURPOSE. Every other family
-   * carries a real per-row `date` this method can range-filter directly
-   * in the query. Vansales carries no per-row date at all -- only a
-   * declared `vansales.periodMonth` ("YYYY-MM", see
-   * VansalesSourceFields's own doc comment) -- so a dotted-path Mongo
-   * filter (`'vansales.periodMonth': {...}`) would be needed to push
-   * that check into the query. tests/helpers/fake-collection.ts's
-   * matcher reads `doc[field]` as a LITERAL key, not a dotted path (real
-   * MongoDB supports dot-path filters; this fake deliberately does not
-   * -- see its own header), so a dotted filter here would silently
-   * match nothing under the shared test double while working against
-   * real Mongo -- exactly the kind of trap this codebase's own test
-   * discipline exists to catch. Instead: fetch every amount-null
-   * Vansales row once (bounded, org-unit scoped, same as every other
-   * branch here) and check each row's own declared period in Node via
-   * the same `parsePeriodMonth` helper TransportCostPostingService
-   * already uses at posting time, against the SAME fully-contained rule
-   * the ledger uses everywhere else (see allocation-ledger.repository.ts's
-   * `buildPeriodFilter` doc comment) -- one bounded fetch, not a second
-   * database round trip per row.
+   * ADDED, Phase O4. Third-party rows in a period with no Amount
+   * recorded yet -- what drives the report screen's "this total includes
+   * pending rows, do not present it as final" banner. Deliberately
+   * scoped to the CALLER's org-unit visibility (findManyInScope), not a
+   * raw count: the banner must reflect what pending evidence the viewer
+   * themselves can see, the same scoping discipline as every other
+   * report path in this codebase.
    */
   async countPendingAmount(
     periodStart: Date,
     periodEnd: Date,
-    context: TenantContext,
-    sheetFamily: TransportCostSheetFamily | TransportCostSheetFamily[] = 'third-party'
+    context: TenantContext
   ): Promise<number> {
-    const families = Array.isArray(sheetFamily) ? sheetFamily : [sheetFamily];
-    const datedFamilies = families.filter((f) => f !== 'vansales');
-    let count = 0;
-
-    if (datedFamilies.length > 0) {
-      const rows = await this.findManyInScope(
-        {
-          sheetFamily: datedFamilies.length === 1 ? datedFamilies[0] : { $in: datedFamilies },
-          amount: null,
-          date: { $gte: periodStart, $lte: periodEnd },
-        } as Filter<TransportCostSourceRecord>,
-        context,
-        { limit: 100000 }
-      );
-      count += rows.length;
-    }
-
-    if (families.includes('vansales')) {
-      const vansalesRows = await this.findManyInScope(
-        { sheetFamily: 'vansales', amount: null } as Filter<TransportCostSourceRecord>,
-        context,
-        { limit: 100000 }
-      );
-      count += vansalesRows.filter((row) => {
-        const period = parsePeriodMonth(row.vansales?.periodMonth ?? null);
-        if (!period) return false;
-        return period.periodStart >= periodStart && period.periodEnd <= periodEnd;
-      }).length;
-    }
-
-    return count;
+    const rows = await this.findManyInScope(
+      {
+        sheetFamily: 'third-party',
+        amount: null,
+        date: { $gte: periodStart, $lte: periodEnd },
+      } as Filter<TransportCostSourceRecord>,
+      context,
+      { limit: 100000 }
+    );
+    return rows.length;
   }
 
   async countByImportBatch(importBatchId: string, tenantId: string): Promise<number> {

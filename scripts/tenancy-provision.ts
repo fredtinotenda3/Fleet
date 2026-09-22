@@ -354,8 +354,43 @@ async function resolveTargetOrganization(db: Db): Promise<ResolvedOrg> {
     canonicalTenantId: canonical,
     objectId: String(chosen._id),
     name: String(chosen.name ?? canonical),
-    emailDomain: 'willsgrove.test',
+    emailDomain: deriveEmailDomain(String(chosen.name ?? canonical)),
   };
+}
+
+/**
+ * FIXED: this was `emailDomain: 'willsgrove.test'` -- a literal, not
+ * derived from `chosen` at all. Harmless while this script only ever
+ * targeted the one Willsgrove demo org it was written for, but a real
+ * bug the moment `--org <slug>` is used to target a DIFFERENT
+ * organization (e.g. a newly seeded "Olivine Group"): every account
+ * this script creates or updates for that org would silently be
+ * printed and written under `@willsgrove.test`, not that org's own
+ * domain -- confusing at best, and a credential/identity mix-up
+ * waiting to happen at worst if two orgs' seed accounts ever share an
+ * inbox convention.
+ *
+ * Derives a short, readable domain from the organization's own NAME
+ * (not its slug, which always carries organizationService.
+ * createOrganization's random 6-char disambiguating suffix -- see that
+ * method's generateSlug() -- and would produce an ugly
+ * "@olivine-group-a1b2c3.test"). Takes the first alphabetic word,
+ * lowercased: "Willsgrove Farm Enterprises_Harare" -> "willsgrove.test"
+ * (byte-for-byte the same domain this script already hardcoded for
+ * Willsgrove, so the default/no---org path is unaffected -- this is a
+ * pure bugfix, not a behaviour change for the existing demo org).
+ * "Olivine Group" -> "olivine.test". Falls back to the full
+ * canonicalTenantId (sluggified) if the name yields nothing usable,
+ * rather than ever falling back to another organization's domain.
+ */
+function deriveEmailDomain(orgName: string): string {
+  const firstWord = orgName
+    .split(/[\s_-]+/)[0]
+    ?.toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+  if (firstWord) return `${firstWord}.test`;
+  const fallback = orgName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return `${fallback || 'org'}.test`;
 }
 
 // ── Main ─────────────────────────────────────────────────────────────

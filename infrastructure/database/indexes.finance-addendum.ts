@@ -85,20 +85,6 @@ export const FINANCE_INDEXES = {
       key: { tenantId: 1, sourceCollection: 1, sourceId: 1, costCategory: 1 },
       name: 'idx_allocationledger_tenant_source',
     },
-    {
-      // ADDED, Cost Intelligence Command Centre, Slice A0. Every new
-      // Command Centre aggregation (getNetTotalsByCategoryAcrossVehicles,
-      // and the widened-category calls to findRawByCategoryInScope) reads
-      // {tenantId, costCategory: {$in:[...]}, periodStart} ACROSS EVERY
-      // VEHICLE -- unlike idx_allocationledger_tenant_vehicle_periodstart
-      // above, which leads with vehicleId and only serves the existing
-      // per-vehicle drill-down. Without this, those cross-vehicle,
-      // category-filtered, period-ranged queries fall back to a full
-      // tenant-scoped collection scan. See
-      // OLIVINE_COST_INTELLIGENCE_COMMAND_CENTRE_DESIGN.md Section 11.
-      key: { tenantId: 1, costCategory: 1, periodStart: 1 },
-      name: 'idx_allocationledger_tenant_costcategory_periodstart',
-    },
   ],
   tbldepreciationprofiles: [
     {
