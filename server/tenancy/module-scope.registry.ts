@@ -627,6 +627,14 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
     module: 'transport-cost',
     collections: [
       'tbltransportcostsourcerecords',
+      // Item 6 addition. Same org-unit reasoning as
+      // tbltransportcostsourcerecords immediately above (and the same
+      // 'explicit' orgUnitSource below): an import exception is scoped
+      // to the importing user's own org unit at import time, exactly
+      // like the source record whose row it explains -- see
+      // transport-cost-import-exception.types.ts's header and
+      // TransportCostImportExceptionRepository's own doc comment.
+      'tbltransportcostimportexceptions',
       // Phase O2 additions -- see the rationale's "MIXED-LEVEL MODULE"
       // paragraph below. Deliberately kept in this one entry rather than
       // a second 'transport-cost' entry: the conformance suite requires
@@ -652,8 +660,10 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
      * row to inherit scope from. orgUnitId is resolved once per import
      * batch from the IMPORTING USER's own assignment
      * (resolveCreationOrgUnitId), never from the uploaded spreadsheet --
-     * see the handler. Applies to tbltransportcostsourcerecords only --
-     * see MIXED-LEVEL MODULE below for the other three collections.
+     * see the handler. Applies to tbltransportcostsourcerecords and
+     * tbltransportcostimportexceptions (item 6 -- same import-batch
+     * orgUnitId, same handler) -- see MIXED-LEVEL MODULE below for the
+     * other four collections.
      */
     orgUnitSource: 'explicit',
     rationale:

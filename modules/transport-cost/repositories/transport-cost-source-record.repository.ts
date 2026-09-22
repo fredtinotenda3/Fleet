@@ -71,6 +71,40 @@ export class TransportCostSourceRecordRepository extends TenantScopedRepository<
     });
   }
 
+  /**
+   * ADDED, item 6 (data-quality exceptions export). Bulk id lookup --
+   * used by TransportCostReportService.getDataQualityExceptions to
+   * resolve a posting's sourceId back to the source record it came
+   * from, without one findById round trip per posting. Same
+   * validate-then-toObjectId pattern as bulkSetField below.
+   */
+  async findManyByIds(ids: string[], context: TenantContext): Promise<TransportCostSourceRecord[]> {
+    const validIds = ids.filter((id) => ObjectId.isValid(id)).map((id) => this.toObjectId(id));
+    if (validIds.length === 0) return [];
+    const filter: Record<string, unknown> = { _id: { $in: validIds } };
+    return this.findManyInScope(filter as Filter<TransportCostSourceRecord>, context, {
+      limit: 100000,
+    });
+  }
+
+  /**
+   * ADDED, item 6 (data-quality exceptions export). Batched sibling of
+   * findByImportBatch above -- the exceptions report needs source
+   * records for a SET of batches (every batch that touched the
+   * requested period), not one batch at a time.
+   */
+  async findByImportBatchIds(
+    importBatchIds: string[],
+    context: TenantContext
+  ): Promise<TransportCostSourceRecord[]> {
+    if (importBatchIds.length === 0) return [];
+    return this.findManyInScope(
+      { importBatchId: { $in: importBatchIds } } as Filter<TransportCostSourceRecord>,
+      context,
+      { sortBy: 'sourceRowNumber', sortOrder: 'asc', limit: 100000 }
+    );
+  }
+
   async findInScope(
     filter: Filter<TransportCostSourceRecord>,
     pagination: PaginationParams,

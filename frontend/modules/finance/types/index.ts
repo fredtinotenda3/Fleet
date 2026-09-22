@@ -90,10 +90,15 @@ export const COST_CATEGORY_LABELS: Record<AllocationCostCategory, string> = {
   depreciation: 'Depreciation',
   insurance: 'Insurance',
   other: 'Other',
-  // Phase O3 (Olivine transport cost) -- excluded from cost-per-km, see
-  // AllocationCostCategory's own doc comment. Still needs a label here
-  // since this record type is exhaustive.
-  'transport-cost': 'Transport cost (Olivine)',
+  // Phase O3 (Olivine transport cost), split per Section R2 -- excluded
+  // from cost-per-km, see AllocationCostCategory's own doc comment.
+  // Still needs a label here since this record type is exhaustive.
+  // Only 'third-party-transport' is actually posted by anything today;
+  // the other two are reserved (see their doc comments) and would
+  // render this label only if a future phase starts posting them.
+  'third-party-transport': 'Transport cost – 3rd Party (Olivine)',
+  'transport-retainer': 'Transport cost – Vansales retainer (Olivine)',
+  'stock-transfer': 'Stock transfer – Depot STO (Olivine)',
 };
 
 export const FX_POLICY_LABELS: Record<FxPolicy, string> = {

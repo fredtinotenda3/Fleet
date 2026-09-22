@@ -12,6 +12,8 @@ import type {
   StreamGroupTotal,
   VehicleGroupTotal,
   PostingDrillDown,
+  DataQualityExceptionRow,
+  DataQualityExceptionsReport,
 } from '@/modules/transport-cost/services/transport-cost-report.service';
 import type { AllocationPosting } from '@/modules/finance/types/allocation.types';
 
@@ -20,5 +22,7 @@ export type {
   StreamGroupTotal,
   VehicleGroupTotal,
   PostingDrillDown,
+  DataQualityExceptionRow,
+  DataQualityExceptionsReport,
   AllocationPosting,
 };

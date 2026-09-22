@@ -36,11 +36,58 @@ jest.mock('../../../modules/finance/repositories/allocation-ledger.repository', 
   };
 });
 
+// ADDED, item 6: getDataQualityExceptions reads real source-record and
+// exception repositories (never mocks-of-mocks for these two -- the
+// batch-membership join between tbltransportcostsourcerecords and
+// tbltransportcostimportexceptions is exactly the logic under test),
+// same FakeCollection-backed pattern as the ledger mock above.
+jest.mock('../../../modules/transport-cost/repositories/transport-cost-source-record.repository', () => {
+  const actual = jest.requireActual('../../../modules/transport-cost/repositories/transport-cost-source-record.repository');
+  const { FakeCollection } = jest.requireActual('../../helpers/fake-collection');
+  const collection = new FakeCollection();
+
+  class TestTransportCostSourceRecordRepository extends actual.TransportCostSourceRecordRepository {
+    async getCollection() {
+      return collection;
+    }
+  }
+
+  return {
+    __esModule: true,
+    ...actual,
+    transportCostSourceRecordRepository: new TestTransportCostSourceRecordRepository(),
+    __fakeCollection: collection,
+  };
+});
+
+jest.mock('../../../modules/transport-cost/repositories/transport-cost-import-exception.repository', () => {
+  const actual = jest.requireActual('../../../modules/transport-cost/repositories/transport-cost-import-exception.repository');
+  const { FakeCollection } = jest.requireActual('../../helpers/fake-collection');
+  const collection = new FakeCollection();
+
+  class TestTransportCostImportExceptionRepository extends actual.TransportCostImportExceptionRepository {
+    async getCollection() {
+      return collection;
+    }
+  }
+
+  return {
+    __esModule: true,
+    ...actual,
+    transportCostImportExceptionRepository: new TestTransportCostImportExceptionRepository(),
+    __fakeCollection: collection,
+  };
+});
+
 import { TransportCostReportService } from '../../../modules/transport-cost/services/transport-cost-report.service';
 import type { TenantContext } from '../../../modules/tenancy/services/tenant-context.service';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { allocationLedgerRepository, __fakeCollection: fakeCollection } = require('../../../modules/finance/repositories/allocation-ledger.repository');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { transportCostSourceRecordRepository, __fakeCollection: fakeSourceRecordCollection } = require('../../../modules/transport-cost/repositories/transport-cost-source-record.repository');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { transportCostImportExceptionRepository, __fakeCollection: fakeExceptionCollection } = require('../../../modules/transport-cost/repositories/transport-cost-import-exception.repository');
 
 const TENANT = 'olivine-group-o4';
 const JAN_START = new Date('2026-01-01T00:00:00.000Z');
@@ -61,7 +108,7 @@ async function seedPosting(overrides: Record<string, unknown> = {}) {
     {
       orgUnitId: 'unit-harare',
       vehicleId: 'veh-1',
-      costCategory: 'transport-cost',
+      costCategory: 'third-party-transport',
       allocationRule: 'direct',
       sourceCollection: 'tbltransportcostsourcerecords',
       sourceId: 'src-1',
@@ -114,7 +161,57 @@ function makeSourceRepo(pendingCount = 0) {
 beforeEach(() => {
   fakeCollection.docs = [];
   fakeCollection.seenFilters = [];
+  fakeSourceRecordCollection.docs = [];
+  fakeSourceRecordCollection.seenFilters = [];
+  fakeExceptionCollection.docs = [];
+  fakeExceptionCollection.seenFilters = [];
 });
+
+async function seedSourceRecord(overrides: Record<string, unknown> = {}) {
+  return transportCostSourceRecordRepository.create(
+    {
+      orgUnitId: 'unit-harare',
+      sheetFamily: 'third-party',
+      importBatchId: 'batch-1',
+      sourceFileName: 'JAN-26 3rd Party.xlsx',
+      sourceRowNumber: 1,
+      importedAt: JAN_START,
+      rawRow: { date: '05.01.26', registration: 'AGL8230', transporter: 'SIGHTSCORE', amount: 100 },
+      date: JAN_START,
+      rawDate: '05.01.26',
+      registration: 'AGL8230',
+      registrationRaw: 'AGL8230',
+      transporterNormalized: 'SIGHTSCORE',
+      transporterRaw: 'SIGHTSCORE',
+      amount: 100,
+      tonnageRaw: null,
+      ...overrides,
+    },
+    TENANT,
+    'user-1'
+  );
+}
+
+async function seedException(overrides: Record<string, unknown> = {}) {
+  return transportCostImportExceptionRepository.log(
+    {
+      orgUnitId: 'unit-harare',
+      importBatchId: 'batch-1',
+      sheetFamily: 'third-party',
+      sourceFileName: 'JAN-26 3rd Party.xlsx',
+      sourceRowNumber: 2,
+      kind: 'rejected',
+      column: 'registration',
+      reason: 'Truck registration number is required',
+      invalidValue: '',
+      rawRow: { date: '06.01.26', registration: '', transporter: 'PRINORTH', amount: 50 },
+      importedAt: JAN_START,
+      ...overrides,
+    },
+    TENANT,
+    'user-1'
+  );
+}
 
 describe('TransportCostReportService.getAllocationReport', () => {
   it('groups postings by resolved business stream and vehicle, sourced only from the ledger', async () => {
@@ -254,5 +351,117 @@ describe('TransportCostReportService.getPostingsForVehicle', () => {
     expect(drilldown.businessStream).toBe('olivine');
     expect(drilldown.postings).toHaveLength(1);
     expect(drilldown.postings[0].vehicleId).toBe('veh-1');
+  });
+});
+
+// ADDED, item 6: "Add a data-quality exceptions export ... so the four
+// year-typo rows and the rejected rows are findable without reading the
+// README."
+describe('TransportCostReportService.getDataQualityExceptions', () => {
+  function makeService() {
+    return new TransportCostReportService(
+      makeVehicleRepo([]),
+      makePartnerRepo([]),
+      makeSettingsService(),
+      allocationLedgerRepository,
+      transportCostSourceRecordRepository,
+      transportCostImportExceptionRepository
+    );
+  }
+
+  it('returns persisted rejected/duplicate exceptions and computed period-outlier postings for a batch that touched the period', async () => {
+    // A normal, in-period row -- what makes batch-1 "touch" January 2026.
+    const src1 = await seedSourceRecord({ sourceRowNumber: 1 });
+    await seedPosting({
+      vehicleId: 'veh-1',
+      sourceId: String(src1._id),
+      amount: 100,
+      reportingAmount: 100,
+      periodStart: JAN_START,
+      periodEnd: JAN_START,
+    });
+
+    // Same batch, a year-typo row: posts correctly to Jan 2025, so it
+    // never shows up in an in-period query -- exactly the January 2026
+    // finding (rows 93/96/97/105, "31.01.25" on a sheet named "JAN-26").
+    const src2 = await seedSourceRecord({
+      sourceRowNumber: 93,
+      rawDate: '30.01.25',
+      registrationRaw: 'ABC123',
+      transporterRaw: 'PRINORTH',
+    });
+    const outlierDate = new Date('2025-01-30T00:00:00.000Z');
+    await seedPosting({
+      vehicleId: 'veh-2',
+      sourceId: String(src2._id),
+      amount: 642,
+      reportingAmount: 642,
+      periodStart: outlierDate,
+      periodEnd: outlierDate,
+    });
+
+    await seedException({ kind: 'rejected', sourceRowNumber: 2, column: 'registration', reason: 'Truck registration number is required' });
+    await seedException({
+      kind: 'duplicate',
+      sourceRowNumber: 3,
+      column: undefined,
+      invalidValue: undefined,
+      reason: 'Looks like a duplicate of an existing third-party record for AGL8230 on Mon Jan 05 2026',
+      rawRow: { date: '05.01.26', registration: 'AGL8230', transporter: 'SIGHTSCORE', amount: 100 },
+    });
+
+    const result = await makeService().getDataQualityExceptions(contextFor(null), JAN_START, JAN_END);
+
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0]).toMatchObject({
+      kind: 'rejected',
+      sourceRowNumber: 2,
+      column: 'registration',
+      reason: 'Truck registration number is required',
+    });
+
+    expect(result.duplicates).toHaveLength(1);
+    expect(result.duplicates[0]).toMatchObject({ kind: 'duplicate', sourceRowNumber: 3 });
+
+    expect(result.periodOutliers).toHaveLength(1);
+    expect(result.periodOutliers[0]).toMatchObject({
+      kind: 'period-outlier',
+      sourceRowNumber: 93,
+      rawDate: '30.01.25',
+      rawRegistration: 'ABC123',
+      rawTransporter: 'PRINORTH',
+      amount: '642',
+    });
+    expect(result.periodOutliers[0].reason).toContain('2025-01-30');
+  });
+
+  it('finds a rejected row by batch membership even when the row itself has no parseable date', async () => {
+    const src1 = await seedSourceRecord();
+    await seedPosting({ vehicleId: 'veh-1', sourceId: String(src1._id), amount: 100, reportingAmount: 100 });
+
+    // Rejected specifically BECAUSE its date is missing/unparseable --
+    // filtering by the exception's own date would silently drop this row.
+    await seedException({
+      kind: 'rejected',
+      sourceRowNumber: 5,
+      column: 'date',
+      reason: 'Date is missing or not in a recognised format',
+      rawRow: { date: '', registration: 'XYZ999', transporter: 'PRINORTH', amount: 80 },
+    });
+
+    const result = await makeService().getDataQualityExceptions(contextFor(null), JAN_START, JAN_END);
+
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0].sourceRowNumber).toBe(5);
+    expect(result.rejected[0].rawDate).toBeUndefined();
+  });
+
+  it('returns nothing for a period no import batch touched', async () => {
+    const result = await makeService().getDataQualityExceptions(contextFor(null), JAN_START, JAN_END);
+    expect(result).toEqual({ periodStart: JAN_START, periodEnd: JAN_END, rejected: [], duplicates: [], periodOutliers: [] });
+  });
+
+  it('rejects an inverted period range', async () => {
+    await expect(makeService().getDataQualityExceptions(contextFor(null), JAN_END, JAN_START)).rejects.toThrow();
   });
 });

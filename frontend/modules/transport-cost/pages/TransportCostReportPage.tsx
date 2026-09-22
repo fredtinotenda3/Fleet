@@ -24,9 +24,10 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Download } from 'lucide-react';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
+import { Button } from '@/frontend/shared/ui/primitives/button';
 import {
   Table,
   TableBody,
@@ -38,6 +39,7 @@ import {
 import { formatDate } from '@/shared/utils/date.utils';
 import { formatMoney } from '@/frontend/modules/finance/utils/money.utils';
 import { useTransportCostAvailableMonths, useTransportCostReport } from '../hooks/useTransportCost';
+import { transportCostApi } from '../services/transport-cost.api';
 import { VehicleDrillDownDialog } from '../components/VehicleDrillDownDialog';
 
 /** First day of `month`, 00:00, and the last instant of that same month -- the ledger's own fully-contained period semantics (see AllocationLedgerRepository's header). */
@@ -61,8 +63,26 @@ const DEFAULT_MONTH = new Date(Date.UTC(2026, 0, 1));
 export function TransportCostReportPage() {
   const [selectedMonth, setSelectedMonth] = useState<Date>(DEFAULT_MONTH);
   const [drillDownVehicleId, setDrillDownVehicleId] = useState<string | null>(null);
+  const [isExportingExceptions, setIsExportingExceptions] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const { periodStart, periodEnd } = useMemo(() => monthBounds(selectedMonth), [selectedMonth]);
+
+  // Item 6: "so the four year-typo rows and the rejected rows are
+  // findable without reading the README." A plain download rather than
+  // an in-page table -- this report is meant to be handed to Olivine's
+  // finance team directly, not just looked at once here.
+  const handleExportExceptions = async () => {
+    setExportError(null);
+    setIsExportingExceptions(true);
+    try {
+      await transportCostApi.downloadDataQualityExceptionsCsv(periodStart, periodEnd);
+    } catch {
+      setExportError("Couldn't export the data-quality exceptions for this period.");
+    } finally {
+      setIsExportingExceptions(false);
+    }
+  };
 
   const { data: availableMonths } = useTransportCostAvailableMonths();
   const { data: report, isLoading, isError } = useTransportCostReport(periodStart, periodEnd);
@@ -84,6 +104,14 @@ export function TransportCostReportPage() {
     () => (report ? [...report.byVehicle].sort((a, b) => b.netReportingAmount - a.netReportingAmount) : []),
     [report]
   );
+
+  // Item 5: a single "Unattributed" bucket is not a business-stream
+  // breakdown -- it is every vehicle in the period, restated as a
+  // one-tile summary that duplicates the vehicle table below without
+  // adding anything. Shown only once more than one stream is present,
+  // or the one stream present is a real one a reviewer actually set.
+  const showStreamCards =
+    !!report && !(report.byBusinessStream.length === 1 && report.byBusinessStream[0].businessStream === 'unattributed');
 
   return (
     <div className="flex flex-col gap-6">
@@ -113,12 +141,25 @@ export function TransportCostReportPage() {
                 ))}
               </select>
             </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mb-0.5"
+              disabled={isExportingExceptions}
+              onClick={handleExportExceptions}
+            >
+              <Download className="h-3.5 w-3.5" />
+              {isExportingExceptions ? 'Exporting…' : 'Export exceptions'}
+            </Button>
+
             <Link href="/transport-cost/import" className="pb-2 text-body-sm text-primary hover:underline">
               Import data &rarr;
             </Link>
           </div>
         }
       />
+
+      {exportError && <p className="text-sm text-destructive">{exportError}</p>}
 
       {isLoading && <p className="py-8 text-sm text-center text-muted-foreground">Loading&hellip;</p>}
 
@@ -172,22 +213,24 @@ export function TransportCostReportPage() {
             </div>
           ) : (
             <>
-              <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {report.byBusinessStream.map((stream) => (
-                  <div key={`${stream.businessStream}-${stream.reportingCurrency}`} className="p-4 border rounded-lg surface-card">
-                    <p className="text-caption text-muted-foreground">
-                      {stream.businessStream === 'unattributed' ? 'Unattributed' : stream.businessStream}
-                    </p>
-                    <p className="text-h3 font-semibold text-foreground">
-                      {formatMoney(stream.netReportingAmount, stream.reportingCurrency)}
-                    </p>
-                    <p className="mt-1 text-caption text-muted-foreground">
-                      {stream.vehicleCount} vehicle{stream.vehicleCount === 1 ? '' : 's'} &middot; {stream.postingCount}{' '}
-                      posting{stream.postingCount === 1 ? '' : 's'}
-                    </p>
-                  </div>
-                ))}
-              </section>
+              {showStreamCards && (
+                <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {report.byBusinessStream.map((stream) => (
+                    <div key={`${stream.businessStream}-${stream.reportingCurrency}`} className="p-4 border rounded-lg surface-card">
+                      <p className="text-caption text-muted-foreground">
+                        {stream.businessStream === 'unattributed' ? 'Unattributed' : stream.businessStream}
+                      </p>
+                      <p className="text-h3 font-semibold text-foreground">
+                        {formatMoney(stream.netReportingAmount, stream.reportingCurrency)}
+                      </p>
+                      <p className="mt-1 text-caption text-muted-foreground">
+                        {stream.vehicleCount} vehicle{stream.vehicleCount === 1 ? '' : 's'} &middot; {stream.postingCount}{' '}
+                        posting{stream.postingCount === 1 ? '' : 's'}
+                      </p>
+                    </div>
+                  ))}
+                </section>
+              )}
 
               <section className="p-4 border rounded-lg sm:p-6">
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-4">

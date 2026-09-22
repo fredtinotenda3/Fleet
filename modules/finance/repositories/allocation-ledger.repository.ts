@@ -326,6 +326,65 @@ export class AllocationLedgerRepository extends TenantScopedRepository<Allocatio
       .sort((a, b) => a.getTime() - b.getTime());
   }
 
+  /**
+   * ADDED, item 6 (data-quality exceptions export). Raw (non-aggregated)
+   * postings for one cost category, across every vehicle in the
+   * caller's scope, whose periodStart/periodEnd both fall within
+   * [periodStart, periodEnd] -- same fully-contained rule and same
+   * scope as getNetTotalsByVehicleForCategory immediately above, but
+   * returns the individual postings rather than a grouped sum.
+   *
+   * Needed because TransportCostReportService.getDataQualityExceptions
+   * has to resolve each posting's sourceId back to the
+   * TransportCostSourceRecord it came from (to find that record's
+   * importBatchId) -- a total has nothing to resolve.
+   */
+  async findRawByCategoryInScope(
+    costCategory: AllocationCostCategory,
+    periodStart: Date,
+    periodEnd: Date,
+    context: TenantContext
+  ): Promise<AllocationPosting[]> {
+    return this.findManyInScope(
+      { costCategory, ...buildPeriodFilter(periodStart, periodEnd) } as Filter<AllocationPosting>,
+      context,
+      { limit: 100000 }
+    );
+  }
+
+  /**
+   * ADDED, item 6. Every posting (any period, any vehicle, in the
+   * caller's scope) for one cost category whose sourceId is in the
+   * given set -- deliberately IGNORES periodStart/periodEnd, unlike
+   * every other read in this file.
+   *
+   * This is what makes the "period outlier" side of the data-quality
+   * exceptions report possible: TransportCostReportService first finds
+   * which import batches touched the requested period (via
+   * findRawByCategoryInScope above), then resolves every source record
+   * in those SAME batches, then calls this method with those records'
+   * ids to see every posting those batches actually produced --
+   * including the ones whose own periodStart falls outside the
+   * requested window (e.g. the January-2026 import's four rows with a
+   * "25" vs "26" year typo, which post correctly to January 2025 and
+   * would otherwise be invisible to any period-scoped query). A caller
+   * that wants only the in-period subset already has
+   * findRawByCategoryInScope; this method exists specifically for the
+   * complement.
+   */
+  async findBySourceIdsForCategory(
+    sourceIds: string[],
+    costCategory: AllocationCostCategory,
+    context: TenantContext
+  ): Promise<AllocationPosting[]> {
+    if (sourceIds.length === 0) return [];
+    return this.findManyInScope(
+      { costCategory, sourceId: { $in: sourceIds } } as Filter<AllocationPosting>,
+      context,
+      { limit: 100000 }
+    );
+  }
+
   private buildFilter(filters: AllocationLedgerFilters): Filter<AllocationPosting> {
     const filter: Record<string, unknown> = {};
     if (filters.vehicleId) filter.vehicleId = filters.vehicleId;

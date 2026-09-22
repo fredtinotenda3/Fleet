@@ -8,13 +8,14 @@
 // FINANCE_MANAGE on the import page, not this one).
 
 import { apiClient } from '@/shared/utils/api-client.utils';
+import { downloadBlob } from '@/shared/utils/file-download.utils';
 import type { PaginatedResponse } from '@/shared/types/common.types';
 import type {
   TransportCostSourceRecord,
   TransportCostSheetFamily,
 } from '@/shared/types/transport-cost.types';
 import type { ImportResponse } from '@/frontend/shared/import/ImportModal';
-import type { TransportCostAllocationReport, PostingDrillDown } from '../types';
+import type { TransportCostAllocationReport, PostingDrillDown, DataQualityExceptionsReport } from '../types';
 
 const BASE = '/api/transport-cost';
 
@@ -81,6 +82,36 @@ export const transportCostApi = {
     return apiClient.get<PostingDrillDown>(`${BASE}/report/vehicles/${contractedVehicleId}`, {
       params: { periodStart: periodStart.toISOString(), periodEnd: periodEnd.toISOString() },
     });
+  },
+
+  /**
+   * GET /api/transport-cost/report/exceptions?format=json -- item 6:
+   * the rejected/duplicate/period-outlier rows for a period, as JSON
+   * (for an on-screen view, should one be built later).
+   */
+  async getDataQualityExceptions(periodStart: Date, periodEnd: Date): Promise<DataQualityExceptionsReport> {
+    return apiClient.get<DataQualityExceptionsReport>(`${BASE}/report/exceptions`, {
+      params: { periodStart: periodStart.toISOString(), periodEnd: periodEnd.toISOString() },
+    });
+  },
+
+  /**
+   * GET /api/transport-cost/report/exceptions?format=csv -- item 6:
+   * downloads the same data as a CSV file. Bounded, single-period
+   * dataset (like GL reconciliation's export, not a paginated bulk
+   * table), so this calls apiClient.getBlob() directly rather than
+   * going through the Phase 2 Enterprise Export Framework's
+   * triggerExport()/X-Export-* truncation machinery, which exists for
+   * paginated multi-page exports this report never has.
+   */
+  async downloadDataQualityExceptionsCsv(periodStart: Date, periodEnd: Date): Promise<void> {
+    const fallbackFilename = `transport-cost-data-quality-exceptions-${periodStart.toISOString().slice(0, 10)}-${periodEnd
+      .toISOString()
+      .slice(0, 10)}.csv`;
+    const { blob, filename } = await apiClient.getBlob(`${BASE}/report/exceptions`, {
+      params: { periodStart: periodStart.toISOString(), periodEnd: periodEnd.toISOString(), format: 'csv' },
+    });
+    downloadBlob(blob, filename ?? fallbackFilename);
   },
 };
 

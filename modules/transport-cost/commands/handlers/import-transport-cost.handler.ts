@@ -38,10 +38,26 @@ import {
   VansalesImportRow,
 } from '../import-transport-cost.command';
 import { TransportCostSourceRecordRepository } from '@/modules/transport-cost/repositories/transport-cost-source-record.repository';
+import {
+  TransportCostImportExceptionRepository,
+  transportCostImportExceptionRepository,
+} from '@/modules/transport-cost/repositories/transport-cost-import-exception.repository';
 import { TransportCostSourceRecord } from '@/shared/types/transport-cost.types';
+import { TransportCostImportExceptionKind } from '@/shared/types/transport-cost-import-exception.types';
 import { resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
 import { ForbiddenError } from '@/server/errors/app.errors';
 import { randomUUID } from 'crypto';
+import {
+  parseSourceDate,
+  parseAmount,
+  normalizeRegistration,
+  normalizeTransporter,
+  isKnownInvalidTransporter,
+} from '@/modules/transport-cost/utils/normalization.utils';
+import {
+  NormalizationMatcherService,
+  normalizationMatcherService,
+} from '@/modules/transport-cost/services/normalization-matcher.service';
 
 export interface ImportRowResult {
   row: number;
@@ -73,97 +89,29 @@ export interface ImportTransportCostResult {
   results: ImportRowResult[];
 }
 
-// Values seen in the source data's Transporter/TRUCK columns that are
-// clearly not transporter names -- a mis-entered spreadsheet label, not
-// a company (audit Section K: "VAT EXCL" appears seven times in the
-// Transporter column across the workbook). Rejected rather than
-// imported as if it were a real transporter, so it can never silently
-// pollute a future transporter master list or cost-by-transporter
-// report.
-const KNOWN_INVALID_TRANSPORTER_VALUES = new Set(['VAT EXCL', 'VAT INCL', 'N/A', 'NA', 'TOTAL']);
-
-const DATE_DMY_RE = /^(\d{1,2})\.(\d{1,2})\.(\d{2}|\d{4})$/;
-const DATE_ISO_RE = /^(\d{4})-(\d{2})-(\d{2})/;
-
-/**
- * Parses the two date shapes actually seen in Olivine's source sheets
- * (audit Section K): free-text `DD.MM.YY` / `DD.MM.YYYY`, and ISO
- * strings (in case a re-exported template uses them). Deliberately does
- * NOT fall back to `new Date(raw)` for anything else -- that
- * constructor's locale-dependent parsing of ambiguous strings is
- * exactly the kind of silent coercion the audit's Section K calls for
- * "parse defensively and reject rather than silently coerce".
- */
-function parseSourceDate(raw: string): Date | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-
-  const dmy = DATE_DMY_RE.exec(trimmed);
-  if (dmy) {
-    const day = Number(dmy[1]);
-    const month = Number(dmy[2]);
-    let year = Number(dmy[3]);
-    if (dmy[3].length === 2) year += 2000;
-    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-    const d = new Date(year, month - 1, day);
-    // Guards against JS's date-rollover behaviour for invalid combinations
-    // (e.g. "31.02.26" would otherwise silently become March 3rd).
-    if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) {
-      return null;
-    }
-    return d;
-  }
-
-  if (DATE_ISO_RE.test(trimmed)) {
-    const d = new Date(trimmed);
-    return Number.isNaN(d.getTime()) ? null : d;
-  }
-
-  return null;
-}
-
-/**
- * Never returns 0 for a blank/unparseable cell -- returns null instead.
- * See the file header: coercing a blank Amount to 0 is the specific
- * mistake this handler exists to avoid.
- */
-function parseAmount(value: string | number | undefined | null): number | null {
-  if (value === undefined || value === null) return null;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  const trimmed = String(value).trim();
-  if (trimmed === '') return null;
-  const cleaned = trimmed.replace(/[^0-9.-]/g, '');
-  if (cleaned === '' || cleaned === '-') return null;
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : null;
-}
-
-function normalizeRegistration(raw: string | undefined): { normalized: string | null; raw: string } {
-  const r = (raw ?? '').toString().trim();
-  if (!r) return { normalized: null, raw: r };
-  // Collapses internal whitespace and uppercases (audit Section K: at
-  // least 40 plates in the source data have multiple raw spellings that
-  // differ only by whitespace, e.g. "AGL8230" / "AGL 8230" / "AGL  8230").
-  // Deliberately does NOT attempt to split a multi-plate cell (e.g.
-  // "AAA 9999/ AAA 9999") -- that is flagged as its own explicit case in
-  // the audit, not silently parsed here.
-  return { normalized: r.replace(/\s+/g, '').toUpperCase(), raw: r };
-}
-
-function normalizeTransporter(raw: string | undefined): { normalized: string | null; raw: string } {
-  const r = (raw ?? '').toString().trim();
-  if (!r) return { normalized: null, raw: r };
-  return { normalized: r.toUpperCase().replace(/\s+/g, ' '), raw: r };
-}
-
-function isKnownInvalidTransporter(normalized: string | null): boolean {
-  return normalized !== null && KNOWN_INVALID_TRANSPORTER_VALUES.has(normalized);
-}
+// NOTE: parseSourceDate, parseAmount, normalizeRegistration,
+// normalizeTransporter, isKnownInvalidTransporter, and
+// KNOWN_INVALID_TRANSPORTER_VALUES used to be declared here (Phase O1).
+// They moved to modules/transport-cost/utils/normalization.utils.ts,
+// unchanged, in Phase O2 so the O2 normalization matcher can import the
+// exact same functions instead of a re-implementation that could drift
+// -- see that file's header. This handler now imports them from there.
 
 export class ImportTransportCostHandler
   implements ICommandHandler<ImportTransportCostCommand, ImportTransportCostResult>
 {
-  constructor(private readonly repo: TransportCostSourceRecordRepository) {}
+  constructor(
+    private readonly repo: TransportCostSourceRecordRepository,
+    // Phase O2: defaults to the process-wide singleton so every real
+    // call site (cqrs.register.ts) needs no change; injectable here so
+    // unit tests can mock it without reaching into the module system.
+    private readonly matcher: NormalizationMatcherService = normalizationMatcherService,
+    // Item 6 (data-quality exceptions export): same defaulting
+    // convention as `matcher` immediately above, for the same reason --
+    // every existing call site (cqrs.register.ts, the verify script,
+    // every two-arg test construction) keeps compiling unchanged.
+    private readonly exceptionRepo: TransportCostImportExceptionRepository = transportCostImportExceptionRepository
+  ) {}
 
   async execute(command: ImportTransportCostCommand): Promise<ImportTransportCostResult> {
     const importBatchId = randomUUID();
@@ -194,6 +142,7 @@ export class ImportTransportCostHandler
         const result = this.validateAndBuildThirdParty(row as ThirdPartyImportRow, rowNum);
         if (!result.ok) {
           results.push(result.error);
+          await this.logException('rejected', { ...row }, rowNum, command, importBatchId, orgUnitId, result.error);
           continue;
         }
         await this.insertOrFlag(result.record, command, importBatchId, results, rowNum, orgUnitId);
@@ -201,6 +150,7 @@ export class ImportTransportCostHandler
         const result = this.validateAndBuildVansales(row as VansalesImportRow, rowNum);
         if (!result.ok) {
           results.push(result.error);
+          await this.logException('rejected', { ...row }, rowNum, command, importBatchId, orgUnitId, result.error);
           continue;
         }
         await this.insertOrFlag(result.record, command, importBatchId, results, rowNum, orgUnitId);
@@ -404,19 +354,22 @@ export class ImportTransportCostHandler
       command.tenantId
     );
     if (duplicate) {
-      results.push({
+      const duplicateResult: ImportRowResult = {
         row: rowNum,
         success: false,
         identifier,
         duplicate: true,
         error: `Looks like a duplicate of an existing ${record.sheetFamily} record for ${record.registration} on ${record.date?.toDateString()}`,
         suggestedFix: 'Remove this row if it is a re-import of a file already loaded, or check the source data if it is genuinely a separate record.',
-      });
+      };
+      results.push(duplicateResult);
+      await this.logException('duplicate', record.rawRow, rowNum, command, importBatchId, orgUnitId, duplicateResult);
       return;
     }
 
+    let created: TransportCostSourceRecord;
     try {
-      const created = await this.repo.create(
+      created = await this.repo.create(
         {
           ...record,
           ...(orgUnitId ? { orgUnitId } : {}),
@@ -435,6 +388,105 @@ export class ImportTransportCostHandler
         error: err instanceof Error ? err.message : 'Unknown error while saving this row',
         suggestedFix: 'Check the row values and try again.',
       });
+      return;
+    }
+
+    // Phase O2: best-effort normalization, run AFTER the row is safely
+    // stored. Never lets a matching failure turn an otherwise-successful
+    // import row into a reported failure -- the source-evidence row is
+    // already durable at this point; normalization is auxiliary
+    // bookkeeping that a human can always retry via the review queue or
+    // the backfill script (scripts/backfill-transport-cost-normalization.ts).
+    try {
+      await this.normalizeRow(created, command.tenantId);
+    } catch (err) {
+      console.error(
+        `[ImportTransportCostHandler] normalization failed for row ${rowNum} (record ${created._id}):`,
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+
+  /**
+   * ADDED, item 6 (data-quality exceptions export). Persists a
+   * TransportCostImportException for a rejected or duplicate-flagged
+   * row, so "what got rejected and why" survives past the synchronous
+   * ImportTransportCostResult -- see that type's header for what this
+   * fixes.
+   *
+   * Best-effort, same discipline as normalizeRow below it: this is
+   * AUXILIARY evidence about an outcome that has already been decided
+   * (the row's ImportRowResult is already pushed into `results` by the
+   * caller before this runs) -- a failure writing that evidence must
+   * never retroactively change what the import reports as having
+   * happened to the row, and must never abort the rest of the batch.
+   */
+  private async logException(
+    kind: TransportCostImportExceptionKind,
+    rawRow: Record<string, unknown>,
+    rowNum: number,
+    command: ImportTransportCostCommand,
+    importBatchId: string,
+    orgUnitId: string | undefined,
+    outcome: Pick<ImportRowResult, 'column' | 'invalidValue' | 'error'>
+  ): Promise<void> {
+    try {
+      await this.exceptionRepo.log(
+        {
+          ...(orgUnitId ? { orgUnitId } : {}),
+          importBatchId,
+          sheetFamily: command.sheetFamily,
+          sourceFileName: command.sourceFileName,
+          sourceRowNumber: rowNum,
+          kind,
+          ...(outcome.column ? { column: outcome.column } : {}),
+          reason: outcome.error ?? `Row ${rowNum} was not imported (${kind}).`,
+          ...(outcome.invalidValue !== undefined ? { invalidValue: outcome.invalidValue } : {}),
+          rawRow: { ...rawRow },
+          importedAt: new Date(),
+        },
+        command.tenantId,
+        command.userId
+      );
+    } catch (err) {
+      console.error(
+        `[ImportTransportCostHandler] failed to persist ${kind} exception for row ${rowNum}:`,
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+
+  /**
+   * Runs the O2 matcher for one just-inserted row and applies an
+   * immediate resolution when (and only when) the matcher resolved
+   * against an already-CONFIRMED identity. Everything else (pending
+   * review, blocked, no-value) intentionally leaves the row's
+   * transporterPartnerId/contractedVehicleId unset -- see
+   * normalization-matcher.service.ts's header for why that is not a
+   * gap, it is the whole point of Phase O2.
+   */
+  private async normalizeRow(created: TransportCostSourceRecord, tenantId: string): Promise<void> {
+    const transporterMatch = await this.matcher.matchTransporter(
+      created.transporterNormalized,
+      created._id!,
+      tenantId
+    );
+    const vehicleMatch = await this.matcher.matchVehicle(
+      created.registrationRaw,
+      created.registration,
+      created._id!,
+      tenantId
+    );
+
+    const patch: Partial<Pick<TransportCostSourceRecord, 'transporterPartnerId' | 'contractedVehicleId'>> = {};
+    if (transporterMatch.outcome === 'resolved-confirmed') {
+      patch.transporterPartnerId = transporterMatch.transporterPartnerId;
+    }
+    if (vehicleMatch.outcome === 'resolved-confirmed') {
+      patch.contractedVehicleId = vehicleMatch.contractedVehicleId;
+    }
+    if (Object.keys(patch).length > 0) {
+      await this.repo.update(created._id!, patch, tenantId);
     }
   }
 }

@@ -55,6 +55,99 @@
 // delivery README) -- a scope note, not a silently missing feature.
 //
 // ---------------------------------------------------------------------
+// ITEM 3 -- INVARIANT-BY-INVARIANT vs AllocationService.postAllocation,
+// AND WHY "DOCUMENT + TEST" OVER "EXTRACT A SHARED SEAM"
+// ---------------------------------------------------------------------
+// The client's follow-up asked for one of two things: document which of
+// postAllocation's invariants this service reimplements vs. skips (plus
+// a parity test), OR extract a shared vehicle-resolution seam so there
+// is one posting entry point. This chose the former -- both are done,
+// this section is the "document" half (the "test" half is
+// tests/unit/transport-cost/transport-cost-posting.service.parity.spec.ts).
+//
+// REUSED VERBATIM (not reimplemented -- the actual imported function is
+// called, so there is no copy to drift):
+//   - resolveFxContext / roundCurrency (fx-conversion.utils.ts) -- same
+//     currency.toUpperCase(), same rounding, same "returns null/never
+//     guesses 1:1" contract on an unresolvable rate.
+//   - buildPostingIdempotencyKey (allocation-posting.service.ts) -- the
+//     key DERIVATION function is shared; only whether/how it is invoked
+//     differs (see below).
+//   - allocationService.reversePosting() -- corrections call the real
+//     method, not a reimplementation. This is the single highest-risk
+//     piece of logic in the whole ledger (append-only correctness) and
+//     is why "extract a seam" was rejected for THIS path specifically:
+//     there is nothing left to extract, it is already one entry point.
+//   - AllocationPosting's shape itself -- never retrofitted (see the
+//     top of this header).
+//
+// DELIBERATELY SKIPPED, because the condition it guards against is
+// STRUCTURALLY UNREACHABLE here, not because it was overlooked:
+//   - allocationRule quantity/unit/driverId validation -- this service
+//     always posts allocationRule: 'direct' with no quantity/unit/
+//     driverId, so postAllocation's "non-direct needs a denominator"
+//     and "driver-allocated needs a driverId" branches can never fire
+//     for a call this service makes. Reimplementing a check that can
+//     never trip would be dead code, not an invariant.
+//   - periodEnd >= periodStart validation -- this service always sets
+//     periodStart === periodEnd === source.date (a single dated
+//     transaction, never a spread range), so the invariant it protects
+//     cannot be violated by construction.
+//
+// DELIBERATELY REPLACED, with a different but equally-deliberate
+// contract for THIS service's batch-processing caller (postImportBatch
+// driving hundreds of rows, vs. postAllocation's single synchronous
+// HTTP call):
+//   - postAllocation THROWS ValidationError on an unresolved FX rate;
+//     this service returns `{status: 'skipped', reason:
+//     'unresolved-fx-rate', ...}`. The underlying resolveFxContext call
+//     and its never-guess behavior are identical (proved by the parity
+//     test) -- only what happens with a null result differs, because a
+//     throw would abort postImportBatch's whole batch over one bad row.
+//   - Same reasoning for pending-amount/missing-date/unresolved-
+//     currency/unresolved-vehicle-identity: all conditions postAllocation
+//     has no equivalent of at all (it takes amount/vehicleId as already-
+//     resolved, required input), turned into batch-safe skips here
+//     because THIS service's whole job is deriving them from source
+//     evidence that may not (yet) be resolvable.
+//   - idempotencyKey: postAllocation accepts an OPTIONAL caller-supplied
+//     key (used only by Phase 6 auto-posting call sites) and does
+//     nothing further with it -- no 11000-race handling of its own.
+//     This service ALWAYS derives its own key (via the shared
+//     buildPostingIdempotencyKey) and DOES handle the 11000 race,
+//     because every call here is auto-derived, never a one-off manual
+//     posting a human is deliberately allowed to repeat. That race-
+//     handling and the "always derive a key" policy are not
+//     postAllocation's contract to begin with -- they mirror
+//     AllocationPostingService.postSource's (Phase 6 auto-posting)
+//     contract instead, which this service's own header already says
+//     it "structurally mirrors ... far more closely than AllocationService
+//     itself." Item 3 asked specifically about the AllocationService
+//     comparison, so that distinction is worth being explicit about:
+//     this service's true sibling for idempotency/race semantics is
+//     AllocationPostingService, not AllocationService.
+//
+// NOT COMPARABLE AT ALL -- the documented, permanent divergence (see
+// "WHY THIS IS NOT AllocationService.postAllocation" above): vehicle
+// resolution. resolveVehicleInScope() checks a tblvehicles row against
+// the caller's ORG-UNIT scope; this service checks a tblcontractedvehicles
+// row against TENANT membership only, because a ContractedVehicle is
+// organization-level (can serve more than one branch) while a Vehicle
+// is org-unit-scoped. Extracting a shared "vehicle-resolution seam"
+// would mean either forcing ContractedVehicle to pretend it has a
+// single orgUnitId (fabricating an ownership fact the data does not
+// support) or building a polymorphic resolver inside AllocationService
+// -- itself financially safety-critical, stable, and used by every
+// other cost category -- purely to serve one category's different
+// scoping model. That risk was judged larger than the cost of one
+// documented, tested divergence, especially since the codebase already
+// has 10+ other "check org-unit-scope by hand" call sites outside
+// finance entirely (dispatch, inventory, attention, ...) that this
+// task was never in scope to unify either -- partially refactoring one
+// of many instances of an established codebase-wide idiom, as a side
+// effect of an unrelated delivery, is its own source of inconsistency.
+//
+// ---------------------------------------------------------------------
 // ORG-UNIT ATTRIBUTION -- PROVISIONAL, SAME INTERIM RULE AS O1
 // ---------------------------------------------------------------------
 // The posting's orgUnitId is copied from the SOURCE RECORD's own
@@ -99,7 +192,12 @@ import { NotFoundError, ConflictError } from '@/server/errors/app.errors';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
 import { monitoring } from '@/infrastructure/monitoring/logger';
 
-const COST_CATEGORY = 'transport-cost' as const;
+// 'third-party-transport', not the retired single 'transport-cost'
+// category -- see allocation.types.ts's AllocationCostCategory for the
+// Section R2 split into third-party-transport / transport-retainer
+// (Vansales, not yet posted here) / stock-transfer (Depot STO, Phase
+// O5). This service posts the first of the three only.
+const COST_CATEGORY = 'third-party-transport' as const;
 const SOURCE_COLLECTION = 'tbltransportcostsourcerecords' as const;
 
 export type PostSourceRecordOutcome =

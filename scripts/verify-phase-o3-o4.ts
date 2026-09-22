@@ -45,6 +45,7 @@ import { contractedVehicleRepository } from '../modules/transport-cost/repositor
 import { normalizationReviewRepository } from '../modules/transport-cost/repositories/normalization-review.repository';
 import { allocationLedgerRepository } from '../modules/finance/repositories/allocation-ledger.repository';
 import { transportCostVatConfigRepository } from '../modules/transport-cost/repositories/transport-cost-vat-config.repository';
+import { transportCostImportExceptionRepository } from '../modules/transport-cost/repositories/transport-cost-import-exception.repository';
 
 import { financeSettingsService } from '../modules/finance/services/finance-settings.service';
 import { auditLog } from '../infrastructure/monitoring/audit.logger';
@@ -72,6 +73,11 @@ const collections = {
   reviewItems: new FakeCollection(),
   ledger: new FakeCollection(),
   vatConfigs: new FakeCollection(),
+  // Item 6 addition -- patched so this run also exercises the real
+  // exception-persistence wiring (ImportTransportCostHandler ->
+  // TransportCostImportExceptionRepository) against the real workbook,
+  // not just synthetic unit-test rows.
+  importExceptions: new FakeCollection(),
 };
 
 function patchCollection(repo: any, collection: FakeCollection) {
@@ -83,6 +89,7 @@ patchCollection(contractedVehicleRepository, collections.vehicles);
 patchCollection(normalizationReviewRepository, collections.reviewItems);
 patchCollection(allocationLedgerRepository, collections.ledger);
 patchCollection(transportCostVatConfigRepository, collections.vatConfigs);
+patchCollection(transportCostImportExceptionRepository, collections.importExceptions);
 
 // No live organization/finance-settings document in this run -- USD
 // reporting currency mirrors the same provisional USD DEFAULT this
@@ -170,7 +177,11 @@ async function main() {
   // 2. IMPORT (Phase O1 + O2 inline normalization)
   // ---------------------------------------------------------------------
   console.log('\n[2] Importing via the real ImportTransportCostHandler...');
-  const importHandler = new ImportTransportCostHandler(transportCostSourceRecordRepository, normalizationMatcherService);
+  const importHandler = new ImportTransportCostHandler(
+    transportCostSourceRecordRepository,
+    normalizationMatcherService,
+    transportCostImportExceptionRepository
+  );
 
   const tpImport = await importHandler.execute(
     new ImportTransportCostCommand('third-party', thirdPartyRows, TENANT, scope(), 'TRANSPORT_COST_JANUARY_2026.xlsx', USER_ID)
@@ -374,6 +385,49 @@ async function main() {
   const explainedGap = failedTotal + duplicateTotal + outOfPeriodTotal;
   const unexplainedGap = workbookThirdPartyTotal - postedTotal - explainedGap;
   console.log(`    Unexplained residual after accounting for the above: ${unexplainedGap.toFixed(2)} (expect ~0.00, modulo rounding)`);
+
+  // ---------------------------------------------------------------------
+  // ITEM 1 -- itemized rejected-row data-quality report, not a summary
+  // count. One line per row: row number, raw date, raw registration,
+  // raw transporter, amount, and the specific validation rule that
+  // rejected it -- pulled from the raw workbook row (thirdPartyRows),
+  // never from any parsed/normalized field, so this is exactly what a
+  // human opening the source file at that row number would see.
+  // ---------------------------------------------------------------------
+  console.log(`\n[5b] ITEMIZED: the ${failedRows.length} rejected January 2026 3rd Party rows`);
+  console.log('    row | raw date       | raw registration | raw transporter        | amount     | rejected because');
+  console.log('    ----+----------------+-------------------+-------------------------+------------+------------------------------------------');
+  for (const r of failedRows) {
+    const row = thirdPartyRows.find((tp) => tp.rowNumber === r.row);
+    const rawDate = row?.date ?? '(blank)';
+    const rawReg = row?.registration ?? '(blank)';
+    const rawTransporter = row?.transporter ?? '(blank)';
+    const amount = row?.amount != null && Number.isFinite(row.amount) ? String(row.amount) : '(blank)';
+    console.log(
+      `    ${String(r.row).padStart(3)} | ${String(rawDate).padEnd(14)} | ${String(rawReg).padEnd(17)} | ${String(rawTransporter).padEnd(23)} | ${amount.padEnd(10)} | ${r.error}`
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // ITEM 6 -- confirm the persisted-exceptions + period-outlier export
+  // reproduces the same findings via the real API path (report service
+  // + repository), not just the in-script arrays above.
+  // ---------------------------------------------------------------------
+  console.log('\n[5c] ITEM 6 CHECK: TransportCostReportService.getDataQualityExceptions for January 2026');
+  const exceptionsReport = await transportCostReportService.getDataQualityExceptions(context(), janStart, janEnd);
+  console.log(
+    `    rejected=${exceptionsReport.rejected.length}, duplicates=${exceptionsReport.duplicates.length}, periodOutliers=${exceptionsReport.periodOutliers.length}`
+  );
+  console.log(
+    exceptionsReport.rejected.length === failedRows.length
+      ? '    PASS -- getDataQualityExceptions finds the same number of rejected rows as the import result itself.'
+      : `    FAIL -- getDataQualityExceptions found ${exceptionsReport.rejected.length} rejected rows, expected ${failedRows.length}. Investigate before shipping.`
+  );
+  console.log(
+    exceptionsReport.periodOutliers.length === outOfPeriodCount
+      ? '    PASS -- getDataQualityExceptions finds the same number of period-outlier (year-typo) postings as the manual scan above.'
+      : `    FAIL -- getDataQualityExceptions found ${exceptionsReport.periodOutliers.length} period outliers, expected ${outOfPeriodCount}. Investigate before shipping.`
+  );
 
   // ---------------------------------------------------------------------
   // 7. THE O4 REPORT, AS THE SCREEN WOULD RENDER IT

@@ -63,6 +63,21 @@ export const TRANSPORT_COST_INDEXES = {
     // not an oversight.
   ],
 
+  // ── Item 6, data-quality exceptions (org-unit scoped, same as
+  //    tbltransportcostsourcerecords above). ──────────────────────────
+  tbltransportcostimportexceptions: [
+    {
+      // TransportCostImportExceptionRepository.findByImportBatchIds,
+      // sorted sourceRowNumber asc -- the exceptions report's sole read
+      // path, run once per O4 "Export exceptions" request. Same shape
+      // as tbltransportcostsourcerecords' own batch index above,
+      // deliberately: this collection is queried by the same
+      // importBatchId set that query already resolved.
+      key: { tenantId: 1, importBatchId: 1, sourceRowNumber: 1 },
+      name: 'idx_transportcostimportexception_tenant_batch_row',
+    },
+  ],
+
   // ── Phase O2 master data (organization-level). ─────────────────────
   tbltransportpartners: [
     {

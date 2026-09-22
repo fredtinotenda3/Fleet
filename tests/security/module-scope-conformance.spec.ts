@@ -207,6 +207,61 @@ describe('modules deliberately left organization-wide', () => {
   });
 });
 
+describe('transport-cost: every declared collection is registered (item 4)', () => {
+  // ADDED, item 4: "Confirm module-scope.registry.ts has entries for
+  // every new Olivine-facing collection, and the CI conformance test
+  // covers them."
+  //
+  // Deliberately scoped to modules/transport-cost's OWN repository
+  // files, not a codebase-wide "every collectionName anywhere must be
+  // registered" check. A direct cross-reference at the time this test
+  // was written found 18 pre-existing collections registered nowhere
+  // in MODULE_SCOPE_REGISTRY -- expenses, notifications, oauth,
+  // reporting, rules, security, sla, telematics, server/events, and
+  // server/scheduler -- none of them transport-cost's. Asserting
+  // codebase-wide completeness here would fail on that pre-existing
+  // gap on day one, for modules this delivery never touched, which is
+  // exactly the kind of unrelated-red-test noise that gets a whole
+  // suite muted rather than fixed. That gap is real and worth its own
+  // follow-up, but it is out of this delivery's scope -- recorded here
+  // for visibility, not silently dropped.
+  //
+  // This test's own job is narrower and unconditional: nothing this
+  // delivery (or the next one, to this module) adds should EVER join
+  // that pre-existing gap. Every `collectionName = 'tblX'` literal
+  // found under modules/transport-cost/repositories/*.ts must appear
+  // in the registry's transport-cost entry, full stop.
+
+  function collectionNamesDeclaredInRepositories(moduleName: string): string[] {
+    const repoFiles = filesUnder(`modules/${moduleName}/repositories`);
+    const names: string[] = [];
+    const pattern = /collectionName\s*=\s*'([a-z0-9_]+)'/g;
+    for (const file of repoFiles) {
+      const src = readIfExists(file) ?? '';
+      let match: RegExpExecArray | null;
+      pattern.lastIndex = 0;
+      while ((match = pattern.exec(src)) !== null) {
+        names.push(match[1]);
+      }
+    }
+    return names;
+  }
+
+  it('registers every collectionName declared under modules/transport-cost/repositories', () => {
+    const declared = collectionNamesDeclaredInRepositories('transport-cost');
+    // Sanity check on the scan itself -- if this ever drops to zero, the
+    // glob or the regex broke, not that the module lost its repositories.
+    expect(declared.length).toBeGreaterThan(0);
+
+    const registryEntry = MODULE_SCOPE_REGISTRY.find((e) => e.module === 'transport-cost');
+    expect(registryEntry).toBeDefined();
+    const registered = new Set(registryEntry!.collections);
+
+    const missing = declared.filter((name) => !registered.has(name));
+    expect(missing).toEqual([]);
+  });
+});
+
 describe('open decisions stay visible', () => {
   it('reports which scope decisions still need product sign-off', () => {
     const open = unconfirmedDecisions();

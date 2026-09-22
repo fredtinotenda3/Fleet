@@ -6,12 +6,13 @@
 // wrong is worse than a URL that states it) and one read action for
 // verifying an import landed correctly.
 
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { bootstrapCqrs } from '@/server/cqrs/cqrs.module';
 import { transportCostCommandService } from '../services/transport-cost-command.service';
 import { transportCostQueryService } from '../services/transport-cost-query.service';
 import { transportCostPostingService } from '../services/transport-cost-posting.service';
 import { transportCostReportService } from '../services/transport-cost-report.service';
+import { buildDataQualityExceptionsCsv } from '../generators/data-quality-exceptions-csv.generator';
 import { TransportCostImportRow } from '../commands/import-transport-cost.command';
 import { TransportCostSheetFamily, TransportCostSourceRecordFilters } from '@/shared/types/transport-cost.types';
 import { validatePaginationParams } from '@/shared/utils/pagination.utils';
@@ -19,6 +20,7 @@ import { successResponse, paginatedResponse, errorResponse } from '@/server/util
 import { ValidationError, isAppError, describeError } from '@/server/errors/app.errors';
 import { resolveTenantContext, resolveTenantContextWithUser } from '@/server/utils/tenant-context.utils';
 import { userWriteScope } from '@/server/tenancy/write-scope';
+import { applySecurityHeaders } from '@/infrastructure/security/security-headers';
 
 bootstrapCqrs();
 
@@ -275,6 +277,60 @@ export class TransportCostController {
 
       const result = await transportCostReportService.getPostingsForVehicle(context, contractedVehicleId, start, end);
       return successResponse(result);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /**
+   * GET /api/transport-cost/report/exceptions?periodStart=...&periodEnd=...&format=json|csv
+   *
+   * Item 6: "a data-quality exceptions export ... so the four
+   * year-typo rows and the rejected rows are findable without reading
+   * the README." Same VIEW-gated, period-required convention as
+   * getAllocationReport above; `format=csv` mirrors
+   * modules/attention/controllers/ledger-export.controller.ts's
+   * ?format= pattern.
+   */
+  async getDataQualityExceptions(req: NextRequest) {
+    try {
+      const context = await resolveTenantContext(req);
+      const params = req.nextUrl.searchParams;
+
+      const periodStart = params.get('periodStart');
+      const periodEnd = params.get('periodEnd');
+      if (!periodStart || !periodEnd) {
+        throw new ValidationError('"periodStart" and "periodEnd" are required.');
+      }
+      const start = new Date(periodStart);
+      const end = new Date(periodEnd);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+        throw new ValidationError('"periodStart"/"periodEnd" must be valid dates.');
+      }
+
+      const format = params.get('format') ?? 'json';
+      if (format !== 'json' && format !== 'csv') {
+        throw new ValidationError(`Unsupported export format "${format}". Use "json" or "csv".`);
+      }
+
+      const result = await transportCostReportService.getDataQualityExceptions(context, start, end);
+
+      if (format === 'json') {
+        return successResponse(result);
+      }
+
+      const buffer = buildDataQualityExceptionsCsv(result);
+      const filename = `transport-cost-data-quality-exceptions-${periodStart}-${periodEnd}.csv`;
+      const response = new NextResponse(new Uint8Array(buffer), {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': `attachment; filename="${filename}"`,
+          'Content-Length': String(buffer.length),
+          'Cache-Control': 'no-store',
+        },
+      });
+      return applySecurityHeaders(response);
     } catch (error) {
       return this.handleError(error);
     }

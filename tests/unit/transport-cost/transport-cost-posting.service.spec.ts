@@ -176,7 +176,7 @@ describe('TransportCostPostingService.postSourceRecord -- happy path', () => {
     if (outcome.status !== 'posted') throw new Error('unreachable');
     expect(outcome.posting.vehicleId).toBe(VEHICLE_ID);
     expect(outcome.posting.orgUnitId).toBe(HARARE);
-    expect(outcome.posting.costCategory).toBe('transport-cost');
+    expect(outcome.posting.costCategory).toBe('third-party-transport');
     expect(outcome.posting.sourceCollection).toBe('tbltransportcostsourcerecords');
     expect(outcome.posting.amount).toBe(837);
     expect(outcome.posting.currency).toBe('USD');
@@ -259,7 +259,7 @@ describe('TransportCostPostingService.postSourceRecord -- correction', () => {
       {
         orgUnitId: HARARE,
         vehicleId: VEHICLE_ID,
-        costCategory: 'transport-cost',
+        costCategory: 'third-party-transport',
         allocationRule: 'direct',
         sourceCollection: 'tbltransportcostsourcerecords',
         sourceId: SOURCE_ID,
@@ -283,7 +283,7 @@ describe('TransportCostPostingService.postSourceRecord -- correction', () => {
       {
         orgUnitId: HARARE,
         vehicleId: VEHICLE_ID,
-        costCategory: 'transport-cost',
+        costCategory: 'third-party-transport',
         allocationRule: 'direct',
         sourceCollection: 'tbltransportcostsourcerecords',
         sourceId: SOURCE_ID,

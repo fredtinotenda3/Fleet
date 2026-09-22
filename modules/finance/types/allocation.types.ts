@@ -48,15 +48,43 @@ export type AllocationCostCategory =
   | 'insurance'
   | 'other'
   /**
-   * ADDED, Phase O3 ("Phase O3 Spec" tab). A third-party/contracted-
-   * vehicle transport cost posted from a confirmed TransportCostSourceRecord
-   * -- see TransportCostPostingService. Its own category rather than
-   * 'other' or 'expense' because it is explicitly excluded from
-   * cost-per-km (no fuel/cost-per-km anywhere for this data yet, per the
-   * audit) and must be filterable out of that engine without a
-   * free-text description match.
+   * ADDED, Phase O3 ("Phase O3 Spec" tab), SPLIT from a single
+   * 'transport-cost' category once Section R2's three Olivine transport
+   * cost streams were reconciled against the ledger (still empty of
+   * real postings at the time of the split, so no migration was
+   * needed). All three share the same reasoning for having their own
+   * category rather than 'other'/'expense': each is explicitly excluded
+   * from cost-per-km (no fuel/cost-per-km anywhere for this data yet,
+   * per the audit) and must be filterable out of that engine without a
+   * free-text description match -- and each other, without a
+   * free-text description match either, since a "how much did 3rd
+   * Party transport cost this month" report must not silently include
+   * a Depot STO stock-transfer figure or vice versa.
+   *
+   * A third-party/contracted-vehicle delivery, posted from a confirmed
+   * TransportCostSourceRecord (sheetFamily 'third-party') --
+   * TransportCostPostingService. Live in Phase O3.
    */
-  | 'transport-cost';
+  | 'third-party-transport'
+  /**
+   * A Vansales fixed weekly/monthly retainer, posted from a confirmed
+   * TransportCostSourceRecord (sheetFamily 'vansales'). Reserved, NOT
+   * yet posted by any service -- see TransportCostPostingService's
+   * header and the delivery README's Vansales periodization decision
+   * note (escalated, not decided). Declared now, while the ledger is
+   * still empty, so the eventual posting path does not have to either
+   * retrofit every existing 'third-party-transport' row or invent a
+   * fourth category later under time pressure.
+   */
+  | 'transport-retainer'
+  /**
+   * A Depot STO (May-August StockTransferRecord) movement. Reserved,
+   * NOT yet posted by any service -- Depot STO import/posting is
+   * deferred to Phase O5 (see the delivery README's phase-plan
+   * update); its own schema and sourceCollection do not exist yet.
+   * Declared now for the same reason as 'transport-retainer' above.
+   */
+  | 'stock-transfer';
 
 /** Where the fx_rate for this posting came from -- see finance-currency addendum for the same enum applied to source transactions. */
 export type FxSource = 'transaction' | 'period-average' | 'manual' | 'organization-default';
