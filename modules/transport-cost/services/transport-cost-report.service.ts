@@ -53,7 +53,7 @@ import {
   TransportCostImportExceptionRepository,
 } from '../repositories/transport-cost-import-exception.repository';
 import { financeSettingsService, FinanceSettingsService } from '@/modules/finance/services/finance-settings.service';
-import type { AllocationPosting } from '@/modules/finance/types/allocation.types';
+import type { AllocationPosting, AllocationCostCategory } from '@/modules/finance/types/allocation.types';
 import type { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import type { TransportCostSheetFamily } from '@/shared/types/transport-cost.types';
 import type { TransportCostImportException } from '@/shared/types/transport-cost-import-exception.types';
@@ -86,7 +86,29 @@ import { roundCurrency } from '@/modules/finance/utils/fx-conversion.utils';
 // Reversibility: trivially reversible -- change COST_CATEGORY below to
 // an array (or add a stream toggle/breakdown in the UI) whenever that
 // design work happens; no ledger or repository change is needed.
+//
+// THAT REVERSAL HAS NOW HAPPENED, BUT ADDITIVELY, NOT IN PLACE --
+// see OLIVINE_COST_INTELLIGENCE_COMMAND_CENTRE_DESIGN.md Section 6.0.
+// COST_CATEGORY stays exactly as it was so this O4 screen's existing
+// numbers are never silently reinterpreted; TRANSPORT_COST_CATEGORIES
+// below is the widened set the new Command Centre methods use instead.
 const COST_CATEGORY = 'third-party-transport' as const;
+
+/**
+ * The full set of transport-cost categories, for the Command Centre
+ * (Slice A onward) -- unlike COST_CATEGORY above, which intentionally
+ * stays pinned to 'third-party-transport' so the existing O4 report
+ * screen's totals never change underneath it. Every repository method
+ * these categories are passed to already accepts
+ * `AllocationCostCategory | AllocationCostCategory[]` via
+ * costCategoryMatch() (allocation-ledger.repository.ts) -- this is a
+ * query-parameter change, not a schema or repository-architecture one.
+ */
+export const TRANSPORT_COST_CATEGORIES: AllocationCostCategory[] = [
+  'third-party-transport',
+  'transport-retainer',
+  'stock-transfer',
+];
 const UNATTRIBUTED = 'unattributed' as const;
 
 export interface VehicleGroupTotal {
@@ -185,6 +207,31 @@ export interface DataQualityExceptionsReport {
  * family, so getDataQualityExceptions itself never has to branch on
  * sheetFamily to read a cell.
  */
+/**
+ * WIDENED, Command Centre Slice A0. Previously branched only on
+ * `sheetFamily === 'third-party'`, with every other family --
+ * 'vansales' AND, incorrectly, 'swift'/'depot-sto' too -- falling
+ * through to the SAME 'vansales'-shaped fallback (rawRow.truck /
+ * rawRow.total). That was never wrong in production only because
+ * Swift never posts (every row is `unresolved-vehicle-identity`, so
+ * getDataQualityExceptions' rejected/duplicate paths were the only way
+ * a Swift rawRow could reach this function, and none had before this
+ * change) and Depot STO's 'stock-transfer' category was outside this
+ * report's COST_CATEGORY scope entirely. Both stop being true the
+ * moment the Command Centre widens that scope (see
+ * TRANSPORT_COST_CATEGORIES below) -- at that point a rejected/
+ * duplicate Depot STO or Swift row becomes reachable through
+ * getDataQualityExceptions and this function must label its raw fields
+ * correctly rather than mislabel them as Vansales's.
+ *
+ * Field names below are read directly from each family's own
+ * `*ImportRow` command shape (modules/transport-cost/commands/
+ * import-transport-cost.command.ts) -- the same keys
+ * ImportModal.buildRecordsForSubmission actually forwards, since a
+ * rejected/duplicate row never reaches TransportCostSourceRecord's own
+ * normalized fields (date/registration/transporterRaw/amount) and this
+ * function exists precisely to read the raw, as-uploaded row instead.
+ */
 function extractRawDisplayFields(
   sheetFamily: TransportCostSheetFamily,
   rawRow: Record<string, unknown>
@@ -200,15 +247,46 @@ function extractRawDisplayFields(
     };
   }
 
-  // 'vansales' -- no per-row date column (see TransportCostSourceRecord.rawDate's
-  // own header note); 'truck' holds the transporter name, not 'transporter'
-  // (see the audit's Family 4 terminology-trap note), and the source's own
-  // TOTAL column is the authoritative amount, not a re-summed weekly figure.
+  if (sheetFamily === 'vansales') {
+    // No per-row date column (see TransportCostSourceRecord.rawDate's
+    // own header note); 'truck' holds the transporter name, not
+    // 'transporter' (see the audit's Family 4 terminology-trap note),
+    // and the source's own TOTAL column is the authoritative amount,
+    // not a re-summed weekly figure.
+    return {
+      rawDate: undefined,
+      rawRegistration: asString(rawRow.registration),
+      rawTransporter: asString(rawRow.truck),
+      amount: asString(rawRow.total),
+    };
+  }
+
+  if (sheetFamily === 'swift') {
+    // Swift's source data structurally has no registration/transporter
+    // column at all (SwiftImportRow, and TransportCostSheetFamily's own
+    // doc comment) -- rawRegistration/rawTransporter stay undefined,
+    // never fabricated from an unrelated column like receiversName.
+    // 'Cons. date' is the row's own date; 'Total(Incl)' is the posted
+    // amount (see SwiftImportRow.totalIncl's doc comment for why the
+    // all-in figure is used over Total(Excl)).
+    return {
+      rawDate: asString(rawRow.consDate),
+      rawRegistration: undefined,
+      rawTransporter: undefined,
+      amount: asString(rawRow.totalIncl),
+    };
+  }
+
+  // 'depot-sto' -- DepotStoImportRow already maps every month's
+  // differently-named columns (DATE, "Truck registration no"/"REG",
+  // Transporter, Amount/COSTS/COST) onto these four canonical keys at
+  // import time (see DEPOT_STO_DECISION.md), so no per-shape branching
+  // is needed here the way the six real sheets needed it at import.
   return {
-    rawDate: undefined,
+    rawDate: asString(rawRow.date),
     rawRegistration: asString(rawRow.registration),
-    rawTransporter: asString(rawRow.truck),
-    amount: asString(rawRow.total),
+    rawTransporter: asString(rawRow.transporter),
+    amount: asString(rawRow.amount),
   };
 }
 

@@ -9,6 +9,9 @@ import {
 import { PaginatedResponse, PaginationParams } from '@/shared/types/common.types';
 import type { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 
+import { ListNormalizationReviewQueueQuery } from '../queries/list-normalization-review-queue.query';
+import { NormalizationKind, NormalizationReviewItem } from '@/shared/types/normalization-review.types';
+
 export class TransportCostQueryService {
   async getSourceRecords(
     filters: TransportCostSourceRecordFilters,
@@ -17,6 +20,17 @@ export class TransportCostQueryService {
   ): Promise<PaginatedResponse<TransportCostSourceRecord>> {
     return queryBus.execute<PaginatedResponse<TransportCostSourceRecord>>(
       new GetTransportCostSourceRecordsQuery(filters, pagination, context)
+    );
+  }
+
+  /** Phase O2. Organization-level -- bare tenantId, not TenantContext. */
+  async listNormalizationReviewQueue(
+    tenantId: string,
+    pagination: PaginationParams,
+    kind?: NormalizationKind
+  ): Promise<PaginatedResponse<NormalizationReviewItem>> {
+    return queryBus.execute<PaginatedResponse<NormalizationReviewItem>>(
+      new ListNormalizationReviewQueueQuery(tenantId, pagination, kind)
     );
   }
 }
