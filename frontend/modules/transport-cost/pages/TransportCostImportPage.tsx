@@ -9,7 +9,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { UploadCloud } from 'lucide-react';
+import { UploadCloud, PenLine } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { describeQueryError } from '@/frontend/shared/ui/patterns';
@@ -25,6 +25,7 @@ import {
   TableRow,
 } from '@/frontend/shared/ui/data-display/table';
 import { ImportModal, type ImportColumnDef, type ImportResponse } from '@/frontend/shared/import/ImportModal';
+import { ManualEntryModal } from '@/frontend/shared/import/ManualEntryModal';
 import { useSessionStore } from '@/frontend/shared/store/session.store';
 import { Permission, permissionService } from '@/server/permissions/roles';
 import { transportCostApi } from '../services/transport-cost.api';
@@ -137,6 +138,12 @@ export function TransportCostImportPage() {
   const [vansalesModalOpen, setVansalesModalOpen] = useState(false);
   const [swiftModalOpen, setSwiftModalOpen] = useState(false);
   const [depotStoModalOpen, setDepotStoModalOpen] = useState(false);
+  // One-row manual entry -- the no-file alternative to the four modals
+  // above. Same handlers, same API calls, see ManualEntryModal.tsx's header.
+  const [thirdPartyManualOpen, setThirdPartyManualOpen] = useState(false);
+  const [vansalesManualOpen, setVansalesManualOpen] = useState(false);
+  const [swiftManualOpen, setSwiftManualOpen] = useState(false);
+  const [depotStoManualOpen, setDepotStoManualOpen] = useState(false);
   const [familyFilter, setFamilyFilter] = useState<TransportCostSheetFamily | undefined>(undefined);
   const [page, setPage] = useState(1);
   // Vansales periodization Option A (VANSALES_PERIODIZATION_DECISION.md):
@@ -213,6 +220,10 @@ export function TransportCostImportPage() {
                   <UploadCloud className="h-3.5 w-3.5" />
                   Import 3rd Party
                 </Button>
+                <Button size="sm" variant="outline" onClick={() => setThirdPartyManualOpen(true)}>
+                  <PenLine className="h-3.5 w-3.5" />
+                  Enter manually
+                </Button>
                 <div className="flex items-center gap-1.5">
                   <input
                     type="month"
@@ -232,14 +243,32 @@ export function TransportCostImportPage() {
                     <UploadCloud className="h-3.5 w-3.5" />
                     Import Vansales
                   </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!vansalesPeriodMonthValid}
+                    title={!vansalesPeriodMonthValid ? 'Select the month this Vansales batch covers first.' : undefined}
+                    onClick={() => setVansalesManualOpen(true)}
+                  >
+                    <PenLine className="h-3.5 w-3.5" />
+                    Enter manually
+                  </Button>
                 </div>
                 <Button size="sm" variant="outline" onClick={() => setSwiftModalOpen(true)}>
                   <UploadCloud className="h-3.5 w-3.5" />
                   Import Swift
                 </Button>
+                <Button size="sm" variant="outline" onClick={() => setSwiftManualOpen(true)}>
+                  <PenLine className="h-3.5 w-3.5" />
+                  Enter manually
+                </Button>
                 <Button size="sm" variant="outline" onClick={() => setDepotStoModalOpen(true)}>
                   <UploadCloud className="h-3.5 w-3.5" />
                   Import Depot STO
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setDepotStoManualOpen(true)}>
+                  <PenLine className="h-3.5 w-3.5" />
+                  Enter manually
                 </Button>
               </>
             )}
@@ -432,6 +461,50 @@ export function TransportCostImportPage() {
         columns={DEPOT_STO_COLUMNS}
         onImport={handleDepotStoImport}
         onImportComplete={handleImportComplete}
+      />
+
+      <ManualEntryModal
+        open={thirdPartyManualOpen}
+        onOpenChange={setThirdPartyManualOpen}
+        title="Enter 3rd Party record"
+        description="Type in a single 3rd Party delivery instead of uploading a spreadsheet. Saved the same way a file import is -- same validation, same duplicate check, same normalization review."
+        columns={THIRD_PARTY_COLUMNS}
+        onImport={handleThirdPartyImport}
+        onImportComplete={handleImportComplete}
+        sourceLabel="Manual entry (3rd Party)"
+      />
+
+      <ManualEntryModal
+        open={vansalesManualOpen}
+        onOpenChange={setVansalesManualOpen}
+        title="Enter Vansales record"
+        description={`Type in a single Vansales row for ${vansalesPeriodMonth || 'the selected month'}. Saved the same way a file import is.`}
+        columns={VANSALES_COLUMNS}
+        onImport={handleVansalesImport}
+        onImportComplete={handleImportComplete}
+        sourceLabel="Manual entry (Vansales)"
+      />
+
+      <ManualEntryModal
+        open={swiftManualOpen}
+        onOpenChange={setSwiftManualOpen}
+        title="Enter Swift record"
+        description="Type in a single Swift consignment instead of uploading a spreadsheet. Saved the same way a file import is."
+        columns={SWIFT_COLUMNS}
+        onImport={handleSwiftImport}
+        onImportComplete={handleImportComplete}
+        sourceLabel="Manual entry (Swift)"
+      />
+
+      <ManualEntryModal
+        open={depotStoManualOpen}
+        onOpenChange={setDepotStoManualOpen}
+        title="Enter Depot STO record"
+        description="Type in a single Depot STO movement instead of uploading a spreadsheet. Saved the same way a file import is."
+        columns={DEPOT_STO_COLUMNS}
+        onImport={handleDepotStoImport}
+        onImportComplete={handleImportComplete}
+        sourceLabel="Manual entry (Depot STO)"
       />
     </div>
   );

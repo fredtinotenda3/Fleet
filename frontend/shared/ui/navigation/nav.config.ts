@@ -59,6 +59,7 @@ import {
   Trophy,
   Gauge,
   Scale,
+  Banknote,
 } from 'lucide-react';
 import { Permission } from '@/server/permissions/roles';
 
@@ -262,6 +263,24 @@ export const NAV_SECTIONS: NavSection[] = [
         children: [
           { key: 'expenses-list', label: 'All Expenses', href: '/expenses/list', permissions: [Permission.EXPENSE_VIEW] },
           { key: 'expenses-analytics', label: 'Expense Analytics', href: '/expenses/analytics', permissions: [Permission.EXPENSE_VIEW] },
+        ],
+      },
+      {
+        key: 'transport-cost',
+        label: 'Transport Cost',
+        href: '/transport-cost/report',
+        icon: Banknote,
+        hint: 'Third-party transporter spend: the O4 report and the source-file import pipeline',
+        // TRANSPORT_COST_VIEW to match the O4 report route's own gate. The
+        // import child below carries its own, stricter permission per rule 1.
+        permissions: [Permission.TRANSPORT_COST_VIEW],
+        children: [
+          {
+            key: 'transport-cost-import',
+            label: 'Import Data',
+            href: '/transport-cost/import',
+            permissions: [Permission.TRANSPORT_COST_IMPORT],
+          },
         ],
       },
     ],

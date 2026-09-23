@@ -45,6 +45,10 @@ import { ATTENTION_INDEXES } from './indexes.attention-addendum'
 import { FINANCE_INDEXES } from './indexes.finance-addendum';
 // Phase 3 tripId join indexes
 import { TRIP_ANALYTICS_INDEXES } from './indexes.trip-analytics-addendum';
+// Olivine transport-cost work, Phases O1/O2/O3 — was defined but never
+// merged into INDEXES below, so ensureIndexes() never created any of
+// these (see tests/security/transport-cost-indexes.spec.ts).
+import { TRANSPORT_COST_INDEXES } from './indexes.transport-cost-addendum';
 
 const BASE_INDEXES = {
   // ── Domain collections ──────────────────────────────────────────
@@ -431,6 +435,7 @@ export const INDEXES = {
   ...ANOMALY_INDEXES,
   ...ATTENTION_INDEXES,
   ...FINANCE_INDEXES,
+  ...TRANSPORT_COST_INDEXES,
   // Spread BEFORE the explicit tbltrips key below, whose array merges
   // this addendum's trip indexes in by hand -- a bare spread here would
   // be overwritten by that key.

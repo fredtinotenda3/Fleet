@@ -40,6 +40,22 @@
 
 import 'dotenv/config';
 import connectToDatabase from '@/infrastructure/database/mongodb';
+// FIX (this script never registered its CQRS handlers): every subcommand
+// below dispatches through transportCostCommandService/transportCostQueryService,
+// which route through the shared commandBus/queryBus singletons
+// (server/cqrs/command-bus.ts, query-bus.ts). Those singletons start with
+// zero handlers registered -- registration only happens via bootstrapCqrs(),
+// which normally runs once from instrumentation.ts when the Next.js server
+// boots. A standalone `npx tsx` invocation like this one never goes through
+// instrumentation.ts, so without the explicit call added below, EVERY
+// subcommand here (list/confirm-match/confirm-new/reject) throws
+// "[CommandBus] No handler registered for command ...". This is the exact
+// same class of bug workers/bootstrap.ts's own header comment documents
+// and already fixes for the worker process -- this script is a second,
+// previously unfixed instance of it. See also
+// scripts/import-transport-cost-source-file.ts, which hits and fixes the
+// identical issue.
+import { bootstrapCqrs } from '@/server/cqrs/cqrs.module';
 import { adminUserRepository } from '@/modules/organizations/repositories/admin-user.repository';
 import { transportCostQueryService } from '@/modules/transport-cost/services/transport-cost-query.service';
 import { transportCostCommandService } from '@/modules/transport-cost/services/transport-cost-command.service';
@@ -213,6 +229,7 @@ async function main(): Promise<void> {
   }
 
   await connectToDatabase();
+  bootstrapCqrs();
 
   switch (subcommand) {
     case 'list':

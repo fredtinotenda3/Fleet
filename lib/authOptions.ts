@@ -117,9 +117,19 @@ const LEGACY_ROLE_MAP: Record<string, Role> = {
   viewer: Role.VIEWER,
 };
 
-/** Unrecognized/missing role resolves to VIEWER (least privilege), not
- *  super_admin -- an unmapped role must never fail open. */
-function resolveRole(rawRole: string | undefined | null): Role {
+/**
+ * Unrecognized/missing role resolves to VIEWER (least privilege), not
+ * super_admin -- an unmapped role must never fail open.
+ *
+ * Exported (previously module-private) so a script building a real
+ * TenantContext outside an HTTP request -- see
+ * scripts/post-transport-cost-batch.ts -- maps tbladmin.Role to a Role
+ * through this exact function rather than a second, independently
+ * maintained copy of LEGACY_ROLE_MAP that could drift from this one.
+ * Pure function, no behavior change to anything that already imports
+ * this file.
+ */
+export function resolveRole(rawRole: string | undefined | null): Role {
   if (!rawRole) return Role.VIEWER;
   return LEGACY_ROLE_MAP[rawRole.trim().toLowerCase()] ?? Role.VIEWER;
 }

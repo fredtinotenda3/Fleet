@@ -82,7 +82,13 @@ interface ImportModalProps {
 
 type Stage = 'select' | 'preview' | 'submitting' | 'report';
 
-function coerceValue(raw: string, type: ImportColumnType | undefined): unknown {
+/**
+ * Exported so ManualEntryModal.tsx -- the one-row, no-file companion to
+ * this modal -- coerces a typed-in field value with the exact same
+ * rules a parsed spreadsheet cell gets, rather than a second,
+ * independently-maintained copy that could drift from this one.
+ */
+export function coerceValue(raw: string, type: ImportColumnType | undefined): unknown {
   const trimmed = raw.trim();
   if (trimmed === '') return undefined;
 
