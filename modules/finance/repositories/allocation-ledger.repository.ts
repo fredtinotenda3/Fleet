@@ -307,6 +307,63 @@ export class AllocationLedgerRepository extends TenantScopedRepository<Allocatio
   }
 
   /**
+   * ADDED, OLIVINE LIVE OPERATING MODEL (item 2/3/4/10/11 -- see
+   * shared/types/cost-facing-company.types.ts). Net (post-reversal)
+   * reporting-currency totals PER COST-FACING COMPANY (Hypery / Olivine
+   * / Surface) across every vehicle in the caller's scope over a period
+   * -- the dashboard/report screen's primary breakdown. Same shape and
+   * same fully-contained period rule as getNetTotalsByVehicleForCategory
+   * immediately above (this method's closest relative), just grouped by
+   * `costFacingCompany` instead of `vehicleId`.
+   *
+   * Deliberately a flat `$group` on the field itself, NOT `$ifNull`/any
+   * computed expression to fold a missing value into an "unattributed"
+   * bucket server-side -- tests/helpers/fake-collection.ts's aggregate()
+   * only implements a flat field-path `_id` (see
+   * OLIVINE_COST_INTELLIGENCE_COMMAND_CENTRE_DESIGN.md Section 6.2 for
+   * the exact same constraint already documented for this repository).
+   * A posting with no costFacingCompany groups under `_id.costFacingCompany:
+   * null`; the caller maps that to the same 'unattributed' label the
+   * rest of this codebase already uses for a missing dimension (see
+   * TransportCostReportService's UNATTRIBUTED constant), in application
+   * code, not in the pipeline.
+   */
+  async getNetTotalsByCompanyAcrossVehicles(
+    costCategory: AllocationCostCategory | AllocationCostCategory[],
+    periodStart: Date,
+    periodEnd: Date,
+    context: TenantContext
+  ): Promise<Array<{ costFacingCompany: string | null; reportingCurrency: string; netReportingAmount: number; postingCount: number }>> {
+    const collection = await this.getCollection();
+    const match: Record<string, unknown> = {
+      ...this.getActiveFilter(context.organizationId),
+      ...tenantScopeService.buildFilter<AllocationPosting>(context, 'orgUnitId'),
+      costCategory: costCategoryMatch(costCategory),
+      ...buildPeriodFilter(periodStart, periodEnd),
+    };
+
+    const rows = await collection
+      .aggregate([
+        { $match: match },
+        {
+          $group: {
+            _id: { costFacingCompany: '$costFacingCompany', reportingCurrency: '$reportingCurrency' },
+            netReportingAmount: { $sum: '$reportingAmount' },
+            postingCount: { $sum: 1 },
+          },
+        },
+      ])
+      .toArray();
+
+    return rows.map((row: any) => ({
+      costFacingCompany: row._id.costFacingCompany ?? null,
+      reportingCurrency: row._id.reportingCurrency,
+      netReportingAmount: row.netReportingAmount,
+      postingCount: row.postingCount,
+    }));
+  }
+
+  /**
    * ADDED, Phase O3. Distinct calendar months (1st-of-month, UTC) that
    * have at least one posting for a cost category -- the O4 screen's
    * "switch to any imported month" control. Derived from the LEDGER

@@ -31,6 +31,9 @@ export interface ThirdPartyImportRow {
   registration?: string;
   destinationTown?: string;
   amount?: string | number;
+  /** OLIVINE LIVE OPERATING MODEL, item 3: which of Hypery/Olivine/Surface
+   *  this delivery was incurred facing -- see cost-facing-company.types.ts. */
+  costFacingCompany?: string;
 }
 
 /** Raw row shape for the "Vansales" sheets (audit Section B, Family 4).
@@ -50,6 +53,8 @@ export interface VansalesImportRow {
   week3?: string | number;
   week4?: string | number;
   total?: string | number;
+  /** OLIVINE LIVE OPERATING MODEL, item 3 -- see ThirdPartyImportRow's own doc comment. */
+  costFacingCompany?: string;
 }
 
 /**
@@ -89,6 +94,8 @@ export interface SwiftImportRow {
    *  the same reason Vansales posts TOTAL rather than a component
    *  figure: the final, all-in settled amount, not an intermediate one. */
   totalIncl?: string | number;
+  /** OLIVINE LIVE OPERATING MODEL, item 3 -- see ThirdPartyImportRow's own doc comment. */
+  costFacingCompany?: string;
 }
 
 /**
@@ -163,6 +170,8 @@ export interface DepotStoImportRow {
   puredrop2L?: string | number;
   pureDrop5l?: string | number;
   pureDrop750?: string | number;
+  /** OLIVINE LIVE OPERATING MODEL, item 3 -- see ThirdPartyImportRow's own doc comment. */
+  costFacingCompany?: string;
 }
 
 export type TransportCostImportRow = ThirdPartyImportRow | VansalesImportRow | SwiftImportRow | DepotStoImportRow;

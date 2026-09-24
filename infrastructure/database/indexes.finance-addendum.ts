@@ -85,6 +85,37 @@ export const FINANCE_INDEXES = {
       key: { tenantId: 1, sourceCollection: 1, sourceId: 1, costCategory: 1 },
       name: 'idx_allocationledger_tenant_source',
     },
+    {
+      // ADDED, Command Centre Slice A0 (pre-existing gap closed during the
+      // OLIVINE LIVE OPERATING MODEL verification pass). getNetTotalsBy
+      // VehicleForCategory and findRawByCategoryInScope both filter by
+      // {tenantId, costCategory, periodStart: $gte, periodEnd: $lte} --
+      // grouped by vehicleId in the former, returned raw in the latter --
+      // and neither was backed by a costCategory-leading index: the only
+      // pre-existing tblallocationledger indexes led with vehicleId or
+      // glAccountCode, never costCategory alone, so this cross-vehicle,
+      // one-category-in-scope query pattern fell back to a full tenant
+      // scan. tests/security/finance-indexes.spec.ts already asserted
+      // this exact index shape (Command Centre Slice A0's own pinning
+      // test) but the index itself was never added -- caught by running
+      // that suite during this pass's verification, fixed here rather
+      // than left failing, since it directly backs the same aggregation
+      // family (and the same file) the costFacingCompany index just below
+      // was added for.
+      key: { tenantId: 1, costCategory: 1, periodStart: 1 },
+      name: 'idx_allocationledger_tenant_costcategory_periodstart',
+    },
+    {
+      // ADDED, OLIVINE LIVE OPERATING MODEL. getNetTotalsByCompanyAcrossVehicles:
+      // {tenantId, costCategory: $in, costFacingCompany, periodStart: $gte}
+      // -- the company-dimension dashboard breakdown, the client's own
+      // "primary analytical dimension". Sparse: absent on every posting
+      // outside the three transport-cost categories, and on any
+      // transport-cost posting whose source predates this field.
+      key: { tenantId: 1, costFacingCompany: 1, periodStart: 1 },
+      name: 'idx_allocationledger_tenant_costfacingcompany_periodstart',
+      sparse: true,
+    },
   ],
   tbldepreciationprofiles: [
     {

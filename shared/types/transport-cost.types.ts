@@ -21,6 +21,7 @@
 // compiled callers.
 
 import { OrgUnitScopedEntity } from '@/server/repositories/tenant-scoped.repository';
+import { CostFacingCompany } from './cost-facing-company.types';
 
 /**
  * Which Olivine sheet family a row came from.
@@ -262,6 +263,20 @@ export interface TransportCostSourceRecord extends OrgUnitScopedEntity {
   destinationTown?: string;
   customerName?: string;
   salesInvoiceNo?: string;
+
+  /**
+   * OLIVINE LIVE OPERATING MODEL, item 2/3/5 (see
+   * cost-facing-company.types.ts's header for the full rationale). Which
+   * of Hypery/Olivine/Surface this transaction was incurred facing --
+   * captured explicitly at entry (manual or bulk import), never derived
+   * from a sheet name, a transporter, or a vehicle. null on every row
+   * imported before this field existed (the January 2026 historical
+   * data) and on any row genuinely imported without it -- rendered as
+   * "Unattributed" everywhere, never guessed retroactively. Required
+   * (validated by ImportTransportCostHandler) for every row imported
+   * through the current handler, across all four sheet families.
+   */
+  costFacingCompany?: CostFacingCompany | null;
 
   /**
    * Cost, in the source's own currency and VAT basis -- BOTH

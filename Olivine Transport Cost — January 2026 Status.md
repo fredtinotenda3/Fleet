@@ -48,3 +48,11 @@ Before this review, an earlier full re-import of the January file silently creat
 | Swift | 0/276 posted | Decide how to attribute Swift costs without a vehicle identifier | Olivine (business decision) |
 
 Once Olivine provides the above, posting is a single command on our side and takes minutes — no further import work is needed for January.
+
+--
+
+email: owner@olivine.test
+
+password: EjjdTFk7tWKH!7
+
+https://fleet-alpha.vercel.app/ 

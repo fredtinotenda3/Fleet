@@ -457,6 +457,35 @@ export class TransportCostPostingService {
           description: this.describePosting(source, vehicle),
           periodStart,
           periodEnd,
+          // OLIVINE LIVE OPERATING MODEL, item 2/3/4: copied verbatim
+          // from the source record, never fabricated -- see
+          // AllocationPosting.costFacingCompany's own doc comment. Only
+          // set when the source record actually has one (a historical
+          // pre-this-feature row simply posts without it, exactly like
+          // glAccountCode's own optional-field precedent).
+          //
+          // KNOWN, ACCEPTED LIMITATION: AllocationService.reversePosting
+          // (the shared, financially-critical correction path this
+          // service deliberately reuses rather than reimplements -- see
+          // this file's header) builds its reversal posting from an
+          // explicit field list that does not include costFacingCompany,
+          // so a REVERSAL of a transport-cost posting will not carry the
+          // company forward and will show as unattributed in a
+          // company-dimension breakdown, even though the original
+          // posting it reverses did. Deliberately NOT fixed by widening
+          // reversePosting's field list in this pass -- that method is
+          // shared by every cost category and is this ledger's single
+          // highest-risk piece of logic; see this file's header for why
+          // "document + accept" was chosen over touching it under time
+          // pressure. Real-world impact is small: this only affects a
+          // genuine reversal (not the far more common dedupe + re-post
+          // correction path used for a duplicate re-import), and shows
+          // up only as a small unattributed offsetting entry, never a
+          // wrong total. Flagged in the gap analysis as a easy, fully
+          // reversible follow-up (add costFacingCompany: original
+          // .costFacingCompany to that one object literal) whenever
+          // this is prioritised.
+          ...(source.costFacingCompany ? { costFacingCompany: source.costFacingCompany } : {}),
           currency: targetCurrency,
           amount: targetAmount,
           fxRate: fx.fxRate,

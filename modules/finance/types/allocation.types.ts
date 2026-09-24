@@ -18,6 +18,7 @@
 // allocation-ledger.repository.ts for the enforcement.
 
 import type { OrgUnitScopedEntity } from '@/server/repositories/tenant-scoped.repository';
+import type { CostFacingCompany } from '@/shared/types/cost-facing-company.types';
 
 /**
  * How a cost item's amount was attributed to a vehicle:
@@ -153,6 +154,27 @@ export interface AllocationPosting extends OrgUnitScopedEntity {
 
   /** Optional mapping to the customer's chart of accounts, used by the GL reconciliation report. */
   glAccountCode?: string;
+
+  /**
+   * OLIVINE LIVE OPERATING MODEL, item 2/3/4 (see
+   * shared/types/cost-facing-company.types.ts's header). Copied verbatim
+   * from TransportCostSourceRecord.costFacingCompany at post time by
+   * TransportCostPostingService, ONLY when the source record has one --
+   * never fabricated for a posting whose source predates this field
+   * (the January 2026 historical postings). Additive, non-breaking: this
+   * mirrors glAccountCode's own precedent immediately above (a field
+   * copied onto a posting for direct Mongo $group pushdown, rather than
+   * resolved via a join every read) rather than the "destination" field
+   * (Command Centre design doc Section 16), because the client named
+   * this dimension as the PRIMARY one every future breakdown/filter/
+   * chart needs, which justifies paying the append-only-ledger-field
+   * cost for real aggregation performance -- destination did not meet
+   * that bar. Absent on every posting for a cost category other than
+   * the three transport-cost ones, and on any transport-cost posting
+   * whose source record predates this field; a caller must treat an
+   * absent value as "unattributed", never as a fourth company.
+   */
+  costFacingCompany?: CostFacingCompany;
 
   /**
    * PHASE 6 -- deterministic de-duplication key for auto-posted rows.

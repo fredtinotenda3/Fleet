@@ -31,9 +31,28 @@ import { Permission, permissionService } from '@/server/permissions/roles';
 import { transportCostApi } from '../services/transport-cost.api';
 import { useTransportCostSourceRecords } from '../hooks/useTransportCost';
 import type { TransportCostSheetFamily } from '@/shared/types/transport-cost.types';
+import { COST_FACING_COMPANIES } from '@/shared/types/cost-facing-company.types';
+
+// OLIVINE LIVE OPERATING MODEL, item 2/3/5: required on every entry path
+// (manual and bulk), for all four sheet families -- see
+// shared/types/cost-facing-company.types.ts's header for why this is a
+// proper closed-set dropdown, never free text, and why it is captured
+// per row rather than derived from a sheet name later. Reused as one
+// column definition object across all four families' column lists below
+// so the label/options never drift between them.
+const COST_FACING_COMPANY_COLUMN: ImportColumnDef = {
+  key: 'costFacingCompany',
+  label: 'Cost-facing company',
+  required: true,
+  type: 'select',
+  example: 'Olivine',
+  description: 'Which of Hypery, Olivine, or Surface this cost was incurred facing.',
+  options: COST_FACING_COMPANIES,
+};
 
 const THIRD_PARTY_COLUMNS: ImportColumnDef[] = [
   { key: 'date', label: 'Date', required: true, type: 'string', example: '05.01.26' },
+  COST_FACING_COMPANY_COLUMN,
   { key: 'customerName', label: 'Customer name', required: false, type: 'string', example: 'Olivine' },
   { key: 'transporter', label: 'Transporter', required: false, type: 'string', example: 'PRINORTH' },
   { key: 'salesInvoiceNo', label: 'Sales invoice no', required: false, type: 'string', example: 'INV-1024' },
@@ -45,6 +64,7 @@ const THIRD_PARTY_COLUMNS: ImportColumnDef[] = [
 
 const VANSALES_COLUMNS: ImportColumnDef[] = [
   { key: 'payerName', label: 'Payer name', required: true, type: 'string', example: 'Mr Gurjit' },
+  COST_FACING_COMPANY_COLUMN,
   { key: 'registration', label: 'REG', required: false, type: 'string', example: 'AGL8230' },
   { key: 'tonnage', label: 'Tonnage', required: false, type: 'number', example: '8' },
   { key: 'product', label: 'Product', required: false, type: 'string', example: 'Golden Glow 2L' },
@@ -64,6 +84,7 @@ const VANSALES_COLUMNS: ImportColumnDef[] = [
 // column: the real source data has none.
 const SWIFT_COLUMNS: ImportColumnDef[] = [
   { key: 'consDate', label: 'Cons. date', required: true, type: 'string', example: '2026-01-05' },
+  COST_FACING_COMPANY_COLUMN,
   { key: 'consNumber', label: 'Cons. Number', required: true, type: 'string', example: 'CN-10234' },
   { key: 'shipperReference', label: 'Shipper reference', required: false, type: 'string', example: 'SR-4471' },
   { key: 'receiversName', label: 'Receivers Name', required: false, type: 'string', example: 'Olivine' },
@@ -85,6 +106,7 @@ const SWIFT_COLUMNS: ImportColumnDef[] = [
 // nothing here assigns them meaning (see DepotStoSourceFields).
 const DEPOT_STO_COLUMNS: ImportColumnDef[] = [
   { key: 'date', label: 'DATE', required: true, type: 'string', example: '05.03.26' },
+  COST_FACING_COMPANY_COLUMN,
   { key: 'sto', label: 'STO', required: false, type: 'string', example: 'STO-1042' },
   { key: 'source', label: 'SOURCE', required: false, type: 'string', example: 'Harare' },
   { key: 'depot', label: 'DEPOT', required: false, type: 'string', example: 'Bulawayo' },

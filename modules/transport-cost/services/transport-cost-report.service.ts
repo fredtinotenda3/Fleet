@@ -59,6 +59,7 @@ import type { TransportCostSheetFamily } from '@/shared/types/transport-cost.typ
 import type { TransportCostImportException } from '@/shared/types/transport-cost-import-exception.types';
 import { NotFoundError, ValidationError } from '@/server/errors/app.errors';
 import { roundCurrency } from '@/modules/finance/utils/fx-conversion.utils';
+import { costFacingCompanyLabel } from '@/shared/types/cost-facing-company.types';
 
 // 'third-party-transport' only, STILL -- a deliberate, documented scope
 // boundary of the Vansales-posting slice, not an oversight left over
@@ -129,11 +130,29 @@ export interface StreamGroupTotal {
   vehicleCount: number;
 }
 
+/**
+ * ADDED, OLIVINE LIVE OPERATING MODEL (item 2/3/4/10/11). The
+ * cost-facing company breakdown -- Hypery / Olivine / Surface, plus
+ * "Unattributed" for a posting whose source record predates this field.
+ * `costFacingCompany` is the raw stored token ('hypery'/'olivine'/
+ * 'surface'/'unattributed'); `label` is the display form, resolved via
+ * costFacingCompanyLabel so every screen shows "Hypery" rather than the
+ * raw lowercase token.
+ */
+export interface CompanyGroupTotal {
+  costFacingCompany: string;
+  label: string;
+  reportingCurrency: string;
+  netReportingAmount: number;
+  postingCount: number;
+}
+
 export interface TransportCostAllocationReport {
   periodStart: Date;
   periodEnd: Date;
   reportingCurrency: string;
   byBusinessStream: StreamGroupTotal[];
+  byCompany: CompanyGroupTotal[];
   byVehicle: VehicleGroupTotal[];
   /** More than one reportingCurrency appeared in this period's postings
    *  -- see AllocationService.getCostPerKm's identical handling. When
@@ -316,8 +335,9 @@ export class TransportCostReportService {
       throw new ValidationError('periodEnd cannot be earlier than periodStart.');
     }
 
-    const [totals, vehicles, settings, pendingCount] = await Promise.all([
+    const [totals, companyTotals, vehicles, settings, pendingCount] = await Promise.all([
       this.ledgerRepo.getNetTotalsByVehicleForCategory(COST_CATEGORY, periodStart, periodEnd, context),
+      this.ledgerRepo.getNetTotalsByCompanyAcrossVehicles(COST_CATEGORY, periodStart, periodEnd, context),
       this.vehicleRepo.findAllConfirmed(context.organizationId),
       this.settingsService.resolve(context.organizationId),
       this.sourceRepo.countPendingAmount(periodStart, periodEnd, context),
@@ -364,11 +384,23 @@ export class TransportCostReportService {
       }
     }
 
+    const byCompany: CompanyGroupTotal[] = companyTotals.map((t) => {
+      const key = t.costFacingCompany ?? UNATTRIBUTED;
+      return {
+        costFacingCompany: key,
+        label: costFacingCompanyLabel(t.costFacingCompany),
+        reportingCurrency: t.reportingCurrency,
+        netReportingAmount: roundCurrency(t.netReportingAmount),
+        postingCount: t.postingCount,
+      };
+    });
+
     return {
       periodStart,
       periodEnd,
       reportingCurrency: currencies[0] ?? settings.reportingCurrency,
       byBusinessStream: Array.from(streamMap.values()),
+      byCompany,
       byVehicle,
       ...(mixed ? { mixedReportingCurrencies: currencies } : {}),
       pending: {

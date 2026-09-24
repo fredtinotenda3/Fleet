@@ -75,6 +75,15 @@ function makeExceptionRepo(overrides: Record<string, jest.Mock> = {}) {
   } as any;
 }
 
+// OLIVINE LIVE OPERATING MODEL, item 2/3/5: costFacingCompany is now a
+// required column on every family (see resolveCostFacingCompany in the
+// handler under test). Every row builder below defaults it to a valid
+// value so every PRE-EXISTING test in this file -- none of which are
+// about the company dimension -- keeps constructing a row that is valid
+// under the new required field, exactly as they already default
+// date/registration/transporter to valid values. Tests that exercise
+// resolveCostFacingCompany itself override it explicitly (see the
+// "cost-facing company validation" describe block below).
 function thirdPartyRow(overrides: Partial<ThirdPartyImportRow> = {}): ThirdPartyImportRow {
   return {
     rowNumber: 2,
@@ -84,6 +93,7 @@ function thirdPartyRow(overrides: Partial<ThirdPartyImportRow> = {}): ThirdParty
     registration: 'AGL8230',
     amount: '4500',
     tonnage: '32',
+    costFacingCompany: 'olivine',
     ...overrides,
   };
 }
@@ -99,6 +109,7 @@ function vansalesRow(overrides: Partial<VansalesImportRow> = {}): VansalesImport
     week3: '300',
     week4: '300',
     total: '1200',
+    costFacingCompany: 'olivine',
     ...overrides,
   };
 }
@@ -115,6 +126,7 @@ function swiftRow(overrides: Partial<SwiftImportRow> = {}): SwiftImportRow {
     totalExcl: '3900',
     taxAmount: '600',
     totalIncl: '4500',
+    costFacingCompany: 'olivine',
     ...overrides,
   };
 }
@@ -135,6 +147,7 @@ function depotStoRow(overrides: Partial<DepotStoImportRow> = {}): DepotStoImport
     mrGurjit: true,
     mrInderjeet: false,
     sharmaJi: true,
+    costFacingCompany: 'olivine',
     ...overrides,
   };
 }
@@ -1187,5 +1200,173 @@ describe('ImportTransportCostHandler -- Phase O2 normalization wiring', () => {
     );
 
     expect(result.summary).toEqual({ total: 1, succeeded: 1, duplicates: 0, failed: 0 });
+  });
+});
+
+describe('ImportTransportCostHandler -- OLIVINE LIVE OPERATING MODEL cost-facing company (item 2/3/5)', () => {
+  it('rejects a third-party row with a missing costFacingCompany, without inserting it', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    const result = await handler.execute(
+      new ImportTransportCostCommand(
+        'third-party',
+        [thirdPartyRow({ costFacingCompany: undefined })],
+        TENANT,
+        userWriteScope(makeContext()),
+        'jan-3rd-party.xlsx',
+        USER_ID
+      )
+    );
+
+    expect(result.summary).toEqual({ total: 1, succeeded: 0, duplicates: 0, failed: 1 });
+    expect(result.results[0]).toMatchObject({ success: false, column: 'costFacingCompany' });
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects a third-party row with an unrecognised costFacingCompany value (never silently defaulted)', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    const result = await handler.execute(
+      new ImportTransportCostCommand(
+        'third-party',
+        [thirdPartyRow({ costFacingCompany: 'Acme Corp' })],
+        TENANT,
+        userWriteScope(makeContext()),
+        'jan-3rd-party.xlsx',
+        USER_ID
+      )
+    );
+
+    expect(result.results[0]).toMatchObject({
+      success: false,
+      column: 'costFacingCompany',
+      invalidValue: 'Acme Corp',
+    });
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it('accepts a case- and whitespace-insensitive costFacingCompany and stores the canonical lowercase token', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    await handler.execute(
+      new ImportTransportCostCommand(
+        'third-party',
+        [thirdPartyRow({ costFacingCompany: ' HYPERY ' })],
+        TENANT,
+        userWriteScope(makeContext()),
+        'jan-3rd-party.xlsx',
+        USER_ID
+      )
+    );
+
+    const [record] = repo.create.mock.calls[0];
+    expect(record.costFacingCompany).toBe('hypery');
+  });
+
+  it('rejects a Vansales row with a missing costFacingCompany', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    const result = await handler.execute(
+      new ImportTransportCostCommand(
+        'vansales',
+        [vansalesRow({ costFacingCompany: undefined })],
+        TENANT,
+        userWriteScope(makeContext()),
+        'may-vansales.xlsx',
+        USER_ID,
+        '2026-01'
+      )
+    );
+
+    expect(result.results[0]).toMatchObject({ success: false, column: 'costFacingCompany' });
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects a Swift row with a missing costFacingCompany', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    const result = await handler.execute(
+      new ImportTransportCostCommand(
+        'swift',
+        [swiftRow({ costFacingCompany: undefined })],
+        TENANT,
+        userWriteScope(makeContext()),
+        'jan-swift.xlsx',
+        USER_ID
+      )
+    );
+
+    expect(result.results[0]).toMatchObject({ success: false, column: 'costFacingCompany' });
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects a Depot STO row with a missing costFacingCompany', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    const result = await handler.execute(
+      new ImportTransportCostCommand(
+        'depot-sto',
+        [depotStoRow({ costFacingCompany: undefined })],
+        TENANT,
+        userWriteScope(makeContext()),
+        'june-deport-sto.xlsx',
+        USER_ID
+      )
+    );
+
+    expect(result.results[0]).toMatchObject({ success: false, column: 'costFacingCompany' });
+    expect(repo.create).not.toHaveBeenCalled();
+  });
+
+  it('persists the selected company onto the stored record for every family (never derived from the sheet/file name)', async () => {
+    const repo = makeRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher());
+
+    await handler.execute(
+      new ImportTransportCostCommand(
+        'depot-sto',
+        [depotStoRow({ costFacingCompany: 'surface' })],
+        TENANT,
+        userWriteScope(makeContext()),
+        // Deliberately a filename that looks like it belongs to a
+        // different company -- the persisted value must come from the
+        // row's own explicit selection, never be inferred from this.
+        'HYPERY-june-deport-sto.xlsx',
+        USER_ID
+      )
+    );
+
+    const [record] = repo.create.mock.calls[0];
+    expect(record.costFacingCompany).toBe('surface');
+  });
+
+  it('an invalid costFacingCompany is also persisted as the data-quality exception\'s invalidValue', async () => {
+    const repo = makeRepo();
+    const exceptionRepo = makeExceptionRepo();
+    const handler = new ImportTransportCostHandler(repo, makeMatcher(), exceptionRepo);
+
+    await handler.execute(
+      new ImportTransportCostCommand(
+        'third-party',
+        [thirdPartyRow({ rowNumber: 5, costFacingCompany: 'Not A Company' })],
+        TENANT,
+        userWriteScope(makeContext()),
+        'jan-3rd-party.xlsx',
+        USER_ID
+      )
+    );
+
+    expect(exceptionRepo.log).toHaveBeenCalledTimes(1);
+    const [logged] = exceptionRepo.log.mock.calls[0];
+    expect(logged).toMatchObject({
+      column: 'costFacingCompany',
+      sourceRowNumber: 5,
+    });
   });
 });

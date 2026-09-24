@@ -97,6 +97,11 @@ import {
   parsePeriodMonth,
 } from '@/modules/transport-cost/utils/normalization.utils';
 import {
+  CostFacingCompany,
+  COST_FACING_COMPANIES,
+  normalizeCostFacingCompany,
+} from '@/shared/types/cost-facing-company.types';
+import {
   NormalizationMatcherService,
   normalizationMatcherService,
 } from '@/modules/transport-cost/services/normalization-matcher.service';
@@ -223,6 +228,41 @@ export class ImportTransportCostHandler
     };
   }
 
+  /**
+   * OLIVINE LIVE OPERATING MODEL, item 2/3/5. Shared by all four
+   * validateAndBuildX methods below -- one validation rule, not four
+   * copies that could drift. Required for every row: an unset or
+   * unrecognised value is REJECTED, the same discipline every other
+   * required field in this handler already applies (never silently
+   * defaulted to "unattributed" at import time -- that would be exactly
+   * the kind of silent guess the client's brief explicitly forbids: "Do
+   * not derive it later from sheet names if the user explicitly
+   * selected it during entry"). A historical row imported before this
+   * field existed keeps `costFacingCompany: undefined/null` forever;
+   * this validation only gates NEW rows going through this handler from
+   * here on.
+   */
+  private resolveCostFacingCompany(
+    raw: unknown,
+    rowNum: number
+  ): { ok: true; value: CostFacingCompany } | { ok: false; error: ImportRowResult } {
+    const normalized = normalizeCostFacingCompany(raw);
+    if (!normalized) {
+      return {
+        ok: false,
+        error: {
+          row: rowNum,
+          success: false,
+          column: 'costFacingCompany',
+          invalidValue: raw === undefined || raw === null ? '' : String(raw),
+          error: 'Cost-facing company is required and must be one of Hypery, Olivine, or Surface',
+          suggestedFix: `Select one of: ${COST_FACING_COMPANIES.map((c) => c.label).join(', ')}.`,
+        },
+      };
+    }
+    return { ok: true, value: normalized };
+  }
+
   private validateAndBuildThirdParty(
     row: ThirdPartyImportRow,
     rowNum: number
@@ -275,6 +315,9 @@ export class ImportTransportCostHandler
       };
     }
 
+    const costFacingCompany = this.resolveCostFacingCompany(row.costFacingCompany, rowNum);
+    if (!costFacingCompany.ok) return costFacingCompany;
+
     return {
       ok: true,
       record: {
@@ -293,6 +336,7 @@ export class ImportTransportCostHandler
         salesInvoiceNo: row.salesInvoiceNo !== undefined ? String(row.salesInvoiceNo).trim() : undefined,
         amount: parseAmount(row.amount),
         tonnageRaw: parseAmount(row.tonnage),
+        costFacingCompany: costFacingCompany.value,
       },
     };
   }
@@ -356,6 +400,9 @@ export class ImportTransportCostHandler
     const { normalized: registration, raw: registrationRaw } = normalizeRegistration(undefined);
     const { normalized: transporterNormalized, raw: transporterRaw } = normalizeTransporter(undefined);
 
+    const costFacingCompany = this.resolveCostFacingCompany(row.costFacingCompany, rowNum);
+    if (!costFacingCompany.ok) return costFacingCompany;
+
     return {
       ok: true,
       record: {
@@ -374,6 +421,7 @@ export class ImportTransportCostHandler
         salesInvoiceNo: consNumber,
         amount: parseAmount(row.totalIncl),
         tonnageRaw: parseAmount(row.actualWeight),
+        costFacingCompany: costFacingCompany.value,
       },
     };
   }
@@ -452,6 +500,9 @@ export class ImportTransportCostHandler
     if (row.pureDrop750 !== undefined) productEntries.push(['Pure Drop 750', Number(row.pureDrop750)]);
     const mayProductQuantities = productEntries.length > 0 ? Object.fromEntries(productEntries) : null;
 
+    const costFacingCompany = this.resolveCostFacingCompany(row.costFacingCompany, rowNum);
+    if (!costFacingCompany.ok) return costFacingCompany;
+
     return {
       ok: true,
       record: {
@@ -491,6 +542,7 @@ export class ImportTransportCostHandler
           signOffMrInderjeet: row.mrInderjeet ?? null,
           signOffSharmaJi: row.sharmaJi ?? null,
         },
+        costFacingCompany: costFacingCompany.value,
       },
     };
   }
@@ -556,6 +608,9 @@ export class ImportTransportCostHandler
 
     const weeklyAmounts = [row.week1, row.week2, row.week3, row.week4].map((v) => parseAmount(v));
 
+    const costFacingCompany = this.resolveCostFacingCompany(row.costFacingCompany, rowNum);
+    if (!costFacingCompany.ok) return costFacingCompany;
+
     return {
       ok: true,
       record: {
@@ -586,6 +641,7 @@ export class ImportTransportCostHandler
           // every row in a Vansales batch shares the one declared month.
           periodMonth,
         },
+        costFacingCompany: costFacingCompany.value,
       },
     };
   }

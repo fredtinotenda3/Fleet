@@ -10,6 +10,7 @@
 import type {
   TransportCostAllocationReport,
   StreamGroupTotal,
+  CompanyGroupTotal,
   VehicleGroupTotal,
   PostingDrillDown,
   DataQualityExceptionRow,
@@ -20,9 +21,12 @@ import type { AllocationPosting } from '@/modules/finance/types/allocation.types
 export type {
   TransportCostAllocationReport,
   StreamGroupTotal,
+  CompanyGroupTotal,
   VehicleGroupTotal,
   PostingDrillDown,
   DataQualityExceptionRow,
   DataQualityExceptionsReport,
   AllocationPosting,
 };
+export type { CostFacingCompany, CostFacingCompanyOption } from '@/shared/types/cost-facing-company.types';
+export { COST_FACING_COMPANIES } from '@/shared/types/cost-facing-company.types';

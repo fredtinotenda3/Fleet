@@ -24,7 +24,12 @@ import { UploadCloud, FileText, X, CheckCircle2, AlertTriangle, Download } from 
 import { buildCsvText, downloadCsvText } from '@/shared/utils/csv-parser.utils';
 import { readTabularFile, IMPORT_FILE_ACCEPT } from '@/shared/utils/excel-parser.utils';
 
-export type ImportColumnType = 'string' | 'number' | 'boolean' | 'date';
+export type ImportColumnType = 'string' | 'number' | 'boolean' | 'date' | 'select';
+
+export interface ImportColumnOption {
+  value: string;
+  label: string;
+}
 
 export interface ImportColumnDef {
   key: string;
@@ -33,6 +38,18 @@ export interface ImportColumnDef {
   type?: ImportColumnType;
   example?: string;
   description?: string;
+  /** Required when type === 'select' -- a closed set of valid values
+   *  (e.g. a cost-facing company), rendered as a proper dropdown by
+   *  ManualEntryModal rather than a free-text input. A bulk file upload
+   *  still supplies this column as a text cell (the uploaded value is
+   *  matched case-insensitively against `options[].value` server-side,
+   *  the same tolerance every other cell in this app already gets --
+   *  see e.g. normalizeCostFacingCompany) -- this list exists to drive
+   *  the manual-entry UI and the downloadable template's example value,
+   *  not to add a second client-side validation path ImportModal itself
+   *  does not otherwise have (missing/invalid values are still reported
+   *  back per-row by the server, exactly like every other column). */
+  options?: ImportColumnOption[];
 }
 
 export interface ImportRowResult {

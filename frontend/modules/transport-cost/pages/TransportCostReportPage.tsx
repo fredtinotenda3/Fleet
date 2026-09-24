@@ -113,6 +113,12 @@ export function TransportCostReportPage() {
   const showStreamCards =
     !!report && !(report.byBusinessStream.length === 1 && report.byBusinessStream[0].businessStream === 'unattributed');
 
+  // OLIVINE LIVE OPERATING MODEL, item 2/3/4/10/11: same "don't show a
+  // single Unattributed tile as if it were a real breakdown" rule as
+  // showStreamCards above, applied to the cost-facing company dimension.
+  const showCompanyCards =
+    !!report && !(report.byCompany.length === 1 && report.byCompany[0].costFacingCompany === 'unattributed');
+
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
@@ -213,6 +219,28 @@ export function TransportCostReportPage() {
             </div>
           ) : (
             <>
+              {showCompanyCards && (
+                <section>
+                  <h2 className="mb-2 text-sm font-medium text-muted-foreground">By cost-facing company</h2>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    {report.byCompany.map((company) => (
+                      <div
+                        key={`${company.costFacingCompany}-${company.reportingCurrency}`}
+                        className="p-4 border rounded-lg surface-card"
+                      >
+                        <p className="text-caption text-muted-foreground">{company.label}</p>
+                        <p className="text-h3 font-semibold text-foreground">
+                          {formatMoney(company.netReportingAmount, company.reportingCurrency)}
+                        </p>
+                        <p className="mt-1 text-caption text-muted-foreground">
+                          {company.postingCount} posting{company.postingCount === 1 ? '' : 's'}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
               {showStreamCards && (
                 <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {report.byBusinessStream.map((stream) => (

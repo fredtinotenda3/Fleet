@@ -38,6 +38,13 @@ import { Button } from '@/frontend/shared/ui/primitives/button';
 import { Input } from '@/frontend/shared/ui/forms/input';
 import { Label } from '@/frontend/shared/ui/forms/label';
 import { Checkbox } from '@/frontend/shared/ui/forms/checkbox';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/frontend/shared/ui/forms/select';
 import { Spinner } from '@/frontend/shared/ui/feedback/spinner';
 import { coerceValue, type ImportColumnDef, type ImportResponse } from './ImportModal';
 
@@ -146,6 +153,30 @@ export function ManualEntryModal({
                       }
                     />
                     <Label htmlFor={`manual-${col.key}`}>{col.label}</Label>
+                  </div>
+                ) : col.type === 'select' ? (
+                  <div key={col.key}>
+                    <Label
+                      htmlFor={`manual-${col.key}`}
+                      className={col.required ? 'form-label form-required' : 'form-label'}
+                    >
+                      {col.label}
+                    </Label>
+                    <Select
+                      value={values[col.key] || undefined}
+                      onValueChange={(value) => setValues((v) => ({ ...v, [col.key]: value ?? '' }))}
+                    >
+                      <SelectTrigger id={`manual-${col.key}`} className="w-full">
+                        <SelectValue placeholder={col.example ?? 'Select…'} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(col.options ?? []).map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 ) : (
                   <div key={col.key}>
