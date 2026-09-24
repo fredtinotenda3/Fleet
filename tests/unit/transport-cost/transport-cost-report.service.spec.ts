@@ -154,8 +154,22 @@ function makeSettingsService() {
   } as any;
 }
 
-function makeSourceRepo(pendingCount = 0) {
-  return { countPendingAmount: jest.fn().mockResolvedValue(pendingCount) } as any;
+function makeSourceRepo(
+  pendingCount = 0,
+  loadSummary: { totalOperations: number; totalLines: number; multiLineOperationCount: number } = {
+    totalOperations: 0,
+    totalLines: 0,
+    multiLineOperationCount: 0,
+  }
+) {
+  return {
+    countPendingAmount: jest.fn().mockResolvedValue(pendingCount),
+    // OLIVINE LIVE OPERATING MODEL, SLICE 2: getAllocationReport now
+    // also calls getLoadSummaryInScope -- stubbed here so every
+    // pre-existing test constructing a report service with
+    // makeSourceRepo() keeps working unchanged.
+    getLoadSummaryInScope: jest.fn().mockResolvedValue(loadSummary),
+  } as any;
 }
 
 beforeEach(() => {

@@ -284,6 +284,42 @@ export class AllocationService {
         reportingCurrency: original.reportingCurrency,
         reportingAmount: roundCurrency(-original.reportingAmount),
         glAccountCode: original.glAccountCode,
+        // OLIVINE LIVE OPERATING MODEL, SLICE 2 follow-up (was flagged
+        // as a deferred gap by TransportCostPostingService's own header
+        // comment during Slice 1 -- see that file's postSourceRecord).
+        //
+        // Copied verbatim from the original posting, exactly like every
+        // other field above (currency, glAccountCode, fxRate, ...): a
+        // reversal is defined as "equal and opposite", and a reversal
+        // that silently drops a dimension the original carried is not
+        // equal and opposite, it is a different, less-attributed fact.
+        //
+        // Concretely, before this fix: getNetTotalsByCompanyAcrossVehicles
+        // (this repository's own $group on costFacingCompany, used by
+        // the cost-facing-company report) groups strictly on the literal
+        // field value, with NO $ifNull folding -- so a reversal posted
+        // without costFacingCompany would land in the `null`
+        // ("unattributed") bucket while the original's amount stayed in
+        // its real company's bucket. A REVERSE -> CORRECT -> REPOST
+        // cycle would then leave that real company's total permanently
+        // overstated by the reversed amount, offset only by a phantom
+        // negative sitting under "unattributed" -- silent, and in the
+        // wrong direction from what a corrections workflow promises.
+        //
+        // Safe to change here because: (1) this method is generic across
+        // every AllocationCostCategory, and costFacingCompany is
+        // `undefined` on every posting for every category except the
+        // three transport-cost ones (see AllocationPosting's own doc
+        // comment), so this line is a no-op for fuel/maintenance/expense/
+        // trip postings -- nothing about their reversal shape changes;
+        // (2) it reads `original.costFacingCompany`, never derives or
+        // guesses a value, matching this file's "copy verbatim, never
+        // fabricate" rule for fxRate/fxRateDate above; (3) it does not
+        // touch any existing posting -- append-only, additive, and only
+        // takes effect on reversals created from this point forward.
+        // Regression coverage: allocation.service.spec.ts's
+        // "reversePosting" describe block.
+        ...(original.costFacingCompany ? { costFacingCompany: original.costFacingCompany } : {}),
         postedBy: userId,
         postedAt: new Date(),
         reversalOfPostingId: postingId,

@@ -185,6 +185,60 @@ export interface DepotStoSourceFields {
 }
 
 /**
+ * OLIVINE LIVE OPERATING MODEL, SLICE 2 (item 6/7 -- see
+ * OLIVINE_LIVE_OPERATING_MODEL_GAP_ANALYSIS.md Section 5 for the full
+ * design record this implements). One repeatable load/consignment
+ * within a single transport OPERATION: "one transporter, one truck, one
+ * trip -- but potentially several invoices/customers/destinations riding
+ * on it."
+ *
+ * DELIBERATELY DOES NOT INCLUDE A COST FIELD. Cost is, and remains, a
+ * PARENT-level fact (`TransportCostSourceRecord.amount`) -- the client's
+ * own Slice 2 brief lists "transport-level cost" as a parent field, not
+ * a line field, which resolves what would otherwise be an open costing
+ * question (see this file's header note on TransportCostSourceRecord.lines
+ * for the full financial-integrity argument: a line array must never be
+ * able to multiply the cost a transport operation posts).
+ *
+ * DELIBERATELY DOES NOT INCLUDE A SEPARATE "receiver name" DISTINCT FROM
+ * "customer": inspected against the current schema before adding this
+ * (per this slice's own explicit instruction not to blindly copy the
+ * client's field list) and found that the codebase already treats
+ * Swift's "Receivers Name" as the same concept as 3rd Party's "Customer
+ * name" -- both map into one `customerName` field today
+ * (validateAndBuildSwift). Introducing a second, always-empty
+ * `receiverName` field with no data behind it would be exactly the kind
+ * of speculative field the client's own brief warns against. One
+ * `customerName` field is used for both.
+ *
+ * DOES include `consignmentNumber` as its own field, separate from
+ * `salesInvoiceNo`, specifically for the NEW manual-entry multi-line
+ * workflow (the client's own wireframe lists "Invoice" and "Consignment"
+ * as two distinct fields) -- unlike "receiver", a consignment number and
+ * an invoice number are genuinely different real-world identifiers even
+ * though the CURRENT bulk-import schema has only ever needed one
+ * reference-number field per row (see TransportCostSheetFamily's own doc
+ * comment on the audit's Section D join-key finding: Sales invoice no /
+ * Shipper reference / Cons. Number are different numbering schemes
+ * across sheet families, never a proof that "invoice" and "consignment"
+ * are the same concept). `consignmentNumber` is therefore populated only
+ * by the manual multi-line entry path; every bulk-imported and legacy
+ * line leaves it unset, never fabricated from `salesInvoiceNo`.
+ */
+export interface TransportCostLine {
+  /** 1-indexed position within the parent's `lines` array -- display
+   *  order only, not a database key, not a business identifier. */
+  lineNumber: number;
+  salesInvoiceNo?: string;
+  customerName?: string;
+  consignmentNumber?: string;
+  destinationTown?: string;
+  /** Same raw-storage, never-coerced-to-0 discipline as the parent
+   *  record's own `tonnageRaw` -- see that field's doc comment. */
+  tonnageRaw: number | null;
+}
+
+/**
  * One imported row from an Olivine transport-cost spreadsheet, stored
  * essentially verbatim (light normalization only -- see the handler)
  * with full provenance. This is SOURCE EVIDENCE, not financial truth:
@@ -302,6 +356,60 @@ export interface TransportCostSourceRecord extends OrgUnitScopedEntity {
 
   vansales?: VansalesSourceFields;
   depotSto?: DepotStoSourceFields;
+
+  /**
+   * OLIVINE LIVE OPERATING MODEL, SLICE 2 (item 6/7). The full set of
+   * loads/consignments belonging to this ONE transport operation. See
+   * TransportCostLine's own doc comment for the field-by-field design
+   * reasoning.
+   *
+   * INVARIANTS, load-bearing for every consumer of this record:
+   *
+   *   1. UNDEFINED means "imported before this field existed" (every row
+   *      from Slice 1 and earlier) -- never backfilled or fabricated
+   *      retroactively for historical data, same discipline as
+   *      `costFacingCompany` before it.
+   *   2. Populated for EVERY row imported through the current handler,
+   *      across all four sheet families, always with at least one
+   *      element -- even a family/row that never supports genuine
+   *      multi-line entry (Vansales/Swift/Depot STO, and a 3rd Party row
+   *      submitted the ordinary single-line way) still gets a one-
+   *      element `lines` array, so a consumer that wants full load
+   *      detail never has to special-case "does this record have
+   *      lines or not" -- only "does it have one or several".
+   *   3. `lines[0]` is ALWAYS kept in sync with this record's own flat
+   *      `salesInvoiceNo`/`customerName`/`destinationTown`/`tonnageRaw`
+   *      fields -- they are the SAME data, not two independent copies
+   *      that could drift. This is what makes the migration additive:
+   *      every existing consumer that reads the flat scalar fields
+   *      directly (describePosting, the data-quality exception export,
+   *      any future report) keeps working completely unchanged, reading
+   *      what is effectively "load 1" of the operation, without knowing
+   *      `lines` exists at all. A NEW consumer that wants the full
+   *      multi-load picture reads `lines`.
+   *   4. `lines.length > 1` is the one authoritative signal that this is
+   *      a genuine multi-load operation. Currently only the 3rd Party
+   *      manual-entry form can produce this (see
+   *      ImportTransportCostHandler.resolveLines) -- bulk-imported rows
+   *      and the other three sheet families always produce exactly one
+   *      line, per this slice's own "do not force a multi-line model
+   *      onto datasets where the source structure is inherently
+   *      one-line" instruction (OLIVINE_LIVE_OPERATING_MODEL_GAP_ANALYSIS.md
+   *      Section 5's recommended sequencing: bulk-import grouping is
+   *      deliberately NOT invented this pass, since there is no reliable
+   *      signal in the existing source files to distinguish "two rows
+   *      are the same trip" from "two rows are two separate trips that
+   *      happen to share a truck/transporter/date" without risking a
+   *      false merge of real financial records).
+   *   5. NEVER carries a cost/amount field -- see TransportCostLine's
+   *      own doc comment. `amount` above is, and remains, the ONLY cost
+   *      figure this record represents, regardless of how many lines it
+   *      has. TransportCostPostingService posts exactly one figure per
+   *      source record, structurally incapable of reading `lines` for
+   *      money (verified by tests/unit/transport-cost/
+   *      transport-cost-posting.service.multiline.spec.ts).
+   */
+  lines?: TransportCostLine[];
 
   // --- Phase O2 additive fields (see "Phase O2 Spec" tab). Unset on
   // every existing O1 row and every new import until the O2 matching

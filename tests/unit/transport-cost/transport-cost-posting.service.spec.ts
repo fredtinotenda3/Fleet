@@ -397,6 +397,100 @@ describe('TransportCostPostingService.postSourceRecord -- correction', () => {
   });
 });
 
+// OLIVINE LIVE OPERATING MODEL, SLICE 2 follow-up. Proves
+// AllocationService.reversePosting (invoked here through the real
+// correction path, exactly like the "correction" describe block above)
+// now carries costFacingCompany forward onto the reversal row, closing
+// the gap Slice 1 documented and deliberately deferred. Exercises the
+// REAL reversePosting implementation via the same FakeCollection-backed
+// allocationLedgerRepository this whole file already shares with it --
+// not a mock of reversePosting itself -- so this is a true regression
+// test of the shared correction path, not just of this service's call
+// site.
+describe('TransportCostPostingService.postSourceRecord -- costFacingCompany carries through a reversal', () => {
+  it('a correction (which reverses the original) carries costFacingCompany onto BOTH the reversal and the new posting', async () => {
+    const v1 = buildService({ record: makeSourceRecord({ costFacingCompany: 'hypery' }) });
+    const posted = await v1.postSourceRecord(contextFor(null), 'user-1', SOURCE_ID);
+    if (posted.status !== 'posted') throw new Error('unreachable');
+    expect(posted.posting.costFacingCompany).toBe('hypery');
+
+    const v2 = buildService({ record: makeSourceRecord({ costFacingCompany: 'hypery', amount: 950 }) });
+    const outcome = await v2.postSourceRecord(contextFor(null), 'user-2', SOURCE_ID);
+    if (outcome.status !== 'corrected') throw new Error('unreachable');
+
+    // The reversal is the fix under test: before Slice 2 this was
+    // undefined, which the company-totals aggregation groups under
+    // "unattributed" instead of netting against 'hypery'.
+    expect(outcome.reversal.costFacingCompany).toBe('hypery');
+    expect(outcome.reversal.amount).toBe(-837);
+    // The new (v2) posting is unaffected -- it is built directly from
+    // the source record, not derived from the reversal.
+    expect(outcome.posting.costFacingCompany).toBe('hypery');
+  });
+
+  it('a historical record with no costFacingCompany still reverses cleanly, with no fabricated company on either row', async () => {
+    const v1 = buildService({ record: makeSourceRecord({ costFacingCompany: undefined }) });
+    const posted = await v1.postSourceRecord(contextFor(null), 'user-1', SOURCE_ID);
+    if (posted.status !== 'posted') throw new Error('unreachable');
+    expect(posted.posting.costFacingCompany).toBeUndefined();
+
+    const v2 = buildService({ record: makeSourceRecord({ costFacingCompany: undefined, amount: 950 }) });
+    const outcome = await v2.postSourceRecord(contextFor(null), 'user-2', SOURCE_ID);
+    if (outcome.status !== 'corrected') throw new Error('unreachable');
+
+    expect(outcome.reversal.costFacingCompany).toBeUndefined();
+    expect(outcome.posting.costFacingCompany).toBeUndefined();
+  });
+
+  it('REGRESSION: a non-transport-cost category reversal is unaffected -- costFacingCompany stays absent, never fabricated as null/undefined-turned-value', async () => {
+    // Exercises AllocationService.reversePosting directly (not through
+    // TransportCostPostingService) to prove the fix is a true no-op for
+    // every other cost category, per this file's own module-level mock
+    // making AllocationService's internal singleton resolve to the same
+    // FakeCollection this test asserts against.
+    const { allocationLedgerRepository } = require('../../../modules/finance/repositories/allocation-ledger.repository');
+    const { AllocationService } = require('../../../modules/finance/services/allocation.service');
+
+    const original = await allocationLedgerRepository.append(
+      {
+        orgUnitId: HARARE,
+        vehicleId: VEHICLE_ID,
+        costCategory: 'fuel',
+        allocationRule: 'direct',
+        sourceCollection: 'expenses',
+        sourceId: 'fuel-src-1',
+        description: 'Fuel purchase',
+        periodStart: new Date('2026-01-05T00:00:00.000Z'),
+        periodEnd: new Date('2026-01-05T00:00:00.000Z'),
+        currency: 'USD',
+        amount: 120,
+        fxRate: 1,
+        fxRateDate: new Date('2026-01-05T00:00:00.000Z'),
+        fxSource: 'organization-default',
+        reportingCurrency: 'USD',
+        reportingAmount: 120,
+        postedBy: 'seed-user',
+        postedAt: new Date('2026-01-06T00:00:00.000Z'),
+      },
+      TENANT,
+      'seed-user'
+    );
+    expect(original.costFacingCompany).toBeUndefined();
+
+    const service = new AllocationService();
+    const { reversal } = await service.reversePosting(
+      contextFor(null),
+      'user-1',
+      String(original._id),
+      'duplicate fuel entry'
+    );
+
+    expect(reversal.amount).toBe(-120);
+    expect(reversal.costFacingCompany).toBeUndefined();
+    expect('costFacingCompany' in reversal).toBe(false);
+  });
+});
+
 describe('TransportCostPostingService.postSourceRecord -- refused, never fabricated', () => {
   it('a null Amount is refused, never zero-filled', async () => {
     const service = buildService({ record: makeSourceRecord({ amount: null }) });

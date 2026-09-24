@@ -192,6 +192,69 @@ export class TransportCostSourceRecordRepository extends TenantScopedRepository<
     return count;
   }
 
+  /**
+   * OLIVINE LIVE OPERATING MODEL, SLICE 2 (item 6/7's reporting
+   * requirement: "Where line-level analysis is useful, provide it
+   * separately from parent transport-operation metrics... TRANSPORT
+   * OPERATIONS vs TRANSPORT LINES/LOADS"). Counts, over a period and
+   * within the caller's org-unit scope:
+   *
+   *   - totalOperations: how many TransportCostSourceRecord rows exist
+   *     (each one a single transport OPERATION, regardless of how many
+   *     loads it carries).
+   *   - totalLines: the sum of every operation's `lines.length` -- a
+   *     legacy row with no `lines` field at all (imported before Slice 2)
+   *     counts as exactly 1, the same as a Slice-2 row with one line,
+   *     since both represent one load either way.
+   *   - multiLineOperationCount: how many of those operations have 2+
+   *     lines -- the client's own explicit "make it obvious these are
+   *     multiple loads belonging to ONE operation" signal, aggregated.
+   *
+   * Deliberately a SOURCE-RECORD read, not a ledger read -- like
+   * countPendingAmount immediately above, this is an operational/
+   * statistical view ("how many loads did we handle"), not a financial
+   * one, so it does not need to join through AllocationPosting the way
+   * a money figure would. Scoped by sheetFamily (default 'third-party',
+   * the only family that can currently have more than one line -- see
+   * TransportCostLine's own doc comment) so a future caller can widen it
+   * without a signature change, mirroring countPendingAmount's own
+   * default-parameter convention.
+   *
+   * Bounded fetch (same `limit: 100000` convention as every other
+   * whole-scan read in this repository) rather than an aggregation
+   * pipeline: `lines` is an array field, and computing "sum of array
+   * lengths" / "count where array length > 1" in application code is
+   * both simpler and testable against tests/helpers/fake-collection.ts's
+   * minimal aggregate (which has no `$size` operator), the same
+   * reasoning getDistinctPostedMonths documents on the ledger repository.
+   */
+  async getLoadSummaryInScope(
+    periodStart: Date,
+    periodEnd: Date,
+    context: TenantContext,
+    sheetFamily: TransportCostSheetFamily | TransportCostSheetFamily[] = 'third-party'
+  ): Promise<{ totalOperations: number; totalLines: number; multiLineOperationCount: number }> {
+    const families = Array.isArray(sheetFamily) ? sheetFamily : [sheetFamily];
+    const rows = await this.findManyInScope(
+      {
+        sheetFamily: families.length === 1 ? families[0] : { $in: families },
+        date: { $gte: periodStart, $lte: periodEnd },
+      } as Filter<TransportCostSourceRecord>,
+      context,
+      { limit: 100000 }
+    );
+
+    let totalLines = 0;
+    let multiLineOperationCount = 0;
+    for (const row of rows) {
+      const lineCount = row.lines?.length ?? 1;
+      totalLines += lineCount;
+      if (lineCount > 1) multiLineOperationCount += 1;
+    }
+
+    return { totalOperations: rows.length, totalLines, multiLineOperationCount };
+  }
+
   async countByImportBatch(importBatchId: string, tenantId: string): Promise<number> {
     const collection = await this.getCollection();
     return collection.countDocuments({

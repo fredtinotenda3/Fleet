@@ -17,6 +17,12 @@ import type {
   DataQualityExceptionsReport,
 } from '@/modules/transport-cost/services/transport-cost-report.service';
 import type { AllocationPosting } from '@/modules/finance/types/allocation.types';
+// OLIVINE LIVE OPERATING MODEL, SLICE 2 (item 6/7). Same re-export-not-
+// restate technique as the report types above, applied to the new
+// child-line shape -- TransportCostSourceRecord.lines' own doc comment
+// (shared/types/transport-cost.types.ts) is the single source of truth
+// for what a line is; this file only re-exports it for frontend imports.
+import type { TransportCostLine } from '@/shared/types/transport-cost.types';
 
 export type {
   TransportCostAllocationReport,
@@ -27,6 +33,7 @@ export type {
   DataQualityExceptionRow,
   DataQualityExceptionsReport,
   AllocationPosting,
+  TransportCostLine,
 };
 export type { CostFacingCompany, CostFacingCompanyOption } from '@/shared/types/cost-facing-company.types';
 export { COST_FACING_COMPANIES } from '@/shared/types/cost-facing-company.types';

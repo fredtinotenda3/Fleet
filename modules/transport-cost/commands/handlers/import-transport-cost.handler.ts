@@ -77,13 +77,14 @@ import {
   VansalesImportRow,
   SwiftImportRow,
   DepotStoImportRow,
+  RawTransportCostLineInput,
 } from '../import-transport-cost.command';
 import { TransportCostSourceRecordRepository } from '@/modules/transport-cost/repositories/transport-cost-source-record.repository';
 import {
   TransportCostImportExceptionRepository,
   transportCostImportExceptionRepository,
 } from '@/modules/transport-cost/repositories/transport-cost-import-exception.repository';
-import { TransportCostSourceRecord } from '@/shared/types/transport-cost.types';
+import { TransportCostSourceRecord, TransportCostLine } from '@/shared/types/transport-cost.types';
 import { TransportCostImportExceptionKind } from '@/shared/types/transport-cost-import-exception.types';
 import { resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
 import { ForbiddenError, ValidationError } from '@/server/errors/app.errors';
@@ -263,6 +264,85 @@ export class ImportTransportCostHandler
     return { ok: true, value: normalized };
   }
 
+  /** Builds one TransportCostLine from a raw per-line input, applying
+   *  the exact same trim/parse rules Slice 1 already used for the
+   *  equivalent scalar fields -- see resolveLines' header for why. */
+  private buildLine(
+    raw: { salesInvoiceNo?: string | number; customerName?: string; consignmentNumber?: string; destinationTown?: string; tonnage?: string | number },
+    lineNumber: number
+  ): TransportCostLine {
+    return {
+      lineNumber,
+      salesInvoiceNo: raw.salesInvoiceNo !== undefined ? String(raw.salesInvoiceNo).trim() : undefined,
+      customerName: raw.customerName?.trim() || undefined,
+      consignmentNumber: raw.consignmentNumber?.trim() || undefined,
+      destinationTown: raw.destinationTown?.trim() || undefined,
+      tonnageRaw: parseAmount(raw.tonnage),
+    };
+  }
+
+  private isBlankLine(line: TransportCostLine): boolean {
+    return (
+      !line.salesInvoiceNo &&
+      !line.customerName &&
+      !line.consignmentNumber &&
+      !line.destinationTown &&
+      line.tonnageRaw === null
+    );
+  }
+
+  /**
+   * OLIVINE LIVE OPERATING MODEL, SLICE 2 (item 6/7 -- see
+   * OLIVINE_LIVE_OPERATING_MODEL_GAP_ANALYSIS.md Section 5 and
+   * TransportCostSourceRecord.lines' own doc comment for the full design
+   * record this implements). Resolves the `lines` array for a row,
+   * honoring the additive-migration invariant: every row gets at least
+   * one line, and `lines[0]` mirrors whatever this row's own flat
+   * scalar fields would have been under Slice 1 -- callers assign
+   * `lines[0]`'s fields onto the record's own scalar fields afterward,
+   * never the raw row directly, so the two can never disagree.
+   *
+   * - No explicit `explicitLines` (every bulk-file-upload row, and every
+   *   Vansales/Swift/Depot STO row -- see the doc comment on
+   *   TransportCostLine for why those three families don't accept
+   *   multi-line input this slice): builds exactly ONE line from
+   *   `scalarFallback`, byte-for-byte the same values Slice 1 already
+   *   computed for the equivalent scalar fields. Cannot fail.
+   * - An explicit `explicitLines` array (the new 3rd Party multi-line
+   *   manual-entry path): each entry becomes its own TransportCostLine;
+   *   wholly-blank lines are dropped (a UI artifact -- "clicked add
+   *   line, typed nothing" -- not a data-quality problem worth rejecting
+   *   the row for) and the survivors are renumbered 1..N; the row is
+   *   rejected only if EVERY submitted line is blank, since there is
+   *   then genuinely no load data on this operation at all.
+   */
+  private resolveLines(
+    scalarFallback: { salesInvoiceNo?: string | number; customerName?: string; destinationTown?: string; tonnage?: string | number },
+    explicitLines: RawTransportCostLineInput[] | undefined,
+    rowNum: number
+  ): { ok: true; value: TransportCostLine[] } | { ok: false; error: ImportRowResult } {
+    if (!explicitLines || explicitLines.length === 0) {
+      return { ok: true, value: [this.buildLine(scalarFallback, 1)] };
+    }
+
+    const built = explicitLines.map((raw, i) => this.buildLine(raw, i + 1));
+    const survivors = built.filter((line) => !this.isBlankLine(line));
+    if (survivors.length === 0) {
+      return {
+        ok: false,
+        error: {
+          row: rowNum,
+          success: false,
+          column: 'lines',
+          invalidValue: '',
+          error: 'At least one load/consignment line is required when multiple lines are submitted',
+          suggestedFix: 'Fill in at least one line with an invoice, customer, consignment, destination, or weight -- or remove the empty extra line(s).',
+        },
+      };
+    }
+    return { ok: true, value: survivors.map((line, i) => ({ ...line, lineNumber: i + 1 })) };
+  }
+
   private validateAndBuildThirdParty(
     row: ThirdPartyImportRow,
     rowNum: number
@@ -318,6 +398,20 @@ export class ImportTransportCostHandler
     const costFacingCompany = this.resolveCostFacingCompany(row.costFacingCompany, rowNum);
     if (!costFacingCompany.ok) return costFacingCompany;
 
+    // OLIVINE LIVE OPERATING MODEL, SLICE 2: the only sheet family that
+    // accepts an explicit `lines` array (see resolveLines' header). The
+    // scalar destinationTown/customerName/salesInvoiceNo/tonnageRaw
+    // below are assigned FROM lines[0], never from `row` directly, so
+    // the flat mirror and `lines[0]` can never disagree -- see
+    // TransportCostSourceRecord.lines' invariant #3.
+    const lines = this.resolveLines(
+      { salesInvoiceNo: row.salesInvoiceNo, customerName: row.customerName, destinationTown: row.destinationTown, tonnage: row.tonnage },
+      row.lines,
+      rowNum
+    );
+    if (!lines.ok) return lines;
+    const primaryLine = lines.value[0];
+
     return {
       ok: true,
       record: {
@@ -331,12 +425,13 @@ export class ImportTransportCostHandler
         registrationRaw,
         transporterNormalized,
         transporterRaw,
-        destinationTown: row.destinationTown?.trim() || undefined,
-        customerName: row.customerName?.trim() || undefined,
-        salesInvoiceNo: row.salesInvoiceNo !== undefined ? String(row.salesInvoiceNo).trim() : undefined,
+        destinationTown: primaryLine.destinationTown,
+        customerName: primaryLine.customerName,
+        salesInvoiceNo: primaryLine.salesInvoiceNo,
         amount: parseAmount(row.amount),
-        tonnageRaw: parseAmount(row.tonnage),
+        tonnageRaw: primaryLine.tonnageRaw,
         costFacingCompany: costFacingCompany.value,
+        lines: lines.value,
       },
     };
   }
@@ -403,6 +498,19 @@ export class ImportTransportCostHandler
     const costFacingCompany = this.resolveCostFacingCompany(row.costFacingCompany, rowNum);
     if (!costFacingCompany.ok) return costFacingCompany;
 
+    // OLIVINE LIVE OPERATING MODEL, SLICE 2: Swift does not accept an
+    // explicit `lines` array (see TransportCostLine's own doc comment
+    // for why) -- resolveLines always succeeds here, building exactly
+    // one line that mirrors this row's own scalar fields, unchanged
+    // from Slice 1's behaviour.
+    const lines = this.resolveLines(
+      { salesInvoiceNo: consNumber, customerName: row.receiversName, destinationTown: row.destinationLocation, tonnage: row.actualWeight },
+      undefined,
+      rowNum
+    );
+    if (!lines.ok) return lines;
+    const primaryLine = lines.value[0];
+
     return {
       ok: true,
       record: {
@@ -416,12 +524,13 @@ export class ImportTransportCostHandler
         registrationRaw,
         transporterNormalized,
         transporterRaw,
-        destinationTown: row.destinationLocation?.trim() || undefined,
-        customerName: row.receiversName?.trim() || undefined,
-        salesInvoiceNo: consNumber,
+        destinationTown: primaryLine.destinationTown,
+        customerName: primaryLine.customerName,
+        salesInvoiceNo: primaryLine.salesInvoiceNo,
         amount: parseAmount(row.totalIncl),
-        tonnageRaw: parseAmount(row.actualWeight),
+        tonnageRaw: primaryLine.tonnageRaw,
         costFacingCompany: costFacingCompany.value,
+        lines: lines.value,
       },
     };
   }
@@ -503,6 +612,20 @@ export class ImportTransportCostHandler
     const costFacingCompany = this.resolveCostFacingCompany(row.costFacingCompany, rowNum);
     if (!costFacingCompany.ok) return costFacingCompany;
 
+    // OLIVINE LIVE OPERATING MODEL, SLICE 2: Depot STO does not accept
+    // an explicit `lines` array this slice (a dated stock movement is a
+    // structurally different business event from a multi-invoice
+    // delivery -- see TransportCostLine's own doc comment) -- builds
+    // exactly one line mirroring this row's own scalar fields,
+    // unchanged from Slice 1's behaviour.
+    const lines = this.resolveLines(
+      { salesInvoiceNo: row.salesInvoiceNo, customerName: row.customerName, destinationTown: row.destinationTown, tonnage: row.tonnage },
+      undefined,
+      rowNum
+    );
+    if (!lines.ok) return lines;
+    const primaryLine = lines.value[0];
+
     return {
       ok: true,
       record: {
@@ -516,15 +639,16 @@ export class ImportTransportCostHandler
         registrationRaw,
         transporterNormalized,
         transporterRaw,
-        destinationTown: row.destinationTown?.trim() || undefined,
-        customerName: row.customerName?.trim() || undefined,
-        salesInvoiceNo: row.salesInvoiceNo !== undefined ? String(row.salesInvoiceNo).trim() : undefined,
+        destinationTown: primaryLine.destinationTown,
+        customerName: primaryLine.customerName,
+        salesInvoiceNo: primaryLine.salesInvoiceNo,
         // "Tonnage" (March/April) -- a different real column from
         // "TOONNES" (June/July, see depotSto.toonnesRaw below). Kept
         // separate deliberately: they are two distinct columns in two
         // different months' sheets, never merged into one figure.
         amount: parseAmount(row.amount),
-        tonnageRaw: parseAmount(row.tonnage),
+        tonnageRaw: primaryLine.tonnageRaw,
+        lines: lines.value,
         depotSto: {
           stoNumber: row.sto?.trim() || null,
           sourceLocation: row.source?.trim() || null,
@@ -611,6 +735,16 @@ export class ImportTransportCostHandler
     const costFacingCompany = this.resolveCostFacingCompany(row.costFacingCompany, rowNum);
     if (!costFacingCompany.ok) return costFacingCompany;
 
+    // OLIVINE LIVE OPERATING MODEL, SLICE 2: a Vansales row has no
+    // salesInvoiceNo/customerName/destinationTown concept at all (it is
+    // a retainer, not a per-shipment delivery -- see the `amount`
+    // comment just below), so its one mirrored line only ever carries
+    // tonnageRaw; resolveLines is still used (rather than constructing
+    // the line by hand) so the "every row has at least one line"
+    // invariant is enforced in exactly one place.
+    const lines = this.resolveLines({ tonnage: row.tonnage }, undefined, rowNum);
+    if (!lines.ok) return lines;
+
     return {
       ok: true,
       record: {
@@ -624,7 +758,7 @@ export class ImportTransportCostHandler
         registrationRaw,
         transporterNormalized,
         transporterRaw,
-        tonnageRaw: parseAmount(row.tonnage),
+        tonnageRaw: lines.value[0].tonnageRaw,
         // A Vansales row's cost is a fixed weekly/monthly retainer, not
         // a per-shipment charge -- `amount` is left null (never the
         // retainer figure) so a later phase can't accidentally sum it
@@ -642,6 +776,7 @@ export class ImportTransportCostHandler
           periodMonth,
         },
         costFacingCompany: costFacingCompany.value,
+        lines: lines.value,
       },
     };
   }

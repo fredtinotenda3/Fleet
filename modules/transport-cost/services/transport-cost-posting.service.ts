@@ -464,27 +464,14 @@ export class TransportCostPostingService {
           // pre-this-feature row simply posts without it, exactly like
           // glAccountCode's own optional-field precedent).
           //
-          // KNOWN, ACCEPTED LIMITATION: AllocationService.reversePosting
-          // (the shared, financially-critical correction path this
-          // service deliberately reuses rather than reimplements -- see
-          // this file's header) builds its reversal posting from an
-          // explicit field list that does not include costFacingCompany,
-          // so a REVERSAL of a transport-cost posting will not carry the
-          // company forward and will show as unattributed in a
-          // company-dimension breakdown, even though the original
-          // posting it reverses did. Deliberately NOT fixed by widening
-          // reversePosting's field list in this pass -- that method is
-          // shared by every cost category and is this ledger's single
-          // highest-risk piece of logic; see this file's header for why
-          // "document + accept" was chosen over touching it under time
-          // pressure. Real-world impact is small: this only affects a
-          // genuine reversal (not the far more common dedupe + re-post
-          // correction path used for a duplicate re-import), and shows
-          // up only as a small unattributed offsetting entry, never a
-          // wrong total. Flagged in the gap analysis as a easy, fully
-          // reversible follow-up (add costFacingCompany: original
-          // .costFacingCompany to that one object literal) whenever
-          // this is prioritised.
+          // RESOLVED, SLICE 2: AllocationService.reversePosting now
+          // carries this field forward onto the reversal too (see that
+          // method's own comment) -- a REVERSAL of a transport-cost
+          // posting no longer drops the company and shows up
+          // "unattributed". This was flagged as a known, deliberately
+          // accepted limitation in Slice 1; it was safe to close because
+          // the fix is a single additive, optional-field copy that is a
+          // no-op for every non-transport-cost category.
           ...(source.costFacingCompany ? { costFacingCompany: source.costFacingCompany } : {}),
           currency: targetCurrency,
           amount: targetAmount,
@@ -721,9 +708,20 @@ export class TransportCostPostingService {
    * if they meant something in a human-readable description.
    */
   private describePosting(
-    source: Pick<TransportCostSourceRecord, 'sheetFamily' | 'transporterNormalized' | 'transporterRaw' | 'destinationTown' | 'salesInvoiceNo' | 'vansales' | 'depotSto'>,
+    source: Pick<TransportCostSourceRecord, 'sheetFamily' | 'transporterNormalized' | 'transporterRaw' | 'destinationTown' | 'salesInvoiceNo' | 'vansales' | 'depotSto' | 'lines'>,
     vehicle: { registration: string }
   ): string {
+    // OLIVINE LIVE OPERATING MODEL, SLICE 2: `lines.length > 1` is the
+    // one authoritative multi-load signal (see TransportCostSourceRecord
+    // .lines' invariant #4) -- surfaced here so a multi-load operation's
+    // ledger posting reads as one operation with several loads, not as
+    // if `destinationTown`/`salesInvoiceNo` (line 1 only) were the whole
+    // story. Never changes `amount`/`periodStart`/`periodEnd` -- this
+    // method only builds a human-readable label, exactly as before this
+    // slice; see resolveAmountAndPeriod, unmodified by this slice, for
+    // where the actual posted figure comes from.
+    const loadCount = source.lines?.length ?? 1;
+    const loadSuffix = loadCount > 1 ? ` [+${loadCount - 1} more load${loadCount - 1 === 1 ? '' : 's'}]` : '';
     const transporter = source.transporterNormalized ?? source.transporterRaw;
     if (source.sheetFamily === 'vansales') {
       const payer = source.vansales?.payerName ?? 'payer unspecified';
@@ -740,7 +738,7 @@ export class TransportCostPostingService {
     }
     const destination = source.destinationTown ?? 'destination unspecified';
     const invoice = source.salesInvoiceNo ? ` (invoice ${source.salesInvoiceNo})` : '';
-    return `${transporter} / ${vehicle.registration} -> ${destination}${invoice}`;
+    return `${transporter} / ${vehicle.registration} -> ${destination}${invoice}${loadSuffix}`;
   }
 }
 

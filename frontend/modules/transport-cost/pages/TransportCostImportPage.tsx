@@ -50,6 +50,13 @@ const COST_FACING_COMPANY_COLUMN: ImportColumnDef = {
   options: COST_FACING_COMPANIES,
 };
 
+// Bulk file upload's column set -- UNCHANGED by Slice 2, per its own
+// instruction not to invent a bulk multi-line convention. ImportModal
+// (the file-upload path) always uses this exact list; a two-invoice
+// truck trip in a bulk file still lands as two ordinary rows, exactly
+// as it did before this slice -- see OLIVINE_LIVE_OPERATING_MODEL_
+// GAP_ANALYSIS.md Section 5 for why no reliable in-file signal exists
+// to group rows into one operation.
 const THIRD_PARTY_COLUMNS: ImportColumnDef[] = [
   { key: 'date', label: 'Date', required: true, type: 'string', example: '05.01.26' },
   COST_FACING_COMPANY_COLUMN,
@@ -60,6 +67,37 @@ const THIRD_PARTY_COLUMNS: ImportColumnDef[] = [
   { key: 'registration', label: 'Truck registration no', required: true, type: 'string', example: 'AGL8230' },
   { key: 'destinationTown', label: 'Destination Town', required: false, type: 'string', example: 'Bulawayo' },
   { key: 'amount', label: 'Amount', required: false, type: 'number', example: '4500.00' },
+];
+
+// OLIVINE LIVE OPERATING MODEL, SLICE 2 (item 6/7). Manual-entry-ONLY
+// split of THIRD_PARTY_COLUMNS above into what the backend now treats
+// as parent-level (one truck/transporter/date/cost per transport
+// OPERATION) versus line-level (one invoice/customer/consignment/
+// destination/tonnage per LOAD within that operation) -- see
+// TransportCostSourceRecord.lines and RawTransportCostLineInput's own
+// doc comments for the exact contract this mirrors. THIRD_PARTY_COLUMNS
+// itself is untouched, so the bulk file-upload modal's columns,
+// template, and behaviour are byte-for-byte unchanged.
+const THIRD_PARTY_PARENT_COLUMNS: ImportColumnDef[] = [
+  { key: 'date', label: 'Date', required: true, type: 'string', example: '05.01.26' },
+  COST_FACING_COMPANY_COLUMN,
+  { key: 'transporter', label: 'Transporter', required: false, type: 'string', example: 'PRINORTH' },
+  { key: 'registration', label: 'Truck registration no', required: true, type: 'string', example: 'AGL8230' },
+  { key: 'amount', label: 'Amount (for the whole trip -- never per line)', required: false, type: 'number', example: '4500.00' },
+];
+
+// Field keys here must match RawTransportCostLineInput exactly (see
+// import-transport-cost.command.ts) -- consignmentNumber is genuinely
+// new (no scalar equivalent existed pre-Slice-2); the rest mirror
+// THIRD_PARTY_COLUMNS' former customerName/salesInvoiceNo/tonnage/
+// destinationTown fields, now scoped to one load instead of the whole
+// operation.
+const THIRD_PARTY_LINE_COLUMNS: ImportColumnDef[] = [
+  { key: 'customerName', label: 'Customer name', required: false, type: 'string', example: 'Olivine' },
+  { key: 'salesInvoiceNo', label: 'Sales invoice no', required: false, type: 'string', example: 'INV-1024' },
+  { key: 'consignmentNumber', label: 'Consignment number', required: false, type: 'string', example: 'CN-10234' },
+  { key: 'destinationTown', label: 'Destination Town', required: false, type: 'string', example: 'Bulawayo' },
+  { key: 'tonnage', label: 'Tonnage', required: false, type: 'number', example: '32' },
 ];
 
 const VANSALES_COLUMNS: ImportColumnDef[] = [
@@ -387,6 +425,16 @@ export function TransportCostImportPage() {
                   <TableHead>Registration</TableHead>
                   <TableHead>Transporter</TableHead>
                   <TableHead>Amount</TableHead>
+                  {/* OLIVINE LIVE OPERATING MODEL, SLICE 2 (item 6/7): the
+                      "TRANSPORT OPERATIONS vs TRANSPORT LINES/LOADS"
+                      distinction, at the row level -- record.lines is
+                      undefined for every pre-Slice-2 historical row (an
+                      operation with exactly one, unlabelled, load), so
+                      that and a length-1 array both read as "1". Only a
+                      genuine multi-load operation (length > 1) shows a
+                      badge, keeping the ordinary single-line case visually
+                      silent. */}
+                  <TableHead>Loads</TableHead>
                   <TableHead>Source file</TableHead>
                   <TableHead>Imported</TableHead>
                 </TableRow>
@@ -394,35 +442,47 @@ export function TransportCostImportPage() {
               <TableBody>
                 {isLoading && (
                   <TableRow>
-                    <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
+                    <TableCell colSpan={9} className="py-8 text-center text-muted-foreground">
                       Loading&hellip;
                     </TableCell>
                   </TableRow>
                 )}
                 {!isLoading && (result?.data.length ?? 0) === 0 && (
                   <TableRow>
-                    <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
+                    <TableCell colSpan={9} className="py-8 text-center text-muted-foreground">
                       No source records imported yet.
                     </TableCell>
                   </TableRow>
                 )}
                 {!isLoading &&
-                  result?.data.map((record) => (
-                    <TableRow key={record._id}>
-                      <TableCell>{record.sourceRowNumber}</TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{familyLabel(record.sheetFamily)}</Badge>
-                      </TableCell>
-                      <TableCell>{record.date ? new Date(record.date).toLocaleDateString() : '—'}</TableCell>
-                      <TableCell>{record.registration ?? '—'}</TableCell>
-                      <TableCell>{record.transporterNormalized ?? '—'}</TableCell>
-                      <TableCell>{record.amount === null ? '—' : record.amount.toLocaleString()}</TableCell>
-                      <TableCell className="max-w-[200px] truncate" title={record.sourceFileName}>
-                        {record.sourceFileName}
-                      </TableCell>
-                      <TableCell>{new Date(record.importedAt).toLocaleString()}</TableCell>
-                    </TableRow>
-                  ))}
+                  result?.data.map((record) => {
+                    const loadCount = record.lines?.length ?? 1;
+                    return (
+                      <TableRow key={record._id}>
+                        <TableCell>{record.sourceRowNumber}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{familyLabel(record.sheetFamily)}</Badge>
+                        </TableCell>
+                        <TableCell>{record.date ? new Date(record.date).toLocaleDateString() : '—'}</TableCell>
+                        <TableCell>{record.registration ?? '—'}</TableCell>
+                        <TableCell>{record.transporterNormalized ?? '—'}</TableCell>
+                        <TableCell>{record.amount === null ? '—' : record.amount.toLocaleString()}</TableCell>
+                        <TableCell>
+                          {loadCount > 1 ? (
+                            <Badge variant="secondary" title={`${loadCount} loads on this one transport operation -- the amount above is the whole trip's cost, not per load.`}>
+                              {loadCount} loads
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground">1</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="max-w-[200px] truncate" title={record.sourceFileName}>
+                          {record.sourceFileName}
+                        </TableCell>
+                        <TableCell>{new Date(record.importedAt).toLocaleString()}</TableCell>
+                      </TableRow>
+                    );
+                  })}
               </TableBody>
             </Table>
           </div>
@@ -489,8 +549,9 @@ export function TransportCostImportPage() {
         open={thirdPartyManualOpen}
         onOpenChange={setThirdPartyManualOpen}
         title="Enter 3rd Party record"
-        description="Type in a single 3rd Party delivery instead of uploading a spreadsheet. Saved the same way a file import is -- same validation, same duplicate check, same normalization review."
-        columns={THIRD_PARTY_COLUMNS}
+        description="Type in one truck trip instead of uploading a spreadsheet -- one transport operation, which can carry more than one invoice or consignment. Saved the same way a file import is -- same validation, same duplicate check, same normalization review."
+        columns={THIRD_PARTY_PARENT_COLUMNS}
+        lineColumns={THIRD_PARTY_LINE_COLUMNS}
         onImport={handleThirdPartyImport}
         onImportComplete={handleImportComplete}
         sourceLabel="Manual entry (3rd Party)"

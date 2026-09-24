@@ -208,6 +208,50 @@ export function TransportCostReportPage() {
             </div>
           )}
 
+          {/* OLIVINE LIVE OPERATING MODEL, SLICE 2 (item 6/7). Deliberately
+              its own section, never folded into the company/stream/
+              vehicle cards above or below: those are financial totals
+              built from Allocation Ledger postings (one posting per
+              transport OPERATION, see TransportCostPostingService), while
+              this is a purely operational count of LOADS -- how many
+              invoices/consignments rode on those operations' trucks.
+              Mixing the two would invite exactly the "3 lines = $3,000"
+              mistake this slice was built to prevent, so the two numbers
+              never appear inside the same figure or card. Currently
+              third-party only (loadSummary's default sheetFamily scope --
+              see the backend report service), since that is the only
+              family Slice 2 accepts multi-line input for. */}
+          {report.loadSummary.totalOperations > 0 && (
+            <section className="p-4 border rounded-lg surface-card">
+              <div className="flex items-center justify-between">
+                <p className="text-caption text-muted-foreground">
+                  3rd Party transport operations vs. loads &middot; {formatDate(periodStart, 'MMMM yyyy')}
+                </p>
+                <p className="text-caption text-muted-foreground">Operational count -- not a financial figure</p>
+              </div>
+              <div className="grid grid-cols-1 gap-4 mt-2 sm:grid-cols-3">
+                <div>
+                  <p className="text-h3 font-semibold text-foreground">{report.loadSummary.totalOperations}</p>
+                  <p className="text-caption text-muted-foreground">
+                    Transport operation{report.loadSummary.totalOperations === 1 ? '' : 's'} (truck trips)
+                  </p>
+                </div>
+                <div>
+                  <p className="text-h3 font-semibold text-foreground">{report.loadSummary.totalLines}</p>
+                  <p className="text-caption text-muted-foreground">
+                    Transport line{report.loadSummary.totalLines === 1 ? '' : 's'} / load{report.loadSummary.totalLines === 1 ? '' : 's'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-h3 font-semibold text-foreground">{report.loadSummary.multiLineOperationCount}</p>
+                  <p className="text-caption text-muted-foreground">
+                    Multi-load operation{report.loadSummary.multiLineOperationCount === 1 ? '' : 's'}
+                  </p>
+                </div>
+              </div>
+            </section>
+          )}
+
           {report.byVehicle.length === 0 ? (
             <div className="p-8 text-center border rounded-lg surface-card">
               <p className="font-medium text-body-sm text-foreground">

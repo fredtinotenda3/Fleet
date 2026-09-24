@@ -4,6 +4,8 @@
 **Scope:** the entire transport-cost pipeline (O1 import → O2 normalization → O3 ledger posting → O4 reporting) plus the Command Centre dashboard work already in progress.
 **Status of this document:** this is the client's own explicitly required first deliverable ("Do NOT immediately start changing random files. First inspect... Then produce a... GAP ANALYSIS"). It was produced after a full inspection of the current codebase, and — because the highest-priority, most concretely specified requirement (items 2–5, the cost-facing company dimension) was small enough to design, build, and fully test with high confidence in the same pass — that one slice has already been implemented end-to-end and is reported as **shipped**, not proposed, below. Every other item is reported honestly as **analyzed and designed**, with a concrete recommendation, but **not yet built**, so this document does not overstate progress. See Section 15 for the recommended build order for what remains.
 
+**SLICE 2 UPDATE (see `CHANGELOG-olivine-live-operating-model.md`'s Slice 2 entry for the full delivery record):** Section 5's multi-line transport-operation model — the highest-priority remaining item this document identified below — has since been **implemented and shipped**. Section 5 itself has been rewritten in place to reflect what was actually built, rather than left as a stale "designed, not built" snapshot; the original design reasoning is preserved because the shipped implementation follows it. Section 4's disclosed `reversePosting()` limitation has also since been resolved — see Section 4's note. Every other section (6–11, 13–14) is unchanged from the original Slice 1 pass and remains accurate as a "not yet built" snapshot for those items.
+
 ---
 
 ## 1. What's ready for 1 October
@@ -18,9 +20,13 @@
 - O1 import (all four sheet families), O2 normalization-review matching, O3 ledger posting (including the append-only + reversal/repost discipline), and O4 reporting (`TransportCostReportService.getAllocationReport`) are all in place and exercised by an extensive existing test suite (`import-transport-cost.handler.spec.ts`, `transport-cost-posting.service.spec.ts`, `transport-cost-report.service.spec.ts`, `allocation-ledger-append-only.spec.ts`, and the live-data `verify-phase-o3-o4.ts` script that ran against the real January 2026 workbook).
 - Tenant/org-unit isolation, RBAC, and the append-only ledger discipline are pre-existing, load-bearing platform guarantees, unmodified and re-verified by this pass's full test run.
 
-**NOT ready for 1 October without further work (see Sections 5–11 and 15):**
+**Shipped and tested in Slice 2 (see Section 5 and the Slice 2 changelog entry):**
 
-- Multi-invoice/multi-customer/multi-destination line items on one transport record (item 6/7) — analyzed, not built.
+- Multi-invoice/multi-customer/multi-consignment/multi-destination line items on ONE 3rd Party transport OPERATION (item 6/7) — parent/child model, manual-entry repeatable-lines UI, ledger integrity (one posting per operation, cost never multiplied by line count), and an operations-vs-loads reporting split.
+- The Section 4 `reversePosting()` `costFacingCompany` carry-forward gap — closed.
+
+**NOT ready for 1 October without further work (see Sections 6–11 and 15):**
+
 - Searchable/"+ Add New" master-data fields for Customer, Transporter, Truck registration, Destination (item 8) — analyzed, not built.
 - Inline table CRUD (View/Edit/Delete/Duplicate/Resolve) on operational tables (item 9) — not started.
 - The broader dashboard (daily/weekly/monthly/total cards, trend/vehicle/transporter/destination charts — items 10/11) — one card section shipped (by-company), the rest not started.
@@ -32,7 +38,7 @@
 
 1. **Entry forms must stop being able to save a transport-cost record without a selected cost-facing company.** Done — see Section 4. This was the single most explicit, most repeated instruction in the requirements ("must therefore make this dimension explicit," "Do not make this a free-text field," "must be persisted as structured data").
 2. **The three companies must never be modeled as transporters, vehicle owners, drivers, customers, or destinations.** Confirmed as designed: `CostFacingCompany` is its own field on the source record and the ledger posting, structurally incapable of being confused with `transporterNormalized`, `customerName`, or `destinationTown` — they are different fields with different types, not different values of the same field.
-3. **A definitive answer on whether the current data model supports "one transporter, multiple invoices/customers/destinations on one trip."** Answered in Section 5: **it does not.** `TransportCostSourceRecord` is flat — one `salesInvoiceNo`, one `customerName`, one `destinationTown`, one `tonnageRaw` per row. An additive child/line-item structure is recommended, not yet built.
+3. **A definitive answer on whether the current data model supports "one transporter, multiple invoices/customers/destinations on one trip."** Originally answered in Section 5 as: it did not, and an additive child/line-item structure was recommended. **As of Slice 2, it now does** — see Section 5 for what was actually built.
 4. **A documented, non-executed cutover plan**, distinguishing master data (survives) from transactional data (reset/archived) — delivered in Section 13, still requiring the client's explicit go-ahead before any of it runs.
 
 ## 3. What can wait
@@ -66,31 +72,41 @@
 - `TransportCostReportService.getAllocationReport()` — a new `byCompany: CompanyGroupTotal[]` field, built from the aggregation above.
 - `TransportCostReportPage` — a new "By cost-facing company" card section, using the same formatting/styling conventions as the existing business-stream cards.
 
-**Known, disclosed, accepted limitation:** `AllocationService.reversePosting()` builds a reversal from an explicit field list that does not currently include `costFacingCompany`. A reversal of a transport-cost posting will therefore net the company total to zero correctly (both the original and the reversal are still counted — see the new repository tests) but the reversal row itself will display as "Unattributed" rather than carrying the original's company forward. This was a deliberate choice **not** to touch `reversePosting` this pass — it is shared by every cost category in the platform and is the single highest-risk shared correctness path in the ledger; widening its field list is a small, easy, low-risk follow-up, tracked here rather than rushed in under time pressure. **Reversibility:** trivial — adding one field to that method's explicit list is additive and backward-compatible.
+**Known, disclosed, accepted limitation — RESOLVED IN SLICE 2:** `AllocationService.reversePosting()` originally built a reversal from an explicit field list that did not include `costFacingCompany`, so a reversal of a transport-cost posting would display as "Unattributed" instead of carrying the original's company forward (the net total was still always correct — see the repository tests referenced below — only the reversal row's own dimension label was affected). This was deliberately left as a disclosed, low-risk follow-up in Slice 1 rather than rushed under time pressure. In Slice 2, the client explicitly asked for it to be revisited; it was judged safe (a one-line, purely additive, optional-field copy onto `reversePosting`'s existing `append()` call, a no-op for every cost category other than the three transport-cost ones) and fixed, with new regression tests in `transport-cost-posting.service.spec.ts` (the "costFacingCompany carries through a reversal" describe block) proving: (1) the reversal now carries the company forward, (2) a historical record with no company still reverses cleanly with nothing fabricated, and (3) a non-transport-cost reversal (fuel, in the test) is provably unaffected.
 
 **Deliberately distinct from `ContractedVehicle.businessStream`:** that field lives on the *vehicle* (`'olivine' | 'hypery' | 'surface-wilmar'`), is set once by a human confirming a new vehicle in the O2 review queue, and represents "who this truck usually serves" — a fact about the vehicle, not the transaction. `costFacingCompany` lives on the *transaction* and represents "which company this specific cost was incurred facing" — a single contracted vehicle can genuinely serve more than one of the three companies over its life, which `businessStream` cannot express per-trip. These are not merged. A future reconciliation (e.g., deprecating `businessStream` in favour of always reading the transaction-level field) is flagged as an open question, not resolved here, per Section 3.
 
 ---
 
-## 5. Multi-value representation — ANALYZED, DESIGNED, NOT YET BUILT
+## 5. Multi-value representation — SHIPPED (Slice 2)
 
-**Finding, from direct inspection of `shared/types/transport-cost.types.ts`:** the current model is flat. `TransportCostSourceRecord` has exactly one `salesInvoiceNo`, one `customerName`, one `destinationTown`, and one `tonnageRaw` per row. There is no array or child-record concept anywhere in this schema today. The client's stated real-world fact ("ONE TRANSPORTER CAN HAVE MULTIPLE ITEMS UNDER ONE TRIP/TRANSPORT RECORD") is therefore **not represented** by the current model — confirmed, not assumed.
+**Finding, from direct inspection of `shared/types/transport-cost.types.ts` (Slice 1):** the model was flat. `TransportCostSourceRecord` had exactly one `salesInvoiceNo`, one `customerName`, one `destinationTown`, and one `tonnageRaw` per row — no array or child-record concept anywhere. The client's stated real-world fact ("ONE TRANSPORTER CAN HAVE MULTIPLE ITEMS UNDER ONE TRIP/TRANSPORT RECORD") was therefore not represented.
 
-**DECISION (recommended, not yet implemented):** introduce an additive parent/child model:
-- **Parent** (`TransportCostSourceRecord`, unchanged in shape): cost-facing company, transporter, truck registration, driver, transport date, source provenance — the fields that are genuinely one-per-trip.
-- **Child** (`TransportCostLine[]`, new, optional, on the parent record): invoice number, customer, consignment number, receiver name, destination, weight/tonnage — the fields that can genuinely repeat within one trip.
+**DECISION, as built:** an additive parent/child model, exactly as this section originally recommended:
+- **Parent** (`TransportCostSourceRecord`, unchanged in shape and still the source of truth for every existing consumer): cost-facing company, transporter, truck registration, transport date, source/import provenance, transport-level cost, source family/category. (Not "driver" — see the ASSUMPTION note below on why the client's own suggested field list was not copied blindly.)
+- **Child** (`TransportCostLine[]`, new, optional, on the parent record): sales invoice number, customer name, consignment number, destination town, tonnage — the fields that can genuinely repeat within one trip. Structurally incapable of carrying a cost/amount field (see the cost-semantics decision below).
 
-**REASONING:** this mirrors the client's own proposed shape almost exactly and avoids the two failure modes the client explicitly warned against: (a) comma-separated strings in existing scalar fields, which would break every existing report/filter that reads `customerName`/`destinationTown` as a single value, and (b) duplicating the whole parent row per invoice, which would multiply transporter/vehicle/cost totals and silently corrupt every aggregate figure downstream (cost-per-tonne, cost-per-vehicle, everything in Section 4's new company breakdown included). An additive child array is the only option that does not corrupt existing math.
+**REASONING:** unchanged from the original design — this avoids both failure modes the client explicitly warned against: comma-separated strings in existing scalar fields (would break every existing report/filter reading `customerName`/`destinationTown` as one value), and duplicating the whole parent row per invoice (would multiply transporter/vehicle/cost totals). An additive child array was the only option that does not corrupt existing math, and that is what was built.
 
-**ASSUMPTION:** the *existing single-line shape stays the default and fully valid* — most real rows (verified against the imported historical data: the overwhelming majority of 3rd Party/Swift/Depot STO rows already have exactly one invoice, one customer, one destination) will continue to have exactly one line, in which case the child array degenerates to a single element mirroring today's scalar fields, and every existing report keeps working unchanged by reading `lines[0]` as a fallback where a legacy scalar is still expected. This is the design principle that makes the migration additive rather than a rewrite: nothing existing breaks, because nothing existing is removed.
+**What was actually built, end to end:**
 
-**REVERSIBILITY:** additive and non-breaking if built as designed (new optional array field, old scalar fields untouched and still populated as the "line 1" mirror during a transition period). **Not built this pass** because a schema change touching every report/aggregation downstream of `TransportCostSourceRecord` needs its own dedicated implementation-and-verification pass to meet this project's "verify before claiming done" bar — attempting it alongside the company-dimension work in the same pass would have meant shipping two large changes with less confidence in either, which is a worse outcome than shipping one change fully verified and documenting the second as designed and queued. See Section 15 for sequencing.
+- `shared/types/transport-cost.types.ts` — `TransportCostLine` (lineNumber, salesInvoiceNo, customerName, consignmentNumber, destinationTown, tonnageRaw — no cost field) and `TransportCostSourceRecord.lines?: TransportCostLine[]`, `undefined` only for historical pre-Slice-2 rows.
+- `ImportTransportCostHandler` — `buildLine`/`isBlankLine`/`resolveLines` helpers, shared by all four sheet families' `validateAndBuildX` methods, so every row (old or new) has a well-defined `lines[]` and the scalar fields keep being populated as `lines[0]`'s mirror. Only `ThirdPartyImportRow` accepts an explicit `lines` array (see the scope decision below); bulk-file-upload rows for all four families are completely unaffected (see the bulk-import decision below).
+- `ManualEntryModal` — widened with an optional `lineColumns` prop: a repeatable "Load / Consignment Lines" section with an "Add another line" control, additive and byte-for-byte unchanged for every caller that does not pass it (every family except 3rd Party's manual-entry modal).
+- `TransportCostImportPage` — `THIRD_PARTY_COLUMNS` (the bulk-upload column set) is **untouched**; a new `THIRD_PARTY_PARENT_COLUMNS`/`THIRD_PARTY_LINE_COLUMNS` split feeds the 3rd Party manual-entry modal only. The source-records table gained a "Loads" column, silent for every ordinary (1-load) row and a badge for a genuine multi-load operation.
+- `TransportCostPostingService.postSourceRecord`/`resolveAmountAndPeriod` — **not modified for amount/period computation**, which is the structural proof that a line can never multiply the posted cost; `describePosting` gained a `[+N more loads]` suffix for a multi-line operation.
+- `TransportCostSourceRecordRepository.getLoadSummaryInScope` / `TransportCostReportService`'s new `loadSummary` field / `TransportCostReportPage`'s new "3rd Party transport operations vs. loads" section — a purely operational count (operations, lines, multi-line-operation count), deliberately never folded into `byCompany`/`byBusinessStream`/`byVehicle`'s financial totals, satisfying the client's explicit "TRANSPORT OPERATIONS vs TRANSPORT LINES/LOADS, shown separately" requirement.
+- `AllocationService.reversePosting()` — the Section 4 `costFacingCompany` carry-forward gap closed in the same pass (see Section 4's updated note).
 
-**Recommended next steps (not yet executed):**
-1. Add `TransportCostLine` type and optional `lines?: TransportCostLine[]` to `TransportCostSourceRecord`.
-2. Widen the manual-entry/bulk-import UI to support "add another line" within one form submission (Vansales/Swift/Depot STO stay single-line for now — the client's multi-value example was specifically about 3rd Party/general delivery records).
-3. Widen `ImportTransportCostHandler` to build `lines[]` from either a single-line legacy row shape (backward-compatible) or a new multi-line submission shape.
-4. Decide, with the client, whether cost is per-line or per-parent-trip (the client's brief implies per-parent — one transport cost, multiple invoices riding on it — which is the assumption this design uses, but this is exactly the kind of question that could corrupt financial truth if guessed wrong, so it is flagged rather than assumed silently).
+**ASSUMPTION, revised from the original design during implementation:** the client's own suggested child-field list included "receiver name" and "driver." Direct inspection of the existing code (`validateAndBuildSwift`'s `receiversName -> customerName` mapping) showed the current schema already treats a Swift "Receiver's Name" as the same concept as `customerName` — so `TransportCostLine` has no separate `receiverName` field, unifying the two rather than adding a redundant one. Similarly, no sheet family in this schema currently has a `driver` field on the 3rd Party parent row, so one was not invented for it (Depot STO already has its own unrelated `driver` field, untouched). This is the client's own explicit instruction ("DO NOT blindly copy this list... inspect the actual current schema first") applied and documented, not a deviation from it.
+
+**Cost-semantics DECISION:** cost is parent-level (Option A), never allocated or split across lines. **REASONING:** the client's own Slice 2 field list already places "transport-level cost" at the parent, and `TransportCostLine` was made structurally incapable of carrying a cost/amount field — the least-assumptive interpretation available, since inventing a per-line allocation formula (equal split? by tonnage? by declared value?) would be exactly the kind of guess that could corrupt financial truth if wrong. **What would change if line-level costing is later required:** a per-line `amount` field would need to be added to `TransportCostLine`, `resolveAmountAndPeriod` would need an explicit allocation rule (and a client decision on which one), and every consumer currently treating the parent `amount` as the whole trip's cost would need to be re-audited. **REVERSIBILITY:** the current parent-level design does not block this — it is the simpler of the two states to migrate away from, since nothing downstream currently assumes per-line costs exist.
+
+**Bulk-import DECISION:** bulk-file-upload multi-line support was **not added this pass**, for any of the four families. **REASONING:** inspected the real January 2026 3rd Party sheet (`DATA_QUALITY_REPORT_JANUARY_2026.md`) and found no reliable signal in the existing file structure to distinguish "these two rows are one trip with two invoices" from "these two rows are two unrelated trips" — inventing a grouping convention (e.g., "same date + same registration = one operation") risked silently merging genuinely unrelated trips. Manual entry, where a human explicitly clicks "Add another line," has no such ambiguity. **REVERSIBILITY:** fully additive later, once a real multi-line-shaped source file is seen and a grouping key can be confirmed against real data rather than guessed.
+
+**Family-scope DECISION:** only 3rd Party's manual-entry path accepts explicit multi-line input. **REASONING:** Vansales bills a fixed weekly/monthly retainer (not a per-shipment record — "multiple loads" has no clear meaning there); Swift and Depot STO have no demonstrated multi-line business need in the real data inspected this pass. Widening either is a small, additive follow-up if a real business need is shown, not a speculative one built ahead of evidence.
+
+**Ledger/reporting integrity, verified (not assumed):** `resolveAmountAndPeriod` was not touched, so a multi-line operation structurally cannot post more than the ledger's usual one posting for one amount — proven by dedicated financial-rule tests (`import-transport-cost.handler.multiline.spec.ts`) asserting no `amount`/`cost` property exists anywhere on a `TransportCostLine`, and that a record's own `amount` is unchanged regardless of how many lines it has.
 
 ---
 
@@ -110,9 +126,9 @@
 
 ## 7. Form changes
 
-**Shipped:** the cost-facing company selector (Section 4) across manual entry and bulk import, all four families.
+**Shipped:** the cost-facing company selector (Section 4) across manual entry and bulk import, all four families; the repeatable "Load / Consignment Lines" multi-line manual-entry section for 3rd Party (Section 5).
 
-**Designed, not built:** master-data search fields (Section 6); multi-line entry support (Section 5).
+**Designed, not built:** master-data search fields (Section 6).
 
 ---
 
@@ -151,9 +167,10 @@ Pre-existing: the O1 handler already logs rejected/duplicate rows to `TransportC
 ## 12. Financial-ledger implications
 
 - The append-only discipline is unmodified and re-verified (Section 8, Section 14).
-- `costFacingCompany` is now a first-class, aggregable field on `AllocationPosting` (Section 4), with the one disclosed reversal-carry-forward limitation noted there.
+- `costFacingCompany` is now a first-class, aggregable field on `AllocationPosting` (Section 4); the reversal-carry-forward limitation originally disclosed there was closed in Slice 2.
 - No new cost category was introduced; the three companies are a dimension *within* the existing `third-party-transport` / `transport-retainer` / `stock-transfer` categories, not a fourth category.
 - The fully-contained period rule (`periodStart >= X && periodEnd <= Y`) was preserved for the new company aggregation, consistent with every other total-producing ledger query.
+- **Slice 2:** `TransportCostPostingService.resolveAmountAndPeriod` — the actual amount/period computation — was not modified at all, which is the structural guarantee that a multi-line source record can never post more than one `AllocationPosting` or multiply the posted amount by its line count. `getLoadSummaryInScope`/`loadSummary` is a source-record read (operational, not financial) and is never blended into the ledger-sourced financial totals in the same section or figure — see Section 5.
 
 ---
 
@@ -193,11 +210,11 @@ Per the client's explicit instruction, **nothing in this section has been run.**
 
 ## 15. Recommended implementation order
 
-1. ~~Cost-facing company dimension (Section 4)~~ — **done, this pass.**
-2. **Multi-line transport records (Section 5).** Highest remaining client-stated priority (items 6/7 were given as much explicit detail as items 2–5), and it's a pure additive schema change with a clear design already in hand above — the main risk is scope (touches every downstream report), which is exactly why it deserves its own dedicated pass rather than being rushed.
+1. ~~Cost-facing company dimension (Section 4)~~ — **done, Slice 1.**
+2. ~~Multi-line transport records (Section 5)~~ — **done, Slice 2**, including the Section 4 `reversePosting()` follow-up.
 3. **Master-data search fields (Section 6),** starting with Destination (simplest, lowest-risk) then Customer/Transporter — pure UX layer, no pipeline risk, can ship incrementally.
 4. **Broader dashboard (Section 10),** by extending the already-designed Command Centre Slices A/B/C rather than starting over.
-5. **Inline table CRUD (Section 8)** — scoped carefully around the reversal/repost boundary described there; do this after (not before) the multi-line model lands, since "edit a row" means something different once a row can have child lines.
+5. **Inline table CRUD (Section 8)** — scoped carefully around the reversal/repost boundary described there; now that the multi-line model has landed, "edit a row" on a multi-line operation must edit/add/remove individual lines, not just parent scalar fields — scope this explicitly when Section 8 is built.
 6. **Production cutover execution** — only on the client's explicit, separate authorization, using the plan in Section 13, after the client has answered the archive-vs-delete question raised there.
 
 This order prioritizes the items the client gave the most explicit, detailed instructions about (company dimension, multi-value records) first, defers genuinely new UI surface area (master data, broader dashboard, CRUD) to dedicated passes where they can be built and verified properly, and keeps the irreversible step (cutover execution) strictly gated on explicit client sign-off, consistent with every constraint in the client's own requirements document.

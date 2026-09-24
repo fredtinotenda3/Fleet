@@ -15,6 +15,23 @@ import { BaseCommand } from '@/server/cqrs/command';
 import { WriteScope } from '@/server/tenancy/write-scope';
 import { TransportCostSheetFamily } from '@/shared/types/transport-cost.types';
 
+/**
+ * OLIVINE LIVE OPERATING MODEL, SLICE 2 (item 6/7). Raw shape of one
+ * load/consignment as submitted from the manual multi-line entry form
+ * (see ManualEntryModal's `lineColumns` support and
+ * TransportCostImportPage's `THIRD_PARTY_LINE_COLUMNS`). Only meaningful
+ * for `ThirdPartyImportRow.lines` below -- see TransportCostLine's own
+ * doc comment (shared/types/transport-cost.types.ts) for why Vansales/
+ * Swift/Depot STO don't accept this shape.
+ */
+export interface RawTransportCostLineInput {
+  salesInvoiceNo?: string | number;
+  customerName?: string;
+  consignmentNumber?: string;
+  destinationTown?: string;
+  tonnage?: string | number;
+}
+
 /** Raw row shape for the "3rd Party" sheet -- see audit Section B,
  *  Family 2. (March/April's "Depot STO" sheets happen to share this
  *  exact 8-column layout, but post under the separate 'depot-sto'
@@ -34,6 +51,18 @@ export interface ThirdPartyImportRow {
   /** OLIVINE LIVE OPERATING MODEL, item 3: which of Hypery/Olivine/Surface
    *  this delivery was incurred facing -- see cost-facing-company.types.ts. */
   costFacingCompany?: string;
+  /**
+   * OLIVINE LIVE OPERATING MODEL, SLICE 2 (item 6/7). When present and
+   * non-empty, this row represents a multi-load transport OPERATION: the
+   * scalar `customerName`/`salesInvoiceNo`/`destinationTown`/`tonnage`
+   * fields above are ignored in favour of this array (see
+   * ImportTransportCostHandler.resolveLines) -- never read alongside it,
+   * to avoid two disagreeing sources of truth for the same data. Absent
+   * (the ordinary case, including every bulk-file-upload row) means
+   * "single line, built from the scalar fields above", exactly as
+   * before this slice -- this field is purely additive.
+   */
+  lines?: RawTransportCostLineInput[];
 }
 
 /** Raw row shape for the "Vansales" sheets (audit Section B, Family 4).

@@ -164,6 +164,22 @@ export interface TransportCostAllocationReport {
     /** Never presented as final when true -- the screen's own banner flag. */
     hasPendingAmounts: boolean;
   };
+  /**
+   * OLIVINE LIVE OPERATING MODEL, SLICE 2 (item 6/7's reporting
+   * requirement -- "TRANSPORT OPERATIONS vs TRANSPORT LINES/LOADS", kept
+   * explicitly separate from every total above). A pure OPERATIONAL
+   * count -- never a cost figure, never summed into `byCompany`/
+   * `byVehicle`/`byBusinessStream` above, which all remain sourced from
+   * postings exactly as before this slice. See
+   * TransportCostSourceRecordRepository.getLoadSummaryInScope's own doc
+   * comment for the full reasoning and its "source-record read, not a
+   * ledger read" scoping.
+   */
+  loadSummary: {
+    totalOperations: number;
+    totalLines: number;
+    multiLineOperationCount: number;
+  };
 }
 
 export interface PostingDrillDown {
@@ -335,12 +351,13 @@ export class TransportCostReportService {
       throw new ValidationError('periodEnd cannot be earlier than periodStart.');
     }
 
-    const [totals, companyTotals, vehicles, settings, pendingCount] = await Promise.all([
+    const [totals, companyTotals, vehicles, settings, pendingCount, loadSummary] = await Promise.all([
       this.ledgerRepo.getNetTotalsByVehicleForCategory(COST_CATEGORY, periodStart, periodEnd, context),
       this.ledgerRepo.getNetTotalsByCompanyAcrossVehicles(COST_CATEGORY, periodStart, periodEnd, context),
       this.vehicleRepo.findAllConfirmed(context.organizationId),
       this.settingsService.resolve(context.organizationId),
       this.sourceRepo.countPendingAmount(periodStart, periodEnd, context),
+      this.sourceRepo.getLoadSummaryInScope(periodStart, periodEnd, context),
     ]);
 
     const vehicleById = new Map(vehicles.map((v) => [v._id!, v]));
@@ -407,6 +424,7 @@ export class TransportCostReportService {
         pendingSourceRecordCount: pendingCount,
         hasPendingAmounts: pendingCount > 0,
       },
+      loadSummary,
     };
   }
 
