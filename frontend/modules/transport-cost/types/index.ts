@@ -15,6 +15,16 @@ import type {
   PostingDrillDown,
   DataQualityExceptionRow,
   DataQualityExceptionsReport,
+  // OLIVINE LIVE OPERATING MODEL, SLICE 4 (Command Centre). Same
+  // re-export-not-restate technique as every type above -- see
+  // TransportCostReportService.getCommandCentreSummary's own header for
+  // the single source of truth these mirror.
+  CommandCentreGranularity,
+  CommandCentreFilters,
+  CommandCentreDimensionTotal,
+  CommandCentreTimeSeriesBucket,
+  CommandCentreDataQuality,
+  CommandCentreSummary,
 } from '@/modules/transport-cost/services/transport-cost-report.service';
 import type { AllocationPosting } from '@/modules/finance/types/allocation.types';
 // OLIVINE LIVE OPERATING MODEL, SLICE 2 (item 6/7). Same re-export-not-
@@ -34,6 +44,29 @@ export type {
   DataQualityExceptionsReport,
   AllocationPosting,
   TransportCostLine,
+  CommandCentreGranularity,
+  CommandCentreFilters,
+  CommandCentreDimensionTotal,
+  CommandCentreTimeSeriesBucket,
+  CommandCentreDataQuality,
+  CommandCentreSummary,
 };
 export type { CostFacingCompany, CostFacingCompanyOption } from '@/shared/types/cost-facing-company.types';
 export { COST_FACING_COMPANIES } from '@/shared/types/cost-facing-company.types';
+
+/**
+ * OLIVINE LIVE OPERATING MODEL, SLICE 4 (Command Centre). The Command
+ * Centre's own cost-category filter is intentionally narrower than the
+ * full `AllocationCostCategory` union (fuel/maintenance/expense/... are
+ * not transport-cost categories) -- this is the frontend mirror of
+ * TransportCostReportService.TRANSPORT_COST_CATEGORIES, restated (not
+ * imported) because that constant lives in a server-only module; the
+ * service itself validates every value against the same three tokens,
+ * so a drift here would fail loudly rather than silently, unlike the
+ * response-shape re-exports above.
+ */
+export const TRANSPORT_COST_CATEGORY_OPTIONS: Array<{ value: 'third-party-transport' | 'transport-retainer' | 'stock-transfer'; label: string }> = [
+  { value: 'third-party-transport', label: 'Third-party transport' },
+  { value: 'transport-retainer', label: 'Transport retainer' },
+  { value: 'stock-transfer', label: 'Stock transfer' },
+];

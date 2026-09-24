@@ -270,11 +270,24 @@ export const NAV_SECTIONS: NavSection[] = [
         label: 'Transport Cost',
         href: '/transport-cost/report',
         icon: Banknote,
-        hint: 'Third-party transporter spend: the O4 report and the source-file import pipeline',
+        hint: 'Third-party transporter spend: the Command Centre, the O4 vehicle report, and the source-file import pipeline',
         // TRANSPORT_COST_VIEW to match the O4 report route's own gate. The
         // import child below carries its own, stricter permission per rule 1.
         permissions: [Permission.TRANSPORT_COST_VIEW],
         children: [
+          {
+            // ADDED, OLIVINE LIVE OPERATING MODEL, SLICE 4. The Command
+            // Centre -- filters/KPI cards/charts/trust panel across every
+            // cost-facing company, category, vehicle, transporter,
+            // destination, and customer, not just the Stream -> Vehicle
+            // drill-down the existing report screen offers. Same
+            // TRANSPORT_COST_VIEW gate; listed first as the primary
+            // landing view for this section.
+            key: 'transport-cost-command-centre',
+            label: 'Command Centre',
+            href: '/transport-cost/command-centre',
+            permissions: [Permission.TRANSPORT_COST_VIEW],
+          },
           {
             key: 'transport-cost-import',
             label: 'Import Data',

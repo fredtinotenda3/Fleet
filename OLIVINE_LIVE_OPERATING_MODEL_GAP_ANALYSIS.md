@@ -8,6 +8,8 @@
 
 **SLICE 3 UPDATE (see `CHANGELOG-olivine-live-operating-model-slice-3.md` for the full delivery record):** Section 6 — Master-data search + "+ Add New" for Customer, Transporter, Truck registration, and Destination — has since been **implemented and shipped**. Section 6 itself has been rewritten in place; the original recommendation (lightweight reference collections, distinct from `TransportPartner`/`ContractedVehicle`'s review-gated model) is preserved because the shipped implementation follows it, with one refinement made during implementation: Transporter and Truck registration turned out to already have a fully suitable existing identity (`TransportPartner`/`ContractedVehicle`), so no new collection was created for either — only Customer and Destination are new collections. Sections 1 and 7 have been updated to move this item from "not ready" to "shipped." Every other section (8–11, 13–14) remains an unchanged, accurate "not yet built" snapshot for those items.
 
+**SLICE 4 UPDATE (see `CHANGELOG-olivine-live-operating-model-slice-4.md` for the full delivery record):** Section 9/10 — the broader Command Centre dashboard (daily/weekly/monthly/total KPI cards, trend chart, and by-company/by-category/by-vehicle/by-transporter/by-destination/by-customer breakdowns, plus a consolidated data-quality/trust panel) — has since been **implemented and shipped** as Command Centre Slice A (aggregation + time series) and a working subset of Slice C (data-quality panel), reusing `TransportCostReportService`/`AllocationLedgerRepository`/`TransportCostSourceRecordRepository` exactly as this document recommended in Section 10, rather than a second reporting engine. Sections 9, 10, and 15 have been updated in place to reflect this. Command Centre Slice B (dedicated drill-down/evidence endpoints beyond the pre-existing `VehicleDrillDownDialog`) remains designed, not built — see the Slice 4 changelog's "Remaining gaps" section. Section 8 (inline table CRUD) is unaffected by this slice and remains not started.
+
 ---
 
 ## 1. What's ready for 1 October
@@ -31,10 +33,14 @@
 
 - Type-ahead search + "+ Add New" for Customer and Destination (new, lightweight, organization-level reference collections with find-or-create duplicate protection), and type-ahead search (no create — see Section 6) for Transporter and Truck registration, reusing the existing `TransportPartner`/`ContractedVehicle` review-gated identities unchanged. Wired into manual entry across all four sheet families wherever the field has semantic meaning; bulk file import is completely unaffected.
 
-**NOT ready for 1 October without further work (see Sections 8–11 and 15):**
+**Shipped and tested in Slice 4 (see Section 9/10 and the Slice 4 changelog entry):**
+
+- The Cost Intelligence Command Centre (`/transport-cost/command-centre`) — date-range presets + custom range, filters (company/category/vehicle/transporter/destination/customer/data-quality), adaptive-granularity trend chart, by-company/by-category/by-vehicle/by-transporter/by-destination/by-customer breakdown tables, operations-vs-loads KPI cards, and a 12-tile data-quality/trust panel — all built on the existing `TransportCostReportService`/`AllocationLedgerRepository`/`TransportCostSourceRecordRepository`, with the ledger remaining the sole source of financial totals and source records remaining the sole source of operational counts.
+
+**NOT ready for 1 October without further work (see Sections 8, 15):**
 
 - Inline table CRUD (View/Edit/Delete/Duplicate/Resolve) on operational tables (item 9) — not started.
-- The broader dashboard (daily/weekly/monthly/total cards, trend/vehicle/transporter/destination charts — items 10/11) — one card section shipped (by-company), the rest not started.
+- Command Centre Slice B (dedicated drill-down/evidence endpoints beyond the pre-existing `VehicleDrillDownDialog`) — not started; the shipped Slice A dashboard reuses the existing vehicle drill-down only.
 - The production cutover procedure itself is **designed, not executed** (item 14) — correctly, since executing it now would violate the client's own explicit instruction not to touch the database yet.
 
 ---
@@ -178,17 +184,17 @@
 
 ## 9. Reporting changes
 
-**Shipped:** the by-company breakdown (Section 4).
+**Shipped:** the by-company breakdown (Section 4); as of Slice 4, by-category/by-vehicle/by-transporter/by-destination/by-customer breakdowns as well, via the new `TransportCostReportService.getCommandCentreSummary` (single Node-side reduction pass over ledger postings already filtered/joined against source records — see the Slice 4 changelog for the full filter-vs-breakdown correctness design). `getNetTotalsByVehicleForCategory` (pre-existing, Slice A0) continues to back the O4 report screen unchanged; `getCommandCentreSummary` is additive, not a replacement.
 
-**Designed, not built:** by-vehicle, by-transporter, by-destination breakdowns beyond what `TransportCostReportService` already exposes (it already has `getNetTotalsByVehicleForCategory`, from the pre-existing Command Centre Slice A0 work — a by-transporter and by-destination equivalent do not yet exist and would need new repository aggregations, following the exact same pattern as `getNetTotalsByCompanyAcrossVehicles`).
+**Designed, not built:** dedicated drill-down/evidence endpoints beyond the existing `getPostingsForVehicle`/`VehicleDrillDownDialog` (Command Centre Slice B).
 
 ---
 
 ## 10. Dashboard changes
 
-**Shipped:** the "By cost-facing company" card section on `TransportCostReportPage`.
+**Shipped:** the "By cost-facing company" card section on `TransportCostReportPage`; as of Slice 4, the full Cost Intelligence Command Centre at `/transport-cost/command-centre` — daily/weekly/monthly/total KPI cards, an adaptive-granularity trend chart, by-company/by-category/by-vehicle/by-transporter/by-destination/by-customer breakdown tables, and a 12-tile data-quality/trust panel (items 10/11). Built as an extension of the existing, already-designed Command Centre work (`OLIVINE_COST_INTELLIGENCE_COMMAND_CENTRE_DESIGN.md`, Slice A + a working subset of Slice C) exactly as this document recommended, reusing `TransportCostReportService`/`AllocationLedgerRepository`/`TransportCostSourceRecordRepository` rather than a second reporting engine. See `COMMAND_CENTRE_PROGRESS.md` and `CHANGELOG-olivine-live-operating-model-slice-4.md` for the full delivery record.
 
-**Designed, not built:** the client's daily/weekly/monthly/total cards, and trend/by-vehicle/by-transporter/by-destination/by-cost-category charts (items 10/11). The Command Centre design doc (`OLIVINE_COST_INTELLIGENCE_COMMAND_CENTRE_DESIGN.md`) already specifies Slices A/B/C for exactly this (aggregation + time-series, drill-down, data-quality panel) — still "Not started" per `COMMAND_CENTRE_PROGRESS.md`. **Recommendation:** build the Olivine dashboard as an extension of that existing, already-designed Command Centre work rather than a second, parallel dashboard effort — the client's item 10/11 request and the pre-existing Command Centre design are the same underlying need.
+**Designed, not built:** Command Centre Slice B (dedicated drill-down/evidence surface beyond the reused vehicle drill-down dialog); the design doc's Section 8 fully-separate overlapping-vs-exclusive data-quality table (a reasonable subset was folded into the shipped data-quality panel instead — see the Slice 4 changelog's "Remaining gaps").
 
 ---
 
@@ -249,7 +255,7 @@ Per the client's explicit instruction, **nothing in this section has been run.**
 1. ~~Cost-facing company dimension (Section 4)~~ — **done, Slice 1.**
 2. ~~Multi-line transport records (Section 5)~~ — **done, Slice 2**, including the Section 4 `reversePosting()` follow-up.
 3. ~~Master-data search fields (Section 6)~~ — **done, Slice 3.**
-4. **Broader dashboard (Section 10),** by extending the already-designed Command Centre Slices A/B/C rather than starting over.
+4. ~~Broader dashboard (Section 10)~~ — **done, Slice 4** (Command Centre Slice A + a working subset of Slice C). Command Centre Slice B (dedicated drill-down/evidence endpoints) remains open — see Sections 9/10.
 5. **Inline table CRUD (Section 8)** — scoped carefully around the reversal/repost boundary described there; now that the multi-line model has landed, "edit a row" on a multi-line operation must edit/add/remove individual lines, not just parent scalar fields — scope this explicitly when Section 8 is built.
 6. **Production cutover execution** — only on the client's explicit, separate authorization, using the plan in Section 13, after the client has answered the archive-vs-delete question raised there.
 

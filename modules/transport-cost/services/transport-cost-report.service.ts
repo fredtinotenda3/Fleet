@@ -55,11 +55,11 @@ import {
 import { financeSettingsService, FinanceSettingsService } from '@/modules/finance/services/finance-settings.service';
 import type { AllocationPosting, AllocationCostCategory } from '@/modules/finance/types/allocation.types';
 import type { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
-import type { TransportCostSheetFamily } from '@/shared/types/transport-cost.types';
+import type { TransportCostSheetFamily, TransportCostSourceRecord } from '@/shared/types/transport-cost.types';
 import type { TransportCostImportException } from '@/shared/types/transport-cost-import-exception.types';
 import { NotFoundError, ValidationError } from '@/server/errors/app.errors';
 import { roundCurrency } from '@/modules/finance/utils/fx-conversion.utils';
-import { costFacingCompanyLabel } from '@/shared/types/cost-facing-company.types';
+import { costFacingCompanyLabel, CostFacingCompany } from '@/shared/types/cost-facing-company.types';
 
 // 'third-party-transport' only, STILL -- a deliberate, documented scope
 // boundary of the Vansales-posting slice, not an oversight left over
@@ -233,6 +233,265 @@ export interface DataQualityExceptionsReport {
   duplicates: DataQualityExceptionRow[];
   periodOutliers: DataQualityExceptionRow[];
 }
+
+// =====================================================================
+// COMMAND CENTRE (Slice A/B/C). See
+// OLIVINE_COST_INTELLIGENCE_COMMAND_CENTRE_DESIGN.md and
+// OLIVINE_LIVE_OPERATING_MODEL_GAP_ANALYSIS.md Section 7 for the full
+// design record this implements.
+// =====================================================================
+
+/** Time-bucket size for the trend chart. Adaptive to the requested
+ *  range by the CALLER (see the controller/frontend), not chosen here --
+ *  this service takes whatever granularity it is given and buckets
+ *  honestly, so a caller error (e.g. "daily" over a 2-year range) is a
+ *  slow response, never a silently wrong one; the route enforces
+ *  MAX_COMMAND_CENTRE_RANGE_DAYS specifically to bound that. */
+export type CommandCentreGranularity = 'day' | 'week' | 'month';
+
+/**
+ * Every filter the milestone's brief requires, all optional. See
+ * getCommandCentreSummary's own header for exactly how each is applied
+ * (pushed into the ledger $match, resolved to a vehicle-id set first, or
+ * matched against a joined source record) and the FILTER-VS-BREAKDOWN
+ * semantics note for destinationTown/customerName specifically.
+ */
+export interface CommandCentreFilters {
+  costFacingCompany?: CostFacingCompany;
+  /** Must be one of TRANSPORT_COST_CATEGORIES -- validated, not merely typed. */
+  costCategory?: AllocationCostCategory;
+  vehicleId?: string;
+  transporterPartnerId?: string;
+  /** Exact, case-insensitive match against a source record's flat field OR any of its lines[] -- see matchesDestinationOrCustomer's header (source-record repository). */
+  destinationTown?: string;
+  customerName?: string;
+}
+
+export interface CommandCentreDimensionTotal {
+  /** The raw grouping key -- a CostFacingCompany token, an AllocationCostCategory token, a contractedVehicleId, a transporterPartnerId, a destinationTown, or a customerName. 'unattributed'/'unavailable'/'not-applicable' for the documented missing-dimension cases -- never a fabricated bucket name. */
+  key: string;
+  label: string;
+  reportingCurrency: string;
+  netReportingAmount: number;
+  postingCount: number;
+}
+
+export interface CommandCentreTimeSeriesBucket {
+  bucketStart: Date;
+  bucketEnd: Date;
+  reportingCurrency: string;
+  netReportingAmount: number;
+  postingCount: number;
+}
+
+/**
+ * Slice C's trust panel. Every count here is INDEPENDENT and some
+ * legitimately overlap (a row can be both `missingTonnage` and
+ * `unresolvedVehicle`) -- see getDataQualityBreakdown's own header
+ * (source-record repository) for the full Missing/Unresolved/Not
+ * applicable/Rejected/Duplicate vocabulary this implements.
+ */
+export interface CommandCentreDataQuality {
+  /** Rows imported successfully but with no Amount cell yet -- same figure as getAllocationReport's own pending banner, widened across all four sheet families. */
+  pendingAmountCount: number;
+  rejectedCount: number;
+  duplicateCount: number;
+  periodOutlierCount: number;
+  missingCostFacingCompany: number;
+  missingRegistration: number;
+  unresolvedVehicle: number;
+  vehicleNotApplicable: number;
+  unresolvedTransporter: number;
+  missingCustomer: number;
+  missingDestination: number;
+  destinationNotApplicable: number;
+  missingTonnage: number;
+}
+
+export interface CommandCentreSummary {
+  periodStart: Date;
+  periodEnd: Date;
+  granularity: CommandCentreGranularity;
+  filters: CommandCentreFilters;
+  /** Per-currency period total(s) -- NEVER summed across currencies, same discipline as getAllocationReport. Empty when nothing posted in scope: "No data", never a fabricated $0 row. */
+  totals: CommandCentreDimensionTotal[];
+  mixedReportingCurrencies?: string[];
+  byCompany: CommandCentreDimensionTotal[];
+  byCategory: CommandCentreDimensionTotal[];
+  byVehicle: CommandCentreDimensionTotal[];
+  byTransporter: CommandCentreDimensionTotal[];
+  /** Attributed to each record's PRIMARY (flat/line-1) destination only -- see the FILTER-VS-BREAKDOWN semantics note in getCommandCentreSummary's header for why, and why this sums correctly back to `totals` even when a matching operation has several differently-destined lines. */
+  byDestination: CommandCentreDimensionTotal[];
+  byCustomer: CommandCentreDimensionTotal[];
+  timeSeries: CommandCentreTimeSeriesBucket[];
+  /** OPERATIONAL, never financial -- see loadSummary's own doc comment on TransportCostAllocationReport above; the same discipline applies here. */
+  operational: { totalOperations: number; totalLines: number; multiLineOperationCount: number };
+  dataQuality: CommandCentreDataQuality;
+  pending: { pendingSourceRecordCount: number; hasPendingAmounts: boolean };
+}
+
+/**
+ * ADDED, Command Centre Slice A. Buckets a Date into the start of its
+ * day/ISO-week(Monday)/month, in UTC -- the trend chart's grouping key.
+ * Node-side, not a Mongo $group, for the same reason
+ * AllocationLedgerRepository.getDistinctPostedMonths documents: this
+ * repository's test double (tests/helpers/fake-collection.ts) has no
+ * $dateTrunc/$isoWeek, and the dataset this buckets is already a bounded
+ * (<=100000-row, date-range-limited) fetch, so a second in-memory pass
+ * over it costs nothing material. Documented scale caveat: if a single
+ * tenant's transport-cost postings ever exceed the 100000-row bound
+ * within one requested range, this (and every other bounded-fetch path
+ * in this service) undercounts silently rather than erroring -- see
+ * MAX_COMMAND_CENTRE_RANGE_DAYS below for the mitigation this milestone
+ * ships, and the changelog's "remaining gaps" section for the real fix
+ * (a rollup/summary collection) if that bound is ever actually hit.
+ */
+function bucketStartFor(date: Date, granularity: CommandCentreGranularity): Date {
+  const d = new Date(date);
+  if (granularity === 'day') {
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  }
+  if (granularity === 'month') {
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+  }
+  // week: Monday-start ISO week.
+  const dayOfWeek = d.getUTCDay(); // 0=Sun..6=Sat
+  const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  const monday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - diffToMonday));
+  return monday;
+}
+
+function bucketEndFor(bucketStart: Date, granularity: CommandCentreGranularity): Date {
+  if (granularity === 'day') {
+    return new Date(bucketStart.getTime() + 24 * 60 * 60 * 1000 - 1);
+  }
+  if (granularity === 'week') {
+    return new Date(bucketStart.getTime() + 7 * 24 * 60 * 60 * 1000 - 1);
+  }
+  const y = bucketStart.getUTCFullYear();
+  const m = bucketStart.getUTCMonth();
+  return new Date(Date.UTC(y, m + 1, 1) - 1);
+}
+
+const CATEGORY_LABELS: Record<AllocationCostCategory, string> = {
+  'third-party-transport': 'Third-party transport',
+  'transport-retainer': 'Transport retainer',
+  'stock-transfer': 'Stock transfer',
+  fuel: 'Fuel',
+  maintenance: 'Maintenance',
+  expense: 'Expense',
+  depreciation: 'Depreciation',
+  insurance: 'Insurance',
+  other: 'Other',
+};
+
+const UNAVAILABLE = 'unavailable' as const;
+const NOT_APPLICABLE = 'not-applicable' as const;
+
+/**
+ * ADDED, Command Centre Slice A. `destinationTown`/`customerName`
+ * bucketing for the byDestination/byCustomer charts -- deliberately
+ * reads ONLY the record's own flat (line-1) field, never `lines[1..]`.
+ *
+ * This is the load-bearing half of the FILTER-VS-BREAKDOWN semantics
+ * decision documented in getCommandCentreSummary's header: a FILTER
+ * (customer=X) uses OR-over-lines (broad recall), which is safe because
+ * it only decides inclusion/exclusion of an already-one-posting-per-
+ * record row. A BREAKDOWN (chart the total BY customer) cannot use the
+ * same OR-over-lines rule -- if it bucketed one record's single posting
+ * amount under every distinct line customer it has, a two-line
+ * operation naming two different customers would contribute its full
+ * cost to BOTH customers' bars, and the chart's bars would sum to MORE
+ * than `totals` above them. That is exactly the "multiply financial
+ * totals because multiple child lines match" failure item 13/14 of the
+ * milestone's own test list exists to catch. Bucketing by the flat
+ * (line-1) field instead guarantees each posting's amount is counted in
+ * EXACTLY one bucket, so byDestination/byCustomer always sum back to
+ * the same total as `totals` -- the correctness property this function
+ * exists to preserve, verified in
+ * transport-cost-command-centre.service.spec.ts.
+ */
+function destinationBucketKey(record: TransportCostSourceRecord | undefined): string {
+  if (!record) return UNAVAILABLE;
+  if (record.destinationTown && record.destinationTown.trim()) return record.destinationTown.trim();
+  return record.sheetFamily === 'vansales' ? NOT_APPLICABLE : UNAVAILABLE;
+}
+
+function customerBucketKey(record: TransportCostSourceRecord | undefined): string {
+  if (!record) return UNAVAILABLE;
+  if (record.customerName && record.customerName.trim()) return record.customerName.trim();
+  return UNAVAILABLE;
+}
+
+function bucketLabel(key: string): string {
+  if (key === UNAVAILABLE) return 'Unavailable';
+  if (key === NOT_APPLICABLE) return 'Not applicable';
+  return key;
+}
+
+/**
+ * OR-over-lines match, used for the destination/customer FILTER (never
+ * the breakdown -- see destinationBucketKey's header for why the two
+ * must differ). Exported implicitly via the service method only; kept
+ * private to this file since no other module needs this exact
+ * predicate.
+ */
+function matchesDestinationCustomerFilter(
+  record: TransportCostSourceRecord | undefined,
+  destinationTown?: string,
+  customerName?: string
+): boolean {
+  if (!record) return false;
+  const norm = (v?: string) => (v ?? '').trim().toLowerCase();
+  const matchesOne = (needle: string | undefined, flat: string | undefined, lines: Array<string | undefined>) => {
+    if (!needle || !needle.trim()) return true;
+    const target = norm(needle);
+    if (norm(flat) === target) return true;
+    return lines.some((v) => norm(v) === target && !!v);
+  };
+  return (
+    matchesOne(destinationTown, record.destinationTown, (record.lines ?? []).map((l) => l.destinationTown)) &&
+    matchesOne(customerName, record.customerName, (record.lines ?? []).map((l) => l.customerName))
+  );
+}
+
+/**
+ * ADDED, Command Centre Slice A. Resolves the transporter/vehicle
+ * filters to AT MOST ONE of `{vehicleId}` / `{vehicleIds}` (never both
+ * -- see AllocationLedgerRepository.buildVehicleConstraint's header for
+ * why passing both independently would be a collision hazard at the
+ * repository layer; this is where that combination is actually decided).
+ *
+ * A `transporterPartnerId` filter combined with a `vehicleId` filter
+ * that does NOT belong to that transporter is a genuine contradiction --
+ * resolved to `{vehicleIds: []}` (matches nothing), never silently
+ * dropping one of the two filters the caller asked for.
+ */
+async function resolveVehicleScope(
+  filters: CommandCentreFilters,
+  vehicleRepo: ContractedVehicleRepository,
+  organizationId: string
+): Promise<{ vehicleId?: string; vehicleIds?: string[] }> {
+  if (filters.transporterPartnerId) {
+    const vehicles = await vehicleRepo.findByTransporterPartnerId(filters.transporterPartnerId, organizationId);
+    const ids = vehicles.map((v) => v._id!).filter((id): id is string => Boolean(id));
+    if (filters.vehicleId) {
+      return ids.includes(filters.vehicleId) ? { vehicleId: filters.vehicleId } : { vehicleIds: [] };
+    }
+    return { vehicleIds: ids };
+  }
+  if (filters.vehicleId) return { vehicleId: filters.vehicleId };
+  return {};
+}
+
+/** Command Centre's own date-range guard -- bounds every bounded-fetch
+ *  Node-reduction path in getCommandCentreSummary to a scale this
+ *  codebase's existing precedent (100000-row `limit`) comfortably
+ *  covers for one tenant's transport-cost volume. Reversible: raise this
+ *  (and the 100000 limits alongside it) if a tenant's real data ever
+ *  approaches it -- see bucketStartFor's own doc comment for the real
+ *  fix if that happens. */
+export const MAX_COMMAND_CENTRE_RANGE_DAYS = 400;
 
 /**
  * A sheet family's raw column names differ (see
@@ -511,7 +770,18 @@ export class TransportCostReportService {
   async getDataQualityExceptions(
     context: TenantContext,
     periodStart: Date,
-    periodEnd: Date
+    periodEnd: Date,
+    /**
+     * WIDENED, Command Centre Slice A/C. Was implicitly pinned to
+     * COST_CATEGORY ('third-party-transport' only) -- the O4 report
+     * screen's own scope. Defaulted to COST_CATEGORY so that screen's
+     * existing behaviour (and its existing tests) are byte-for-byte
+     * unchanged; getCommandCentreSummary below passes
+     * TRANSPORT_COST_CATEGORIES instead, so Vansales/Swift/Depot STO
+     * batches are discoverable through this same method rather than a
+     * second, parallel exceptions query.
+     */
+    costCategoryScope: AllocationCostCategory | AllocationCostCategory[] = COST_CATEGORY
   ): Promise<DataQualityExceptionsReport> {
     if (periodEnd < periodStart) {
       throw new ValidationError('periodEnd cannot be earlier than periodStart.');
@@ -519,7 +789,7 @@ export class TransportCostReportService {
 
     // Step 1: which batches produced a posting actually inside this period?
     const inPeriodPostings = await this.ledgerRepo.findRawByCategoryInScope(
-      COST_CATEGORY,
+      costCategoryScope,
       periodStart,
       periodEnd,
       context
@@ -555,7 +825,7 @@ export class TransportCostReportService {
     const batchSourceRecords = await this.sourceRepo.findByImportBatchIds(batchIds, context);
     const batchSourceIds = batchSourceRecords.map((r) => r._id!);
     const sourceById = new Map(batchSourceRecords.map((r) => [r._id!, r]));
-    const allBatchPostings = await this.ledgerRepo.findBySourceIdsForCategory(batchSourceIds, COST_CATEGORY, context);
+    const allBatchPostings = await this.ledgerRepo.findBySourceIdsForCategory(batchSourceIds, costCategoryScope, context);
     const inPeriodPostingIds = new Set(inPeriodPostings.map((p) => p._id));
 
     const periodOutliers: DataQualityExceptionRow[] = allBatchPostings
@@ -579,6 +849,292 @@ export class TransportCostReportService {
       });
 
     return { periodStart, periodEnd, rejected, duplicates, periodOutliers };
+  }
+
+  /**
+   * COMMAND CENTRE SUMMARY -- Slice A (aggregation/time-series) + B
+   * (evidence is reached via the existing getPostingsForVehicle /
+   * getDataQualityExceptions drill-downs, extended, not duplicated) + C
+   * (the `dataQuality` block). ONE response for the whole dashboard --
+   * every KPI card, every chart, and the trust panel -- so the frontend
+   * never issues one request per widget (the milestone's own
+   * "PERFORMANCE" requirement).
+   *
+   * -----------------------------------------------------------------
+   * FINANCIAL SOURCE OF TRUTH
+   * -----------------------------------------------------------------
+   * `totals`/`byCompany`/`byCategory`/`byVehicle`/`byTransporter`/
+   * `byDestination`/`byCustomer`/`timeSeries` are ALL built from
+   * AllocationLedgerRepository reads only -- never from
+   * TransportCostSourceRecordRepository.amount. `operational` and
+   * `dataQuality` are the opposite: built from source records only,
+   * never from the ledger, per the milestone's own "financial totals
+   * from the ledger, operational metrics from source records" rule.
+   *
+   * -----------------------------------------------------------------
+   * FILTER-VS-BREAKDOWN SEMANTICS (the "critical correctness
+   * requirement" the milestone calls out explicitly)
+   * -----------------------------------------------------------------
+   * `destinationTown`/`customerName` as an ACTIVE FILTER narrow which
+   * operations are considered using OR-over-lines (a record matches if
+   * its flat field OR ANY line names the given customer/destination --
+   * see matchesDestinationCustomerFilter). This is safe: filtering only
+   * removes non-matching records from consideration; since each source
+   * record still produces at most one ledger posting (Slice 2's own
+   * one-parent-one-cost-one-posting invariant, unchanged by this
+   * milestone), narrowing which records are considered can never
+   * multiply a financial figure.
+   *
+   * `byDestination`/`byCustomer` as a BREAKDOWN/CHART instead bucket by
+   * the record's PRIMARY (flat, line-1) field only -- see
+   * destinationBucketKey/customerBucketKey's own header for why: bucketing
+   * by every distinct line value would let one operation's single cost
+   * contribute to MULTIPLE bars, so the bars would sum to more than
+   * `totals`. This is deliberately a narrower, honest view ("cost by
+   * PRIMARY destination/customer") rather than a wrong one; a future
+   * per-line cost-split feature is explicitly out of scope (no defined,
+   * client-confirmed rule exists for splitting one parent cost across
+   * lines with different destinations -- inventing one would violate
+   * item 17, "do not invent calculations").
+   *
+   * Every OTHER filter (company/category/vehicle/transporter) narrows
+   * every card/chart/the time series/the operational counts identically
+   * -- see resolveVehicleScope for how a vehicle + transporter filter
+   * combine, and buildVehicleConstraint (ledger repository) for why that
+   * combination is computed here, once, rather than left to chance at
+   * the repository layer.
+   *
+   * -----------------------------------------------------------------
+   * MULTI-LINE PARENT COUNTING
+   * -----------------------------------------------------------------
+   * Every dimension above reads AllocationPosting rows, which already
+   * carry the Slice 2 invariant "one parent operation -> one posting" --
+   * so a multi-line operation is structurally incapable of appearing
+   * twice or contributing twice to any total here, regardless of how
+   * many of its lines match an active filter. `operational` (which DOES
+   * read multi-line detail, via getLoadSummaryInScope) reports
+   * `totalOperations` (one per source record, however many lines) and
+   * `totalLines` (the load count) SEPARATELY, exactly like
+   * getAllocationReport's own loadSummary -- never blended into each
+   * other or into a financial figure.
+   */
+  async getCommandCentreSummary(
+    context: TenantContext,
+    periodStart: Date,
+    periodEnd: Date,
+    granularity: CommandCentreGranularity,
+    filters: CommandCentreFilters = {}
+  ): Promise<CommandCentreSummary> {
+    if (periodEnd < periodStart) {
+      throw new ValidationError('periodEnd cannot be earlier than periodStart.');
+    }
+    const rangeDays = (periodEnd.getTime() - periodStart.getTime()) / (24 * 60 * 60 * 1000);
+    if (rangeDays > MAX_COMMAND_CENTRE_RANGE_DAYS) {
+      throw new ValidationError(
+        `The requested range spans more than ${MAX_COMMAND_CENTRE_RANGE_DAYS} days -- narrow the date range for the Command Centre.`
+      );
+    }
+    if (filters.costCategory && !TRANSPORT_COST_CATEGORIES.includes(filters.costCategory)) {
+      throw new ValidationError(
+        `"${filters.costCategory}" is not a transport-cost category. Use one of: ${TRANSPORT_COST_CATEGORIES.join(', ')}.`
+      );
+    }
+
+    // Step 1: resolve transporter/vehicle filters to at most one of {vehicleId, vehicleIds}.
+    const baseVehicleScope = await resolveVehicleScope(filters, this.vehicleRepo, context.organizationId);
+
+    // Step 2: ONE bounded raw-posting fetch, scoped by everything Mongo
+    // can apply directly (company/category/vehicle scope), reused for
+    // BOTH the destination/customer breakdown AND the time series --
+    // never two separate fetches for two charts that need the same rows.
+    const rawPostings = await this.ledgerRepo.findRawByCategoryInScope(
+      filters.costCategory ?? TRANSPORT_COST_CATEGORIES,
+      periodStart,
+      periodEnd,
+      context,
+      { costFacingCompany: filters.costFacingCompany, ...baseVehicleScope }
+    );
+    const sourceIds = Array.from(new Set(rawPostings.map((p) => p.sourceId)));
+    const sourceRecords = sourceIds.length > 0 ? await this.sourceRepo.findManyByIds(sourceIds, context) : [];
+    const sourceById = new Map(sourceRecords.map((r) => [r._id!, r]));
+
+    const destinationCustomerFilterActive = Boolean(
+      (filters.destinationTown && filters.destinationTown.trim()) || (filters.customerName && filters.customerName.trim())
+    );
+    const matchedPostings = destinationCustomerFilterActive
+      ? rawPostings.filter((p) => matchesDestinationCustomerFilter(sourceById.get(p.sourceId), filters.destinationTown, filters.customerName))
+      : rawPostings;
+
+    // Step 3: resolve display names for byVehicle/byTransporter -- same
+    // vehicle+partner join getAllocationReport already does.
+    const vehicles = await this.vehicleRepo.findAllConfirmed(context.organizationId);
+    const vehicleById = new Map(vehicles.map((v) => [v._id!, v]));
+    const partnerIds = Array.from(new Set(vehicles.map((v) => v.transporterPartnerId)));
+    const partners = await Promise.all(partnerIds.map((id) => this.partnerRepo.findById(id, context.organizationId)));
+    const partnerById = new Map(partners.filter((p): p is NonNullable<typeof p> => Boolean(p)).map((p) => [p._id!, p]));
+
+    // Step 4: EVERY dimension below -- totals, byCompany, byCategory,
+    // byVehicle, byTransporter, byDestination, byCustomer, timeSeries --
+    // is reduced from the SAME `matchedPostings` array in ONE pass, not
+    // from a separate $group query per dimension.
+    //
+    // THIS IS DELIBERATE, NOT MERELY AN OPTIMISATION. An earlier version
+    // of this method ran totals/byCompany/byCategory/byVehicle as
+    // separate AllocationLedgerRepository.getNetTotalsGrouped() calls,
+    // narrowed by a vehicle-id SET derived from matchedPostings whenever
+    // a destination/customer filter was active. That is wrong the
+    // moment two different source records share a vehicle and only one
+    // of them matches the filter: the vehicle-id proxy cannot
+    // distinguish "this vehicle's OTHER posting, for a different
+    // customer" from "this vehicle's posting for the filtered customer"
+    // -- both share the same vehicleId, so a vehicleId-based $in filter
+    // includes both, silently re-including cost that was supposed to be
+    // excluded (caught by this file's own
+    // transport-cost-command-centre.service.spec.ts). Reducing over
+    // `matchedPostings` directly has no such gap: that array is ALREADY
+    // the exact, correct set of postings in scope (every filter applied,
+    // including the join-dependent destination/customer one), so every
+    // card and chart below reads from precisely the same source of
+    // truth, by construction, rather than by keeping several
+    // independently-filtered queries in sync. `getNetTotalsGrouped`
+    // itself is kept (see its own header) as a generically useful,
+    // independently-tested aggregation for a future caller that does
+    // NOT need the destination/customer join -- just no longer called
+    // from this method.
+    const totalsMap = new Map<string, CommandCentreDimensionTotal>();
+    const companyMap = new Map<string, CommandCentreDimensionTotal>();
+    const categoryMap = new Map<string, CommandCentreDimensionTotal>();
+    const vehicleMap = new Map<string, CommandCentreDimensionTotal>();
+    const transporterMap = new Map<string, CommandCentreDimensionTotal>();
+    const destinationMap = new Map<string, CommandCentreDimensionTotal>();
+    const customerMap = new Map<string, CommandCentreDimensionTotal>();
+    const timeSeriesMap = new Map<string, CommandCentreTimeSeriesBucket>();
+
+    const accumulate = (map: Map<string, CommandCentreDimensionTotal>, key: string, label: string, currency: string, amount: number) => {
+      const mapKey = `${key}\u0000${currency}`;
+      const existing = map.get(mapKey);
+      if (existing) {
+        existing.netReportingAmount = roundCurrency(existing.netReportingAmount + amount);
+        existing.postingCount += 1;
+      } else {
+        map.set(mapKey, { key, label, reportingCurrency: currency, netReportingAmount: amount, postingCount: 1 });
+      }
+    };
+
+    for (const posting of matchedPostings) {
+      const record = sourceById.get(posting.sourceId);
+      const amount = roundCurrency(posting.reportingAmount);
+      const currency = posting.reportingCurrency;
+
+      accumulate(totalsMap, 'total', 'Total', currency, amount);
+
+      const companyKey = posting.costFacingCompany ?? 'unattributed';
+      accumulate(companyMap, companyKey, costFacingCompanyLabel(posting.costFacingCompany ?? undefined), currency, amount);
+
+      const categoryKey = posting.costCategory;
+      accumulate(categoryMap, categoryKey, CATEGORY_LABELS[categoryKey] ?? categoryKey, currency, amount);
+
+      const vehicle = vehicleById.get(posting.vehicleId);
+      accumulate(vehicleMap, posting.vehicleId, vehicle?.registration ?? '(unresolved vehicle)', currency, amount);
+
+      const transporterPartnerId = vehicle?.transporterPartnerId;
+      const partner = transporterPartnerId ? partnerById.get(transporterPartnerId) : undefined;
+      accumulate(transporterMap, transporterPartnerId ?? UNAVAILABLE, partner?.canonicalName ?? '(unresolved transporter)', currency, amount);
+
+      const destKey = destinationBucketKey(record);
+      accumulate(destinationMap, destKey, bucketLabel(destKey), currency, amount);
+
+      const custKey = customerBucketKey(record);
+      accumulate(customerMap, custKey, bucketLabel(custKey), currency, amount);
+
+      const bucketStart = bucketStartFor(new Date(posting.periodStart), granularity);
+      const tsMapKey = `${bucketStart.toISOString()}\u0000${currency}`;
+      const tsExisting = timeSeriesMap.get(tsMapKey);
+      if (tsExisting) {
+        tsExisting.netReportingAmount = roundCurrency(tsExisting.netReportingAmount + amount);
+        tsExisting.postingCount += 1;
+      } else {
+        timeSeriesMap.set(tsMapKey, {
+          bucketStart,
+          bucketEnd: bucketEndFor(bucketStart, granularity),
+          reportingCurrency: currency,
+          netReportingAmount: amount,
+          postingCount: 1,
+        });
+      }
+    }
+
+    const timeSeries = Array.from(timeSeriesMap.values()).sort((a, b) => a.bucketStart.getTime() - b.bucketStart.getTime());
+    const totals = Array.from(totalsMap.values());
+    const byCompany = Array.from(companyMap.values());
+    const byCategory = Array.from(categoryMap.values());
+    const byVehicle = Array.from(vehicleMap.values());
+    const byTransporter = Array.from(transporterMap.values());
+    const currencies = Array.from(new Set(totals.map((t) => t.reportingCurrency)));
+    const mixed = currencies.length > 1;
+
+    // Step 5: operational metrics -- SOURCE RECORDS only, never the
+    // ledger. Widened across all four sheet families (unlike
+    // getAllocationReport's own loadSummary, which stays pinned to
+    // 'third-party' for that existing screen's stability). Uses
+    // `baseVehicleScope` (the transporter/vehicle filter only) rather
+    // than anything derived from `matchedPostings`: getLoadSummaryInScope
+    // reads TransportCostSourceRecord directly and applies its OWN
+    // destinationTown/customerName matching (passed straight through
+    // below), so narrowing its vehicle scope by which vehicles happen to
+    // have a LEDGER posting would incorrectly hide a vehicle's pending
+    // (never-posted) operations whenever no vehicle/transporter filter
+    // was actually requested.
+    const operationalVehicleIds = baseVehicleScope.vehicleId ? [baseVehicleScope.vehicleId] : baseVehicleScope.vehicleIds;
+    const [operational, pendingSourceRecordCount, dataQualityBreakdown, exceptions] = await Promise.all([
+      this.sourceRepo.getLoadSummaryInScope(periodStart, periodEnd, context, ['third-party', 'vansales', 'swift', 'depot-sto'], {
+        costFacingCompany: filters.costFacingCompany,
+        contractedVehicleIds: operationalVehicleIds,
+        destinationTown: filters.destinationTown,
+        customerName: filters.customerName,
+      }),
+      this.sourceRepo.countPendingAmount(periodStart, periodEnd, context, ['third-party', 'vansales', 'swift', 'depot-sto']),
+      this.sourceRepo.getDataQualityBreakdown(periodStart, periodEnd, context),
+      this.getDataQualityExceptions(context, periodStart, periodEnd, TRANSPORT_COST_CATEGORIES),
+    ]);
+
+    const dataQuality: CommandCentreDataQuality = {
+      pendingAmountCount: pendingSourceRecordCount,
+      rejectedCount: exceptions.rejected.length,
+      duplicateCount: exceptions.duplicates.length,
+      periodOutlierCount: exceptions.periodOutliers.length,
+      missingCostFacingCompany: dataQualityBreakdown.missingCostFacingCompany,
+      missingRegistration: dataQualityBreakdown.missingRegistration,
+      unresolvedVehicle: dataQualityBreakdown.unresolvedVehicle,
+      vehicleNotApplicable: dataQualityBreakdown.vehicleNotApplicable,
+      unresolvedTransporter: dataQualityBreakdown.unresolvedTransporter,
+      missingCustomer: dataQualityBreakdown.missingCustomer,
+      missingDestination: dataQualityBreakdown.missingDestination,
+      destinationNotApplicable: dataQualityBreakdown.destinationNotApplicable,
+      missingTonnage: dataQualityBreakdown.missingTonnage,
+    };
+
+    return {
+      periodStart,
+      periodEnd,
+      granularity,
+      filters,
+      totals,
+      ...(mixed ? { mixedReportingCurrencies: currencies } : {}),
+      byCompany,
+      byCategory,
+      byVehicle,
+      byTransporter,
+      byDestination: Array.from(destinationMap.values()),
+      byCustomer: Array.from(customerMap.values()),
+      timeSeries,
+      operational,
+      dataQuality,
+      pending: {
+        pendingSourceRecordCount,
+        hasPendingAmounts: pendingSourceRecordCount > 0,
+      },
+    };
   }
 }
 

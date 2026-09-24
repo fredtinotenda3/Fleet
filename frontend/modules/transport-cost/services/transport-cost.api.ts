@@ -15,7 +15,14 @@ import type {
   TransportCostSheetFamily,
 } from '@/shared/types/transport-cost.types';
 import type { ImportResponse } from '@/frontend/shared/import/ImportModal';
-import type { TransportCostAllocationReport, PostingDrillDown, DataQualityExceptionsReport } from '../types';
+import type {
+  TransportCostAllocationReport,
+  PostingDrillDown,
+  DataQualityExceptionsReport,
+  CommandCentreGranularity,
+  CommandCentreFilters,
+  CommandCentreSummary,
+} from '../types';
 
 const BASE = '/api/transport-cost';
 
@@ -150,6 +157,34 @@ export const transportCostApi = {
       params: { periodStart: periodStart.toISOString(), periodEnd: periodEnd.toISOString(), format: 'csv' },
     });
     downloadBlob(blob, filename ?? fallbackFilename);
+  },
+
+  /**
+   * GET /api/transport-cost/command-centre/summary -- Command Centre
+   * Slice A/B/C. ONE request for the whole dashboard (every KPI card,
+   * every chart, the trust panel) -- see
+   * TransportCostReportService.getCommandCentreSummary's own header for
+   * why this is deliberately not several smaller endpoints.
+   */
+  async getCommandCentreSummary(
+    periodStart: Date,
+    periodEnd: Date,
+    granularity: CommandCentreGranularity,
+    filters: CommandCentreFilters = {}
+  ): Promise<CommandCentreSummary> {
+    return apiClient.get<CommandCentreSummary>(`${BASE}/command-centre/summary`, {
+      params: {
+        periodStart: periodStart.toISOString(),
+        periodEnd: periodEnd.toISOString(),
+        granularity,
+        costFacingCompany: filters.costFacingCompany,
+        costCategory: filters.costCategory,
+        vehicleId: filters.vehicleId,
+        transporterPartnerId: filters.transporterPartnerId,
+        destinationTown: filters.destinationTown,
+        customerName: filters.customerName,
+      },
+    });
   },
 
   // ── Slice 3: Master Data Search + "+ Add New". ──────────────────────

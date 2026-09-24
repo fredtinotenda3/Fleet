@@ -11,7 +11,7 @@ import { bootstrapCqrs } from '@/server/cqrs/cqrs.module';
 import { transportCostCommandService } from '../services/transport-cost-command.service';
 import { transportCostQueryService } from '../services/transport-cost-query.service';
 import { transportCostPostingService } from '../services/transport-cost-posting.service';
-import { transportCostReportService } from '../services/transport-cost-report.service';
+import { transportCostReportService, CommandCentreFilters, CommandCentreGranularity } from '../services/transport-cost-report.service';
 import { buildDataQualityExceptionsCsv } from '../generators/data-quality-exceptions-csv.generator';
 import { TransportCostImportRow } from '../commands/import-transport-cost.command';
 import { TransportCostSheetFamily, TransportCostSourceRecordFilters } from '@/shared/types/transport-cost.types';
@@ -351,6 +351,63 @@ export class TransportCostController {
         },
       });
       return applySecurityHeaders(response);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /**
+   * GET /api/transport-cost/command-centre/summary -- Command Centre
+   * Slice A/B/C. ONE response for the whole dashboard (see
+   * TransportCostReportService.getCommandCentreSummary's own header for
+   * why) -- read-only, VIEW-gated exactly like getAllocationReport
+   * above (route wires Permission.TRANSPORT_COST_VIEW, not a manage-
+   * level permission: reading the summary carries no write authority).
+   *
+   * Query params:
+   *   periodStart, periodEnd (required, ISO)
+   *   granularity: 'day' | 'week' | 'month' (required)
+   *   costFacingCompany, costCategory, vehicleId, transporterPartnerId,
+   *   destinationTown, customerName (all optional filters)
+   *
+   * Every filter is passed through as-is; the SERVICE validates
+   * costCategory membership and the date range, not this boundary --
+   * same "validation lives with the business rule it enforces, not
+   * duplicated at the HTTP edge" convention as every other read here.
+   */
+  async getCommandCentreSummary(req: NextRequest) {
+    try {
+      const context = await resolveTenantContext(req);
+      const params = req.nextUrl.searchParams;
+
+      const periodStart = params.get('periodStart');
+      const periodEnd = params.get('periodEnd');
+      if (!periodStart || !periodEnd) {
+        throw new ValidationError('"periodStart" and "periodEnd" are required.');
+      }
+      const start = new Date(periodStart);
+      const end = new Date(periodEnd);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+        throw new ValidationError('"periodStart"/"periodEnd" must be valid dates.');
+      }
+
+      const granularityParam = params.get('granularity');
+      if (granularityParam !== 'day' && granularityParam !== 'week' && granularityParam !== 'month') {
+        throw new ValidationError('"granularity" must be one of "day", "week", "month".');
+      }
+      const granularity = granularityParam as CommandCentreGranularity;
+
+      const filters: CommandCentreFilters = {
+        costFacingCompany: (params.get('costFacingCompany') as CommandCentreFilters['costFacingCompany']) || undefined,
+        costCategory: (params.get('costCategory') as CommandCentreFilters['costCategory']) || undefined,
+        vehicleId: params.get('vehicleId') || undefined,
+        transporterPartnerId: params.get('transporterPartnerId') || undefined,
+        destinationTown: params.get('destinationTown') || undefined,
+        customerName: params.get('customerName') || undefined,
+      };
+
+      const result = await transportCostReportService.getCommandCentreSummary(context, start, end, granularity, filters);
+      return successResponse(result);
     } catch (error) {
       return this.handleError(error);
     }

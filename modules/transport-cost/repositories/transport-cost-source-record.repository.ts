@@ -15,6 +15,56 @@ import { TenantContext } from '@/modules/tenancy/services/tenant-context.service
 import { Filter, ObjectId } from 'mongodb';
 import { parsePeriodMonth } from '../utils/normalization.utils';
 
+/**
+ * ADDED, Command Centre Slice A/C. Whether `field` ('destinationTown' or
+ * 'customerName') matches `needle` on a source record -- checking the
+ * record's own flat field OR any of its `lines[]`, never just one.
+ *
+ * This is the FILTER semantics decision documented at length in
+ * TransportCostReportService.getCommandCentreSummary's header: a filter
+ * uses OR-over-lines (broad recall -- an operation is included if ANY
+ * load on it names this customer/destination), which is safe precisely
+ * because filtering only narrows which already-one-posting-per-record
+ * rows are considered; it can never cause one record's single ledger
+ * posting to be counted twice. Case-insensitive, trimmed -- these values
+ * come from the master-data search/select controls (Slice 3), not
+ * free-text, but the underlying stored strings still vary in casing
+ * across sheet families and manual entries.
+ *
+ * `needle` undefined/empty means "no filter" -- always matches.
+ */
+function matchesDestinationOrCustomer(
+  row: TransportCostSourceRecord,
+  destinationTown?: string,
+  customerName?: string
+): boolean {
+  const matchesField = (needle: string | undefined, flatValue: string | undefined, lineValues: Array<string | undefined>) => {
+    if (!needle || !needle.trim()) return true;
+    const target = needle.trim().toLowerCase();
+    if (flatValue && flatValue.trim().toLowerCase() === target) return true;
+    return lineValues.some((v) => !!v && v.trim().toLowerCase() === target);
+  };
+
+  return (
+    matchesField(destinationTown, row.destinationTown, (row.lines ?? []).map((l) => l.destinationTown)) &&
+    matchesField(customerName, row.customerName, (row.lines ?? []).map((l) => l.customerName))
+  );
+}
+
+/**
+ * Whether `field` ('destinationTown' | 'customerName') has a real value
+ * ANYWHERE on this record -- its own flat field or any line -- used by
+ * getDataQualityBreakdown to decide "missing" (see that method's header
+ * for why this is deliberately permissive: a value present on even one
+ * line means the operation is not missing this dimension, even though a
+ * DIFFERENT line lacks it -- that per-line gap is a finer-grained fact
+ * this rollup does not attempt to surface).
+ */
+function hasAnyLineValue(row: TransportCostSourceRecord, field: 'destinationTown' | 'customerName'): boolean {
+  if (row[field]) return true;
+  return (row.lines ?? []).some((l) => !!l[field]);
+}
+
 export class TransportCostSourceRecordRepository extends TenantScopedRepository<TransportCostSourceRecord> {
   protected collectionName = 'tbltransportcostsourcerecords';
 
@@ -228,17 +278,45 @@ export class TransportCostSourceRecordRepository extends TenantScopedRepository<
    * minimal aggregate (which has no `$size` operator), the same
    * reasoning getDistinctPostedMonths documents on the ledger repository.
    */
+  /**
+   * WIDENED, Command Centre Slice A. `filters` narrows the same bounded
+   * fetch by the Command Centre's own active filter set BEFORE counting
+   * -- so "operations/loads" honours company/vehicle/transporter/
+   * destination/customer exactly like the financial cards next to it
+   * (the milestone's own "filters must apply consistently to every
+   * affected card, chart, table" rule). costFacingCompany/
+   * contractedVehicleIds are pushed into the Mongo filter (cheap,
+   * indexed-equality/$in fields); destinationTown/customerName cannot be
+   * (they must match EITHER the record's own flat field OR any one of
+   * its `lines[]` -- see matchesDestinationOrCustomer below), so those
+   * two stay a Node-side predicate over the already-bounded fetch, the
+   * same "push down what Mongo can do, reduce in Node what it can't"
+   * split this repository already uses for Vansales in
+   * countPendingAmount.
+   */
   async getLoadSummaryInScope(
     periodStart: Date,
     periodEnd: Date,
     context: TenantContext,
-    sheetFamily: TransportCostSheetFamily | TransportCostSheetFamily[] = 'third-party'
+    sheetFamily: TransportCostSheetFamily | TransportCostSheetFamily[] = 'third-party',
+    filters: {
+      costFacingCompany?: string;
+      contractedVehicleIds?: string[];
+      destinationTown?: string;
+      customerName?: string;
+    } = {}
   ): Promise<{ totalOperations: number; totalLines: number; multiLineOperationCount: number }> {
+    if (filters.contractedVehicleIds && filters.contractedVehicleIds.length === 0) {
+      return { totalOperations: 0, totalLines: 0, multiLineOperationCount: 0 };
+    }
+
     const families = Array.isArray(sheetFamily) ? sheetFamily : [sheetFamily];
     const rows = await this.findManyInScope(
       {
         sheetFamily: families.length === 1 ? families[0] : { $in: families },
         date: { $gte: periodStart, $lte: periodEnd },
+        ...(filters.costFacingCompany ? { costFacingCompany: filters.costFacingCompany } : {}),
+        ...(filters.contractedVehicleIds ? { contractedVehicleId: { $in: filters.contractedVehicleIds } } : {}),
       } as Filter<TransportCostSourceRecord>,
       context,
       { limit: 100000 }
@@ -246,13 +324,119 @@ export class TransportCostSourceRecordRepository extends TenantScopedRepository<
 
     let totalLines = 0;
     let multiLineOperationCount = 0;
+    let totalOperations = 0;
     for (const row of rows) {
+      if (!matchesDestinationOrCustomer(row, filters.destinationTown, filters.customerName)) continue;
+      totalOperations += 1;
       const lineCount = row.lines?.length ?? 1;
       totalLines += lineCount;
       if (lineCount > 1) multiLineOperationCount += 1;
     }
 
-    return { totalOperations: rows.length, totalLines, multiLineOperationCount };
+    return { totalOperations, totalLines, multiLineOperationCount };
+  }
+
+  /**
+   * ADDED, Command Centre Slice C. One bounded fetch + Node reduction
+   * (same pattern/limit convention as every other whole-scan read in
+   * this file) producing the data-quality trust panel's per-outcome
+   * counts for a period and family scope. Every count below is
+   * INDEPENDENT and may overlap another -- e.g. a row can be both
+   * `missingTonnage` and `unresolvedVehicle` at once -- by design (see
+   * OLIVINE_COST_INTELLIGENCE_COMMAND_CENTRE_DESIGN.md Section 8's
+   * overlapping-vs-exclusive table): this method never implies mutual
+   * exclusivity by only incrementing one bucket per row.
+   *
+   * "Not applicable" vs "Missing" vs "Unresolved", the client's own
+   * required distinction:
+   *   - vehicle identity: Swift structurally carries no registration
+   *     column at all (see TransportCostSheetFamily's header) -- a
+   *     Swift row with no registration is `vehicleNotApplicable`, never
+   *     `unresolvedVehicle`. Every other family DOES have a
+   *     registration concept; a null registration there is
+   *     `missingRegistration` (the source cell itself was blank -- nothing
+   *     to resolve yet), while a populated registration with no
+   *     contractedVehicleId is `unresolvedVehicle` (O2 review has not
+   *     yet confirmed an identity for it).
+   *   - destination: Vansales structurally has no per-row destination
+   *     (a fixed retainer, not a per-trip delivery -- see
+   *     VansalesSourceFields's header) -- every Vansales row is
+   *     `destinationNotApplicable`, never `missingDestination`. Every
+   *     other family has a real destinationTown concept; a row with
+   *     neither a flat destinationTown nor any line destinationTown is
+   *     `missingDestination`.
+   *   - `missingCostFacingCompany` / `missingCustomer` / `missingTonnage`:
+   *     counted wherever the field is structurally meaningful but empty
+   *     on this row -- no family currently makes these three
+   *     structurally inapplicable, so there is no "not applicable"
+   *     variant for them yet.
+   */
+  async getDataQualityBreakdown(
+    periodStart: Date,
+    periodEnd: Date,
+    context: TenantContext,
+    sheetFamily: TransportCostSheetFamily[] = ['third-party', 'vansales', 'swift', 'depot-sto']
+  ): Promise<{
+    totalRows: number;
+    missingCostFacingCompany: number;
+    missingRegistration: number;
+    unresolvedVehicle: number;
+    vehicleNotApplicable: number;
+    unresolvedTransporter: number;
+    missingCustomer: number;
+    missingDestination: number;
+    destinationNotApplicable: number;
+    missingTonnage: number;
+  }> {
+    const rows = await this.findManyInScope(
+      {
+        sheetFamily: sheetFamily.length === 1 ? sheetFamily[0] : { $in: sheetFamily },
+        date: { $gte: periodStart, $lte: periodEnd },
+      } as Filter<TransportCostSourceRecord>,
+      context,
+      { limit: 100000 }
+    );
+
+    const summary = {
+      totalRows: rows.length,
+      missingCostFacingCompany: 0,
+      missingRegistration: 0,
+      unresolvedVehicle: 0,
+      vehicleNotApplicable: 0,
+      unresolvedTransporter: 0,
+      missingCustomer: 0,
+      missingDestination: 0,
+      destinationNotApplicable: 0,
+      missingTonnage: 0,
+    };
+
+    for (const row of rows) {
+      if (!row.costFacingCompany) summary.missingCostFacingCompany += 1;
+
+      if (row.sheetFamily === 'swift' && !row.registration) {
+        summary.vehicleNotApplicable += 1;
+      } else if (!row.registration) {
+        summary.missingRegistration += 1;
+      } else if (!row.contractedVehicleId) {
+        summary.unresolvedVehicle += 1;
+      }
+
+      if (row.transporterRaw && !row.transporterPartnerId) summary.unresolvedTransporter += 1;
+
+      if (row.sheetFamily === 'vansales') {
+        summary.destinationNotApplicable += 1;
+      } else if (!hasAnyLineValue(row, 'destinationTown')) {
+        summary.missingDestination += 1;
+      }
+
+      if (!hasAnyLineValue(row, 'customerName')) summary.missingCustomer += 1;
+
+      const hasTonnage = row.tonnageRaw !== null && row.tonnageRaw !== undefined;
+      const anyLineTonnage = (row.lines ?? []).some((l) => l.tonnageRaw !== null && l.tonnageRaw !== undefined);
+      if (!hasTonnage && !anyLineTonnage) summary.missingTonnage += 1;
+    }
+
+    return summary;
   }
 
   async countByImportBatch(importBatchId: string, tenantId: string): Promise<number> {

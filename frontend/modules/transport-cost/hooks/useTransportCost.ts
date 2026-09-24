@@ -2,6 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { transportCostApi, type TransportCostSourceRecordListParams } from '../services/transport-cost.api';
+import type { CommandCentreGranularity, CommandCentreFilters } from '../types';
 
 function iso(date: Date): string {
   return date.toISOString();
@@ -16,6 +17,8 @@ export const transportCostKeys = {
   availableMonths: () => [...transportCostKeys.all, 'report', 'months'] as const,
   vehiclePostings: (contractedVehicleId: string, periodStart: Date, periodEnd: Date) =>
     [...transportCostKeys.all, 'report', 'vehicles', contractedVehicleId, iso(periodStart), iso(periodEnd)] as const,
+  commandCentreSummary: (periodStart: Date, periodEnd: Date, granularity: CommandCentreGranularity, filters: CommandCentreFilters) =>
+    [...transportCostKeys.all, 'command-centre', 'summary', iso(periodStart), iso(periodEnd), granularity, filters] as const,
 };
 
 export function useTransportCostSourceRecords(params: TransportCostSourceRecordListParams) {
@@ -43,6 +46,31 @@ export function useTransportCostAvailableMonths() {
     queryKey: transportCostKeys.availableMonths(),
     queryFn: () => transportCostApi.getAvailableMonths(),
     staleTime: 60_000,
+    retry: 1,
+  });
+}
+
+/**
+ * Command Centre Slice A/B/C. ONE query backing the whole dashboard --
+ * every KPI card, every chart, and the trust panel share this single
+ * result, never one useQuery per widget (see the API method's own
+ * header). `staleTime`/`retry` match the existing report query above;
+ * `placeholderData` keeps the previous period's numbers on screen while
+ * a filter change refetches, rather than flashing to a loading state on
+ * every click -- the same UX convention useTransportCostSourceRecords
+ * already uses.
+ */
+export function useCommandCentreSummary(
+  periodStart: Date,
+  periodEnd: Date,
+  granularity: CommandCentreGranularity,
+  filters: CommandCentreFilters = {}
+) {
+  return useQuery({
+    queryKey: transportCostKeys.commandCentreSummary(periodStart, periodEnd, granularity, filters),
+    queryFn: () => transportCostApi.getCommandCentreSummary(periodStart, periodEnd, granularity, filters),
+    placeholderData: (prev) => prev,
+    staleTime: 30_000,
     retry: 1,
   });
 }

@@ -79,6 +79,44 @@ function costCategoryMatch(
 }
 
 /**
+ * ADDED, Command Centre Slice A. Combines a single-vehicle filter and a
+ * vehicle-id-set filter (the transporter/destination/customer-derived
+ * narrowing -- see getNetTotalsGrouped's own header) into ONE `vehicleId`
+ * match clause.
+ *
+ * Deliberately NOT two independent `...(a?{}: {}), ...(b?{}:{})` spreads
+ * onto the same match object: both conditions target the same
+ * `vehicleId` key, so spreading both would let the second silently
+ * clobber the first (whichever is spread last simply wins) rather than
+ * apply both -- a real correctness bug if a caller ever needs to combine
+ * a specific-vehicle filter with a transporter-derived id set (exactly
+ * what TransportCostReportService.getCommandCentreSummary does whenever
+ * a vehicle AND a transporter/destination/customer filter are active
+ * together). This function makes the combination explicit and
+ * INTERSECTING rather than last-write-wins: if `vehicleId` is not a
+ * member of `vehicleIds`, the filters contradict each other and the
+ * correct result is "matches nothing" (fail closed), never "silently
+ * ignore one of the two filters the caller asked for".
+ */
+/** The `$group` output shape getNetTotalsGrouped's pipeline produces --
+ *  named so its own `.map` avoids `any`, unlike the four pre-existing
+ *  aggregations above it in this file (left untouched by this slice). */
+interface GroupedRow {
+  _id: { key?: string; reportingCurrency: string };
+  netReportingAmount: number;
+  postingCount: number;
+}
+
+function buildVehicleConstraint(vehicleId?: string, vehicleIds?: string[]): Record<string, unknown> {
+  if (vehicleId && vehicleIds) {
+    return vehicleIds.includes(vehicleId) ? { vehicleId } : { vehicleId: { $in: [] } };
+  }
+  if (vehicleId) return { vehicleId };
+  if (vehicleIds) return { vehicleId: { $in: vehicleIds } };
+  return {};
+}
+
+/**
  * APPEND-ONLY, same discipline and same reason as
  * modules/attention/repositories/value-ledger.repository.ts: a cost
  * posting that can be quietly edited or removed after the fact is not
@@ -422,10 +460,33 @@ export class AllocationLedgerRepository extends TenantScopedRepository<Allocatio
     costCategory: AllocationCostCategory | AllocationCostCategory[],
     periodStart: Date,
     periodEnd: Date,
-    context: TenantContext
+    context: TenantContext,
+    /**
+     * WIDENED, Command Centre Slice A. The by-destination/by-customer/
+     * time-series paths (see TransportCostReportService
+     * .getCommandCentreSummary) need the SAME raw-posting fetch this
+     * method already provides for getDataQualityExceptions, just also
+     * narrowed by an active company/vehicle/transporter filter BEFORE
+     * the bounded fetch runs -- pushing these down to Mongo rather than
+     * filtering 100000 rows in Node for a filter Mongo can apply
+     * directly (destinationTown/customerName cannot be pushed down the
+     * same way, since they live on the joined source record, not the
+     * posting -- those stay a Node-side filter in the service, after
+     * this fetch). Optional and defaulted so getDataQualityExceptions's
+     * existing call site is unaffected.
+     */
+    extraMatch: { costFacingCompany?: string; vehicleId?: string; vehicleIds?: string[] } = {}
   ): Promise<AllocationPosting[]> {
+    if (extraMatch.vehicleIds && extraMatch.vehicleIds.length === 0) {
+      return [];
+    }
     return this.findManyInScope(
-      { costCategory: costCategoryMatch(costCategory), ...buildPeriodFilter(periodStart, periodEnd) } as Filter<AllocationPosting>,
+      {
+        costCategory: costCategoryMatch(costCategory),
+        ...buildPeriodFilter(periodStart, periodEnd),
+        ...(extraMatch.costFacingCompany ? { costFacingCompany: extraMatch.costFacingCompany } : {}),
+        ...buildVehicleConstraint(extraMatch.vehicleId, extraMatch.vehicleIds),
+      } as Filter<AllocationPosting>,
       context,
       { limit: 100000 }
     );
@@ -462,6 +523,101 @@ export class AllocationLedgerRepository extends TenantScopedRepository<Allocatio
       context,
       { limit: 100000 }
     );
+  }
+
+  /**
+   * ADDED, Command Centre Slice A. One flexible aggregation replacing a
+   * would-be family of near-duplicate methods
+   * (getNetTotalsByCategoryAcrossVehicles, getNetTotalsByCompanyFiltered,
+   * ...): the Command Centre summary needs the SAME "net reporting-
+   * currency total, grouped one way, filtered several other ways" shape
+   * for every KPI card and every dimension chart (period total, by
+   * company, by category, by vehicle -- see
+   * OLIVINE_COST_INTELLIGENCE_COMMAND_CENTRE_DESIGN.md Section 9's
+   * proposed `getNetTotalsByCategoryAcrossVehicles`, generalized here to
+   * also cover the period-total and by-vehicle cases with the SAME
+   * method rather than three). `dimension: 'none'` groups by
+   * reportingCurrency alone -- the period-total KPI card's own shape
+   * (still split by currency, per this repository's existing "never sum
+   * two currencies" discipline).
+   *
+   * DELIBERATELY ADDITIVE, NOT A REFACTOR of getNetTotalsByVehicleForCategory
+   * / getNetTotalsByCompanyAcrossVehicles above: those back the existing,
+   * already-shipped O4 report screen and Slice-1 company dashboard; this
+   * codebase's own established rule (see COST_CATEGORY's header in
+   * transport-cost-report.service.ts) is that a widened read path is
+   * added ALONGSIDE an existing narrow one, never rewritten in place, so
+   * a screen a customer may already be reconciling against never changes
+   * its numbers underneath it silently.
+   *
+   * `filters.vehicleIds` is how a transporter filter reaches this
+   * method: AllocationPosting carries no transporterPartnerId (see this
+   * repository's own header / the design doc's Section 16 destination
+   * decision, which applies identically here) -- the service layer
+   * resolves "this transporter's vehicles" via
+   * ContractedVehicleRepository.findByTransporterPartnerId first, then
+   * passes the resulting id list down as a $in, the same
+   * resolve-then-push-down pattern the destination/customer path uses
+   * for the fields that live on the source record instead of the
+   * posting.
+   */
+  async getNetTotalsGrouped(
+    dimension: 'none' | 'costFacingCompany' | 'costCategory' | 'vehicleId',
+    costCategoryScope: AllocationCostCategory[],
+    periodStart: Date,
+    periodEnd: Date,
+    context: TenantContext,
+    filters: {
+      costFacingCompany?: string;
+      costCategory?: AllocationCostCategory;
+      vehicleId?: string;
+      vehicleIds?: string[];
+    } = {}
+  ): Promise<Array<{ key: string | null; reportingCurrency: string; netReportingAmount: number; postingCount: number }>> {
+    // A transporter filter that resolved to zero vehicles must return
+    // "no data", never "ignore the filter" -- an empty $in matches
+    // nothing in real Mongo, which is exactly the fail-closed behaviour
+    // wanted here, but tests/helpers/fake-collection.ts's matcher is
+    // asserted against directly too (see the repository spec), so this
+    // is exercised, not just assumed.
+    if (filters.vehicleIds && filters.vehicleIds.length === 0) {
+      return [];
+    }
+
+    const collection = await this.getCollection();
+    const match: Record<string, unknown> = {
+      ...this.getActiveFilter(context.organizationId),
+      ...tenantScopeService.buildFilter<AllocationPosting>(context, 'orgUnitId'),
+      costCategory: costCategoryMatch(filters.costCategory ?? costCategoryScope),
+      ...buildPeriodFilter(periodStart, periodEnd),
+      ...(filters.costFacingCompany ? { costFacingCompany: filters.costFacingCompany } : {}),
+      ...buildVehicleConstraint(filters.vehicleId, filters.vehicleIds),
+    };
+
+    const groupId: Record<string, string> = { reportingCurrency: '$reportingCurrency' };
+    if (dimension !== 'none') {
+      groupId.key = `$${dimension}`;
+    }
+
+    const rows = await collection
+      .aggregate([
+        { $match: match },
+        {
+          $group: {
+            _id: groupId,
+            netReportingAmount: { $sum: '$reportingAmount' },
+            postingCount: { $sum: 1 },
+          },
+        },
+      ])
+      .toArray();
+
+    return (rows as GroupedRow[]).map((row) => ({
+      key: dimension === 'none' ? null : row._id.key ?? null,
+      reportingCurrency: row._id.reportingCurrency,
+      netReportingAmount: row.netReportingAmount,
+      postingCount: row.postingCount,
+    }));
   }
 
   private buildFilter(filters: AllocationLedgerFilters): Filter<AllocationPosting> {
