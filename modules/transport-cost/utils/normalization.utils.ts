@@ -159,6 +159,24 @@ export function isKnownInvalidTransporter(normalized: string | null): boolean {
 }
 
 /**
+ * OLIVINE LIVE OPERATING MODEL, SLICE 3. The Customer/Destination
+ * master-data de-duplication key -- "Harare"/"HARARE"/"harare " must
+ * all resolve to the same record. Deliberately the EXACT SAME rule as
+ * normalizeTransporter above (uppercase, collapse internal whitespace),
+ * reused under its own name rather than re-implemented, per this file's
+ * own header ("reuse the exact same functions rather than a
+ * re-implementation that could silently drift"). Returns '' for a
+ * blank input rather than null -- unlike the O1/O2 normalizers, a
+ * Customer/Destination name is never optional at the point this is
+ * called (CustomerRepository/DestinationRepository's callers already
+ * reject a blank name before normalizing), so there is no "absent"
+ * case to represent.
+ */
+export function normalizeMasterDataName(raw: string): string {
+  return raw.trim().toUpperCase().replace(/\s+/g, ' ');
+}
+
+/**
  * Detects a multi-plate registration cell (e.g. "AAA 9999/ AAA 9999",
  * "AAA 9999 & BBB 1111" -- audit Section K) from its RAW (pre-
  * normalization) form, since normalizeRegistration already strips the

@@ -100,6 +100,84 @@ const THIRD_PARTY_LINE_COLUMNS: ImportColumnDef[] = [
   { key: 'tonnage', label: 'Tonnage', required: false, type: 'number', example: '32' },
 ];
 
+// ── Slice 3: manual-entry-ONLY master-data search/+Add New wiring. ────
+// Clones of the column sets above with just the customer/destination/
+// transporter/registration fields swapped to `type: 'search-select'`.
+// Deliberately built as a DERIVED copy (withSearchSelect), never a
+// mutation of THIRD_PARTY_PARENT_COLUMNS/THIRD_PARTY_LINE_COLUMNS/
+// VANSALES_COLUMNS/SWIFT_COLUMNS/DEPOT_STO_COLUMNS themselves: every
+// ImportModal instance below keeps using those original arrays,
+// unchanged, so bulk file upload's columns, downloadable template, and
+// coerceValue path stay byte-for-byte what they were before this slice
+// -- exactly the client's own "Do NOT break bulk import... Master-data
+// selection is primarily a manual-entry UX capability" instruction.
+// Only the five ManualEntryModal instances further down this file are
+// given the *_MANUAL_COLUMNS variants.
+//
+// Field mapping, decided by reading each sheet family's own validated
+// schema (validateAndBuildThirdParty/Vansales/Swift/DepotSto) rather
+// than assumed -- see OLIVINE_LIVE_OPERATING_MODEL_GAP_ANALYSIS.md
+// Section 6 for the full record:
+//   3rd Party parent: transporter, registration (Transporter/Vehicle).
+//   3rd Party lines:  customerName, destinationTown (Customer/Destination).
+//   Vansales:         truck, registration (Transporter/Vehicle) ONLY --
+//                      payerName is not customerName, and Vansales has
+//                      no destination field at all.
+//   Swift:             receiversName -> Customer, destinationLocation ->
+//                      Destination. No registration/transporter column
+//                      exists on this sheet family (see SWIFT_COLUMNS'
+//                      own comment).
+//   Depot STO:         customerName, destinationTown, transporter,
+//                      registration -- all four apply.
+function withSearchSelect(
+  columns: ImportColumnDef[],
+  overrides: Record<string, NonNullable<ImportColumnDef['searchSelect']>>
+): ImportColumnDef[] {
+  return columns.map((col) =>
+    overrides[col.key] ? { ...col, type: 'search-select', searchSelect: overrides[col.key] } : col
+  );
+}
+
+const CUSTOMER_SEARCH_SELECT: NonNullable<ImportColumnDef['searchSelect']> = {
+  search: (q: string) => transportCostApi.searchCustomers(q),
+  onCreateNew: async (name: string) => {
+    const result = await transportCostApi.createCustomer(name);
+    return { id: result.id, label: result.name };
+  },
+  createLabel: 'Customer',
+};
+
+const DESTINATION_SEARCH_SELECT: NonNullable<ImportColumnDef['searchSelect']> = {
+  search: (q: string) => transportCostApi.searchDestinations(q),
+  onCreateNew: async (name: string) => {
+    const result = await transportCostApi.createDestination(name);
+    return { id: result.id, label: result.name };
+  },
+  createLabel: 'Destination',
+};
+
+// Search only -- no `onCreateNew`. See master-data.service.ts's header
+// for why manual entry never silently creates a confirmed Transporter/
+// Vehicle identity: a genuinely new one still goes through the existing
+// O1/O2 normalization-review queue exactly as it did before this slice.
+const TRANSPORTER_SEARCH_SELECT: NonNullable<ImportColumnDef['searchSelect']> = {
+  search: (q: string) => transportCostApi.searchTransporters(q),
+};
+
+const VEHICLE_SEARCH_SELECT: NonNullable<ImportColumnDef['searchSelect']> = {
+  search: (q: string) => transportCostApi.searchVehicles(q),
+};
+
+const THIRD_PARTY_PARENT_MANUAL_COLUMNS = withSearchSelect(THIRD_PARTY_PARENT_COLUMNS, {
+  transporter: TRANSPORTER_SEARCH_SELECT,
+  registration: VEHICLE_SEARCH_SELECT,
+});
+
+const THIRD_PARTY_LINE_MANUAL_COLUMNS = withSearchSelect(THIRD_PARTY_LINE_COLUMNS, {
+  customerName: CUSTOMER_SEARCH_SELECT,
+  destinationTown: DESTINATION_SEARCH_SELECT,
+});
+
 const VANSALES_COLUMNS: ImportColumnDef[] = [
   { key: 'payerName', label: 'Payer name', required: true, type: 'string', example: 'Mr Gurjit' },
   COST_FACING_COMPANY_COLUMN,
@@ -171,6 +249,26 @@ const DEPOT_STO_COLUMNS: ImportColumnDef[] = [
   { key: 'pureDrop5l', label: 'Pure drop 5l', required: false, type: 'number', example: '400' },
   { key: 'pureDrop750', label: 'Pure Drop 750', required: false, type: 'number', example: '600' },
 ];
+
+// Slice 3 manual-only variants -- see withSearchSelect's own header
+// comment above THIRD_PARTY_PARENT_MANUAL_COLUMNS for the full
+// reasoning and the field-mapping decision record.
+const VANSALES_MANUAL_COLUMNS = withSearchSelect(VANSALES_COLUMNS, {
+  truck: TRANSPORTER_SEARCH_SELECT,
+  registration: VEHICLE_SEARCH_SELECT,
+});
+
+const SWIFT_MANUAL_COLUMNS = withSearchSelect(SWIFT_COLUMNS, {
+  receiversName: CUSTOMER_SEARCH_SELECT,
+  destinationLocation: DESTINATION_SEARCH_SELECT,
+});
+
+const DEPOT_STO_MANUAL_COLUMNS = withSearchSelect(DEPOT_STO_COLUMNS, {
+  customerName: CUSTOMER_SEARCH_SELECT,
+  transporter: TRANSPORTER_SEARCH_SELECT,
+  registration: VEHICLE_SEARCH_SELECT,
+  destinationTown: DESTINATION_SEARCH_SELECT,
+});
 
 const PAGE_SIZE = 20;
 
@@ -550,8 +648,8 @@ export function TransportCostImportPage() {
         onOpenChange={setThirdPartyManualOpen}
         title="Enter 3rd Party record"
         description="Type in one truck trip instead of uploading a spreadsheet -- one transport operation, which can carry more than one invoice or consignment. Saved the same way a file import is -- same validation, same duplicate check, same normalization review."
-        columns={THIRD_PARTY_PARENT_COLUMNS}
-        lineColumns={THIRD_PARTY_LINE_COLUMNS}
+        columns={THIRD_PARTY_PARENT_MANUAL_COLUMNS}
+        lineColumns={THIRD_PARTY_LINE_MANUAL_COLUMNS}
         onImport={handleThirdPartyImport}
         onImportComplete={handleImportComplete}
         sourceLabel="Manual entry (3rd Party)"
@@ -562,7 +660,7 @@ export function TransportCostImportPage() {
         onOpenChange={setVansalesManualOpen}
         title="Enter Vansales record"
         description={`Type in a single Vansales row for ${vansalesPeriodMonth || 'the selected month'}. Saved the same way a file import is.`}
-        columns={VANSALES_COLUMNS}
+        columns={VANSALES_MANUAL_COLUMNS}
         onImport={handleVansalesImport}
         onImportComplete={handleImportComplete}
         sourceLabel="Manual entry (Vansales)"
@@ -573,7 +671,7 @@ export function TransportCostImportPage() {
         onOpenChange={setSwiftManualOpen}
         title="Enter Swift record"
         description="Type in a single Swift consignment instead of uploading a spreadsheet. Saved the same way a file import is."
-        columns={SWIFT_COLUMNS}
+        columns={SWIFT_MANUAL_COLUMNS}
         onImport={handleSwiftImport}
         onImportComplete={handleImportComplete}
         sourceLabel="Manual entry (Swift)"
@@ -584,7 +682,7 @@ export function TransportCostImportPage() {
         onOpenChange={setDepotStoManualOpen}
         title="Enter Depot STO record"
         description="Type in a single Depot STO movement instead of uploading a spreadsheet. Saved the same way a file import is."
-        columns={DEPOT_STO_COLUMNS}
+        columns={DEPOT_STO_MANUAL_COLUMNS}
         onImport={handleDepotStoImport}
         onImportComplete={handleImportComplete}
         sourceLabel="Manual entry (Depot STO)"

@@ -24,11 +24,37 @@ import { UploadCloud, FileText, X, CheckCircle2, AlertTriangle, Download } from 
 import { buildCsvText, downloadCsvText } from '@/shared/utils/csv-parser.utils';
 import { readTabularFile, IMPORT_FILE_ACCEPT } from '@/shared/utils/excel-parser.utils';
 
-export type ImportColumnType = 'string' | 'number' | 'boolean' | 'date' | 'select';
+export type ImportColumnType = 'string' | 'number' | 'boolean' | 'date' | 'select' | 'search-select';
 
 export interface ImportColumnOption {
   value: string;
   label: string;
+}
+
+/**
+ * OLIVINE LIVE OPERATING MODEL, SLICE 3. Configuration for a
+ * `type: 'search-select'` column -- ManualEntryModal's type-ahead
+ * search + "+ Add New" field (SearchCreateSelect). Optional-`onCreateNew`
+ * is the whole Customer/Destination-vs-Transporter/Vehicle distinction
+ * from one place: Customer/Destination pass it (find-or-create, an
+ * operator can add a genuinely new one), Transporter/Vehicle omit it
+ * (search only, over the existing human-review-gated master data -- see
+ * master-data.service.ts's header for why). Every field here still
+ * submits a plain string (the selected/typed label) through the exact
+ * same `col.key` this column always used -- see this file's own
+ * `coerceValue`, whose default branch already treats an unrecognized
+ * type as plain text, so a 'search-select' column that reaches
+ * ImportModal's own (unrelated) bulk-file code path -- which no caller
+ * currently does -- degrades to a harmless text cell rather than
+ * breaking.
+ */
+export interface ImportColumnSearchSelectConfig {
+  /** Type-ahead lookup. Called with the current (trimmed) query text, debounced client-side. */
+  search: (query: string) => Promise<{ id: string; label: string }[]>;
+  /** When present, "+ Add New <createLabel ?? label>" is offered; selecting it calls this with the typed text. Omit for search-only fields (Transporter/Vehicle). */
+  onCreateNew?: (name: string) => Promise<{ id: string; label: string }>;
+  /** Overrides the column's own `label` in the "+ Add New ..." action text and the empty-state copy. */
+  createLabel?: string;
 }
 
 export interface ImportColumnDef {
@@ -50,6 +76,8 @@ export interface ImportColumnDef {
    *  does not otherwise have (missing/invalid values are still reported
    *  back per-row by the server, exactly like every other column). */
   options?: ImportColumnOption[];
+  /** Required when type === 'search-select'. See ImportColumnSearchSelectConfig's own doc comment. */
+  searchSelect?: ImportColumnSearchSelectConfig;
 }
 
 export interface ImportRowResult {

@@ -182,4 +182,43 @@ export const TRANSPORT_COST_INDEXES = {
       name: 'idx_transportcostvatconfig_tenant_family_updated',
     },
   ],
+
+  // ── Slice 3 master data (organization-level, same reasoning as the
+  //    Phase O2/O3 collections above). ────────────────────────────────
+  tblcustomers: [
+    {
+      // CustomerRepository.findByNormalizedName -- the find-or-create
+      // duplicate-protection pre-check MasterDataService.createCustomer
+      // runs on every "+ Add New Customer" submission, AND the race
+      // defense-in-depth layer: unique so two concurrent creates for the
+      // same normalized name can never both land (see
+      // MasterDataService.findOrCreateNamed's header).
+      key: { tenantId: 1, normalizedName: 1 },
+      name: 'uniq_customer_tenant_normalizedname',
+      unique: true,
+    },
+    {
+      // CustomerRepository.search: {tenantId, active: true, name:
+      // contains}, sorted name asc -- the type-ahead dropdown's own read
+      // path, hit on every keystroke (debounced client-side).
+      key: { tenantId: 1, active: 1, name: 1 },
+      name: 'idx_customer_tenant_active_name',
+    },
+  ],
+  tbldestinations: [
+    {
+      // DestinationRepository.findByNormalizedName -- identical
+      // reasoning to tblcustomers' own uniq_customer_tenant_normalizedname
+      // above.
+      key: { tenantId: 1, normalizedName: 1 },
+      name: 'uniq_destination_tenant_normalizedname',
+      unique: true,
+    },
+    {
+      // DestinationRepository.search -- identical reasoning to
+      // tblcustomers' own idx_customer_tenant_active_name above.
+      key: { tenantId: 1, active: 1, name: 1 },
+      name: 'idx_destination_tenant_active_name',
+    },
+  ],
 } as const;

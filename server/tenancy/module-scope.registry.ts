@@ -650,6 +650,15 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
       // organization-level reasoning as the three above (see the
       // "MIXED-LEVEL MODULE" paragraph below).
       'tbltransportcostvatconfigs',
+      // Slice 3 additions (Master Data Search + "+ Add New") -- same
+      // organization-level reasoning as tbltransportpartners/
+      // tblcontractedvehicles immediately above: a Customer or
+      // Destination is not owned by one branch either, and neither
+      // entity type carries an orgUnitId field (see customer.types.ts/
+      // destination.types.ts's headers). See the "MIXED-LEVEL MODULE"
+      // paragraph below, now extended to cover these two.
+      'tblcustomers',
+      'tbldestinations',
     ],
     level: 'org-unit',
     /**
@@ -676,17 +685,21 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
       'the still-open client confirmations Phase O1 was deliberately scoped to not need; this ' +
       'entry records engineering\'s interim best reading, not a settled answer. Revisit once ' +
       'that confirmation lands, alongside the later phases (O3/O4) it actually gates. ' +
-      'MIXED-LEVEL MODULE (Phase O2/O3): tbltransportpartners, tblcontractedvehicles, ' +
-      'tblnormalizationreviewitems, and tbltransportcostvatconfigs are ORGANIZATION-level, ' +
-      'not org-unit -- a third-party transporter or a contracted vehicle is not owned by ' +
-      'one branch, it can serve several over its life, and currency/VAT-basis configuration ' +
-      'is per sheet family/import, not per branch, so none has a single orgUnitId to filter ' +
-      "by. This is confirmed:true (engineering's own architectural call, not a client " +
-      "business-rule question) even though the module entry as a whole stays confirmed:false: " +
-      'their repositories (transport-partner.repository.ts, contracted-vehicle.repository.ts, ' +
-      'normalization-review.repository.ts, transport-cost-vat-config.repository.ts) ' +
-      'deliberately extend plain BaseRepository, not TenantScopedRepository, and their entity ' +
-      "types carry no orgUnitId field -- see each file's own header. This mirrors finance's " +
+      'MIXED-LEVEL MODULE (Phase O2/O3, extended Slice 3): tbltransportpartners, ' +
+      'tblcontractedvehicles, tblnormalizationreviewitems, tbltransportcostvatconfigs, ' +
+      'tblcustomers, and tbldestinations are ORGANIZATION-level, not org-unit -- a ' +
+      'third-party transporter or a contracted vehicle is not owned by one branch, it can ' +
+      'serve several over its life, currency/VAT-basis configuration is per sheet ' +
+      'family/import, not per branch, and a Customer or Destination is reused the same way ' +
+      'across every branch that ships to or receives from it -- none has a single orgUnitId ' +
+      "to filter by. This is confirmed:true (engineering's own architectural call, not a " +
+      "client business-rule question) even though the module entry as a whole stays " +
+      'confirmed:false: their repositories (transport-partner.repository.ts, ' +
+      'contracted-vehicle.repository.ts, normalization-review.repository.ts, ' +
+      'transport-cost-vat-config.repository.ts, customer.repository.ts, ' +
+      'destination.repository.ts) deliberately extend plain BaseRepository, not ' +
+      'TenantScopedRepository, and their entity types carry no orgUnitId field -- see each ' +
+      "file's own header. This mirrors finance's " +
       "tblglsubmissions, which documents its own level exception in prose within finance's " +
       "single 'org-unit' entry rather than fragmenting that module across two registry " +
       'entries. Allocation postings created by TransportCostPostingService for this module\'s ' +

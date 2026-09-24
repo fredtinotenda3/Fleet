@@ -107,7 +107,25 @@ export function matches(doc: FakeDoc, filter: Record<string, unknown>): boolean 
       !Array.isArray(condition) &&
       Object.keys(condition as object).some((k) => k.startsWith('$'))
     ) {
-      for (const [op, operand] of Object.entries(condition as Record<string, unknown>)) {
+      const conditionObj = condition as Record<string, unknown>;
+
+      // $regex (+ optional $options) is handled as one unit rather than
+      // through the generic per-key operator loop below: `$options`
+      // (e.g. 'i' for case-insensitive) modifies how `$regex` itself is
+      // interpreted rather than being an independent match condition of
+      // its own, and Mongo always emits the pair together -- see
+      // shared/utils/regex.utils.ts's prefixMatch/containsMatch, the
+      // only source of this shape in the codebase (CustomerRepository.
+      // search, DestinationRepository.search, TransportPartnerRepository
+      // .searchConfirmedByName, ContractedVehicleRepository.
+      // searchConfirmedByRegistration).
+      if (typeof conditionObj.$regex === 'string') {
+        const pattern = new RegExp(conditionObj.$regex, typeof conditionObj.$options === 'string' ? conditionObj.$options : undefined);
+        if (typeof value !== 'string' || !pattern.test(value)) return false;
+        continue;
+      }
+
+      for (const [op, operand] of Object.entries(conditionObj)) {
         if (!SUPPORTED_OPERATORS.has(op)) {
           throw new Error(`fake-collection: unsupported operator "${op}"`);
         }
@@ -173,19 +191,58 @@ export class FakeCollection {
     return this.docs.filter((d) => matches(d, normalized));
   }
 
+  /**
+   * `.sort()` previously ignored its argument entirely -- fine for every
+   * caller that only ever asked for the default createdAt-desc order out
+   * of an already createdAt-ordered insertion sequence, but silently
+   * wrong the moment a caller sorts on anything else (CustomerRepository
+   * .search / DestinationRepository.search sort by `name` -- see Slice
+   * 3's customer-destination.repository.spec.ts, the first spec in this
+   * suite to actually depend on non-insertion-order sorting). Sort,
+   * skip, and limit are deferred to `toArray()` and applied in that
+   * fixed order regardless of the order the caller CALLS
+   * .sort()/.skip()/.limit() in -- matching real MongoDB, whose query
+   * planner applies them this way independent of chain-call order.
+   */
   find(filter: Record<string, unknown> = {}) {
-    let rows = this.select(filter);
+    const rows = this.select(filter);
+    let sortSpec: Record<string, 1 | -1> | null = null;
+    let skipN = 0;
+    let limitN: number | undefined;
     const api = {
-      sort: () => api,
+      sort: (spec: Record<string, 1 | -1>) => {
+        sortSpec = spec;
+        return api;
+      },
       skip: (n: number) => {
-        rows = rows.slice(n);
+        skipN = n;
         return api;
       },
       limit: (n: number) => {
-        rows = rows.slice(0, n);
+        limitN = n;
         return api;
       },
-      toArray: async () => rows,
+      toArray: async () => {
+        let result = rows.slice();
+        if (sortSpec) {
+          const entries = Object.entries(sortSpec);
+          result.sort((a, b) => {
+            for (const [field, dir] of entries) {
+              const av = comparable(a[field]);
+              const bv = comparable(b[field]);
+              if (av === null && bv === null) continue;
+              if (av === null) return dir;
+              if (bv === null) return -dir;
+              if (av < bv) return -1 * dir;
+              if (av > bv) return 1 * dir;
+            }
+            return 0;
+          });
+        }
+        if (skipN) result = result.slice(skipN);
+        if (limitN !== undefined) result = result.slice(0, limitN);
+        return result;
+      },
     };
     return api;
   }
@@ -374,7 +431,7 @@ export class FakeCollection {
     const matchStage = stages.find((s) => '$match' in s)?.$match as
       | Record<string, unknown>
       | undefined;
-    let rows: FakeDoc[] = matchStage ? this.select(matchStage) : this.docs.slice();
+    const rows: FakeDoc[] = matchStage ? this.select(matchStage) : this.docs.slice();
 
     const groupStage = stages.find((s) => '$group' in s)?.$group as
       | Record<string, unknown>

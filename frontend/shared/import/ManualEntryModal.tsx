@@ -67,6 +67,7 @@ import {
   SelectValue,
 } from '@/frontend/shared/ui/forms/select';
 import { Spinner } from '@/frontend/shared/ui/feedback/spinner';
+import { SearchCreateSelect } from '@/frontend/shared/ui/forms/SearchCreateSelect';
 import { coerceValue, type ImportColumnDef, type ImportResponse } from './ImportModal';
 
 interface ManualEntryModalProps {
@@ -143,6 +144,29 @@ function FieldInput({
         <Label htmlFor={id}>{col.label}</Label>
       </div>
     );
+  }
+
+  if (col.type === 'search-select') {
+    // OLIVINE LIVE OPERATING MODEL, SLICE 3. `searchSelect` is required
+    // for this type (see ImportColumnDef's own doc comment); if a caller
+    // ever forgets it, degrade to the plain text input below rather than
+    // throwing, since a manual-entry form should never hard-crash on a
+    // config mistake mid-typing.
+    if (col.searchSelect) {
+      return (
+        <SearchCreateSelect
+          id={id}
+          label={col.label}
+          required={col.required}
+          placeholder={col.example ? `e.g. ${col.example}` : 'Search…'}
+          value={value}
+          onChange={onChange}
+          search={col.searchSelect.search}
+          onCreateNew={col.searchSelect.onCreateNew}
+          createLabel={col.searchSelect.createLabel}
+        />
+      );
+    }
   }
 
   if (col.type === 'select') {

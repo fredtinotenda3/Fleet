@@ -10,9 +10,36 @@
 import { Filter } from 'mongodb';
 import { BaseRepository } from '@/server/repositories/base.repository';
 import { ContractedVehicle } from '@/shared/types/contracted-vehicle.types';
+import { containsMatch } from '@/shared/utils/regex.utils';
 
 export class ContractedVehicleRepository extends BaseRepository<ContractedVehicle> {
   protected collectionName = 'tblcontractedvehicles';
+
+  /**
+   * OLIVINE LIVE OPERATING MODEL, SLICE 3. Case-insensitive "contains"
+   * search over registration, CONFIRMED ONLY -- same reasoning as
+   * TransportPartnerRepository.searchConfirmedByName: an unconfirmed
+   * vehicle identity is not yet safe to offer for direct selection.
+   * `transporterPartnerId` narrows to one transporter's own fleet when
+   * supplied (the manual-entry form's likely usage -- pick the
+   * transporter first, then only see that transporter's vehicles), but
+   * is optional: omitted, this searches every confirmed vehicle in the
+   * tenant.
+   */
+  async searchConfirmedByRegistration(
+    query: string,
+    tenantId: string,
+    transporterPartnerId?: string,
+    limit: number = 20
+  ): Promise<ContractedVehicle[]> {
+    const trimmed = query.trim().replace(/\s+/g, '').toUpperCase();
+    const filter: Filter<ContractedVehicle> = {
+      reviewStatus: 'confirmed',
+      ...(transporterPartnerId ? { transporterPartnerId } : {}),
+      ...(trimmed ? { registration: containsMatch(trimmed) } : {}),
+    } as Filter<ContractedVehicle>;
+    return this.findMany(filter, tenantId, { sortBy: 'registration', sortOrder: 'asc', limit });
+  }
 
   /**
    * Exact normalized-registration lookup. For a multi-plate cell, the

@@ -10,9 +10,35 @@
 import { Filter } from 'mongodb';
 import { BaseRepository } from '@/server/repositories/base.repository';
 import { TransportPartner } from '@/shared/types/transport-partner.types';
+import { containsMatch } from '@/shared/utils/regex.utils';
 
 export class TransportPartnerRepository extends BaseRepository<TransportPartner> {
   protected collectionName = 'tbltransportpartners';
+
+  /**
+   * OLIVINE LIVE OPERATING MODEL, SLICE 3. Case-insensitive "contains"
+   * search over canonicalName, CONFIRMED ONLY -- the manual-entry
+   * transporter search box's read path. Deliberately narrower than
+   * findAllForMatching (which also returns 'auto-suggested' rows for the
+   * O2 matcher's own fuzzy-scoring purposes): an unconfirmed identity is
+   * not yet a safe thing to offer a data-entry operator for direct
+   * selection onto a new row, since Phase O2's own central rule is that
+   * NOTHING treats an unconfirmed row as authoritative. Does not search
+   * `aliases` -- aliases exist to make an already-confirmed identity
+   * MATCH more raw spellings automatically at import/review time (see
+   * addAlias), not to be individually offered as separate search
+   * results, which would surface the same transporter under multiple
+   * rows in the dropdown.
+   */
+  async searchConfirmedByName(query: string, tenantId: string, limit: number = 20): Promise<TransportPartner[]> {
+    const trimmed = query.trim();
+    const filter: Filter<TransportPartner> = {
+      reviewStatus: 'confirmed',
+      mergedIntoPartnerId: { $exists: false },
+      ...(trimmed ? { canonicalName: containsMatch(trimmed) } : {}),
+    } as Filter<TransportPartner>;
+    return this.findMany(filter, tenantId, { sortBy: 'canonicalName', sortOrder: 'asc', limit });
+  }
 
   /**
    * Exact match only -- canonicalName or any confirmed alias. This is

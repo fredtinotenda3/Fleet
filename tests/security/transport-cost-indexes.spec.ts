@@ -1,14 +1,15 @@
 // tests/security/transport-cost-indexes.spec.ts
 //
-// Phase O1/O2/O3: verifies the index definitions added for
+// Phase O1/O2/O3/Slice 3: verifies the index definitions added for
 // tbltransportcostsourcerecords, tbltransportpartners,
-// tblcontractedvehicles, tblnormalizationreviewitems, and (Phase O3)
-// tbltransportcostvatconfigs are structurally sound and actually wired
-// into the merged INDEXES export, mirroring tests/security/finance-
-// indexes.spec.ts's approach and rationale (cannot prove an EXPLAIN plan
-// without a live Mongo instance; proves the addendum isn't defined-but-
-// forgotten, is tenant-isolated, and doesn't collide with any other
-// addendum's index names).
+// tblcontractedvehicles, tblnormalizationreviewitems, (Phase O3)
+// tbltransportcostvatconfigs, and (Slice 3) tblcustomers/tbldestinations
+// are structurally sound and actually wired into the merged INDEXES
+// export, mirroring tests/security/finance-indexes.spec.ts's approach
+// and rationale (cannot prove an EXPLAIN plan without a live Mongo
+// instance; proves the addendum isn't defined-but-forgotten, is
+// tenant-isolated, and doesn't collide with any other addendum's index
+// names).
 
 import { INDEXES } from '../../infrastructure/database/indexes';
 import { TRANSPORT_COST_INDEXES } from '../../infrastructure/database/indexes.transport-cost-addendum';
@@ -20,6 +21,9 @@ const TRANSPORT_COST_COLLECTIONS = [
   'tblnormalizationreviewitems',
   // Phase O3.
   'tbltransportcostvatconfigs',
+  // Slice 3.
+  'tblcustomers',
+  'tbldestinations',
 ] as const;
 
 describe('Olivine transport-cost collection indexes (Phase O1/O2/O3)', () => {
@@ -107,5 +111,36 @@ describe('Olivine transport-cost collection indexes (Phase O1/O2/O3)', () => {
       (index) => JSON.stringify(index.key) === JSON.stringify({ tenantId: 1, kind: 1, rawValue: 1, status: 1 })
     );
     expect(has).toBe(true);
+  });
+
+  // ── Slice 3: Master Data Search + "+ Add New". ──────────────────────
+
+  it('Customer normalizedName is a UNIQUE index per tenant -- the find-or-create duplicate-protection floor', () => {
+    const uniqueIndex = TRANSPORT_COST_INDEXES.tblcustomers.find(
+      (index) => index.name === 'uniq_customer_tenant_normalizedname'
+    );
+    expect(uniqueIndex).toBeDefined();
+    expect((uniqueIndex as any).unique).toBe(true);
+    expect(uniqueIndex!.key).toEqual({ tenantId: 1, normalizedName: 1 });
+  });
+
+  it('Destination normalizedName is a UNIQUE index per tenant -- the find-or-create duplicate-protection floor', () => {
+    const uniqueIndex = TRANSPORT_COST_INDEXES.tbldestinations.find(
+      (index) => index.name === 'uniq_destination_tenant_normalizedname'
+    );
+    expect(uniqueIndex).toBeDefined();
+    expect((uniqueIndex as any).unique).toBe(true);
+    expect(uniqueIndex!.key).toEqual({ tenantId: 1, normalizedName: 1 });
+  });
+
+  it('CustomerRepository.search / DestinationRepository.search are backed by {tenantId, active, name} indexes', () => {
+    const hasCustomer = TRANSPORT_COST_INDEXES.tblcustomers.some(
+      (index) => JSON.stringify(index.key) === JSON.stringify({ tenantId: 1, active: 1, name: 1 })
+    );
+    const hasDestination = TRANSPORT_COST_INDEXES.tbldestinations.some(
+      (index) => JSON.stringify(index.key) === JSON.stringify({ tenantId: 1, active: 1, name: 1 })
+    );
+    expect(hasCustomer).toBe(true);
+    expect(hasDestination).toBe(true);
   });
 });

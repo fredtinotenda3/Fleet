@@ -19,6 +19,20 @@ import type { TransportCostAllocationReport, PostingDrillDown, DataQualityExcept
 
 const BASE = '/api/transport-cost';
 
+/** Slice 3: a single type-ahead result -- backend's MasterDataSearchResult. */
+export interface MasterDataSearchResult {
+  id: string;
+  label: string;
+}
+
+/** Slice 3: the response of a Customer/Destination find-or-create POST. */
+export interface MasterDataCreateResult {
+  id: string;
+  name: string;
+  /** false when the name already existed and the existing record was returned instead of creating a duplicate. */
+  created: boolean;
+}
+
 export interface TransportCostSourceRecordListParams {
   sheetFamily?: TransportCostSheetFamily;
   importBatchId?: string;
@@ -136,6 +150,44 @@ export const transportCostApi = {
       params: { periodStart: periodStart.toISOString(), periodEnd: periodEnd.toISOString(), format: 'csv' },
     });
     downloadBlob(blob, filename ?? fallbackFilename);
+  },
+
+  // ── Slice 3: Master Data Search + "+ Add New". ──────────────────────
+  // Customer/Destination are write-capable find-or-create; Transporter/
+  // Vehicle are search-only over the existing, review-gated master data
+  // -- see modules/transport-cost/services/master-data.service.ts's
+  // header for why there is no createTransporter/createVehicle here.
+
+  /** GET /api/transport-cost/customers/search?q=... */
+  async searchCustomers(query: string): Promise<MasterDataSearchResult[]> {
+    return apiClient.get<MasterDataSearchResult[]>(`${BASE}/customers/search`, { params: { q: query } });
+  },
+
+  /** POST /api/transport-cost/customers -- find-or-create, immediately selectable. */
+  async createCustomer(name: string): Promise<MasterDataCreateResult> {
+    return apiClient.post<MasterDataCreateResult>(`${BASE}/customers`, { name });
+  },
+
+  /** GET /api/transport-cost/destinations/search?q=... */
+  async searchDestinations(query: string): Promise<MasterDataSearchResult[]> {
+    return apiClient.get<MasterDataSearchResult[]>(`${BASE}/destinations/search`, { params: { q: query } });
+  },
+
+  /** POST /api/transport-cost/destinations -- find-or-create, immediately selectable. */
+  async createDestination(name: string): Promise<MasterDataCreateResult> {
+    return apiClient.post<MasterDataCreateResult>(`${BASE}/destinations`, { name });
+  },
+
+  /** GET /api/transport-cost/transporters/search?q=... -- confirmed TransportPartner rows only. */
+  async searchTransporters(query: string): Promise<MasterDataSearchResult[]> {
+    return apiClient.get<MasterDataSearchResult[]>(`${BASE}/transporters/search`, { params: { q: query } });
+  },
+
+  /** GET /api/transport-cost/vehicles/search?q=&transporterPartnerId=... -- confirmed ContractedVehicle rows only. */
+  async searchVehicles(query: string, transporterPartnerId?: string): Promise<MasterDataSearchResult[]> {
+    return apiClient.get<MasterDataSearchResult[]>(`${BASE}/vehicles/search`, {
+      params: { q: query, transporterPartnerId },
+    });
   },
 };
 
