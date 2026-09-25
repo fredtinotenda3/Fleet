@@ -13,7 +13,7 @@ import { successResponse, errorResponse } from '@/server/utils/response.utils';
 import { AppError, UnauthorizedError, ValidationError, isAppError, describeError } from '@/server/errors/app.errors';
 import { rateLimiter } from '@/infrastructure/security/rate-limit';
 import { getClientIpOrUndefined } from '@/infrastructure/security/client-ip';
-import { Role } from '@/server/permissions/roles';
+import { resolveRole } from '@/lib/authOptions';
 
 /**
  * BACKLOG ITEM 3: was the leftmost `x-forwarded-for` entry, i.e. a
@@ -179,18 +179,43 @@ export class TokenController {
       });
 
       /**
-       * FIX (critical -- fail-open privilege escalation). This used to
-       * default a missing/empty `roles` field to
+       * FIX (critical -- fail-open privilege escalation, AND a separate
+       * always-VIEWER privilege bug found while tracing it).
+       *
+       * This used to default a missing/empty `roles` field to
        * `['super_admin', 'organization_owner']` -- the two most
        * powerful roles in the system. Any provisioning gap that left
        * `tbladmin.roles` unset (confirmed in production for at least
        * one account) silently handed that account full platform admin
        * and full org-owner privileges instead of restricting it.
        * Failures in auth must fail CLOSED: an account with no roles on
-       * record gets the least-privileged role, not the most.
+       * record gets the least-privileged role, not the most. That part
+       * of the fix (falling back to VIEWER) was correct.
+       *
+       * What was still wrong: `tbladmin` has no `roles` ARRAY field
+       * anywhere in the normal account-creation paths -- both
+       * `organizationService.createOrganization()`'s owner account and
+       * `organizationService.addMemberDirect()`'s member accounts write
+       * only the legacy SINGULAR `Role` field (see the `User` interface
+       * in lib/authOptions.ts). `admin.roles` was therefore undefined
+       * for every ordinarily-created account, not just misprovisioned
+       * ones, so the VIEWER fallback fired unconditionally on THIS
+       * endpoint -- the one the UI's login form actually calls. A member
+       * (or an organization owner) added the normal way would log in
+       * downgraded to VIEWER regardless of their real role, no matter
+       * how correct their credentials were, until their token happened
+       * to go through the refresh path (which already resolved the
+       * singular field correctly). Fixed: fall back to resolving the
+       * singular `Role` field through the SAME mapping
+       * lib/authOptions.ts's authorize() uses (imported, not re-copied
+       * -- a hand-duplicated copy of this exact map in
+       * refresh-token.service.ts had already drifted out of sync with
+       * this one, missing five roles added in a later phase; fixed
+       * alongside this to import the same function instead of
+       * maintaining a second copy that can drift again).
        */
       const roles: string[] =
-        admin.roles && admin.roles.length > 0 ? admin.roles : [Role.VIEWER];
+        admin.roles && admin.roles.length > 0 ? admin.roles : [resolveRole(admin.Role)];
 
       const pair = await refreshTokenService.issueTokenPair({
         userId,

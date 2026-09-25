@@ -87,15 +87,22 @@ function CredentialsPanel({ result, onDone }: { result: AddMemberDirectResult; o
           <strong>{result.member.name}</strong> has been added
           {result.orgUnitAssigned ? ' and scoped to the selected branch' : ''}.
         </p>
-        {result.reusedExistingAccount ? (
+        {result.reusedExistingAccount && !result.temporaryPassword ? (
           <p className="mt-1 text-caption text-muted-foreground">
-            This email already had an account, so it was linked instead of creating a new one — no new
-            password was generated.
+            This email already had an account, so it was linked instead of creating a new one — you left the
+            password blank, so the account&apos;s existing password was left unchanged.
           </p>
         ) : result.temporaryPassword ? (
           <>
+            {result.reusedExistingAccount && (
+              <p className="mt-1 text-caption text-muted-foreground">
+                This email already had an account, so it was linked instead of creating a new one — its password
+                was updated to the one you set below.
+              </p>
+            )}
             <p className="mt-2 text-caption text-muted-foreground">
-              Temporary password (shown only once — share it securely):
+              {result.reusedExistingAccount ? 'Password' : 'Temporary password'} (shown only once — share it
+              securely):
             </p>
             <div className="flex items-center gap-2 mt-1">
               <code className="flex-1 px-2 py-1 font-mono text-sm border rounded-sm border-border bg-background">

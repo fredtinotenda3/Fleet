@@ -12,7 +12,7 @@ import { sessionRepository, SessionRepository } from '../repositories/session.re
 import { IssuedTokenPair } from '../types/refresh-token.types';
 import { AppError, UnauthorizedError } from '@/server/errors/app.errors';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
-import { Role } from '@/server/permissions/roles';
+import { resolveRole } from '@/lib/authOptions';
 
 export interface IssueTokenPairParams {
   userId: string;
@@ -39,31 +39,22 @@ export interface IssueTokenPairParams {
  * actual role. A driver, viewer, or mechanic authenticating through
  * this path silently became a super admin on every token refresh.
  *
- * Mirrors the exact same LEGACY_ROLE_MAP resolution used in
- * lib/authOptions.ts's authorize(), so the mapping from the legacy
- * tbladmin.Role string to the modern Role enum can never drift between
- * the cookie-session login path and the refresh-token path. An
- * unmapped/missing role resolves to VIEWER (least privilege), never to
- * super_admin -- consistent with resolveRole()'s "must never fail open"
- * rule in authOptions.ts.
+ * Resolves the legacy tbladmin.Role string through the SAME
+ * resolveRole()/LEGACY_ROLE_MAP lib/authOptions.ts's authorize() uses --
+ * imported directly, not re-copied. A hand-duplicated copy used to live
+ * here and had already drifted out of sync with the canonical map
+ * (missing organization_admin/branch_manager/department_manager/
+ * workshop_manager/supervisor, all added in a later phase to
+ * lib/authOptions.ts and never back-ported here), which meant an
+ * account with one of those roles refreshing its token silently lost
+ * privileges it had at login. Importing the single source of truth
+ * instead of a second copy is what actually keeps this from drifting
+ * again -- consistent with this codebase's own "delete duplicate
+ * sentinel implementations" precedent elsewhere in the tenancy/auth
+ * layer. An unmapped/missing role resolves to VIEWER (least privilege),
+ * never to super_admin -- resolveRole()'s own "must never fail open"
+ * rule, unchanged by this fix.
  */
-const LEGACY_ROLE_MAP: Record<string, Role> = {
-  admin: Role.ORGANIZATION_OWNER,
-  super_admin: Role.SUPER_ADMIN,
-  organization_owner: Role.ORGANIZATION_OWNER,
-  fleet_manager: Role.FLEET_MANAGER,
-  accountant: Role.ACCOUNTANT,
-  dispatcher: Role.DISPATCHER,
-  driver: Role.DRIVER,
-  mechanic: Role.MECHANIC,
-  auditor: Role.AUDITOR,
-  viewer: Role.VIEWER,
-};
-
-function resolveLegacyRole(rawRole: string | undefined | null): Role {
-  if (!rawRole) return Role.VIEWER;
-  return LEGACY_ROLE_MAP[rawRole.trim().toLowerCase()] ?? Role.VIEWER;
-}
 
 /**
  * Issues, rotates, and revokes refresh/access token pairs for
@@ -230,7 +221,7 @@ export class RefreshTokenService {
       email: admin.Email,
       // FIX: resolve the real per-account role via the same legacy map
       // authOptions.ts uses, instead of failing open to super_admin.
-      roles: [resolveLegacyRole(admin.Role)],
+      roles: [resolveRole(admin.Role)],
     };
   }
 

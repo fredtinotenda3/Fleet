@@ -5,11 +5,15 @@
 // tenant-isolation suite can run in CI (and in restricted build sandboxes)
 // without downloading a mongod binary.
 //
-// It is NOT a Mongo emulator. It implements equality, $ne, $in, $nin and
-// $exists — which is the whole surface the repository's generated filters
-// touch. If a future repository change starts emitting an operator this
-// does not understand, `matches()` throws loudly rather than silently
-// returning the wrong rows, so an unsupported operator can never make an
+// It is NOT a Mongo emulator. It implements equality, $ne, $in, $nin,
+// $exists, $gte/$lte/$gt/$lt, and Mongo's implicit array-field-contains
+// rule for plain equality/$in/$nin against an array-valued field (added
+// for NormalizationReviewRepository's sourceRecordIds containment
+// queries, OLIVINE LIVE OPERATING MODEL SLICE 5) -- which is the whole
+// surface the repository's generated filters touch. If a future
+// repository change starts emitting an operator this does not
+// understand, `matches()` throws loudly rather than silently returning
+// the wrong rows, so an unsupported operator can never make an
 // isolation test pass by accident.
 
 export interface FakeDoc {
@@ -57,9 +61,18 @@ function matchOperator(value: unknown, operator: string, operand: unknown): bool
     case '$ne':
       return value !== operand;
     case '$in':
-      return Array.isArray(operand) && operand.includes(value as never);
+      if (!Array.isArray(operand)) return false;
+      // Real Mongo's $in against an ARRAY-valued field matches when ANY
+      // element of the field overlaps the operand list (this is exactly
+      // how NormalizationReviewRepository.findPendingForSourceRecordIds
+      // queries sourceRecordIds -- see that method's own header), not
+      // just when the whole field value is itself one of the operands.
+      if (Array.isArray(value)) return value.some((v) => operand.includes(v as never));
+      return operand.includes(value as never);
     case '$nin':
-      return Array.isArray(operand) && !operand.includes(value as never);
+      if (!Array.isArray(operand)) return false;
+      if (Array.isArray(value)) return !value.some((v) => operand.includes(v as never));
+      return !operand.includes(value as never);
     case '$exists':
       return (value !== undefined) === Boolean(operand);
     case '$gte': {
@@ -134,6 +147,28 @@ export function matches(doc: FakeDoc, filter: Record<string, unknown>): boolean 
       continue;
     }
 
+    // A plain (non-operator) filter against an ARRAY-valued field matches
+    // if the array CONTAINS the given value -- real Mongo's implicit
+    // array-element-equality rule (e.g.
+    // NormalizationReviewRepository.findPendingContainingSourceRecord's
+    // `{ sourceRecordIds: sourceRecordId }` filter, a bare scalar against
+    // an array field) -- not just when the whole field value equals it.
+    if (Array.isArray(value)) {
+      if (!value.includes(condition as never)) return false;
+      continue;
+    }
+    // Real Mongo compares a Date field by its BSON value (millis), never
+    // by object identity -- two separately-constructed `Date` instances
+    // for the same instant are equal to Mongo but never `===` in JS
+    // (e.g. TransportCostRecordCommandService.editSourceRecord's
+    // `{cancelledAt: view.source.cancelledAt}` race guard, comparing a
+    // Date read moments earlier against whatever's in the store now).
+    if (value instanceof Date || condition instanceof Date) {
+      if (!(value instanceof Date) || !(condition instanceof Date) || value.getTime() !== condition.getTime()) {
+        return false;
+      }
+      continue;
+    }
     if (value !== condition) return false;
   }
   return true;

@@ -74,6 +74,47 @@ export class NormalizationReviewRepository extends BaseRepository<NormalizationR
     if (kind) (filter as any).kind = kind;
     return this.count(filter, tenantId);
   }
+
+  /**
+   * OLIVINE LIVE OPERATING MODEL, SLICE 5. Whether a source record still
+   * has an unresolved identity -- i.e. whether deriveOperationalStatus()
+   * should report `needs-review` for it. `sourceRecordIds` accumulates
+   * every waiting record onto a 'pending' item (see appendSourceRecordId
+   * above), so this is a plain containment query, not a new index or a
+   * new write path -- the array grows via the existing O1/O2 flow only.
+   */
+  async findPendingContainingSourceRecord(
+    sourceRecordId: string,
+    tenantId: string
+  ): Promise<NormalizationReviewItem | null> {
+    return this.findOne(
+      { status: 'pending', sourceRecordIds: sourceRecordId } as Filter<NormalizationReviewItem>,
+      tenantId
+    );
+  }
+
+  /**
+   * ADDED, SLICE 5. Bulk sibling of findPendingContainingSourceRecord
+   * above, for the operational table's per-page status column (see
+   * TransportCostRecordCommandService.getOperationalStatusesForRecords):
+   * every 'pending' item whose sourceRecordIds intersects the given set,
+   * in ONE query for the whole page rather than one per row. The caller
+   * still has to test containment per record afterwards (one pending
+   * item's sourceRecordIds can reference several of the page's records,
+   * or none of them, and a returned item's array is never filtered down
+   * to just the requested ids), same as it would with N separate calls.
+   */
+  async findPendingForSourceRecordIds(
+    sourceRecordIds: string[],
+    tenantId: string
+  ): Promise<NormalizationReviewItem[]> {
+    if (sourceRecordIds.length === 0) return [];
+    return this.findMany(
+      { status: 'pending', sourceRecordIds: { $in: sourceRecordIds } } as Filter<NormalizationReviewItem>,
+      tenantId,
+      { limit: 100000 }
+    );
+  }
 }
 
 export const normalizationReviewRepository = new NormalizationReviewRepository();

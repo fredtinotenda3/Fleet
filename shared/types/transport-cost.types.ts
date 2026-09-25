@@ -435,6 +435,37 @@ export interface TransportCostSourceRecord extends OrgUnitScopedEntity {
   netAmount?: number | null;
   /** Derived gross (incl-VAT) figure, same null-vs-0 rule as netAmount. */
   grossAmount?: number | null;
+
+  // --- OLIVINE LIVE OPERATING MODEL, SLICE 5 (see
+  // OLIVINE_LIVE_OPERATING_MODEL_GAP_ANALYSIS.md Section 8.1 for the
+  // full operational-lifecycle design). Deliberately the ONLY new
+  // stored fields this slice adds to this record -- every other
+  // lifecycle state (needs-review / ready-to-post / posted / reversed)
+  // is DERIVED at read time from existing data (the O2 review queue,
+  // the O3 ledger), never duplicated into a second, driftable status
+  // field here. "Cancelled" is the one fact nothing else already
+  // captures, so it alone gets a stored field. See
+  // transport-cost-lifecycle.service.ts's deriveOperationalStatus(). ---
+
+  /** Set only via the Cancel command (pre-posting: no ledger effect;
+   *  already-posted: set alongside a reversePosting() call with no
+   *  replacement -- see the lifecycle doc's REVERSED vs CANCELLED
+   *  distinction). Undefined/null for every record that was never
+   *  cancelled -- never defaulted to a falsy "not cancelled" sentinel
+   *  date, only ever unset. */
+  cancelledAt?: Date | null;
+  /** userId of whoever cancelled this record. Set iff cancelledAt is. */
+  cancelledBy?: string;
+  /** Required, non-empty, whenever cancelledAt is set -- same "a refusal
+   *  needs a reason" discipline as RejectReviewItemCommand's own
+   *  rejectedReason. */
+  cancelReason?: string;
+
+  /** Set only when this record was created by the Duplicate command,
+   *  pointing at the original record's id -- provenance only, never
+   *  read by any financial computation. Undefined for every
+   *  non-duplicated record, including every pre-Slice-5 row. */
+  duplicatedFromId?: string;
 }
 
 /** Whether a row's `amount` is VAT-inclusive, VAT-exclusive, or not yet

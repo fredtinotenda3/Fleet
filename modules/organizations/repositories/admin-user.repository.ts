@@ -74,6 +74,29 @@ export class AdminUserRepository {
       { $set: { Password: passwordHash, updatedAt: new Date() } }
     );
   }
+
+  /**
+   * Stamps this account's tenant scope. Added for
+   * organization.service.ts's addMemberDirect() reuse path: an existing
+   * tbladmin account being linked into a new organization previously had
+   * its tenantId left completely untouched, so the account continued to
+   * authenticate against whatever tenant (or no tenant) it had before --
+   * meaning a "member added" this way would log in scoped to the WRONG
+   * organization's data, or to none. Same trust boundary as
+   * resetPassword(): callers must have already established (via
+   * isLegacySentinelTenant/matchesTenant) that overwriting this
+   * particular account's tenantId is safe -- this method does not
+   * re-check that itself, exactly as resetPassword() does not re-check
+   * authorization to change a password.
+   */
+  async setTenantId(id: string, tenantId: string): Promise<void> {
+    if (!ObjectId.isValid(id)) return;
+    const collection = await this.getCollection();
+    await collection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { tenantId, updatedAt: new Date() } }
+    );
+  }
 }
 
 export const adminUserRepository = new AdminUserRepository();

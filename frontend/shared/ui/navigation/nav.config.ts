@@ -294,6 +294,19 @@ export const NAV_SECTIONS: NavSection[] = [
             href: '/transport-cost/import',
             permissions: [Permission.TRANSPORT_COST_IMPORT],
           },
+          {
+            // ADDED, OLIVINE LIVE OPERATING MODEL, SLICE 5. The Phase O2
+            // review queue's first-ever frontend entry point -- the
+            // backend (matcher, commands, routes) existed since O1/O2 but
+            // was unreachable from the UI (see app/api/transport-cost/
+            // normalization-review/route.ts's own header). VIEW-gated to
+            // match the queue's own GET route; the confirm/reject actions
+            // inside the page are separately gated on NORMALIZE.
+            key: 'transport-cost-review',
+            label: 'Review Queue',
+            href: '/transport-cost/review',
+            permissions: [Permission.TRANSPORT_COST_VIEW],
+          },
         ],
       },
     ],

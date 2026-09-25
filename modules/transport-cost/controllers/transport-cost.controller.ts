@@ -11,14 +11,17 @@ import { bootstrapCqrs } from '@/server/cqrs/cqrs.module';
 import { transportCostCommandService } from '../services/transport-cost-command.service';
 import { transportCostQueryService } from '../services/transport-cost-query.service';
 import { transportCostPostingService } from '../services/transport-cost-posting.service';
+import { transportCostRecordCommandService } from '../services/transport-cost-record-command.service';
 import { transportCostReportService, CommandCentreFilters, CommandCentreGranularity } from '../services/transport-cost-report.service';
 import { buildDataQualityExceptionsCsv } from '../generators/data-quality-exceptions-csv.generator';
 import { TransportCostImportRow } from '../commands/import-transport-cost.command';
 import { TransportCostSheetFamily, TransportCostSourceRecordFilters } from '@/shared/types/transport-cost.types';
 import { validatePaginationParams } from '@/shared/utils/pagination.utils';
 import { successResponse, paginatedResponse, errorResponse } from '@/server/utils/response.utils';
-import { ValidationError, isAppError, describeError } from '@/server/errors/app.errors';
+import { ValidationError, ForbiddenError, isAppError, describeError } from '@/server/errors/app.errors';
 import { resolveTenantContext, resolveTenantContextWithUser } from '@/server/utils/tenant-context.utils';
+import { getAuthContext, hasPermission } from '@/server/auth/auth-context';
+import { Permission } from '@/server/permissions/roles';
 import { userWriteScope } from '@/server/tenancy/write-scope';
 import { applySecurityHeaders } from '@/infrastructure/security/security-headers';
 
@@ -407,6 +410,161 @@ export class TransportCostController {
       };
 
       const result = await transportCostReportService.getCommandCentreSummary(context, start, end, granularity, filters);
+      return successResponse(result);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // OLIVINE LIVE OPERATING MODEL, SLICE 5 -- operational-record CRUD,
+  // review-adjacent correction/cancellation/duplication. See
+  // OLIVINE_LIVE_OPERATING_MODEL_GAP_ANALYSIS.md Section 8 for the full
+  // design record. Every method below delegates to
+  // TransportCostRecordCommandService, which itself reuses
+  // AllocationService.reversePosting() and
+  // TransportCostPostingService.postSourceRecord() rather than
+  // reimplementing correction/reversal logic -- see that service's own
+  // header.
+  // ---------------------------------------------------------------------
+
+  /** GET /api/transport-cost/source-records/[id] -- operational detail
+   *  view: the source record, its derived lifecycle status, and its
+   *  full ledger posting history (original/reversal/current, exactly as
+   *  AllocationLedgerRepository.findBySource returns it -- never
+   *  recomputed or summarized here). Read-only, VIEW-gated. */
+  /** GET /api/transport-cost/source-records/statuses?ids=a,b,c -- Slice 5.
+   *  Bulk lifecycle status for the operational table's status column;
+   *  see TransportCostRecordCommandService.getOperationalStatusesForIds
+   *  for why this is capped-batch and tenant/org-unit scope-checked per
+   *  id rather than a raw findById loop. GET (not POST) since this is a
+   *  pure read with no side effect, matching every other list/search
+   *  endpoint in this controller. */
+  async getSourceRecordStatuses(req: NextRequest) {
+    try {
+      const context = await resolveTenantContext(req);
+      const idsParam = req.nextUrl.searchParams.get('ids') ?? '';
+      const ids = idsParam
+        .split(',')
+        .map((id) => id.trim())
+        .filter(Boolean);
+      if (ids.length === 0) {
+        return successResponse({});
+      }
+      if (ids.length > 200) {
+        throw new ValidationError('At most 200 ids may be requested at once.');
+      }
+      const result = await transportCostRecordCommandService.getOperationalStatusesForIds(context, ids);
+      return successResponse(result);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async getOperationalRecord(req: NextRequest, sourceRecordId: string) {
+    try {
+      const context = await resolveTenantContext(req);
+      const result = await transportCostRecordCommandService.getOperationalStatus(context, sourceRecordId);
+      return successResponse(result);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** PATCH /api/transport-cost/source-records/[id] -- Edit. Non-financial
+   *  fields on any non-cancelled record, or any field on a record that
+   *  has never been posted. Financial-field edits on a POSTED record are
+   *  refused (see TransportCostRecordCommandService.editSourceRecord) --
+   *  use the Correct action instead. NORMALIZE-gated: this action can
+   *  never itself trigger a ledger reversal or posting. */
+  async editSourceRecord(req: NextRequest, sourceRecordId: string) {
+    try {
+      const { context, userId } = await resolveTenantContextWithUser(req);
+      const patch = await req.json();
+      if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+        throw new ValidationError('Request body must be an object of fields to edit.');
+      }
+      const result = await transportCostRecordCommandService.editSourceRecord(context, userId, sourceRecordId, patch);
+      return successResponse(result);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** POST /api/transport-cost/source-records/[id]/correct -- Correct.
+   *  The only way to change a financial field on a POSTED record:
+   *  applies the patch, then re-runs postSourceRecord(), which performs
+   *  the existing reverse-then-repost sequence. FINANCE_MANAGE-gated --
+   *  the same privilege boundary the existing /postings routes already
+   *  use, since this action can always result in a ledger write. */
+  async correctPostedSourceRecord(req: NextRequest, sourceRecordId: string) {
+    try {
+      const { context, userId } = await resolveTenantContextWithUser(req);
+      const patch = await req.json();
+      if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+        throw new ValidationError('Request body must be an object of fields to correct.');
+      }
+      const result = await transportCostRecordCommandService.correctPostedSourceRecord(
+        context,
+        userId,
+        sourceRecordId,
+        patch
+      );
+      return successResponse(result);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** POST /api/transport-cost/source-records/[id]/cancel -- Cancel. Body:
+   *  { reason }. Route is wired at the lower NORMALIZE privilege level
+   *  (cancelling an unposted mistake is routine operational cleanup),
+   *  but a cancel that would reverse an ALREADY-POSTED record's ledger
+   *  entry is a financial action and requires FINANCE_MANAGE as well --
+   *  checked here, in the handler, once the record's actual state is
+   *  known (the route wrapper alone cannot know this before reading the
+   *  record). Least-privilege: entering/cancelling a record is not the
+   *  same authority as reversing a financial posting. */
+  async cancelSourceRecord(req: NextRequest, sourceRecordId: string) {
+    try {
+      const { context, userId } = await resolveTenantContextWithUser(req);
+      const body = await req.json();
+      const reason = (body as any)?.reason;
+      if (typeof reason !== 'string' || !reason.trim()) {
+        throw new ValidationError('reason is required to cancel a record');
+      }
+
+      const view = await transportCostRecordCommandService.getOperationalStatus(context, sourceRecordId);
+      if (view.status === 'posted') {
+        const authContext = await getAuthContext(req);
+        if (!authContext || !hasPermission(authContext, Permission.FINANCE_MANAGE)) {
+          throw new ForbiddenError(
+            'Cancelling an already-posted record reverses its ledger entry and requires finance-management permission.'
+          );
+        }
+      }
+
+      const result = await transportCostRecordCommandService.cancelSourceRecord(
+        context,
+        userId,
+        sourceRecordId,
+        reason.trim()
+      );
+      return successResponse(result);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** POST /api/transport-cost/source-records/[id]/duplicate -- Duplicate.
+   *  Creates a new, unposted record copying the original's editable
+   *  fields; never copies a confirmed vehicle/transporter identity or
+   *  links to the original's ledger posting. NORMALIZE-gated -- creates
+   *  an operational record, never a ledger write. */
+  async duplicateSourceRecord(req: NextRequest, sourceRecordId: string) {
+    try {
+      const { context, userId } = await resolveTenantContextWithUser(req);
+      const result = await transportCostRecordCommandService.duplicateSourceRecord(context, userId, sourceRecordId);
       return successResponse(result);
     } catch (error) {
       return this.handleError(error);

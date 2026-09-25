@@ -33,6 +33,25 @@ import type { AllocationPosting } from '@/modules/finance/types/allocation.types
 // (shared/types/transport-cost.types.ts) is the single source of truth
 // for what a line is; this file only re-exports it for frontend imports.
 import type { TransportCostLine } from '@/shared/types/transport-cost.types';
+// OLIVINE LIVE OPERATING MODEL, SLICE 5. Same re-export-not-restate
+// technique -- these are the exact backend response/request shapes for
+// the operational table, detail view, and O2 review-queue frontend;
+// restating them here would let the frontend silently drift from what
+// TransportCostRecordCommandService/the review-queue controller methods
+// actually return.
+import type {
+  OperationalStatus,
+  OperationalStatusResult,
+} from '@/modules/transport-cost/services/transport-cost-lifecycle.service';
+import type {
+  OperationalRecordView,
+  SourceRecordPatch,
+} from '@/modules/transport-cost/services/transport-cost-record-command.service';
+import type { PostSourceRecordOutcome } from '@/modules/transport-cost/services/transport-cost-posting.service';
+import type { NormalizationReviewItem, NormalizationKind } from '@/shared/types/normalization-review.types';
+import type { ConfirmReviewMatchResult } from '@/modules/transport-cost/commands/handlers/confirm-review-match.handler';
+import type { ConfirmReviewNewResult } from '@/modules/transport-cost/commands/handlers/confirm-review-new.handler';
+import type { BusinessStream } from '@/shared/types/contracted-vehicle.types';
 
 export type {
   TransportCostAllocationReport,
@@ -50,6 +69,16 @@ export type {
   CommandCentreTimeSeriesBucket,
   CommandCentreDataQuality,
   CommandCentreSummary,
+  OperationalStatus,
+  OperationalStatusResult,
+  OperationalRecordView,
+  SourceRecordPatch,
+  PostSourceRecordOutcome,
+  NormalizationReviewItem,
+  NormalizationKind,
+  ConfirmReviewMatchResult,
+  ConfirmReviewNewResult,
+  BusinessStream,
 };
 export type { CostFacingCompany, CostFacingCompanyOption } from '@/shared/types/cost-facing-company.types';
 export { COST_FACING_COMPANIES } from '@/shared/types/cost-facing-company.types';

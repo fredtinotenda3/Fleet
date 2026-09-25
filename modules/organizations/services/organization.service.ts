@@ -29,7 +29,7 @@ import { Role, ORGANIZATION_ROLES, ASSIGNABLE_ORGANIZATION_ROLES } from '@/serve
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 import { resolveOrganization } from '@/server/tenancy/organization-resolver';
-import { isPlatformScope, matchesTenant } from '@/server/tenancy/tenant-scope';
+import { isPlatformScope, matchesTenant, isLegacySentinelTenant } from '@/server/tenancy/tenant-scope';
 
 export interface AddMemberDirectInput {
   name: string;
@@ -536,6 +536,67 @@ export class OrganizationService {
     if (existingAccount) {
       userId = existingAccount._id!.toString();
       reusedExistingAccount = true;
+
+      /**
+       * FIX (critical -- reused-account login bugs, both found while
+       * tracing a real "member gets 401 despite a correct-looking
+       * password" report).
+       *
+       * This branch used to do nothing beyond linking the account:
+       * neither the account's password nor its tenantId were ever
+       * touched, no matter what the admin filled into the form.
+       *
+       * Bug A (password silently discarded): if the admin typed an
+       * explicit password for this member -- the whole point of the
+       * "Add directly" tab, as opposed to "Invite by email" -- and the
+       * email turned out to already have a tbladmin row (e.g. a stale
+       * account from an earlier org, a partial earlier attempt), that
+       * typed password was thrown away. The account kept whatever hash
+       * it already had. The admin would hand the member a credential
+       * that looks right and simply does not match, producing exactly
+       * the "invalid email or password" 401 this account exists to
+       * prevent -- with no server-side error, because the request
+       * itself succeeded. Fixed: an explicitly supplied password is now
+       * always applied to the reused account.
+       *
+       * Bug B (wrong tenant silently kept): this account's tenantId was
+       * left exactly as it was before, even though it is now a member
+       * of THIS organization. Since a tbladmin account carries exactly
+       * one tenantId (no multi-org session support -- see
+       * OLIVINE_STATUS_AND_LOGIN_FIX.md section 5), an account still
+       * scoped to a different real organization would keep
+       * authenticating into THAT organization's data, not this one's --
+       * the opposite of "added as a member here." An account with no
+       * usable tenantId (missing, or a legacy 'default'/'system'
+       * sentinel) is safe to claim outright. An account already scoped
+       * to a DIFFERENT real organization is not safely auto-resolved --
+       * silently reassigning tenantId is exactly the class of automated
+       * repair this codebase deliberately disabled in favour of the
+       * audited tenant-data-repair.ts pipeline (see that script's own
+       * header) -- so that case is refused with a clear error instead of
+       * a silent, undiscoverable cross-organization reassignment.
+       */
+      const existingTenantId = typeof existingAccount.tenantId === 'string' ? existingAccount.tenantId.trim() : '';
+      const existingTenantUsable = existingTenantId.length > 0 && !isLegacySentinelTenant(existingTenantId);
+
+      if (existingTenantUsable && !matchesTenant(existingTenantId, tenantId)) {
+        throw new ConflictError(
+          'This email already has an active account in a different organization. This platform does not yet ' +
+            'support one login belonging to two organizations at once, so it cannot be linked here automatically. ' +
+            'Use a different email for this member, or contact an operator to move the account between ' +
+            'organizations via the audited tenant-repair tooling.'
+        );
+      }
+
+      if (!existingTenantUsable) {
+        await this.adminUserRepo.setTenantId(userId, tenantId);
+      }
+
+      if (input.password?.trim()) {
+        temporaryPassword = input.password.trim();
+        const passwordHash = await bcrypt.hash(temporaryPassword, 10);
+        await this.adminUserRepo.resetPassword(userId, passwordHash);
+      }
     } else {
       temporaryPassword = input.password?.trim() || generateTemporaryPassword();
       const passwordHash = await bcrypt.hash(temporaryPassword, 10);

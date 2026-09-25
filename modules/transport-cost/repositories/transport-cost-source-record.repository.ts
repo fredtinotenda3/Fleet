@@ -12,7 +12,7 @@ import { TenantScopedRepository } from '@/server/repositories/tenant-scoped.repo
 import { TransportCostSourceRecord, TransportCostSheetFamily } from '@/shared/types/transport-cost.types';
 import { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
-import { Filter, ObjectId } from 'mongodb';
+import { Filter, ObjectId, UpdateFilter } from 'mongodb';
 import { parsePeriodMonth } from '../utils/normalization.utils';
 
 /**
@@ -471,6 +471,96 @@ export class TransportCostSourceRecordRepository extends TenantScopedRepository<
     tenantId: string
   ): Promise<number> {
     return this.bulkSetField(sourceRecordIds, 'contractedVehicleId', contractedVehicleId, tenantId);
+  }
+
+  /**
+   * OLIVINE LIVE OPERATING MODEL, SLICE 5. Atomic conditional update --
+   * the state-guard-filter idiom this codebase already relies on
+   * elsewhere for "no version field exists" concurrency safety (see
+   * AllocationLedgerRepository's partial-unique-idempotency-index guard,
+   * and TransportCostPostingService's own defensive `findReversalOf`
+   * recheck immediately before it writes). `guard` is ANDed onto the
+   * normal tenant/org-unit/not-deleted filter atomically inside one
+   * findOneAndUpdate -- e.g. `{cancelledAt: {$exists: false}}` for
+   * Cancel, so two concurrent cancel requests for the same record can
+   * never both "win" (the second sees zero matched documents, not a
+   * silently-overwritten first cancellation).
+   *
+   * Returns `{outcome: 'not-found'}` when the id does not resolve within
+   * the caller's scope at all (caller should 404), and
+   * `{outcome: 'guard-failed'}` when the record exists but the guard
+   * condition no longer holds -- e.g. it was already cancelled, or
+   * already posted, by a concurrent request (caller should surface a
+   * ConflictError, never silently proceed or silently no-op).
+   */
+  async conditionalUpdate(
+    id: string,
+    guard: Filter<TransportCostSourceRecord>,
+    data: Partial<Omit<TransportCostSourceRecord, '_id' | 'tenantId' | 'createdAt' | 'createdBy'>>,
+    context: TenantContext,
+    userId: string
+  ): Promise<
+    | { outcome: 'updated'; record: TransportCostSourceRecord }
+    | { outcome: 'not-found' }
+    | { outcome: 'guard-failed' }
+  > {
+    if (!ObjectId.isValid(id)) return { outcome: 'not-found' };
+
+    const existing = await this.findById(id, context.organizationId);
+    if (!existing) return { outcome: 'not-found' };
+    if (
+      context.accessibleOrgUnitIds !== null &&
+      (!existing.orgUnitId || !context.accessibleOrgUnitIds.includes(existing.orgUnitId))
+    ) {
+      // Same 404-not-403 discipline as postSourceRecord/reversePosting:
+      // findById is tenant- but not org-unit-scoped, so this is checked
+      // by hand, and an out-of-scope id is reported identically to a
+      // nonexistent one.
+      return { outcome: 'not-found' };
+    }
+
+    const collection = await this.getCollection();
+    const filter = {
+      ...this.getTenantFilter(context.organizationId),
+      _id: new ObjectId(id),
+      isDeleted: { $ne: true },
+      ...guard,
+    } as Filter<TransportCostSourceRecord>;
+
+    const update: UpdateFilter<TransportCostSourceRecord> = {
+      $set: {
+        ...data,
+        updatedAt: new Date(),
+        updatedBy: userId,
+      } as any,
+    };
+
+    const result = await collection.findOneAndUpdate(filter, update, { returnDocument: 'after' });
+    if (!result) return { outcome: 'guard-failed' };
+    return { outcome: 'updated', record: this.normalizeDoc<TransportCostSourceRecord>(result) };
+  }
+
+  /**
+   * ADDED, OLIVINE LIVE OPERATING MODEL, SLICE 5. Bulk, tenant-AND-
+   * org-unit-scoped fetch by id, for the operational table's per-page
+   * status column (see TransportCostRecordCommandService
+   * .getOperationalStatusesForIds) -- one query per page rather than
+   * one findById per row. Uses findManyInScope (not a manual
+   * accessibleOrgUnitIds check) so this goes through the exact same
+   * scoping helper every other in-scope read in this module already
+   * uses; an id from another org unit or tenant is silently absent from
+   * the result, never a thrown error, matching the 404-not-403
+   * existence-hiding discipline findInScope/conditionalUpdate use
+   * elsewhere in this file.
+   */
+  async findByIdsInScope(ids: string[], context: TenantContext): Promise<TransportCostSourceRecord[]> {
+    const validIds = ids.filter((id) => ObjectId.isValid(id)).map((id) => this.toObjectId(id));
+    if (validIds.length === 0) return [];
+    // Same cast bulkSetField below uses: BaseEntity's `_id?: string`
+    // doesn't line up with Mongo's actual ObjectId `_id`, so `$in` over
+    // ObjectId[] needs the wider Record cast, not Filter<T> directly.
+    const filter: Record<string, unknown> = { _id: { $in: validIds } };
+    return this.findManyInScope(filter as Filter<TransportCostSourceRecord>, context, { limit: validIds.length });
   }
 
   private async bulkSetField(

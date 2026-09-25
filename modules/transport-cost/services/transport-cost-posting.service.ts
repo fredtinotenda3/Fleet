@@ -241,7 +241,14 @@ import { monitoring } from '@/infrastructure/monitoring/logger';
 // This service posts two source families under 'third-party-transport'
 // (3rd Party, Swift), one under 'transport-retainer' (Vansales), and one
 // under 'stock-transfer' (Depot STO -- see DEPOT_STO_DECISION.md).
-const COST_CATEGORY_BY_FAMILY: Record<'third-party' | 'vansales' | 'swift' | 'depot-sto', AllocationCostCategory> = {
+// Exported (Slice 5): transport-cost-lifecycle.service.ts's status
+// derivation needs to query AllocationLedgerRepository.findBySource with
+// the SAME costCategory this service would post under, for the SAME
+// reason idempotencyKey is scoped by costCategory below -- reusing this
+// one mapping, rather than a second hand-maintained copy, is what
+// guarantees the two can never drift apart on which category a given
+// sheetFamily belongs to.
+export const COST_CATEGORY_BY_FAMILY: Record<'third-party' | 'vansales' | 'swift' | 'depot-sto', AllocationCostCategory> = {
   'third-party': 'third-party-transport',
   vansales: 'transport-retainer',
   swift: 'third-party-transport',
@@ -273,6 +280,14 @@ export type SkipReason =
    *  imported through the current handler always has a valid one (the
    *  whole batch is rejected at import time otherwise). */
   | 'missing-period-month'
+  /** OLIVINE LIVE OPERATING MODEL, SLICE 5: this source record has been
+   *  cancelled (`cancelledAt` set) via the new Cancel command -- see
+   *  transport-cost-lifecycle.service.ts. A cancelled record can never
+   *  post, whether cancelled before its first posting attempt or
+   *  re-evaluated after the fact; this is the single enforcement point
+   *  for that rule, so no caller (batch, a human "post" action, or a
+   *  future scheduled re-evaluation) can bypass it by construction. */
+  | 'cancelled-record'
   /** postImportBatch only: an unexpected error posting this specific row (see its detail message). */
   | 'error';
 
@@ -318,6 +333,18 @@ export class TransportCostPostingService {
       (!source.orgUnitId || !context.accessibleOrgUnitIds.includes(source.orgUnitId))
     ) {
       throw new NotFoundError(`Transport cost source record "${sourceRecordId}" not found.`);
+    }
+
+    // OLIVINE LIVE OPERATING MODEL, SLICE 5: checked before amount/period
+    // resolution, deliberately -- a cancelled record is never postable
+    // regardless of whether its underlying fields WOULD otherwise
+    // resolve cleanly. See SkipReason's own doc comment.
+    if (source.cancelledAt) {
+      return {
+        status: 'skipped',
+        reason: 'cancelled-record',
+        detail: `Row ${source.sourceRowNumber} was cancelled${source.cancelReason ? ` (${source.cancelReason})` : ''} and cannot be posted.`,
+      };
     }
 
     const resolved = this.resolveAmountAndPeriod(source);

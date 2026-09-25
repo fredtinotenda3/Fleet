@@ -22,6 +22,15 @@ import type {
   CommandCentreGranularity,
   CommandCentreFilters,
   CommandCentreSummary,
+  OperationalStatus,
+  OperationalRecordView,
+  SourceRecordPatch,
+  PostSourceRecordOutcome,
+  NormalizationReviewItem,
+  NormalizationKind,
+  ConfirmReviewMatchResult,
+  ConfirmReviewNewResult,
+  BusinessStream,
 } from '../types';
 
 const BASE = '/api/transport-cost';
@@ -223,6 +232,114 @@ export const transportCostApi = {
     return apiClient.get<MasterDataSearchResult[]>(`${BASE}/vehicles/search`, {
       params: { q: query, transporterPartnerId },
     });
+  },
+
+  // ── Phase O2: normalization review queue. ───────────────────────────
+  // Backend has existed since O1/O2; these three routes were only ever
+  // wired up as part of Slice 5 -- see app/api/transport-cost/
+  // normalization-review/route.ts's own header for why.
+
+  /** GET /api/transport-cost/normalization-review -- pending (or any
+   *  status, via `status`) transporter/vehicle identities awaiting a
+   *  human decision. */
+  async listNormalizationReviewQueue(
+    params: { kind?: NormalizationKind; page?: number; limit?: number } = {}
+  ): Promise<PaginatedResponse<NormalizationReviewItem>> {
+    return apiClient.get<PaginatedResponse<NormalizationReviewItem>>(`${BASE}/normalization-review`, {
+      params: { kind: params.kind, page: params.page, limit: params.limit },
+    });
+  },
+
+  /** POST /api/transport-cost/normalization-review/:id/confirm-match --
+   *  "this raw value IS an existing TransportPartner/ContractedVehicle." */
+  async confirmReviewMatch(reviewItemId: string, resolvedEntityId: string): Promise<ConfirmReviewMatchResult> {
+    return apiClient.post<ConfirmReviewMatchResult>(`${BASE}/normalization-review/${reviewItemId}/confirm-match`, {
+      resolvedEntityId,
+    });
+  },
+
+  /** POST /api/transport-cost/normalization-review/:id/confirm-new --
+   *  "this is a genuinely new transporter/vehicle" -- the only path that
+   *  ever creates a new TransportPartner/ContractedVehicle row. */
+  async confirmReviewNew(
+    reviewItemId: string,
+    transporterPartnerId?: string,
+    businessStream?: BusinessStream
+  ): Promise<ConfirmReviewNewResult> {
+    return apiClient.post<ConfirmReviewNewResult>(`${BASE}/normalization-review/${reviewItemId}/confirm-new`, {
+      transporterPartnerId,
+      businessStream,
+    });
+  },
+
+  /** POST /api/transport-cost/normalization-review/:id/reject -- requires a reason. */
+  async rejectReviewItem(reviewItemId: string, reason: string): Promise<NormalizationReviewItem> {
+    return apiClient.post<NormalizationReviewItem>(`${BASE}/normalization-review/${reviewItemId}/reject`, {
+      reason,
+    });
+  },
+
+  // ── OLIVINE LIVE OPERATING MODEL, SLICE 5: operational record CRUD. ─
+  // See OLIVINE_LIVE_OPERATING_MODEL_GAP_ANALYSIS.md Section 8.2 for the
+  // command design these mirror one-for-one; every method here maps to
+  // exactly one TransportCostRecordCommandService method through exactly
+  // one route -- no client-side branching reimplements any of the
+  // state/permission logic those already enforce server-side.
+
+  /** GET /api/transport-cost/source-records/statuses?ids=a,b,c -- bulk
+   *  lifecycle status for the operational table's status column. At most
+   *  200 ids per call (server-enforced) -- callers should chunk a larger
+   *  id set rather than sending it all at once. */
+  async getSourceRecordStatuses(ids: string[]): Promise<Record<string, OperationalStatus>> {
+    if (ids.length === 0) return {};
+    return apiClient.get<Record<string, OperationalStatus>>(`${BASE}/source-records/statuses`, {
+      params: { ids: ids.join(',') },
+    });
+  },
+
+  /** GET /api/transport-cost/source-records/:id -- the transport-
+   *  operation detail view's single data source: current fields, derived
+   *  lifecycle status, the live posting (if any), and the full posting
+   *  history (original/reversal/correction trail). */
+  async getOperationalRecord(sourceRecordId: string): Promise<OperationalRecordView> {
+    return apiClient.get<OperationalRecordView>(`${BASE}/source-records/${sourceRecordId}`);
+  },
+
+  /** PATCH /api/transport-cost/source-records/:id -- Edit. Non-financial
+   *  fields on any non-cancelled record, or any field on a never-posted
+   *  record. Refused server-side if the patch touches a financial field
+   *  on an already-posted record -- use correctPostedSourceRecord instead. */
+  async editSourceRecord(sourceRecordId: string, patch: SourceRecordPatch): Promise<TransportCostSourceRecord> {
+    return apiClient.patch<TransportCostSourceRecord>(`${BASE}/source-records/${sourceRecordId}`, patch);
+  },
+
+  /** POST /api/transport-cost/source-records/:id/correct -- Correct. The
+   *  only way to change a financial field on a POSTED record: applies
+   *  the patch, then reverses the live posting and reposts. */
+  async correctPostedSourceRecord(
+    sourceRecordId: string,
+    patch: SourceRecordPatch
+  ): Promise<{ source: TransportCostSourceRecord; outcome: PostSourceRecordOutcome }> {
+    return apiClient.post<{ source: TransportCostSourceRecord; outcome: PostSourceRecordOutcome }>(
+      `${BASE}/source-records/${sourceRecordId}/correct`,
+      patch
+    );
+  },
+
+  /** POST /api/transport-cost/source-records/:id/cancel -- Cancel. Body:
+   *  { reason }. If the record is already posted, this also reverses its
+   *  ledger entry (no repost) -- requires FINANCE_MANAGE server-side in
+   *  that case, checked once the record's actual state is known. */
+  async cancelSourceRecord(sourceRecordId: string, reason: string): Promise<TransportCostSourceRecord> {
+    return apiClient.post<TransportCostSourceRecord>(`${BASE}/source-records/${sourceRecordId}/cancel`, { reason });
+  },
+
+  /** POST /api/transport-cost/source-records/:id/duplicate -- Duplicate.
+   *  Creates a new, unposted record copying the original's editable
+   *  fields; never copies a confirmed vehicle/transporter identity or
+   *  links to the original's ledger posting. */
+  async duplicateSourceRecord(sourceRecordId: string): Promise<TransportCostSourceRecord> {
+    return apiClient.post<TransportCostSourceRecord>(`${BASE}/source-records/${sourceRecordId}/duplicate`);
   },
 };
 

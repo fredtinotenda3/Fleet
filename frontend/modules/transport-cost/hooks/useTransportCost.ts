@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { transportCostApi, type TransportCostSourceRecordListParams } from '../services/transport-cost.api';
-import type { CommandCentreGranularity, CommandCentreFilters } from '../types';
+import type { CommandCentreGranularity, CommandCentreFilters, NormalizationKind } from '../types';
 
 function iso(date: Date): string {
   return date.toISOString();
@@ -19,6 +19,13 @@ export const transportCostKeys = {
     [...transportCostKeys.all, 'report', 'vehicles', contractedVehicleId, iso(periodStart), iso(periodEnd)] as const,
   commandCentreSummary: (periodStart: Date, periodEnd: Date, granularity: CommandCentreGranularity, filters: CommandCentreFilters) =>
     [...transportCostKeys.all, 'command-centre', 'summary', iso(periodStart), iso(periodEnd), granularity, filters] as const,
+  // OLIVINE LIVE OPERATING MODEL, SLICE 5.
+  sourceRecordStatuses: (ids: string[]) =>
+    [...transportCostKeys.all, 'source-records', 'statuses', [...ids].sort()] as const,
+  operationalRecord: (sourceRecordId: string) =>
+    [...transportCostKeys.all, 'source-records', sourceRecordId, 'operational'] as const,
+  normalizationReviewQueue: (params: { kind?: NormalizationKind; page?: number; limit?: number }) =>
+    [...transportCostKeys.all, 'normalization-review', params] as const,
 };
 
 export function useTransportCostSourceRecords(params: TransportCostSourceRecordListParams) {
@@ -87,5 +94,48 @@ export function useTransportCostVehiclePostings(
     enabled: Boolean(contractedVehicleId),
     staleTime: 30_000,
     retry: 1,
+  });
+}
+
+// ── OLIVINE LIVE OPERATING MODEL, SLICE 5. ──────────────────────────
+
+/** Bulk lifecycle status for the operational table's status column --
+ *  one request per page of source-record ids, never one per row (see
+ *  transportCostApi.getSourceRecordStatuses's own header). Disabled
+ *  until there is at least one id, so an empty page never fires a
+ *  request. A short staleTime: this drives row-action gating, and a
+ *  stale "ready-to-post" row that's actually just been posted by
+ *  someone else should self-correct quickly, not linger. */
+export function useTransportCostSourceRecordStatuses(ids: string[]) {
+  return useQuery({
+    queryKey: transportCostKeys.sourceRecordStatuses(ids),
+    queryFn: () => transportCostApi.getSourceRecordStatuses(ids),
+    enabled: ids.length > 0,
+    staleTime: 10_000,
+    retry: 1,
+  });
+}
+
+/** The transport-operation detail view's single data source. Disabled until an id is known. */
+export function useOperationalRecord(sourceRecordId: string | null) {
+  return useQuery({
+    queryKey: transportCostKeys.operationalRecord(sourceRecordId ?? ''),
+    queryFn: () => transportCostApi.getOperationalRecord(sourceRecordId!),
+    enabled: Boolean(sourceRecordId),
+    staleTime: 10_000,
+    retry: 1,
+  });
+}
+
+/** Phase O2 review queue -- reused, unmodified backend; this is the
+ *  first frontend consumer (see app/api/transport-cost/normalization-
+ *  review/route.ts's own header for why it existed but was never wired
+ *  up before Slice 5). */
+export function useNormalizationReviewQueue(params: { kind?: NormalizationKind; page?: number; limit?: number } = {}) {
+  return useQuery({
+    queryKey: transportCostKeys.normalizationReviewQueue(params),
+    queryFn: () => transportCostApi.listNormalizationReviewQueue(params),
+    placeholderData: (prev) => prev,
+    staleTime: 15_000,
   });
 }

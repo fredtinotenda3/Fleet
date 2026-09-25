@@ -9,6 +9,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { UploadCloud, PenLine } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
@@ -29,8 +30,18 @@ import { ManualEntryModal } from '@/frontend/shared/import/ManualEntryModal';
 import { useSessionStore } from '@/frontend/shared/store/session.store';
 import { Permission, permissionService } from '@/server/permissions/roles';
 import { transportCostApi } from '../services/transport-cost.api';
-import { useTransportCostSourceRecords } from '../hooks/useTransportCost';
-import type { TransportCostSheetFamily } from '@/shared/types/transport-cost.types';
+import { useTransportCostSourceRecords, useTransportCostSourceRecordStatuses } from '../hooks/useTransportCost';
+import {
+  useEditSourceRecord,
+  useCorrectPostedSourceRecord,
+  useCancelSourceRecord,
+  useDuplicateSourceRecord,
+} from '../hooks/useTransportCostMutations';
+import { StatusBadge } from '../components/StatusBadge';
+import { RecordActionsMenu } from '../components/RecordActionsMenu';
+import { EditRecordDialog, type EditRecordDialogMode } from '../components/EditRecordDialog';
+import type { TransportCostSourceRecord, TransportCostSheetFamily } from '@/shared/types/transport-cost.types';
+import type { SourceRecordPatch } from '../types';
 import { COST_FACING_COMPANIES } from '@/shared/types/cost-facing-company.types';
 
 // OLIVINE LIVE OPERATING MODEL, item 2/3/5: required on every entry path
@@ -288,9 +299,13 @@ function familyLabel(family: TransportCostSheetFamily): string {
 }
 
 export function TransportCostImportPage() {
+  const router = useRouter();
   const user = useSessionStore((s) => s.user);
   const roles = user?.roles ?? [];
   const canImport = permissionService.hasPermission(roles, Permission.TRANSPORT_COST_IMPORT);
+  // OLIVINE LIVE OPERATING MODEL, SLICE 5.
+  const canNormalize = permissionService.hasPermission(roles, Permission.TRANSPORT_COST_NORMALIZE);
+  const canManageFinance = permissionService.hasPermission(roles, Permission.FINANCE_MANAGE);
 
   const [thirdPartyModalOpen, setThirdPartyModalOpen] = useState(false);
   const [vansalesModalOpen, setVansalesModalOpen] = useState(false);
@@ -316,6 +331,52 @@ export function TransportCostImportPage() {
     page,
     limit: PAGE_SIZE,
   });
+
+  // OLIVINE LIVE OPERATING MODEL, SLICE 5. Bulk status for exactly this
+  // page's rows -- ONE request per page, never one per row (see
+  // useTransportCostSourceRecordStatuses's own header).
+  const pageRecordIds = (result?.data ?? []).map((r) => r._id).filter((id): id is string => Boolean(id));
+  const { data: statuses } = useTransportCostSourceRecordStatuses(pageRecordIds);
+
+  const editMutation = useEditSourceRecord();
+  const correctMutation = useCorrectPostedSourceRecord();
+  const cancelMutation = useCancelSourceRecord();
+  const duplicateMutation = useDuplicateSourceRecord();
+
+  const [editTarget, setEditTarget] = useState<TransportCostSourceRecord | null>(null);
+  const [editDialogMode, setEditDialogMode] = useState<EditRecordDialogMode>('edit');
+
+  async function handleEditSubmit(patch: SourceRecordPatch) {
+    if (!editTarget?._id) return;
+    if (editDialogMode === 'edit') {
+      await editMutation.mutateAsync({ sourceRecordId: editTarget._id, patch });
+    } else {
+      await correctMutation.mutateAsync({ sourceRecordId: editTarget._id, patch });
+    }
+    setEditTarget(null);
+  }
+
+  async function handleCancelRecord(record: TransportCostSourceRecord) {
+    if (!record._id) return;
+    const status = statuses?.[record._id];
+    const consequence =
+      status === 'posted'
+        ? 'This record is already posted -- cancelling it will reverse its ledger entry. This cannot be undone.'
+        : 'This record has not been posted yet -- cancelling it just marks it as not-to-be-posted.';
+    const reason = window.prompt(`${consequence}\n\nEnter a reason to cancel row ${record.sourceRowNumber}:`);
+    if (reason === null) return;
+    if (!reason.trim()) {
+      window.alert('A reason is required to cancel a record.');
+      return;
+    }
+    await cancelMutation.mutateAsync({ sourceRecordId: record._id, reason: reason.trim() });
+  }
+
+  async function handleDuplicateRecord(record: TransportCostSourceRecord) {
+    if (!record._id) return;
+    const duplicate = await duplicateMutation.mutateAsync(record._id);
+    if (duplicate._id) router.push(`/transport-cost/operations/${duplicate._id}`);
+  }
 
   async function handleThirdPartyImport(
     records: Array<Record<string, unknown>>,
@@ -535,19 +596,22 @@ export function TransportCostImportPage() {
                   <TableHead>Loads</TableHead>
                   <TableHead>Source file</TableHead>
                   <TableHead>Imported</TableHead>
+                  {/* OLIVINE LIVE OPERATING MODEL, SLICE 5. */}
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading && (
                   <TableRow>
-                    <TableCell colSpan={9} className="py-8 text-center text-muted-foreground">
+                    <TableCell colSpan={11} className="py-8 text-center text-muted-foreground">
                       Loading&hellip;
                     </TableCell>
                   </TableRow>
                 )}
                 {!isLoading && (result?.data.length ?? 0) === 0 && (
                   <TableRow>
-                    <TableCell colSpan={9} className="py-8 text-center text-muted-foreground">
+                    <TableCell colSpan={11} className="py-8 text-center text-muted-foreground">
                       No source records imported yet.
                     </TableCell>
                   </TableRow>
@@ -578,6 +642,30 @@ export function TransportCostImportPage() {
                           {record.sourceFileName}
                         </TableCell>
                         <TableCell>{new Date(record.importedAt).toLocaleString()}</TableCell>
+                        <TableCell>
+                          {record._id && statuses?.[record._id] ? (
+                            <StatusBadge status={statuses[record._id]} />
+                          ) : (
+                            <span className="text-muted-foreground">&hellip;</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <RecordActionsMenu
+                            status={record._id ? statuses?.[record._id] : undefined}
+                            permissions={{ canNormalize, canManageFinance }}
+                            onView={() => record._id && router.push(`/transport-cost/operations/${record._id}`)}
+                            onEdit={() => {
+                              setEditTarget(record);
+                              setEditDialogMode('edit');
+                            }}
+                            onCorrect={() => {
+                              setEditTarget(record);
+                              setEditDialogMode('correct');
+                            }}
+                            onCancel={() => handleCancelRecord(record)}
+                            onDuplicate={() => handleDuplicateRecord(record)}
+                          />
+                        </TableCell>
                       </TableRow>
                     );
                   })}
@@ -686,6 +774,16 @@ export function TransportCostImportPage() {
         onImport={handleDepotStoImport}
         onImportComplete={handleImportComplete}
         sourceLabel="Manual entry (Depot STO)"
+      />
+
+      {/* OLIVINE LIVE OPERATING MODEL, SLICE 5. */}
+      <EditRecordDialog
+        open={editTarget !== null}
+        mode={editDialogMode}
+        record={editTarget}
+        isSubmitting={editMutation.isPending || correctMutation.isPending}
+        onOpenChange={(open) => !open && setEditTarget(null)}
+        onSubmit={handleEditSubmit}
       />
     </div>
   );
