@@ -12,7 +12,13 @@ import { transportCostCommandService } from '../services/transport-cost-command.
 import { transportCostQueryService } from '../services/transport-cost-query.service';
 import { transportCostPostingService } from '../services/transport-cost-posting.service';
 import { transportCostRecordCommandService } from '../services/transport-cost-record-command.service';
-import { transportCostReportService, CommandCentreFilters, CommandCentreGranularity } from '../services/transport-cost-report.service';
+import {
+  transportCostReportService,
+  CommandCentreFilters,
+  CommandCentreGranularity,
+  CommandCentreDrillDownDimension,
+  DataQualityIssueKind,
+} from '../services/transport-cost-report.service';
 import { buildDataQualityExceptionsCsv } from '../generators/data-quality-exceptions-csv.generator';
 import { TransportCostImportRow } from '../commands/import-transport-cost.command';
 import { TransportCostSheetFamily, TransportCostSourceRecordFilters } from '@/shared/types/transport-cost.types';
@@ -416,6 +422,124 @@ export class TransportCostController {
     }
   }
 
+  private static readonly DRILL_DOWN_DIMENSIONS: CommandCentreDrillDownDimension[] = [
+    'company',
+    'category',
+    'vehicle',
+    'transporter',
+    'destination',
+    'customer',
+  ];
+
+  /**
+   * GET /api/transport-cost/command-centre/drilldown
+   * ?periodStart=...&periodEnd=...&[dimension=...&key=...]&[the same
+   * filter params getCommandCentreSummary accepts]
+   *
+   * GAP-CLOSURE PASS, Objective 4. `dimension`+`key` are OPTIONAL and
+   * come as a pair (both or neither) -- see
+   * TransportCostReportService.getCommandCentreDrillDown's own header:
+   * omitted entirely, this returns every posting in the period+filters
+   * (a trend-point click); supplied, it narrows to one bar/card's exact
+   * evidence. Same VIEW-gated, period-required convention as
+   * getCommandCentreSummary above -- this is a read of the same
+   * ledger-sourced data, carrying no write authority.
+   */
+  async getCommandCentreDrillDown(req: NextRequest) {
+    try {
+      const context = await resolveTenantContext(req);
+      const params = req.nextUrl.searchParams;
+
+      const periodStart = params.get('periodStart');
+      const periodEnd = params.get('periodEnd');
+      if (!periodStart || !periodEnd) {
+        throw new ValidationError('"periodStart" and "periodEnd" are required.');
+      }
+      const start = new Date(periodStart);
+      const end = new Date(periodEnd);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+        throw new ValidationError('"periodStart"/"periodEnd" must be valid dates.');
+      }
+
+      const dimensionParam = params.get('dimension');
+      const keyParam = params.get('key');
+      if (Boolean(dimensionParam) !== Boolean(keyParam)) {
+        throw new ValidationError('"dimension" and "key" must be supplied together, or not at all.');
+      }
+      let dimensionConstraint: { dimension: CommandCentreDrillDownDimension; key: string } | undefined;
+      if (dimensionParam && keyParam) {
+        if (!TransportCostController.DRILL_DOWN_DIMENSIONS.includes(dimensionParam as CommandCentreDrillDownDimension)) {
+          throw new ValidationError(
+            `"${dimensionParam}" is not a valid drill-down dimension. Use one of: ${TransportCostController.DRILL_DOWN_DIMENSIONS.join(', ')}.`
+          );
+        }
+        dimensionConstraint = { dimension: dimensionParam as CommandCentreDrillDownDimension, key: keyParam };
+      }
+
+      const filters: CommandCentreFilters = {
+        costFacingCompany: (params.get('costFacingCompany') as CommandCentreFilters['costFacingCompany']) || undefined,
+        costCategory: (params.get('costCategory') as CommandCentreFilters['costCategory']) || undefined,
+        vehicleId: params.get('vehicleId') || undefined,
+        transporterPartnerId: params.get('transporterPartnerId') || undefined,
+        destinationTown: params.get('destinationTown') || undefined,
+        customerName: params.get('customerName') || undefined,
+      };
+
+      const result = await transportCostReportService.getCommandCentreDrillDown(context, start, end, filters, dimensionConstraint);
+      return successResponse(result);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  private static readonly DATA_QUALITY_ISSUES: DataQualityIssueKind[] = [
+    'missingCostFacingCompany',
+    'missingRegistration',
+    'unresolvedVehicle',
+    'vehicleNotApplicable',
+    'unresolvedTransporter',
+    'missingCustomer',
+    'missingDestination',
+    'destinationNotApplicable',
+    'missingTonnage',
+  ];
+
+  /**
+   * GET /api/transport-cost/command-centre/data-quality/[issue]?periodStart=...&periodEnd=...
+   *
+   * GAP-CLOSURE PASS, Objective 4. The evidence rows behind one trust-
+   * panel count -- see TransportCostReportService.getDataQualityIssueEvidence's
+   * own header. Same VIEW-gated convention as every other Command
+   * Centre read.
+   */
+  async getDataQualityIssueEvidence(req: NextRequest, issue: string) {
+    try {
+      const context = await resolveTenantContext(req);
+      if (!TransportCostController.DATA_QUALITY_ISSUES.includes(issue as DataQualityIssueKind)) {
+        throw new ValidationError(
+          `"${issue}" is not a valid data-quality issue. Use one of: ${TransportCostController.DATA_QUALITY_ISSUES.join(', ')}.`
+        );
+      }
+      const params = req.nextUrl.searchParams;
+
+      const periodStart = params.get('periodStart');
+      const periodEnd = params.get('periodEnd');
+      if (!periodStart || !periodEnd) {
+        throw new ValidationError('"periodStart" and "periodEnd" are required.');
+      }
+      const start = new Date(periodStart);
+      const end = new Date(periodEnd);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+        throw new ValidationError('"periodStart"/"periodEnd" must be valid dates.');
+      }
+
+      const result = await transportCostReportService.getDataQualityIssueEvidence(context, issue as DataQualityIssueKind, start, end);
+      return successResponse(result);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
   // ---------------------------------------------------------------------
   // OLIVINE LIVE OPERATING MODEL, SLICE 5 -- operational-record CRUD,
   // review-adjacent correction/cancellation/duplication. See
@@ -466,6 +590,26 @@ export class TransportCostController {
       const context = await resolveTenantContext(req);
       const result = await transportCostRecordCommandService.getOperationalStatus(context, sourceRecordId);
       return successResponse(result);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /**
+   * GET /api/transport-cost/source-records/[id]/audit?page=&limit=
+   * GAP-CLOSURE PASS, Objective 1. TRANSPORT_COST_VIEW-gated (see route
+   * file + TransportCostRecordCommandService.getAuditHistory's own
+   * header for why this is a purpose-scoped endpoint rather than
+   * reusing the generic AUDIT_LOG_VIEW-gated /api/security/audit-log
+   * route directly).
+   */
+  async getSourceRecordAuditHistory(req: NextRequest, sourceRecordId: string) {
+    try {
+      const context = await resolveTenantContext(req);
+      const params = req.nextUrl.searchParams;
+      const { page, limit } = validatePaginationParams(params.get('page'), params.get('limit'));
+      const result = await transportCostRecordCommandService.getAuditHistory(context, sourceRecordId, { page, limit });
+      return paginatedResponse(result.data, result.pagination);
     } catch (error) {
       return this.handleError(error);
     }

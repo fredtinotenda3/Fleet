@@ -28,8 +28,16 @@ import { formatMoney } from '@/frontend/modules/finance/utils/money.utils';
 import { useCommandCentreSummary } from '../hooks/useTransportCost';
 import { transportCostApi } from '../services/transport-cost.api';
 import { VehicleDrillDownDialog } from '../components/VehicleDrillDownDialog';
+import { DimensionDrillDownDialog } from '../components/DimensionDrillDownDialog';
+import { DataQualityEvidenceDialog } from '../components/DataQualityEvidenceDialog';
 import { COST_FACING_COMPANIES, TRANSPORT_COST_CATEGORY_OPTIONS } from '../types';
-import type { CommandCentreFilters, CommandCentreGranularity, CommandCentreDimensionTotal } from '../types';
+import type {
+  CommandCentreFilters,
+  CommandCentreGranularity,
+  CommandCentreDimensionTotal,
+  CommandCentreDrillDownDimension,
+  DataQualityIssueKind,
+} from '../types';
 
 // ---------------------------------------------------------------------
 // DATE RANGE PRESETS
@@ -178,6 +186,14 @@ export function CommandCentrePage() {
   const [vehicleLabel, setVehicleLabel] = useState<string | undefined>();
   const [transporterLabel, setTransporterLabel] = useState<string | undefined>();
   const [drillDownVehicleId, setDrillDownVehicleId] = useState<string | null>(null);
+  // GAP-CLOSURE PASS, Objective 4.
+  const [dimensionDrillDown, setDimensionDrillDown] = useState<{
+    title: string;
+    periodStart: Date;
+    periodEnd: Date;
+    constraint?: { dimension: CommandCentreDrillDownDimension; key: string };
+  } | null>(null);
+  const [dataQualityIssue, setDataQualityIssue] = useState<DataQualityIssueKind | null>(null);
 
   const { periodStart, periodEnd } = useMemo(
     () => rangeForPreset(preset, { start: customStart, end: customEnd }),
@@ -199,12 +215,14 @@ export function CommandCentrePage() {
             : formatDate(b.bucketStart, 'dd MMM'),
         amount: b.netReportingAmount,
         currency: b.reportingCurrency,
+        bucketStart: b.bucketStart,
+        bucketEnd: b.bucketEnd,
       })),
     [summary?.timeSeries, granularity]
   );
 
   const companyChartData = useMemo(
-    () => (summary?.byCompany ?? []).map((c) => ({ label: c.label, amount: c.netReportingAmount })),
+    () => (summary?.byCompany ?? []).map((c) => ({ label: c.label, amount: c.netReportingAmount, key: c.key })),
     [summary?.byCompany]
   );
 
@@ -435,7 +453,29 @@ export function CommandCentrePage() {
               ) : (
                 <div style={{ width: '100%', height: 260 }}>
                   <ResponsiveContainer>
-                    <LineChart data={trendChartData} margin={{ left: -20, right: 8 }}>
+                    <LineChart
+                      data={trendChartData}
+                      margin={{ left: -20, right: 8 }}
+                      onClick={(state) => {
+                        // GAP-CLOSURE PASS, Objective 4 (drill-down from a
+                        // "daily trend point"). Narrows the drill-down's
+                        // OWN period to this bucket's [bucketStart,
+                        // bucketEnd] while keeping every other active
+                        // filter -- no dimension constraint, since a trend
+                        // point is a time bucket, not one company/vehicle/
+                        // transporter/destination/customer value.
+                        const point = state?.activePayload?.[0]?.payload as
+                          | { label?: string; bucketStart?: Date | string; bucketEnd?: Date | string }
+                          | undefined;
+                        if (!point?.bucketStart || !point?.bucketEnd) return;
+                        setDimensionDrillDown({
+                          title: `Transport cost trend — ${point.label ?? ''}`,
+                          periodStart: new Date(point.bucketStart),
+                          periodEnd: new Date(point.bucketEnd),
+                        });
+                      }}
+                      style={{ cursor: 'pointer' }}
+                    >
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                       <XAxis dataKey="label" stroke="var(--muted-foreground)" fontSize={11} />
                       <YAxis stroke="var(--muted-foreground)" fontSize={11} />
@@ -445,10 +485,13 @@ export function CommandCentrePage() {
                           'Cost',
                         ]}
                       />
-                      <Line type="monotone" dataKey="amount" stroke="var(--chart-1)" strokeWidth={2} dot={{ r: 3 }} />
+                      <Line type="monotone" dataKey="amount" stroke="var(--chart-1)" strokeWidth={2} dot={{ r: 3, cursor: 'pointer' }} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
+              )}
+              {trendChartData.length > 0 && (
+                <p className="pt-2 text-caption text-muted-foreground">Click a point to see the operations behind that day/week/month.</p>
               )}
             </CardContent>
           </Card>
@@ -465,12 +508,27 @@ export function CommandCentrePage() {
               ) : (
                 <div style={{ width: '100%', height: 220 }}>
                   <ResponsiveContainer>
-                    <BarChart data={companyChartData} margin={{ left: -20, right: 8 }}>
+                    <BarChart
+                      data={companyChartData}
+                      margin={{ left: -20, right: 8 }}
+                      onClick={(state) => {
+                        // GAP-CLOSURE PASS, Objective 4 (drill-down from "company total").
+                        const bar = state?.activePayload?.[0]?.payload as { label?: string; key?: string } | undefined;
+                        if (!bar?.key) return;
+                        setDimensionDrillDown({
+                          title: `Cost by company — ${bar.label ?? bar.key}`,
+                          periodStart,
+                          periodEnd,
+                          constraint: { dimension: 'company', key: bar.key },
+                        });
+                      }}
+                      style={{ cursor: 'pointer' }}
+                    >
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                       <XAxis dataKey="label" stroke="var(--muted-foreground)" fontSize={11} />
                       <YAxis stroke="var(--muted-foreground)" fontSize={11} />
                       <Tooltip formatter={(value: number) => formatMoney(value, summary.totals[0]?.reportingCurrency ?? '')} />
-                      <Bar dataKey="amount" fill="var(--chart-2)" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="amount" fill="var(--chart-2)" radius={[4, 4, 0, 0]} cursor="pointer" />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -480,20 +538,64 @@ export function CommandCentrePage() {
 
           {/* DIMENSION BREAKDOWNS */}
           <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <DimensionTable title="By category" rows={summary.byCategory} emptyHint="No postings in this period." />
+            <DimensionTable
+              title="By category"
+              rows={summary.byCategory}
+              emptyHint="No postings in this period."
+              onRowClick={(r) =>
+                setDimensionDrillDown({
+                  title: `By category — ${r.label}`,
+                  periodStart,
+                  periodEnd,
+                  constraint: { dimension: 'category', key: r.key },
+                })
+              }
+            />
             <DimensionTable
               title="By vehicle"
               rows={summary.byVehicle}
               emptyHint="No postings in this period."
               onRowClick={(r) => (r.key !== 'unavailable' ? setDrillDownVehicleId(r.key) : undefined)}
             />
-            <DimensionTable title="By transporter" rows={summary.byTransporter} emptyHint="No postings in this period." />
+            <DimensionTable
+              title="By transporter"
+              rows={summary.byTransporter}
+              emptyHint="No postings in this period."
+              onRowClick={(r) =>
+                setDimensionDrillDown({
+                  title: `By transporter — ${r.label}`,
+                  periodStart,
+                  periodEnd,
+                  constraint: { dimension: 'transporter', key: r.key },
+                })
+              }
+            />
             <DimensionTable
               title="By destination"
               rows={summary.byDestination}
               emptyHint="No postings in this period."
+              onRowClick={(r) =>
+                setDimensionDrillDown({
+                  title: `By destination — ${r.label}`,
+                  periodStart,
+                  periodEnd,
+                  constraint: { dimension: 'destination', key: r.key },
+                })
+              }
             />
-            <DimensionTable title="By customer" rows={summary.byCustomer} emptyHint="No postings in this period." />
+            <DimensionTable
+              title="By customer"
+              rows={summary.byCustomer}
+              emptyHint="No postings in this period."
+              onRowClick={(r) =>
+                setDimensionDrillDown({
+                  title: `By customer — ${r.label}`,
+                  periodStart,
+                  periodEnd,
+                  constraint: { dimension: 'customer', key: r.key },
+                })
+              }
+            />
           </section>
           <p className="flex items-start gap-2 text-caption text-muted-foreground">
             <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
@@ -518,14 +620,60 @@ export function CommandCentrePage() {
                   <DataQualityStat label="Rejected" value={dq.rejectedCount} hint="Failed validation at import" />
                   <DataQualityStat label="Duplicate" value={dq.duplicateCount} hint="Flagged as a likely duplicate" />
                   <DataQualityStat label="Period outliers" value={dq.periodOutlierCount} hint="Posted outside the requested window" />
-                  <DataQualityStat label="Missing company" value={dq.missingCostFacingCompany} hint="No cost-facing company recorded" />
-                  <DataQualityStat label="Unresolved transporter" value={dq.unresolvedTransporter} hint="Not yet confirmed via O2 review" />
-                  <DataQualityStat label="Unresolved vehicle" value={dq.unresolvedVehicle} hint="Registration present, not yet confirmed" />
-                  <DataQualityStat label="Vehicle: not applicable" value={dq.vehicleNotApplicable} hint="Source has no registration column (e.g. Swift)" />
-                  <DataQualityStat label="Missing customer" value={dq.missingCustomer} hint="No customer on any load" />
-                  <DataQualityStat label="Missing destination" value={dq.missingDestination} hint="No destination on any load" />
-                  <DataQualityStat label="Destination: not applicable" value={dq.destinationNotApplicable} hint="Retainer rows (e.g. Vansales) have no destination" />
-                  <DataQualityStat label="Missing tonnage" value={dq.missingTonnage} hint="No tonnage recorded" />
+                  <DataQualityStat
+                    label="Missing company"
+                    value={dq.missingCostFacingCompany}
+                    hint="No cost-facing company recorded"
+                    onClick={dq.missingCostFacingCompany > 0 ? () => setDataQualityIssue('missingCostFacingCompany') : undefined}
+                  />
+                  <DataQualityStat
+                    label="Unresolved transporter"
+                    value={dq.unresolvedTransporter}
+                    hint="Not yet confirmed via O2 review"
+                    onClick={dq.unresolvedTransporter > 0 ? () => setDataQualityIssue('unresolvedTransporter') : undefined}
+                  />
+                  <DataQualityStat
+                    label="Unresolved vehicle"
+                    value={dq.unresolvedVehicle}
+                    hint="Registration present, not yet confirmed"
+                    onClick={dq.unresolvedVehicle > 0 ? () => setDataQualityIssue('unresolvedVehicle') : undefined}
+                  />
+                  <DataQualityStat
+                    label="Vehicle: not applicable"
+                    value={dq.vehicleNotApplicable}
+                    hint="Source has no registration column (e.g. Swift)"
+                    onClick={dq.vehicleNotApplicable > 0 ? () => setDataQualityIssue('vehicleNotApplicable') : undefined}
+                  />
+                  <DataQualityStat
+                    label="Missing customer"
+                    value={dq.missingCustomer}
+                    hint="No customer on any load"
+                    onClick={dq.missingCustomer > 0 ? () => setDataQualityIssue('missingCustomer') : undefined}
+                  />
+                  <DataQualityStat
+                    label="Missing destination"
+                    value={dq.missingDestination}
+                    hint="No destination on any load"
+                    onClick={dq.missingDestination > 0 ? () => setDataQualityIssue('missingDestination') : undefined}
+                  />
+                  <DataQualityStat
+                    label="Destination: not applicable"
+                    value={dq.destinationNotApplicable}
+                    hint="Retainer rows (e.g. Vansales) have no destination"
+                    onClick={dq.destinationNotApplicable > 0 ? () => setDataQualityIssue('destinationNotApplicable') : undefined}
+                  />
+                  <DataQualityStat
+                    label="Missing tonnage"
+                    value={dq.missingTonnage}
+                    hint="No tonnage recorded"
+                    onClick={dq.missingTonnage > 0 ? () => setDataQualityIssue('missingTonnage') : undefined}
+                  />
+                  <DataQualityStat
+                    label="Missing registration"
+                    value={dq.missingRegistration}
+                    hint="Registration cell blank at import"
+                    onClick={dq.missingRegistration > 0 ? () => setDataQualityIssue('missingRegistration') : undefined}
+                  />
                 </div>
               )}
               {hasUnresolvedIdentity && (
@@ -548,16 +696,60 @@ export function CommandCentrePage() {
           if (!open) setDrillDownVehicleId(null);
         }}
       />
+
+      {/* GAP-CLOSURE PASS, Objective 4. */}
+      <DimensionDrillDownDialog
+        open={Boolean(dimensionDrillDown)}
+        onOpenChange={(open) => {
+          if (!open) setDimensionDrillDown(null);
+        }}
+        title={dimensionDrillDown?.title ?? ''}
+        periodStart={dimensionDrillDown?.periodStart ?? periodStart}
+        periodEnd={dimensionDrillDown?.periodEnd ?? periodEnd}
+        filters={filters}
+        constraint={dimensionDrillDown?.constraint}
+      />
+      <DataQualityEvidenceDialog
+        issue={dataQualityIssue}
+        periodStart={periodStart}
+        periodEnd={periodEnd}
+        onOpenChange={(open) => {
+          if (!open) setDataQualityIssue(null);
+        }}
+      />
     </div>
   );
 }
 
-function DataQualityStat({ label, value, hint }: { label: string; value: number; hint: string }) {
-  return (
-    <div>
+function DataQualityStat({
+  label,
+  value,
+  hint,
+  onClick,
+}: {
+  label: string;
+  value: number;
+  hint: string;
+  /** GAP-CLOSURE PASS, Objective 4. Omitted -> not (yet) drill-down-able (the four exception-shaped counts above still route through the existing CSV export); supplied -> opens DataQualityEvidenceDialog for this exact issue. */
+  onClick?: () => void;
+}) {
+  const content = (
+    <>
       <p className={value > 0 ? 'text-h3 font-semibold text-foreground' : 'text-h3 font-semibold text-muted-foreground'}>{value}</p>
       <p className="text-caption font-medium text-foreground">{label}</p>
       <p className="text-caption text-muted-foreground">{hint}</p>
-    </div>
+    </>
   );
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="text-left rounded-md -m-1 p-1 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {content}
+      </button>
+    );
+  }
+  return <div>{content}</div>;
 }

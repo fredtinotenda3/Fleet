@@ -45,9 +45,12 @@ import {
 import {
   transportCostSourceRecordRepository,
   TransportCostSourceRecordRepository,
+  DataQualityIssueKind,
 } from '../repositories/transport-cost-source-record.repository';
 import { contractedVehicleRepository, ContractedVehicleRepository } from '../repositories/contracted-vehicle.repository';
 import { transportPartnerRepository, TransportPartnerRepository } from '../repositories/transport-partner.repository';
+import type { ContractedVehicle } from '@/shared/types/contracted-vehicle.types';
+import type { TransportPartner } from '@/shared/types/transport-partner.types';
 import {
   transportCostImportExceptionRepository,
   TransportCostImportExceptionRepository,
@@ -330,6 +333,91 @@ export interface CommandCentreSummary {
   pending: { pendingSourceRecordCount: number; hasPendingAmounts: boolean };
 }
 
+export type { DataQualityIssueKind };
+
+/**
+ * GAP-CLOSURE PASS, Objective 4 ("Command Centre Slice B/C" --
+ * evidence/traceability). One of the seven groupings
+ * getCommandCentreSummary already buckets by (byCompany/byCategory/
+ * byVehicle/byTransporter/byDestination/byCustomer -- `totals` itself is
+ * the eighth, ungrouped case, reached by omitting the constraint
+ * entirely, e.g. for a trend-point click). Deliberately the SAME
+ * vocabulary as CommandCentreDimensionTotal's own `key` values, not a
+ * new taxonomy.
+ */
+export type CommandCentreDrillDownDimension = 'company' | 'category' | 'vehicle' | 'transporter' | 'destination' | 'customer';
+
+/**
+ * One row of evidence behind a Command Centre metric -- the operation
+ * (source record) and the exact ledger posting that metric was built
+ * from. `sourceRecordId` is the link back to
+ * TransportOperationDetailPage, which now itself carries the ledger
+ * posting history AND the audit-history section (Objective 1) -- this
+ * is the "Command Centre metric -> operation/source record -> financial
+ * posting -> audit history" traceability chain the milestone requires,
+ * closed by composition rather than by building a second, parallel
+ * evidence viewer.
+ */
+export interface CommandCentreDrillDownRow {
+  sourceRecordId: string;
+  postingId: string;
+  /** The posting's own periodStart -- the transaction date, not postedAt (audit metadata). Same convention as PostingDrillDown/VehicleDrillDownDialog. */
+  date: Date;
+  costFacingCompany: string | null;
+  costCategory: AllocationCostCategory;
+  vehicleId: string;
+  registration: string;
+  transporterPartnerId?: string;
+  transporterName: string;
+  destinationTown?: string;
+  customerName?: string;
+  sheetFamily?: TransportCostSheetFamily;
+  reportingAmount: number;
+  reportingCurrency: string;
+}
+
+/** Bounds every drill-down's row list to a page a dialog can render responsively -- `truncated` tells the UI to say "showing the first N of <rowCount>" rather than silently dropping rows. `totals` is reduced over the FULL constrained set (not just the returned page), so it always reconciles to the bar/card the drill-down was opened from even when rows are truncated. */
+export const COMMAND_CENTRE_DRILL_DOWN_ROW_LIMIT = 500;
+
+export interface CommandCentreDrillDownResult {
+  /** Omitted for an unconstrained (e.g. trend-point) drill-down. */
+  dimension?: CommandCentreDrillDownDimension;
+  key?: string;
+  label?: string;
+  periodStart: Date;
+  periodEnd: Date;
+  filters: CommandCentreFilters;
+  totals: CommandCentreDimensionTotal[];
+  rows: CommandCentreDrillDownRow[];
+  rowCount: number;
+  truncated: boolean;
+}
+
+/** One row of evidence behind a `CommandCentreDataQuality` count -- see TransportCostSourceRecordRepository.findByDataQualityIssue's own header for why this can never disagree with the count itself. */
+export interface DataQualityIssueEvidenceRow {
+  sourceRecordId: string;
+  sheetFamily: TransportCostSheetFamily;
+  importBatchId: string;
+  sourceFileName: string;
+  sourceRowNumber: number;
+  date: Date | null;
+  rawDate: string;
+  registrationRaw: string;
+  transporterRaw: string;
+  customerName?: string;
+  destinationTown?: string;
+  costFacingCompany?: string;
+}
+
+export interface DataQualityIssueEvidenceResult {
+  issue: DataQualityIssueKind;
+  periodStart: Date;
+  periodEnd: Date;
+  rows: DataQualityIssueEvidenceRow[];
+  rowCount: number;
+  truncated: boolean;
+}
+
 /**
  * ADDED, Command Centre Slice A. Buckets a Date into the start of its
  * day/ISO-week(Monday)/month, in UTC -- the trend chart's grouping key.
@@ -453,6 +541,50 @@ function matchesDestinationCustomerFilter(
     matchesOne(destinationTown, record.destinationTown, (record.lines ?? []).map((l) => l.destinationTown)) &&
     matchesOne(customerName, record.customerName, (record.lines ?? []).map((l) => l.customerName))
   );
+}
+
+/**
+ * GAP-CLOSURE PASS, Objective 4. THE single place that derives a
+ * dimension bucket key from a posting -- both
+ * getCommandCentreSummary's accumulate loop (the bars/cards) and
+ * getCommandCentreDrillDown (the evidence behind a clicked bar/card)
+ * call this, so "which bucket does this posting belong to" can never be
+ * computed two different ways in two different places. For
+ * 'destination'/'customer' this is deliberately the BREAKDOWN
+ * (flat/line-1-only) key, never the broader OR-over-lines FILTER
+ * predicate -- see destinationBucketKey/customerBucketKey's own header:
+ * using the filter's broader match here would let a drill-down return
+ * MORE postings than the bar's own count, which would make the
+ * drill-down's total disagree with the card that opened it.
+ */
+function dimensionKeyFor(
+  dimension: CommandCentreDrillDownDimension,
+  posting: AllocationPosting,
+  record: TransportCostSourceRecord | undefined,
+  vehicleById: Map<string, ContractedVehicle>
+): string {
+  switch (dimension) {
+    case 'company':
+      return posting.costFacingCompany ?? 'unattributed';
+    case 'category':
+      return posting.costCategory;
+    case 'vehicle':
+      return posting.vehicleId;
+    case 'transporter': {
+      // Deliberately mirrors the accumulate loop's own
+      // `transporterPartnerId ?? UNAVAILABLE` exactly -- keyed by the
+      // raw id even if partnerById can't resolve a display name for it
+      // (a deleted/orphaned partner reference), never silently
+      // re-bucketed to UNAVAILABLE, or this key would stop matching the
+      // bar's own key the moment a partner lookup fails.
+      const vehicle = vehicleById.get(posting.vehicleId);
+      return vehicle?.transporterPartnerId ?? UNAVAILABLE;
+    }
+    case 'destination':
+      return destinationBucketKey(record);
+    case 'customer':
+      return customerBucketKey(record);
+  }
 }
 
 /**
@@ -925,53 +1057,20 @@ export class TransportCostReportService {
     granularity: CommandCentreGranularity,
     filters: CommandCentreFilters = {}
   ): Promise<CommandCentreSummary> {
-    if (periodEnd < periodStart) {
-      throw new ValidationError('periodEnd cannot be earlier than periodStart.');
-    }
-    const rangeDays = (periodEnd.getTime() - periodStart.getTime()) / (24 * 60 * 60 * 1000);
-    if (rangeDays > MAX_COMMAND_CENTRE_RANGE_DAYS) {
-      throw new ValidationError(
-        `The requested range spans more than ${MAX_COMMAND_CENTRE_RANGE_DAYS} days -- narrow the date range for the Command Centre.`
-      );
-    }
-    if (filters.costCategory && !TRANSPORT_COST_CATEGORIES.includes(filters.costCategory)) {
-      throw new ValidationError(
-        `"${filters.costCategory}" is not a transport-cost category. Use one of: ${TRANSPORT_COST_CATEGORIES.join(', ')}.`
-      );
-    }
-
-    // Step 1: resolve transporter/vehicle filters to at most one of {vehicleId, vehicleIds}.
-    const baseVehicleScope = await resolveVehicleScope(filters, this.vehicleRepo, context.organizationId);
-
-    // Step 2: ONE bounded raw-posting fetch, scoped by everything Mongo
-    // can apply directly (company/category/vehicle scope), reused for
-    // BOTH the destination/customer breakdown AND the time series --
-    // never two separate fetches for two charts that need the same rows.
-    const rawPostings = await this.ledgerRepo.findRawByCategoryInScope(
-      filters.costCategory ?? TRANSPORT_COST_CATEGORIES,
+    // Steps 1-3 (validation, vehicle-scope resolution, the one bounded
+    // raw-posting fetch, the destination/customer filter, and the
+    // vehicle/partner display-name join) now live in fetchScopedPostings
+    // -- GAP-CLOSURE PASS, Objective 4 -- so getCommandCentreDrillDown
+    // below can reuse the exact same scoped-postings computation this
+    // method's bars/cards are built from, rather than a second,
+    // independently-maintained copy that could silently drift and make
+    // a drill-down disagree with the card that opened it.
+    const { matchedPostings, sourceById, vehicleById, partnerById, baseVehicleScope } = await this.fetchScopedPostings(
+      context,
       periodStart,
       periodEnd,
-      context,
-      { costFacingCompany: filters.costFacingCompany, ...baseVehicleScope }
+      filters
     );
-    const sourceIds = Array.from(new Set(rawPostings.map((p) => p.sourceId)));
-    const sourceRecords = sourceIds.length > 0 ? await this.sourceRepo.findManyByIds(sourceIds, context) : [];
-    const sourceById = new Map(sourceRecords.map((r) => [r._id!, r]));
-
-    const destinationCustomerFilterActive = Boolean(
-      (filters.destinationTown && filters.destinationTown.trim()) || (filters.customerName && filters.customerName.trim())
-    );
-    const matchedPostings = destinationCustomerFilterActive
-      ? rawPostings.filter((p) => matchesDestinationCustomerFilter(sourceById.get(p.sourceId), filters.destinationTown, filters.customerName))
-      : rawPostings;
-
-    // Step 3: resolve display names for byVehicle/byTransporter -- same
-    // vehicle+partner join getAllocationReport already does.
-    const vehicles = await this.vehicleRepo.findAllConfirmed(context.organizationId);
-    const vehicleById = new Map(vehicles.map((v) => [v._id!, v]));
-    const partnerIds = Array.from(new Set(vehicles.map((v) => v.transporterPartnerId)));
-    const partners = await Promise.all(partnerIds.map((id) => this.partnerRepo.findById(id, context.organizationId)));
-    const partnerById = new Map(partners.filter((p): p is NonNullable<typeof p> => Boolean(p)).map((p) => [p._id!, p]));
 
     // Step 4: EVERY dimension below -- totals, byCompany, byCategory,
     // byVehicle, byTransporter, byDestination, byCustomer, timeSeries --
@@ -1135,6 +1234,253 @@ export class TransportCostReportService {
         hasPendingAmounts: pendingSourceRecordCount > 0,
       },
     };
+  }
+
+  /**
+   * GAP-CLOSURE PASS, Objective 4. Validation + Steps 1-3 of
+   * getCommandCentreSummary, extracted verbatim (not re-derived) so both
+   * that method and getCommandCentreDrillDown below read from IDENTICAL
+   * scoped-postings logic. Also returns `baseVehicleScope`, which
+   * getCommandCentreSummary's own Step 5 (operational metrics) still
+   * needs directly.
+   */
+  private async fetchScopedPostings(
+    context: TenantContext,
+    periodStart: Date,
+    periodEnd: Date,
+    filters: CommandCentreFilters
+  ): Promise<{
+    matchedPostings: AllocationPosting[];
+    sourceById: Map<string, TransportCostSourceRecord>;
+    vehicleById: Map<string, ContractedVehicle>;
+    partnerById: Map<string, TransportPartner>;
+    baseVehicleScope: { vehicleId?: string; vehicleIds?: string[] };
+  }> {
+    if (periodEnd < periodStart) {
+      throw new ValidationError('periodEnd cannot be earlier than periodStart.');
+    }
+    const rangeDays = (periodEnd.getTime() - periodStart.getTime()) / (24 * 60 * 60 * 1000);
+    if (rangeDays > MAX_COMMAND_CENTRE_RANGE_DAYS) {
+      throw new ValidationError(
+        `The requested range spans more than ${MAX_COMMAND_CENTRE_RANGE_DAYS} days -- narrow the date range for the Command Centre.`
+      );
+    }
+    if (filters.costCategory && !TRANSPORT_COST_CATEGORIES.includes(filters.costCategory)) {
+      throw new ValidationError(
+        `"${filters.costCategory}" is not a transport-cost category. Use one of: ${TRANSPORT_COST_CATEGORIES.join(', ')}.`
+      );
+    }
+
+    // Step 1: resolve transporter/vehicle filters to at most one of {vehicleId, vehicleIds}.
+    const baseVehicleScope = await resolveVehicleScope(filters, this.vehicleRepo, context.organizationId);
+
+    // Step 2: ONE bounded raw-posting fetch, scoped by everything Mongo
+    // can apply directly (company/category/vehicle scope), reused for
+    // BOTH the destination/customer breakdown AND the time series --
+    // never two separate fetches for two charts that need the same rows.
+    const rawPostings = await this.ledgerRepo.findRawByCategoryInScope(
+      filters.costCategory ?? TRANSPORT_COST_CATEGORIES,
+      periodStart,
+      periodEnd,
+      context,
+      { costFacingCompany: filters.costFacingCompany, ...baseVehicleScope }
+    );
+    const sourceIds = Array.from(new Set(rawPostings.map((p) => p.sourceId)));
+    const sourceRecords = sourceIds.length > 0 ? await this.sourceRepo.findManyByIds(sourceIds, context) : [];
+    const sourceById = new Map(sourceRecords.map((r) => [r._id!, r]));
+
+    const destinationCustomerFilterActive = Boolean(
+      (filters.destinationTown && filters.destinationTown.trim()) || (filters.customerName && filters.customerName.trim())
+    );
+    const matchedPostings = destinationCustomerFilterActive
+      ? rawPostings.filter((p) => matchesDestinationCustomerFilter(sourceById.get(p.sourceId), filters.destinationTown, filters.customerName))
+      : rawPostings;
+
+    // Step 3: resolve display names for byVehicle/byTransporter -- same
+    // vehicle+partner join getAllocationReport already does.
+    const vehicles = await this.vehicleRepo.findAllConfirmed(context.organizationId);
+    const vehicleById = new Map(vehicles.map((v) => [v._id!, v]));
+    const partnerIds = Array.from(new Set(vehicles.map((v) => v.transporterPartnerId)));
+    const partners = await Promise.all(partnerIds.map((id) => this.partnerRepo.findById(id, context.organizationId)));
+    const partnerById = new Map(partners.filter((p): p is NonNullable<typeof p> => Boolean(p)).map((p) => [p._id!, p]));
+
+    return { matchedPostings, sourceById, vehicleById, partnerById, baseVehicleScope };
+  }
+
+  /**
+   * GAP-CLOSURE PASS, Objective 4 ("Command Centre Slice B/C" --
+   * drill-down/evidence). Users move from a Command Centre metric
+   * (a bar in byCompany/byCategory/byVehicle/byTransporter/
+   * byDestination/byCustomer, or a point on the trend chart) into the
+   * exact postings/operations behind it.
+   *
+   * `dimensionConstraint` omitted entirely -> every posting in the
+   * requested period+filters (the shape a trend-point click wants: "show
+   * me everything behind this day/week/month bar", not one dimension
+   * value). `dimensionConstraint` supplied -> further narrowed to
+   * postings whose `dimensionKeyFor(dimension, ...)` equals `key` --
+   * EXACTLY the same key a bar's own `CommandCentreDimensionTotal.key`
+   * carries, computed by the same function the summary's own accumulate
+   * loop effectively uses (see dimensionKeyFor's header) -- so a
+   * frontend that opens this from "byTransporter row with key X" is
+   * guaranteed to see only (and all of) the postings that bar's own
+   * total was built from.
+   *
+   * NEVER double-counts a multi-line operation: like
+   * getCommandCentreSummary, this reads AllocationPosting rows directly
+   * (one per source record, per the Slice 2 invariant), never
+   * `lines[]`, so a multi-line operation contributes at most one row
+   * here regardless of how many lines it has.
+   *
+   * `totals` is reduced over the FULL constrained set (every matching
+   * posting), not just the returned/truncated `rows` page, so it always
+   * reconciles to the bar/card that was clicked to open this drill-down
+   * even when the row list itself is capped at
+   * COMMAND_CENTRE_DRILL_DOWN_ROW_LIMIT for the dialog to render.
+   */
+  async getCommandCentreDrillDown(
+    context: TenantContext,
+    periodStart: Date,
+    periodEnd: Date,
+    filters: CommandCentreFilters = {},
+    dimensionConstraint?: { dimension: CommandCentreDrillDownDimension; key: string }
+  ): Promise<CommandCentreDrillDownResult> {
+    const { matchedPostings, sourceById, vehicleById, partnerById } = await this.fetchScopedPostings(
+      context,
+      periodStart,
+      periodEnd,
+      filters
+    );
+
+    const constrained = dimensionConstraint
+      ? matchedPostings.filter(
+          (p) => dimensionKeyFor(dimensionConstraint.dimension, p, sourceById.get(p.sourceId), vehicleById) === dimensionConstraint.key
+        )
+      : matchedPostings;
+
+    // Newest first -- the same "most recent evidence first" convention
+    // an operator reviewing a metric would expect, and matches
+    // TransportCostImportPage's own default sort.
+    const sorted = [...constrained].sort((a, b) => new Date(b.periodStart).getTime() - new Date(a.periodStart).getTime());
+    const truncated = sorted.length > COMMAND_CENTRE_DRILL_DOWN_ROW_LIMIT;
+    const page = sorted.slice(0, COMMAND_CENTRE_DRILL_DOWN_ROW_LIMIT);
+
+    const rows: CommandCentreDrillDownRow[] = page.map((posting) => {
+      const record = sourceById.get(posting.sourceId);
+      const vehicle = vehicleById.get(posting.vehicleId);
+      const partner = vehicle?.transporterPartnerId ? partnerById.get(vehicle.transporterPartnerId) : undefined;
+      return {
+        sourceRecordId: posting.sourceId,
+        postingId: posting._id!,
+        date: posting.periodStart,
+        costFacingCompany: posting.costFacingCompany ?? null,
+        costCategory: posting.costCategory,
+        vehicleId: posting.vehicleId,
+        registration: vehicle?.registration ?? '(unresolved vehicle)',
+        transporterPartnerId: vehicle?.transporterPartnerId,
+        transporterName: partner?.canonicalName ?? '(unresolved transporter)',
+        destinationTown: record?.destinationTown,
+        customerName: record?.customerName,
+        sheetFamily: record?.sheetFamily,
+        reportingAmount: roundCurrency(posting.reportingAmount),
+        reportingCurrency: posting.reportingCurrency,
+      };
+    });
+
+    // Reduced over `constrained` (the FULL matching set), never `page` --
+    // see this method's own header for why.
+    const totalsMap = new Map<string, CommandCentreDimensionTotal>();
+    for (const posting of constrained) {
+      const amount = roundCurrency(posting.reportingAmount);
+      const currency = posting.reportingCurrency;
+      const mapKey = `total\u0000${currency}`;
+      const existing = totalsMap.get(mapKey);
+      if (existing) {
+        existing.netReportingAmount = roundCurrency(existing.netReportingAmount + amount);
+        existing.postingCount += 1;
+      } else {
+        totalsMap.set(mapKey, { key: 'total', label: 'Total', reportingCurrency: currency, netReportingAmount: amount, postingCount: 1 });
+      }
+    }
+
+    let label: string | undefined;
+    if (dimensionConstraint) {
+      const sample = constrained[0];
+      const sampleRecord = sample ? sourceById.get(sample.sourceId) : undefined;
+      switch (dimensionConstraint.dimension) {
+        case 'company':
+          label = costFacingCompanyLabel(dimensionConstraint.key);
+          break;
+        case 'category':
+          label = CATEGORY_LABELS[dimensionConstraint.key as AllocationCostCategory] ?? dimensionConstraint.key;
+          break;
+        case 'vehicle':
+          label = vehicleById.get(dimensionConstraint.key)?.registration ?? '(unresolved vehicle)';
+          break;
+        case 'transporter':
+          label = partnerById.get(dimensionConstraint.key)?.canonicalName ?? '(unresolved transporter)';
+          break;
+        case 'destination':
+          label = bucketLabel(destinationBucketKey(sampleRecord));
+          break;
+        case 'customer':
+          label = bucketLabel(customerBucketKey(sampleRecord));
+          break;
+      }
+    }
+
+    return {
+      dimension: dimensionConstraint?.dimension,
+      key: dimensionConstraint?.key,
+      label,
+      periodStart,
+      periodEnd,
+      filters,
+      totals: Array.from(totalsMap.values()),
+      rows,
+      rowCount: constrained.length,
+      truncated,
+    };
+  }
+
+  /**
+   * GAP-CLOSURE PASS, Objective 4 ("navigation from exception ->
+   * operation/source record -> review/correct where existing workflows
+   * support it"). The evidence rows behind one
+   * CommandCentreDataQuality count -- see
+   * TransportCostSourceRecordRepository.findByDataQualityIssue's own
+   * header for why this can never disagree with the count itself.
+   * Deliberately thin: this method does no additional classification of
+   * its own, it only shapes findByDataQualityIssue's rows for the API/
+   * frontend and applies the same row cap every other drill-down here
+   * uses.
+   */
+  async getDataQualityIssueEvidence(
+    context: TenantContext,
+    issue: DataQualityIssueKind,
+    periodStart: Date,
+    periodEnd: Date
+  ): Promise<DataQualityIssueEvidenceResult> {
+    if (periodEnd < periodStart) {
+      throw new ValidationError('periodEnd cannot be earlier than periodStart.');
+    }
+    const records = await this.sourceRepo.findByDataQualityIssue(periodStart, periodEnd, context, issue);
+    const truncated = records.length > COMMAND_CENTRE_DRILL_DOWN_ROW_LIMIT;
+    const rows: DataQualityIssueEvidenceRow[] = records.slice(0, COMMAND_CENTRE_DRILL_DOWN_ROW_LIMIT).map((r) => ({
+      sourceRecordId: r._id!,
+      sheetFamily: r.sheetFamily,
+      importBatchId: r.importBatchId,
+      sourceFileName: r.sourceFileName,
+      sourceRowNumber: r.sourceRowNumber,
+      date: r.date,
+      rawDate: r.rawDate,
+      registrationRaw: r.registrationRaw,
+      transporterRaw: r.transporterRaw,
+      customerName: r.customerName,
+      destinationTown: r.destinationTown,
+      costFacingCompany: r.costFacingCompany ?? undefined,
+    }));
+    return { issue, periodStart, periodEnd, rows, rowCount: records.length, truncated };
   }
 }
 

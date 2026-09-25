@@ -58,6 +58,34 @@ export interface ContractedVehicle extends BaseEntity {
   confirmedBy?: string;
   confirmedAt?: Date;
 
-  /** Provenance: the first TransportCostSourceRecord._id that produced this row. */
-  firstSeenSourceRecordId: string;
+  /**
+   * GAP-CLOSURE PASS (Objective 5). Mirrors TransportPartner.rejected/
+   * rejectedReason exactly -- same reasoning: a row can be explicitly
+   * rejected in review without deleting the audit trail of why. Only
+   * reachable via the new "confirm/reject pending master data" review
+   * action (see request-new-vehicle.handler.ts and
+   * reject-pending-master-data.handler.ts) -- the O1/O2 matcher itself
+   * never rejects a ContractedVehicle row today.
+   */
+  rejected?: boolean;
+  rejectedReason?: string;
+
+  /**
+   * Provenance: the first TransportCostSourceRecord._id that produced
+   * this row. Required for every row created by the O2 matcher's own
+   * confirm-new pathway (ConfirmReviewNewHandler), which always resolves
+   * a pending import-derived review item with real sourceRecordIds.
+   *
+   * OPTIONAL as of the gap-closure pass's new "request new vehicle"
+   * pathway (RequestNewVehicleHandler): an operator can now request a
+   * new vehicle identity directly from a manual-entry form BEFORE the
+   * operation itself has been saved as a TransportCostSourceRecord, so
+   * there is no id to attach yet. Confirmed by grepping every read site
+   * of this field before widening it -- it is written in exactly one
+   * place (ConfirmReviewNewHandler) and never queried/joined anywhere
+   * else in application logic (provenance/display only), so this widen
+   * is safe and does not change any existing behavior for import-derived
+   * rows, which continue to always set it.
+   */
+  firstSeenSourceRecordId?: string;
 }

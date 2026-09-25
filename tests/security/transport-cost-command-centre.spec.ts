@@ -29,6 +29,30 @@ describe('Command Centre route: permission wiring (item 20 -- unauthorized acces
     // left ungated (no bare export without withAuth).
     expect(source).not.toContain('Permission.TRANSPORT_COST_MANAGE');
   });
+
+  // GAP-CLOSURE PASS, Objective 4. The two new drill-down/evidence
+  // routes are read-only reports over the same ledger/source-record
+  // data the summary route already reads -- same VIEW-gated convention,
+  // never a manage-level permission, never left ungated.
+  it('GET /api/transport-cost/command-centre/drilldown is wrapped in withAuth and requires TRANSPORT_COST_VIEW', () => {
+    const routeFile = path.join(ROOT, 'app/api/transport-cost/command-centre/drilldown/route.ts');
+    const source = fs.readFileSync(routeFile, 'utf8');
+    expect(source).toContain('withAuth(');
+    expect(source).toContain('Permission.TRANSPORT_COST_VIEW');
+    expect(source).not.toContain('Permission.TRANSPORT_COST_MANAGE');
+  });
+
+  it('GET /api/transport-cost/command-centre/data-quality/[issue] is wrapped in withAuth and requires TRANSPORT_COST_VIEW', () => {
+    const routeFile = path.join(ROOT, 'app/api/transport-cost/command-centre/data-quality/[issue]/route.ts');
+    const source = fs.readFileSync(routeFile, 'utf8');
+    // withAuth<RouteParams>( for a dynamic-segment route -- same generic
+    // pattern report/vehicles/[id]/route.ts already uses -- so this
+    // checks for 'withAuth' rather than the no-generic 'withAuth(' the
+    // non-dynamic routes above use.
+    expect(source).toContain('withAuth');
+    expect(source).toContain('Permission.TRANSPORT_COST_VIEW');
+    expect(source).not.toContain('Permission.TRANSPORT_COST_MANAGE');
+  });
 });
 
 jest.mock('../../modules/finance/repositories/allocation-ledger.repository', () => {
@@ -205,6 +229,34 @@ describe('Command Centre: customer/destination filter cannot leak another tenant
     });
 
     expect(summary.totals).toEqual([]);
+  });
+});
+
+describe('Command Centre drill-down: cannot be used to enumerate another tenant\'s evidence (GAP-CLOSURE PASS, Objective 4)', () => {
+  it('a dimension/key pair taken from another tenant\'s own bar returns nothing for this tenant, never that tenant\'s rows', async () => {
+    // The "key" for a transporter/vehicle/company bucket is just an id
+    // or token string -- an attacker who has seen (or guessed) another
+    // tenant's transporterPartnerId could try passing it here directly,
+    // bypassing whatever UI normally supplies it.
+    const attackerSrc = await seedSourceRecord(OTHER_TENANT, { contractedVehicleId: 'veh-1', costFacingCompany: 'olivine' });
+    await seedPosting(OTHER_TENANT, attackerSrc._id!, { vehicleId: 'veh-1', costFacingCompany: 'olivine', reportingAmount: 77777, amount: 77777 });
+
+    const drillDown = await makeService().getCommandCentreDrillDown(contextFor(TENANT, null), JAN_START, JAN_END, {}, {
+      dimension: 'company',
+      key: 'olivine',
+    });
+    expect(drillDown.rows).toEqual([]);
+    expect(drillDown.totals).toEqual([]);
+  });
+
+  it('getCommandCentreDrillDown never calls append -- a read path cannot also be a write path', async () => {
+    const src = await seedSourceRecord(TENANT);
+    await seedPosting(TENANT, src._id!);
+
+    const appendSpy = jest.spyOn(allocationLedgerRepository, 'append');
+    await makeService().getCommandCentreDrillDown(contextFor(TENANT, null), JAN_START, JAN_END, {});
+    expect(appendSpy).not.toHaveBeenCalled();
+    appendSpy.mockRestore();
   });
 });
 

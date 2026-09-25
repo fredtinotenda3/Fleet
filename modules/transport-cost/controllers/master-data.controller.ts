@@ -23,6 +23,21 @@ import { ValidationError, isAppError, describeError } from '@/server/errors/app.
 import { resolveTenantContext, resolveTenantContextWithUser } from '@/server/utils/tenant-context.utils';
 import { validatePaginationParams } from '@/shared/utils/pagination.utils';
 
+// GAP-CLOSURE PASS, Objectives 1/3/5 -- "add new master data" for
+// Transporter/Vehicle, plus the pending-master-data review queue that
+// resolves what it creates. See request-new-transporter.command.ts for
+// the full decision record. Deliberately routed through
+// transportCostCommandService/transportCostQueryService (the CQRS
+// command/query bus), not masterDataService directly -- masterDataService
+// is explicitly search-only for these two entities by design (see this
+// file's own header and master-data.service.ts's header); the new
+// write path lives in its own commands, same separation the O2 review
+// queue itself already uses.
+import { transportCostCommandService } from '../services/transport-cost-command.service';
+import { transportCostQueryService } from '../services/transport-cost-query.service';
+import { NormalizationKind } from '@/shared/types/normalization-review.types';
+import { BusinessStream } from '@/shared/types/contracted-vehicle.types';
+
 const MAX_NAME_LENGTH = 200;
 
 function readSearchQuery(req: NextRequest): string {
@@ -41,6 +56,14 @@ function readCreateName(body: unknown, entityLabel: string): string {
     throw new ValidationError(`A ${entityLabel} name cannot exceed ${MAX_NAME_LENGTH} characters.`);
   }
   return raw.trim();
+}
+
+/** GAP-CLOSURE PASS: validates the `[kind]` URL segment against NormalizationKind rather than trusting it verbatim -- the browser-supplied route param must never reach the command layer unchecked (IDOR/injection discipline applies to path segments too, not just body fields). */
+function readMasterDataKind(kind: string): NormalizationKind {
+  if (kind !== 'transporter' && kind !== 'vehicle') {
+    throw new ValidationError(`Unsupported master-data kind "${kind}". Use "transporter" or "vehicle".`);
+  }
+  return kind;
 }
 
 export class MasterDataController {
@@ -192,6 +215,107 @@ export class MasterDataController {
         transporterPartnerId
       );
       return successResponse(results);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  // ── GAP-CLOSURE PASS: Transporter/Vehicle "request new" + pending review ──
+
+  /** POST /api/transport-cost/transporters/request-new  Body: { name }. Find-existing-or-request-new (reviewStatus: 'needs-review'). */
+  async requestNewTransporter(req: NextRequest) {
+    try {
+      const { context, userId } = await resolveTenantContextWithUser(req);
+      const body = await req.json().catch(() => ({}));
+      const name = readCreateName(body, 'transporter');
+      const result = await transportCostCommandService.requestNewTransporter(name, context.organizationId, userId);
+      return successResponse({
+        id: result.record._id,
+        label: result.record.canonicalName,
+        reviewStatus: result.record.reviewStatus,
+        created: result.created,
+      });
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** POST /api/transport-cost/vehicles/request-new  Body: { registration, transporterPartnerId, businessStream?, sourceRecordId? }. */
+  async requestNewVehicle(req: NextRequest) {
+    try {
+      const { context, userId } = await resolveTenantContextWithUser(req);
+      const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+      const registration = typeof body.registration === 'string' ? body.registration.trim() : '';
+      if (!registration) throw new ValidationError('A vehicle registration is required.');
+      const transporterPartnerId = typeof body.transporterPartnerId === 'string' ? body.transporterPartnerId.trim() : '';
+      if (!transporterPartnerId) throw new ValidationError('transporterPartnerId is required.');
+      const businessStream = typeof body.businessStream === 'string' ? (body.businessStream as BusinessStream) : undefined;
+      const sourceRecordId = typeof body.sourceRecordId === 'string' ? body.sourceRecordId.trim() || undefined : undefined;
+
+      const result = await transportCostCommandService.requestNewVehicle(
+        registration,
+        transporterPartnerId,
+        context.organizationId,
+        userId,
+        businessStream,
+        sourceRecordId
+      );
+      return successResponse({
+        id: result.record._id,
+        label: result.record.registration,
+        reviewStatus: result.record.reviewStatus,
+        created: result.created,
+      });
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** GET /api/transport-cost/master-data/pending -- transporters+vehicles awaiting confirm/reject. */
+  async listPendingMasterData(req: NextRequest) {
+    try {
+      const context = await resolveTenantContext(req);
+      const result = await transportCostQueryService.listPendingMasterData(context.organizationId);
+      return successResponse(result);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** POST /api/transport-cost/master-data/[kind]/[id]/confirm */
+  async confirmPendingMasterData(req: NextRequest, kind: string, id: string) {
+    try {
+      const { context, userId } = await resolveTenantContextWithUser(req);
+      const validatedKind = readMasterDataKind(kind);
+      const result = await transportCostCommandService.confirmPendingMasterData(
+        validatedKind,
+        id,
+        context.organizationId,
+        userId
+      );
+      return successResponse(result.record);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /** POST /api/transport-cost/master-data/[kind]/[id]/reject  Body: { reason }. */
+  async rejectPendingMasterData(req: NextRequest, kind: string, id: string) {
+    try {
+      const { context, userId } = await resolveTenantContextWithUser(req);
+      const validatedKind = readMasterDataKind(kind);
+      const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+      const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+      if (!reason) throw new ValidationError('A rejection reason is required.');
+
+      const result = await transportCostCommandService.rejectPendingMasterData(
+        validatedKind,
+        id,
+        context.organizationId,
+        userId,
+        reason
+      );
+      return successResponse(result.record);
     } catch (error) {
       return this.handleError(error);
     }

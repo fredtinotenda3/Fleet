@@ -22,6 +22,10 @@ import type {
   CommandCentreGranularity,
   CommandCentreFilters,
   CommandCentreSummary,
+  CommandCentreDrillDownDimension,
+  CommandCentreDrillDownResult,
+  DataQualityIssueKind,
+  DataQualityIssueEvidenceResult,
   OperationalStatus,
   OperationalRecordView,
   SourceRecordPatch,
@@ -31,6 +35,10 @@ import type {
   ConfirmReviewMatchResult,
   ConfirmReviewNewResult,
   BusinessStream,
+  AuditLogEntry,
+  TransportPartner,
+  ContractedVehicle,
+  PendingMasterDataResult,
 } from '../types';
 
 const BASE = '/api/transport-cost';
@@ -46,6 +54,15 @@ export interface MasterDataCreateResult {
   id: string;
   name: string;
   /** false when the name already existed and the existing record was returned instead of creating a duplicate. */
+  created: boolean;
+}
+
+/** GAP-CLOSURE PASS, Objective 5: the response of a Transporter/Vehicle request-new POST -- backend's flattened MasterDataController.requestNewTransporter/requestNewVehicle shape. */
+export interface RequestNewMasterDataResponse {
+  id: string;
+  label: string;
+  reviewStatus: 'auto-suggested' | 'confirmed' | 'needs-review';
+  /** false when an exact match (confirmed OR already-pending) already existed -- the caller was NOT created. */
   created: boolean;
 }
 
@@ -196,6 +213,50 @@ export const transportCostApi = {
     });
   },
 
+  /**
+   * GET /api/transport-cost/command-centre/drilldown -- GAP-CLOSURE
+   * PASS, Objective 4. `dimensionConstraint` omitted -> every posting in
+   * the period+filters (a trend-point click); supplied -> narrowed to
+   * one bar/card's exact evidence. See
+   * TransportCostReportService.getCommandCentreDrillDown's own header.
+   */
+  async getCommandCentreDrillDown(
+    periodStart: Date,
+    periodEnd: Date,
+    filters: CommandCentreFilters = {},
+    dimensionConstraint?: { dimension: CommandCentreDrillDownDimension; key: string }
+  ): Promise<CommandCentreDrillDownResult> {
+    return apiClient.get<CommandCentreDrillDownResult>(`${BASE}/command-centre/drilldown`, {
+      params: {
+        periodStart: periodStart.toISOString(),
+        periodEnd: periodEnd.toISOString(),
+        dimension: dimensionConstraint?.dimension,
+        key: dimensionConstraint?.key,
+        costFacingCompany: filters.costFacingCompany,
+        costCategory: filters.costCategory,
+        vehicleId: filters.vehicleId,
+        transporterPartnerId: filters.transporterPartnerId,
+        destinationTown: filters.destinationTown,
+        customerName: filters.customerName,
+      },
+    });
+  },
+
+  /**
+   * GET /api/transport-cost/command-centre/data-quality/:issue --
+   * GAP-CLOSURE PASS, Objective 4. The evidence rows behind one trust-
+   * panel count.
+   */
+  async getDataQualityIssueEvidence(
+    issue: DataQualityIssueKind,
+    periodStart: Date,
+    periodEnd: Date
+  ): Promise<DataQualityIssueEvidenceResult> {
+    return apiClient.get<DataQualityIssueEvidenceResult>(`${BASE}/command-centre/data-quality/${issue}`, {
+      params: { periodStart: periodStart.toISOString(), periodEnd: periodEnd.toISOString() },
+    });
+  },
+
   // ── Slice 3: Master Data Search + "+ Add New". ──────────────────────
   // Customer/Destination are write-capable find-or-create; Transporter/
   // Vehicle are search-only over the existing, review-gated master data
@@ -340,6 +401,50 @@ export const transportCostApi = {
    *  links to the original's ledger posting. */
   async duplicateSourceRecord(sourceRecordId: string): Promise<TransportCostSourceRecord> {
     return apiClient.post<TransportCostSourceRecord>(`${BASE}/source-records/${sourceRecordId}/duplicate`);
+  },
+
+  /** GET /api/transport-cost/source-records/:id/audit?page=&limit= -- GAP-CLOSURE PASS, Objective 1. */
+  async getSourceRecordAuditHistory(
+    sourceRecordId: string,
+    params: { page?: number; limit?: number } = {}
+  ): Promise<PaginatedResponse<AuditLogEntry>> {
+    return apiClient.get<PaginatedResponse<AuditLogEntry>>(`${BASE}/source-records/${sourceRecordId}/audit`, {
+      params: { page: params.page, limit: params.limit },
+    });
+  },
+
+  // ── GAP-CLOSURE PASS, Objective 5: request-new + pending master data. ──
+  // See master-data.controller.ts's own header for why these are
+  // deliberately separate from searchTransporters/searchVehicles above.
+
+  /** POST /api/transport-cost/transporters/request-new  Body: { name }. Find-existing-or-request-new (reviewStatus: 'needs-review' when newly created). */
+  async requestNewTransporter(name: string): Promise<RequestNewMasterDataResponse> {
+    return apiClient.post<RequestNewMasterDataResponse>(`${BASE}/transporters/request-new`, { name });
+  },
+
+  /** POST /api/transport-cost/vehicles/request-new  Body: { registration, transporterPartnerId, businessStream?, sourceRecordId? }. */
+  async requestNewVehicle(params: {
+    registration: string;
+    transporterPartnerId: string;
+    businessStream?: BusinessStream;
+    sourceRecordId?: string;
+  }): Promise<RequestNewMasterDataResponse> {
+    return apiClient.post<RequestNewMasterDataResponse>(`${BASE}/vehicles/request-new`, params);
+  },
+
+  /** GET /api/transport-cost/master-data/pending -- transporters+vehicles awaiting confirm/reject. */
+  async listPendingMasterData(): Promise<PendingMasterDataResult> {
+    return apiClient.get<PendingMasterDataResult>(`${BASE}/master-data/pending`);
+  },
+
+  /** POST /api/transport-cost/master-data/:kind/:id/confirm */
+  async confirmPendingMasterData(kind: NormalizationKind, id: string): Promise<TransportPartner | ContractedVehicle> {
+    return apiClient.post(`${BASE}/master-data/${kind}/${id}/confirm`);
+  },
+
+  /** POST /api/transport-cost/master-data/:kind/:id/reject  Body: { reason }. */
+  async rejectPendingMasterData(kind: NormalizationKind, id: string, reason: string): Promise<TransportPartner | ContractedVehicle> {
+    return apiClient.post(`${BASE}/master-data/${kind}/${id}/reject`, { reason });
   },
 };
 

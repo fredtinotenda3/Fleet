@@ -8,6 +8,8 @@ import { ContractedVehicleRepository } from '@/modules/transport-cost/repositori
 import { TransportCostSourceRecordRepository } from '@/modules/transport-cost/repositories/transport-cost-source-record.repository';
 import { NotFoundError, ConflictError, ValidationError } from '@/server/errors/app.errors';
 import { NormalizationReviewItem } from '@/shared/types/normalization-review.types';
+import { auditLog } from '@/infrastructure/monitoring/audit.logger';
+import { NORMALIZATION_REVIEW_ENTITY_TYPE } from './confirm-review-match.handler';
 
 export interface ConfirmReviewNewResult {
   reviewItem: NormalizationReviewItem;
@@ -99,6 +101,13 @@ export class ConfirmReviewNewHandler
       command.tenantId,
       command.userId
     );
+
+    await auditLog.logUpdate(command.userId, command.tenantId, NORMALIZATION_REVIEW_ENTITY_TYPE, command.reviewItemId, item, {
+      status: 'confirmed-new',
+      createdEntityId,
+      kind: item.kind,
+      sourceRecordsUpdated,
+    });
 
     return { reviewItem: updated!, createdEntityId, sourceRecordsUpdated };
   }

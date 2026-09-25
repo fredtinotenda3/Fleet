@@ -2,7 +2,13 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { transportCostApi, type TransportCostSourceRecordListParams } from '../services/transport-cost.api';
-import type { CommandCentreGranularity, CommandCentreFilters, NormalizationKind } from '../types';
+import type {
+  CommandCentreGranularity,
+  CommandCentreFilters,
+  CommandCentreDrillDownDimension,
+  DataQualityIssueKind,
+  NormalizationKind,
+} from '../types';
 
 function iso(date: Date): string {
   return date.toISOString();
@@ -26,6 +32,19 @@ export const transportCostKeys = {
     [...transportCostKeys.all, 'source-records', sourceRecordId, 'operational'] as const,
   normalizationReviewQueue: (params: { kind?: NormalizationKind; page?: number; limit?: number }) =>
     [...transportCostKeys.all, 'normalization-review', params] as const,
+  // GAP-CLOSURE PASS, Objectives 1/3/5.
+  auditHistory: (sourceRecordId: string, page: number) =>
+    [...transportCostKeys.all, 'source-records', sourceRecordId, 'audit', page] as const,
+  pendingMasterData: () => [...transportCostKeys.all, 'master-data', 'pending'] as const,
+  // GAP-CLOSURE PASS, Objective 4.
+  commandCentreDrillDown: (
+    periodStart: Date,
+    periodEnd: Date,
+    filters: CommandCentreFilters,
+    constraint?: { dimension: CommandCentreDrillDownDimension; key: string }
+  ) => [...transportCostKeys.all, 'command-centre', 'drilldown', iso(periodStart), iso(periodEnd), filters, constraint ?? null] as const,
+  dataQualityIssueEvidence: (issue: DataQualityIssueKind, periodStart: Date, periodEnd: Date) =>
+    [...transportCostKeys.all, 'command-centre', 'data-quality', issue, iso(periodStart), iso(periodEnd)] as const,
 };
 
 export function useTransportCostSourceRecords(params: TransportCostSourceRecordListParams) {
@@ -97,6 +116,44 @@ export function useTransportCostVehiclePostings(
   });
 }
 
+/**
+ * GAP-CLOSURE PASS, Objective 4. Command Centre metric -> underlying
+ * evidence. `open` gates the request so clicking a bar/card/trend-point
+ * is what triggers the fetch, not every render of the page that could
+ * open this dialog -- same pattern as useTransportCostVehiclePostings's
+ * own `enabled: Boolean(contractedVehicleId)` above.
+ */
+export function useCommandCentreDrillDown(
+  open: boolean,
+  periodStart: Date,
+  periodEnd: Date,
+  filters: CommandCentreFilters = {},
+  constraint?: { dimension: CommandCentreDrillDownDimension; key: string }
+) {
+  return useQuery({
+    queryKey: transportCostKeys.commandCentreDrillDown(periodStart, periodEnd, filters, constraint),
+    queryFn: () => transportCostApi.getCommandCentreDrillDown(periodStart, periodEnd, filters, constraint),
+    enabled: open,
+    staleTime: 30_000,
+    retry: 1,
+  });
+}
+
+/** GAP-CLOSURE PASS, Objective 4. The evidence rows behind one data-quality trust-panel count. Disabled until an issue is selected (a click on a `DataQualityStat`). */
+export function useDataQualityIssueEvidence(
+  issue: DataQualityIssueKind | null,
+  periodStart: Date,
+  periodEnd: Date
+) {
+  return useQuery({
+    queryKey: transportCostKeys.dataQualityIssueEvidence(issue ?? ('missingCostFacingCompany' as DataQualityIssueKind), periodStart, periodEnd),
+    queryFn: () => transportCostApi.getDataQualityIssueEvidence(issue!, periodStart, periodEnd),
+    enabled: Boolean(issue),
+    staleTime: 30_000,
+    retry: 1,
+  });
+}
+
 // ── OLIVINE LIVE OPERATING MODEL, SLICE 5. ──────────────────────────
 
 /** Bulk lifecycle status for the operational table's status column --
@@ -136,6 +193,27 @@ export function useNormalizationReviewQueue(params: { kind?: NormalizationKind; 
     queryKey: transportCostKeys.normalizationReviewQueue(params),
     queryFn: () => transportCostApi.listNormalizationReviewQueue(params),
     placeholderData: (prev) => prev,
+    staleTime: 15_000,
+  });
+}
+
+/** GAP-CLOSURE PASS, Objective 1: the operation detail page's audit-history section. Disabled until an id is known -- same convention as useOperationalRecord. */
+export function useSourceRecordAuditHistory(sourceRecordId: string | null, page: number = 1, limit: number = 20) {
+  return useQuery({
+    queryKey: transportCostKeys.auditHistory(sourceRecordId ?? '', page),
+    queryFn: () => transportCostApi.getSourceRecordAuditHistory(sourceRecordId!, { page, limit }),
+    enabled: Boolean(sourceRecordId),
+    placeholderData: (prev) => prev,
+    staleTime: 15_000,
+    retry: 1,
+  });
+}
+
+/** GAP-CLOSURE PASS, Objectives 1/3/5: transporters/vehicles awaiting confirm/reject -- the "Pending master data" tab on the review queue page. */
+export function usePendingMasterData() {
+  return useQuery({
+    queryKey: transportCostKeys.pendingMasterData(),
+    queryFn: () => transportCostApi.listPendingMasterData(),
     staleTime: 15_000,
   });
 }

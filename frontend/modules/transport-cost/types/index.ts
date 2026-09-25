@@ -25,6 +25,13 @@ import type {
   CommandCentreTimeSeriesBucket,
   CommandCentreDataQuality,
   CommandCentreSummary,
+  // GAP-CLOSURE PASS, Objective 4. Same re-export-not-restate technique.
+  CommandCentreDrillDownDimension,
+  CommandCentreDrillDownRow,
+  CommandCentreDrillDownResult,
+  DataQualityIssueKind,
+  DataQualityIssueEvidenceRow,
+  DataQualityIssueEvidenceResult,
 } from '@/modules/transport-cost/services/transport-cost-report.service';
 import type { AllocationPosting } from '@/modules/finance/types/allocation.types';
 // OLIVINE LIVE OPERATING MODEL, SLICE 2 (item 6/7). Same re-export-not-
@@ -52,6 +59,13 @@ import type { NormalizationReviewItem, NormalizationKind } from '@/shared/types/
 import type { ConfirmReviewMatchResult } from '@/modules/transport-cost/commands/handlers/confirm-review-match.handler';
 import type { ConfirmReviewNewResult } from '@/modules/transport-cost/commands/handlers/confirm-review-new.handler';
 import type { BusinessStream } from '@/shared/types/contracted-vehicle.types';
+// GAP-CLOSURE PASS, Objectives 1/3/5. Same re-export-not-restate technique.
+import type { AuditLogEntry } from '@/modules/security/types/audit-log.types';
+import type { TransportPartner, TransportPartnerReviewStatus } from '@/shared/types/transport-partner.types';
+import type { ContractedVehicle, ContractedVehicleReviewStatus } from '@/shared/types/contracted-vehicle.types';
+import type { RequestNewTransporterResult } from '@/modules/transport-cost/commands/handlers/request-new-transporter.handler';
+import type { RequestNewVehicleResult } from '@/modules/transport-cost/commands/handlers/request-new-vehicle.handler';
+import type { PendingMasterDataResult } from '@/modules/transport-cost/queries/handlers/list-pending-master-data.handler';
 
 export type {
   TransportCostAllocationReport,
@@ -69,6 +83,12 @@ export type {
   CommandCentreTimeSeriesBucket,
   CommandCentreDataQuality,
   CommandCentreSummary,
+  CommandCentreDrillDownDimension,
+  CommandCentreDrillDownRow,
+  CommandCentreDrillDownResult,
+  DataQualityIssueKind,
+  DataQualityIssueEvidenceRow,
+  DataQualityIssueEvidenceResult,
   OperationalStatus,
   OperationalStatusResult,
   OperationalRecordView,
@@ -79,6 +99,14 @@ export type {
   ConfirmReviewMatchResult,
   ConfirmReviewNewResult,
   BusinessStream,
+  AuditLogEntry,
+  TransportPartner,
+  TransportPartnerReviewStatus,
+  ContractedVehicle,
+  ContractedVehicleReviewStatus,
+  RequestNewTransporterResult,
+  RequestNewVehicleResult,
+  PendingMasterDataResult,
 };
 export type { CostFacingCompany, CostFacingCompanyOption } from '@/shared/types/cost-facing-company.types';
 export { COST_FACING_COMPANIES } from '@/shared/types/cost-facing-company.types';

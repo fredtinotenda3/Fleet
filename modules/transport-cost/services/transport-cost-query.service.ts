@@ -12,6 +12,10 @@ import type { TenantContext } from '@/modules/tenancy/services/tenant-context.se
 import { ListNormalizationReviewQueueQuery } from '../queries/list-normalization-review-queue.query';
 import { NormalizationKind, NormalizationReviewItem } from '@/shared/types/normalization-review.types';
 
+// GAP-CLOSURE PASS, Objectives 1/3/5.
+import { ListPendingMasterDataQuery } from '../queries/list-pending-master-data.query';
+import type { PendingMasterDataResult } from '../queries/handlers/list-pending-master-data.handler';
+
 export class TransportCostQueryService {
   async getSourceRecords(
     filters: TransportCostSourceRecordFilters,
@@ -32,6 +36,11 @@ export class TransportCostQueryService {
     return queryBus.execute<PaginatedResponse<NormalizationReviewItem>>(
       new ListNormalizationReviewQueueQuery(tenantId, pagination, kind)
     );
+  }
+
+  /** GAP-CLOSURE PASS, Objectives 1/3/5. Organization-level, same reasoning as listNormalizationReviewQueue above. */
+  async listPendingMasterData(tenantId: string): Promise<PendingMasterDataResult> {
+    return queryBus.execute<PendingMasterDataResult>(new ListPendingMasterDataQuery(tenantId));
   }
 }
 

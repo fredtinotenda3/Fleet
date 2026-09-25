@@ -14,8 +14,18 @@ import type { ConfirmReviewMatchResult } from '../commands/handlers/confirm-revi
 import { ConfirmReviewNewCommand } from '../commands/confirm-review-new.command';
 import type { ConfirmReviewNewResult } from '../commands/handlers/confirm-review-new.handler';
 import { RejectReviewItemCommand } from '../commands/reject-review-item.command';
-import { NormalizationReviewItem } from '@/shared/types/normalization-review.types';
+import { NormalizationReviewItem, NormalizationKind } from '@/shared/types/normalization-review.types';
 import { BusinessStream } from '@/shared/types/contracted-vehicle.types';
+
+// GAP-CLOSURE PASS, Objectives 1/3/5.
+import { RequestNewTransporterCommand } from '../commands/request-new-transporter.command';
+import type { RequestNewTransporterResult } from '../commands/handlers/request-new-transporter.handler';
+import { RequestNewVehicleCommand } from '../commands/request-new-vehicle.command';
+import type { RequestNewVehicleResult } from '../commands/handlers/request-new-vehicle.handler';
+import { ConfirmPendingMasterDataCommand } from '../commands/confirm-pending-master-data.command';
+import type { ConfirmPendingMasterDataResult } from '../commands/handlers/confirm-pending-master-data.handler';
+import { RejectPendingMasterDataCommand } from '../commands/reject-pending-master-data.command';
+import type { RejectPendingMasterDataResult } from '../commands/handlers/reject-pending-master-data.handler';
 
 export class TransportCostCommandService {
   /**
@@ -70,6 +80,54 @@ export class TransportCostCommandService {
   ): Promise<NormalizationReviewItem> {
     return commandBus.execute<NormalizationReviewItem>(
       new RejectReviewItemCommand(reviewItemId, tenantId, userId, reason)
+    );
+  }
+
+  // ── GAP-CLOSURE PASS, Objectives 1/3/5 ──────────────────────────────
+
+  async requestNewTransporter(
+    rawName: string,
+    tenantId: string,
+    userId: string
+  ): Promise<RequestNewTransporterResult> {
+    return commandBus.execute<RequestNewTransporterResult>(
+      new RequestNewTransporterCommand(rawName, tenantId, userId)
+    );
+  }
+
+  async requestNewVehicle(
+    rawRegistration: string,
+    transporterPartnerId: string,
+    tenantId: string,
+    userId: string,
+    businessStream?: BusinessStream,
+    sourceRecordId?: string
+  ): Promise<RequestNewVehicleResult> {
+    return commandBus.execute<RequestNewVehicleResult>(
+      new RequestNewVehicleCommand(rawRegistration, transporterPartnerId, tenantId, userId, businessStream, sourceRecordId)
+    );
+  }
+
+  async confirmPendingMasterData(
+    kind: NormalizationKind,
+    id: string,
+    tenantId: string,
+    userId: string
+  ): Promise<ConfirmPendingMasterDataResult> {
+    return commandBus.execute<ConfirmPendingMasterDataResult>(
+      new ConfirmPendingMasterDataCommand(kind, id, tenantId, userId)
+    );
+  }
+
+  async rejectPendingMasterData(
+    kind: NormalizationKind,
+    id: string,
+    tenantId: string,
+    userId: string,
+    reason: string
+  ): Promise<RejectPendingMasterDataResult> {
+    return commandBus.execute<RejectPendingMasterDataResult>(
+      new RejectPendingMasterDataCommand(kind, id, tenantId, userId, reason)
     );
   }
 }

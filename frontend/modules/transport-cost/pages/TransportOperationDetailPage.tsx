@@ -43,6 +43,7 @@ import {
 import { StatusBadge } from '../components/StatusBadge';
 import { RecordActionsMenu } from '../components/RecordActionsMenu';
 import { EditRecordDialog, type EditRecordDialogMode } from '../components/EditRecordDialog';
+import { AuditHistorySection } from '../components/AuditHistorySection';
 import type { SourceRecordPatch } from '../types';
 
 interface TransportOperationDetailPageProps {
@@ -297,10 +298,18 @@ export function TransportOperationDetailPage({ sourceRecordId }: TransportOperat
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader><CardTitle>Audit history</CardTitle></CardHeader>
+        <CardContent>
+          <AuditHistorySection sourceRecordId={source._id!} />
+        </CardContent>
+      </Card>
+
       <EditRecordDialog
         open={dialogMode !== null}
         mode={dialogMode ?? 'edit'}
         record={source}
+        isPosted={status === 'posted'}
         isSubmitting={isSubmitting}
         onOpenChange={(open) => setDialogMode(open ? dialogMode : null)}
         onSubmit={handleEditSubmit}

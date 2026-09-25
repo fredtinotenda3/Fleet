@@ -57,6 +57,10 @@ import type { TenantContext } from '@/modules/tenancy/services/tenant-context.se
 import type { Filter } from 'mongodb';
 import { NotFoundError, ConflictError, ValidationError } from '@/server/errors/app.errors';
 import { auditLog } from '@/infrastructure/monitoring/audit.logger';
+// GAP-CLOSURE PASS, Objective 1 (operation detail audit history).
+import { auditLogRepository, AuditLogRepository } from '@/modules/security/repositories/audit-log.repository';
+import type { AuditLogEntry } from '@/modules/security/types/audit-log.types';
+import type { PaginatedResponse, PaginationParams } from '@/shared/types/common.types';
 
 const ENTITY_TYPE = 'transport_cost_operation';
 
@@ -95,7 +99,15 @@ export class TransportCostRecordCommandService {
     private readonly reviewRepo: NormalizationReviewRepository = normalizationReviewRepository,
     private readonly ledgerRepo: AllocationLedgerRepository = allocationLedgerRepository,
     private readonly allocation: AllocationService = allocationService,
-    private readonly posting: TransportCostPostingService = transportCostPostingService
+    private readonly posting: TransportCostPostingService = transportCostPostingService,
+    // GAP-CLOSURE PASS, Objective 1. Constructor-injected like every
+    // other dependency above (defaulting to the singleton for every
+    // existing call site) rather than the direct module-level import
+    // getAuditHistory used to reach for -- makes this method testable
+    // against a fake collection the same way every other method in this
+    // class already is, and keeps this class's own "everything is
+    // injected" convention consistent.
+    private readonly auditLogRepo: AuditLogRepository = auditLogRepository
   ) {}
 
   /**
@@ -447,6 +459,55 @@ export class TransportCostRecordCommandService {
     });
 
     return duplicate;
+  }
+
+  /**
+   * GAP-CLOSURE PASS, Objective 1. Audit history for the operation
+   * detail page. Reuses findInScope (the exact same tenant/org-unit
+   * scope check every other method on this class already applies to
+   * `sourceRecordId`) as the sole access-control gate, then queries the
+   * existing, already-tenant-aware AuditLogRepository.findWithFilters
+   * directly -- mirroring exactly how
+   * organization-advanced.service.ts's own getAuditLog already reads
+   * this same repository for a different entity type, rather than
+   * routing through the generic `/api/security/audit-log` endpoint
+   * (which requires Permission.AUDIT_LOG_VIEW, a role most transport-
+   * cost users -- who only need TRANSPORT_COST_VIEW to be looking at
+   * this page at all -- would not otherwise hold).
+   *
+   * SCOPE DECISION, documented rather than silently narrowed: this
+   * returns only entries filed under entityType: 'transport_cost_operation'
+   * / entityId: sourceRecordId -- i.e. Edit/Correct/Cancel/Duplicate,
+   * the four actions this service itself audits (see ENTITY_TYPE's
+   * every auditLog.log* call above). It deliberately does NOT also pull
+   * in the original posting event (filed under a different entityType/
+   * entityId -- see transport-cost-posting.service.ts's own audit call)
+   * or reversal events (AllocationService.reversePosting's
+   * auditLog.logAction call has NO entityId at all today -- adding one
+   * would mean touching modules/finance/services/allocation.service.ts,
+   * shared by every allocation-ledger consumer in the platform, not
+   * just transport-cost, which is out of this pass's reuse-not-rewrite
+   * mandate) or O2 normalization-review confirm/reject decisions (a
+   * different entity entirely -- reviewItemId, not sourceRecordId; see
+   * ENTITY_TYPE constants added to the O2 handlers in this same pass).
+   * The operation detail page already shows postings/reversals in its
+   * own dedicated ledger-history table (built in Slice 5's first pass),
+   * so this section's job is specifically "what did a human do TO this
+   * record", not a merged feed of every system event that ever touched
+   * it -- kept separate on purpose, the same "financial vs operational,
+   * kept strictly separate" principle Slice 4 already established for
+   * Command Centre.
+   */
+  async getAuditHistory(
+    context: TenantContext,
+    sourceRecordId: string,
+    pagination: PaginationParams
+  ): Promise<PaginatedResponse<AuditLogEntry>> {
+    await this.findInScope(context, sourceRecordId);
+    return this.auditLogRepo.findWithFilters(
+      { tenantId: context.organizationId, entityType: ENTITY_TYPE, entityId: sourceRecordId },
+      pagination
+    );
   }
 
   private async findInScope(context: TenantContext, sourceRecordId: string): Promise<TransportCostSourceRecord> {

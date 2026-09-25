@@ -781,6 +781,7 @@ export function TransportCostImportPage() {
         open={editTarget !== null}
         mode={editDialogMode}
         record={editTarget}
+        isPosted={editTarget?._id ? statuses?.[editTarget._id] === 'posted' : false}
         isSubmitting={editMutation.isPending || correctMutation.isPending}
         onOpenChange={(open) => !open && setEditTarget(null)}
         onSubmit={handleEditSubmit}

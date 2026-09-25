@@ -58,6 +58,8 @@ import { TransportCostPostingService } from '../../../modules/transport-cost/ser
 import { TransportCostRecordCommandService } from '../../../modules/transport-cost/services/transport-cost-record-command.service';
 import { allocationLedgerRepository } from '../../../modules/finance/repositories/allocation-ledger.repository';
 import { allocationService } from '../../../modules/finance/services/allocation.service';
+// GAP-CLOSURE PASS, Objective 1.
+import { AuditLogRepository } from '../../../modules/security/repositories/audit-log.repository';
 import { NotFoundError, ConflictError, ValidationError } from '../../../server/errors/app.errors';
 import type { TransportCostSourceRecord } from '../../../shared/types/transport-cost.types';
 import type { ContractedVehicle } from '../../../shared/types/contracted-vehicle.types';
@@ -99,8 +101,10 @@ function makeVehicle(overrides: Partial<ContractedVehicle> = {}): ContractedVehi
 describe('TransportCostRecordCommandService', () => {
   let sourceFake: FakeCollection;
   let reviewFake: FakeCollection;
+  let auditFake: FakeCollection;
   let sourceRepo: TransportCostSourceRecordRepository;
   let reviewRepo: NormalizationReviewRepository;
+  let auditLogRepo: AuditLogRepository;
   let postingService: TransportCostPostingService;
   let service: TransportCostRecordCommandService;
 
@@ -111,6 +115,7 @@ describe('TransportCostRecordCommandService', () => {
 
     sourceFake = new FakeCollection();
     reviewFake = new FakeCollection();
+    auditFake = new FakeCollection();
 
     class TestSourceRepo extends TransportCostSourceRecordRepository {
       async getCollection() {
@@ -122,9 +127,21 @@ describe('TransportCostRecordCommandService', () => {
         return reviewFake as any;
       }
     }
+    // GAP-CLOSURE PASS, Objective 1. AuditLogRepository.getCollection is
+    // private (it deliberately doesn't extend BaseRepository -- see its
+    // own header), which TypeScript still permits a subclass to declare
+    // an unrelated same-named method for -- this shadows it identically
+    // at runtime, so findWithFilters (inherited, unchanged) reads
+    // through the fake exactly like every other repository above.
+    class TestAuditLogRepo extends AuditLogRepository {
+      async getCollection() {
+        return auditFake as any;
+      }
+    }
 
     sourceRepo = new TestSourceRepo();
     reviewRepo = new TestReviewRepo();
+    auditLogRepo = new TestAuditLogRepo();
 
     const vehicleRepo = { findById: jest.fn().mockResolvedValue(makeVehicle()) } as any;
     const vatConfigService = {
@@ -135,7 +152,14 @@ describe('TransportCostRecordCommandService', () => {
     } as any;
 
     postingService = new TransportCostPostingService(sourceRepo, vehicleRepo, vatConfigService, settingsService);
-    service = new TransportCostRecordCommandService(sourceRepo, reviewRepo, allocationLedgerRepository, allocationService, postingService);
+    service = new TransportCostRecordCommandService(
+      sourceRepo,
+      reviewRepo,
+      allocationLedgerRepository,
+      allocationService,
+      postingService,
+      auditLogRepo
+    );
   });
 
   async function seedRecord(overrides: Partial<TransportCostSourceRecord> = {}): Promise<TransportCostSourceRecord> {
@@ -210,6 +234,102 @@ describe('TransportCostRecordCommandService', () => {
       await expect(
         service.editSourceRecord(contextFor(null), 'user-2', record._id!, { customerName: 'X' })
       ).rejects.toThrow(ConflictError);
+    });
+  });
+
+  // GAP-CLOSURE PASS, Objective 2 -- multi-line (`lines[]`) editing. The
+  // frontend (EditRecordDialog.tsx) is the ONLY thing that keeps
+  // `lines[0]` in sync with the record's own flat customerName/
+  // destinationTown/salesInvoiceNo/tonnageRaw fields (see that file's
+  // own header): this service applies whatever a patch says verbatim,
+  // with no cross-field derivation of its own. These tests pin exactly
+  // that behaviour at the service layer, so a future change to
+  // editSourceRecord/conditionalUpdate that silently added (or removed)
+  // implicit lines<->flat-field syncing would be caught here.
+  describe('Edit: multi-line lines[] patch (Objective 2 gap closure)', () => {
+    async function seedMultiLineRecord(): Promise<TransportCostSourceRecord> {
+      return seedRecord({
+        customerName: 'Acme Ltd',
+        destinationTown: 'BULAWAYO',
+        salesInvoiceNo: 'INV-1',
+        tonnageRaw: 1200,
+        lines: [
+          { lineNumber: 1, customerName: 'Acme Ltd', destinationTown: 'BULAWAYO', salesInvoiceNo: 'INV-1', tonnageRaw: 1200 },
+        ],
+      } as Partial<TransportCostSourceRecord>);
+    }
+
+    it('accepts a `lines` patch (add/edit/reorder) and stores it verbatim', async () => {
+      const record = await seedMultiLineRecord();
+      const newLines = [
+        { lineNumber: 1, customerName: 'Beta Traders', destinationTown: 'MUTARE', salesInvoiceNo: 'INV-2', consignmentNumber: 'C-1', tonnageRaw: 300 },
+        { lineNumber: 2, customerName: 'Acme Ltd', destinationTown: 'BULAWAYO', salesInvoiceNo: 'INV-1', tonnageRaw: 900 },
+      ];
+
+      const updated = await service.editSourceRecord(contextFor(null), 'user-2', record._id!, {
+        lines: newLines as any,
+      });
+
+      expect(updated.lines).toEqual(newLines);
+    });
+
+    it('is a non-financial field -- editable on a POSTED record with no ledger consequence', async () => {
+      const record = await seedMultiLineRecord();
+      await postingService.postSourceRecord(contextFor(null), 'user-1', record._id!);
+      const before = fakeLedger.docs.length;
+
+      const updated = await service.editSourceRecord(contextFor(null), 'user-2', record._id!, {
+        lines: [{ lineNumber: 1, customerName: 'Acme Ltd', destinationTown: 'BULAWAYO', salesInvoiceNo: 'INV-1', tonnageRaw: 1500 }] as any,
+      });
+
+      expect(updated.lines?.[0].tonnageRaw).toBe(1500);
+      expect(fakeLedger.docs.length).toBe(before); // no new ledger row
+    });
+
+    it('does NOT auto-sync the flat fields from lines[0] -- pins that this is the caller\'s responsibility, not this service\'s (see EditRecordDialog.tsx\'s own header)', async () => {
+      const record = await seedMultiLineRecord();
+
+      // A `lines`-only patch, deliberately NOT also patching the flat
+      // fields (the "wrong" way to call this, which the UI never does --
+      // see EditRecordDialog.tsx's handleSubmit). This documents why the
+      // UI must send both together, rather than asserting a behaviour
+      // this service happens not to need.
+      const updated = await service.editSourceRecord(contextFor(null), 'user-2', record._id!, {
+        lines: [{ lineNumber: 1, customerName: 'Drifted Customer', destinationTown: 'BULAWAYO', salesInvoiceNo: 'INV-1', tonnageRaw: 1200 }] as any,
+      });
+
+      expect(updated.lines?.[0].customerName).toBe('Drifted Customer');
+      expect(updated.customerName).toBe('Acme Ltd'); // unchanged -- proves no implicit derivation exists
+    });
+
+    it('a combined lines + flat-field patch (the shape EditRecordDialog.tsx actually sends) keeps both in sync', async () => {
+      const record = await seedMultiLineRecord();
+
+      const updated = await service.editSourceRecord(contextFor(null), 'user-2', record._id!, {
+        lines: [{ lineNumber: 1, customerName: 'Synced Customer', destinationTown: 'HARARE', salesInvoiceNo: 'INV-9', tonnageRaw: 42 }] as any,
+        customerName: 'Synced Customer',
+        destinationTown: 'HARARE',
+        salesInvoiceNo: 'INV-9',
+        tonnageRaw: 42,
+      });
+
+      expect(updated.lines?.[0]).toMatchObject({ customerName: 'Synced Customer', destinationTown: 'HARARE', salesInvoiceNo: 'INV-9', tonnageRaw: 42 });
+      expect(updated.customerName).toBe('Synced Customer');
+      expect(updated.destinationTown).toBe('HARARE');
+      expect(updated.salesInvoiceNo).toBe('INV-9');
+      expect(updated.tonnageRaw).toBe(42);
+    });
+
+    it('a legacy record with no `lines` array at all can still have its flat fields edited (lines stays undefined, never fabricated)', async () => {
+      const record = await seedRecord(); // no `lines` override -- undefined, the pre-Slice-2 shape
+      expect(record.lines).toBeUndefined();
+
+      const updated = await service.editSourceRecord(contextFor(null), 'user-2', record._id!, {
+        customerName: 'Legacy Edit',
+      });
+
+      expect(updated.customerName).toBe('Legacy Edit');
+      expect(updated.lines).toBeUndefined();
     });
   });
 
@@ -480,6 +600,105 @@ describe('TransportCostRecordCommandService', () => {
       await expect(
         service.editSourceRecord(contextFor([]), 'user-2', record._id!, { customerName: 'X' })
       ).rejects.toThrow(NotFoundError);
+    });
+  });
+
+  // GAP-CLOSURE PASS, Objective 1 ("Operation detail page -- audit
+  // history"). auditLog.logCreate/logUpdate/etc. are mocked to no-ops at
+  // the top of this file (this suite is about editSourceRecord/
+  // cancelSourceRecord/etc.'s OWN behaviour, not the audit trail they
+  // write), so these tests seed AuditLogEntry rows directly through the
+  // injected auditLogRepo -- the same repository/collection
+  // getAuditHistory itself reads through -- rather than relying on a
+  // mocked-out side effect.
+  describe('Audit history', () => {
+    let seq = 0;
+    async function seedAuditEntry(overrides: Partial<Parameters<AuditLogRepository['append']>[0]> = {}) {
+      seq += 1;
+      return auditLogRepo.append({
+        sequence: seq,
+        prevHash: 'prev',
+        hash: `hash-${seq}`,
+        action: 'UPDATE',
+        category: 'domain',
+        severity: 'info',
+        userId: 'user-1',
+        tenantId: TENANT,
+        entityType: 'transport_cost_operation',
+        entityId: 'placeholder',
+        recordedAt: new Date('2026-01-10T00:00:00.000Z'),
+        ...overrides,
+      });
+    }
+
+    it('shows audit entries for the correct operation only', async () => {
+      const record = await seedRecord();
+      const other = await seedRecord({ sourceRowNumber: 2 });
+      await seedAuditEntry({ entityId: record._id, action: 'UPDATE' });
+      await seedAuditEntry({ entityId: other._id, action: 'UPDATE' });
+
+      const history = await service.getAuditHistory(contextFor(null), record._id!, { page: 1, limit: 20 });
+      expect(history.data).toHaveLength(1);
+      expect(history.data[0].entityId).toBe(record._id);
+    });
+
+    it('an unrelated operation\'s history never appears for a different record', async () => {
+      const record = await seedRecord();
+      const unrelated = await seedRecord({ sourceRowNumber: 2 });
+      await seedAuditEntry({ entityId: unrelated._id });
+
+      const history = await service.getAuditHistory(contextFor(null), record._id!, { page: 1, limit: 20 });
+      expect(history.data).toEqual([]);
+    });
+
+    it('returns an empty, honest result for a record with no history yet -- never an error, never a fabricated row', async () => {
+      const record = await seedRecord();
+      const history = await service.getAuditHistory(contextFor(null), record._id!, { page: 1, limit: 20 });
+      expect(history.data).toEqual([]);
+      expect(history.pagination.total).toBe(0);
+    });
+
+    it('cross-tenant retrieval is blocked -- a caller from a different tenant 404s rather than seeing another tenant\'s history', async () => {
+      const record = await seedRecord();
+      await seedAuditEntry({ entityId: record._id });
+
+      await expect(
+        service.getAuditHistory(contextFor(null, 'attacker-org'), record._id!, { page: 1, limit: 20 })
+      ).rejects.toThrow(NotFoundError);
+    });
+
+    it('an org-unit-scoped caller cannot retrieve history for a record outside their accessible org units', async () => {
+      const record = await seedRecord({ orgUnitId: BULAWAYO });
+      await seedAuditEntry({ entityId: record._id });
+
+      await expect(
+        service.getAuditHistory(contextFor([HARARE]), record._id!, { page: 1, limit: 20 })
+      ).rejects.toThrow(NotFoundError);
+    });
+
+    it('is scoped by tenantId even when entityId collides -- never returns another tenant\'s entry for the same id', async () => {
+      const record = await seedRecord();
+      // A same-shaped entry filed under a different tenant but an
+      // identical entityId string (a plausible collision if ids are
+      // ever reused/short) must not leak through.
+      await seedAuditEntry({ entityId: record._id, tenantId: 'attacker-org' });
+
+      const history = await service.getAuditHistory(contextFor(null), record._id!, { page: 1, limit: 20 });
+      expect(history.data).toEqual([]);
+    });
+
+    it('paginates chronologically (newest sequence first), matching AuditLogRepository.findWithFilters\' own sort', async () => {
+      const record = await seedRecord();
+      await seedAuditEntry({ entityId: record._id, action: 'CREATE' });
+      await seedAuditEntry({ entityId: record._id, action: 'UPDATE' });
+      await seedAuditEntry({ entityId: record._id, action: 'UPDATE' });
+
+      const history = await service.getAuditHistory(contextFor(null), record._id!, { page: 1, limit: 2 });
+      expect(history.data).toHaveLength(2);
+      expect(history.pagination.total).toBe(3);
+      expect(history.pagination.totalPages).toBe(2);
+      // Highest sequence (most recently appended) first.
+      expect(history.data[0].sequence).toBeGreaterThan(history.data[1].sequence);
     });
   });
 });

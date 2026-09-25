@@ -8,6 +8,10 @@ import { ContractedVehicleRepository } from '@/modules/transport-cost/repositori
 import { TransportCostSourceRecordRepository } from '@/modules/transport-cost/repositories/transport-cost-source-record.repository';
 import { NotFoundError, ConflictError } from '@/server/errors/app.errors';
 import { NormalizationReviewItem } from '@/shared/types/normalization-review.types';
+import { auditLog } from '@/infrastructure/monitoring/audit.logger';
+
+/** GAP-CLOSURE PASS, Objective 3: "Record the decision in the existing audit trail." Shared by this handler and its confirm-new/reject siblings so all three review decisions are filed under the same entityType/queryable shape. */
+export const NORMALIZATION_REVIEW_ENTITY_TYPE = 'transport_cost_normalization_review';
 
 export interface ConfirmReviewMatchResult {
   reviewItem: NormalizationReviewItem;
@@ -77,6 +81,13 @@ export class ConfirmReviewMatchHandler
       command.tenantId,
       command.userId
     );
+
+    await auditLog.logUpdate(command.userId, command.tenantId, NORMALIZATION_REVIEW_ENTITY_TYPE, command.reviewItemId, item, {
+      status: 'confirmed-match',
+      resolvedEntityId: command.resolvedEntityId,
+      wasAlternativeSelection: command.resolvedEntityId !== item.candidateEntityId,
+      sourceRecordsUpdated,
+    });
 
     return { reviewItem: updated!, sourceRecordsUpdated };
   }

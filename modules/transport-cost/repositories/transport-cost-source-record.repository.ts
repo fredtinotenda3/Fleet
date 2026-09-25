@@ -65,6 +65,29 @@ function hasAnyLineValue(row: TransportCostSourceRecord, field: 'destinationTown
   return (row.lines ?? []).some((l) => !!l[field]);
 }
 
+/**
+ * GAP-CLOSURE PASS, Objective 4 ("fuller data-quality table making
+ * actionable exceptions visible"). One token per independent count
+ * `getDataQualityBreakdown` below already computes -- see that method's
+ * header for the full Missing/Unresolved/Not-applicable/Rejected/
+ * Duplicate vocabulary. Deliberately does NOT include 'rejected'/
+ * 'duplicate'/'period-outlier' -- those three are a different shape
+ * (TransportCostImportException / posted-outside-window rows, not
+ * TransportCostSourceRecord rows) already served by
+ * getDataQualityExceptions; this type is only for the nine
+ * classifyDataQualityIssues() outcomes below.
+ */
+export type DataQualityIssueKind =
+  | 'missingCostFacingCompany'
+  | 'missingRegistration'
+  | 'unresolvedVehicle'
+  | 'vehicleNotApplicable'
+  | 'unresolvedTransporter'
+  | 'missingCustomer'
+  | 'missingDestination'
+  | 'destinationNotApplicable'
+  | 'missingTonnage';
+
 export class TransportCostSourceRecordRepository extends TenantScopedRepository<TransportCostSourceRecord> {
   protected collectionName = 'tbltransportcostsourcerecords';
 
@@ -371,6 +394,47 @@ export class TransportCostSourceRecordRepository extends TenantScopedRepository<
    *     structurally inapplicable, so there is no "not applicable"
    *     variant for them yet.
    */
+  /**
+   * GAP-CLOSURE PASS, Objective 4. The SAME nine predicates
+   * getDataQualityBreakdown's loop used to apply inline, extracted into
+   * one function so the trust panel's COUNTS and the new
+   * findByDataQualityIssue's per-issue ROW LIST can never drift apart --
+   * both call this, so "the count says 4" and "the evidence list shows
+   * these exact 4 rows" are the same computation, not two independently
+   * maintained ones. Returns every independent issue this row matches
+   * (a row commonly matches more than one, by design -- see the class
+   * header above this method's original doc comment).
+   */
+  private classifyDataQualityIssues(row: TransportCostSourceRecord): DataQualityIssueKind[] {
+    const issues: DataQualityIssueKind[] = [];
+
+    if (!row.costFacingCompany) issues.push('missingCostFacingCompany');
+
+    if (row.sheetFamily === 'swift' && !row.registration) {
+      issues.push('vehicleNotApplicable');
+    } else if (!row.registration) {
+      issues.push('missingRegistration');
+    } else if (!row.contractedVehicleId) {
+      issues.push('unresolvedVehicle');
+    }
+
+    if (row.transporterRaw && !row.transporterPartnerId) issues.push('unresolvedTransporter');
+
+    if (row.sheetFamily === 'vansales') {
+      issues.push('destinationNotApplicable');
+    } else if (!hasAnyLineValue(row, 'destinationTown')) {
+      issues.push('missingDestination');
+    }
+
+    if (!hasAnyLineValue(row, 'customerName')) issues.push('missingCustomer');
+
+    const hasTonnage = row.tonnageRaw !== null && row.tonnageRaw !== undefined;
+    const anyLineTonnage = (row.lines ?? []).some((l) => l.tonnageRaw !== null && l.tonnageRaw !== undefined);
+    if (!hasTonnage && !anyLineTonnage) issues.push('missingTonnage');
+
+    return issues;
+  }
+
   async getDataQualityBreakdown(
     periodStart: Date,
     periodEnd: Date,
@@ -411,32 +475,44 @@ export class TransportCostSourceRecordRepository extends TenantScopedRepository<
     };
 
     for (const row of rows) {
-      if (!row.costFacingCompany) summary.missingCostFacingCompany += 1;
-
-      if (row.sheetFamily === 'swift' && !row.registration) {
-        summary.vehicleNotApplicable += 1;
-      } else if (!row.registration) {
-        summary.missingRegistration += 1;
-      } else if (!row.contractedVehicleId) {
-        summary.unresolvedVehicle += 1;
+      for (const issue of this.classifyDataQualityIssues(row)) {
+        summary[issue] += 1;
       }
-
-      if (row.transporterRaw && !row.transporterPartnerId) summary.unresolvedTransporter += 1;
-
-      if (row.sheetFamily === 'vansales') {
-        summary.destinationNotApplicable += 1;
-      } else if (!hasAnyLineValue(row, 'destinationTown')) {
-        summary.missingDestination += 1;
-      }
-
-      if (!hasAnyLineValue(row, 'customerName')) summary.missingCustomer += 1;
-
-      const hasTonnage = row.tonnageRaw !== null && row.tonnageRaw !== undefined;
-      const anyLineTonnage = (row.lines ?? []).some((l) => l.tonnageRaw !== null && l.tonnageRaw !== undefined);
-      if (!hasTonnage && !anyLineTonnage) summary.missingTonnage += 1;
     }
 
     return summary;
+  }
+
+  /**
+   * GAP-CLOSURE PASS, Objective 4 ("navigation from exception ->
+   * operation/source record"). The evidence behind one of
+   * getDataQualityBreakdown's nine counts, for the same period/family
+   * scope -- built from the exact same bounded fetch and the exact same
+   * classifyDataQualityIssues() predicate, so a UI showing "12 missing
+   * customer" and then listing this method's 12 rows can never disagree
+   * with itself. Capped for display the same way every other bounded
+   * evidence read in this module is (see
+   * TransportCostReportService.COMMAND_CENTRE_DRILL_DOWN_ROW_LIMIT) --
+   * callers that need the true count already have it from
+   * getDataQualityBreakdown and should show "showing the first N of
+   * <count>" rather than requesting an unbounded page here.
+   */
+  async findByDataQualityIssue(
+    periodStart: Date,
+    periodEnd: Date,
+    context: TenantContext,
+    issue: DataQualityIssueKind,
+    sheetFamily: TransportCostSheetFamily[] = ['third-party', 'vansales', 'swift', 'depot-sto']
+  ): Promise<TransportCostSourceRecord[]> {
+    const rows = await this.findManyInScope(
+      {
+        sheetFamily: sheetFamily.length === 1 ? sheetFamily[0] : { $in: sheetFamily },
+        date: { $gte: periodStart, $lte: periodEnd },
+      } as Filter<TransportCostSourceRecord>,
+      context,
+      { limit: 100000 }
+    );
+    return rows.filter((row) => this.classifyDataQualityIssues(row).includes(issue));
   }
 
   async countByImportBatch(importBatchId: string, tenantId: string): Promise<number> {

@@ -16,7 +16,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { transportCostApi } from '../services/transport-cost.api';
 import { transportCostKeys } from './useTransportCost';
-import type { SourceRecordPatch, BusinessStream } from '../types';
+import type { SourceRecordPatch, BusinessStream, NormalizationKind } from '../types';
 
 function errMsg(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
@@ -134,5 +134,66 @@ export function useDuplicateSourceRecord() {
       toast.success('Record duplicated');
     },
     onError: (error) => toast.error(errMsg(error, 'Failed to duplicate record')),
+  });
+}
+
+// ── GAP-CLOSURE PASS, Objective 5: request-new + pending master data. ──
+
+export function useRequestNewTransporter() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => transportCostApi.requestNewTransporter(name),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: transportCostKeys.pendingMasterData() });
+      if (result.created) {
+        toast.success(`"${result.label}" requested -- pending confirmation, but usable now`);
+      } else {
+        toast.success(`"${result.label}" already exists -- selected it`);
+      }
+    },
+    onError: (error) => toast.error(errMsg(error, 'Failed to request new transporter')),
+  });
+}
+
+export function useRequestNewVehicle() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: { registration: string; transporterPartnerId: string; businessStream?: BusinessStream; sourceRecordId?: string }) =>
+      transportCostApi.requestNewVehicle(params),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: transportCostKeys.pendingMasterData() });
+      if (result.created) {
+        toast.success(`"${result.label}" requested -- pending confirmation, but usable now`);
+      } else {
+        toast.success(`"${result.label}" already exists -- selected it`);
+      }
+    },
+    onError: (error) => toast.error(errMsg(error, 'Failed to request new vehicle')),
+  });
+}
+
+export function useConfirmPendingMasterData() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ kind, id }: { kind: NormalizationKind; id: string }) =>
+      transportCostApi.confirmPendingMasterData(kind, id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: transportCostKeys.all });
+      toast.success('Confirmed');
+    },
+    onError: (error) => toast.error(errMsg(error, 'Failed to confirm')),
+  });
+}
+
+export function useRejectPendingMasterData() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ kind, id, reason }: { kind: NormalizationKind; id: string; reason: string }) =>
+      transportCostApi.rejectPendingMasterData(kind, id, reason),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: transportCostKeys.all });
+      toast.success('Rejected');
+    },
+    onError: (error) => toast.error(errMsg(error, 'Failed to reject')),
   });
 }

@@ -23,6 +23,21 @@ import { RejectReviewItemHandler } from './commands/handlers/reject-review-item.
 import { ListNormalizationReviewQueueQuery } from './queries/list-normalization-review-queue.query';
 import { ListNormalizationReviewQueueHandler } from './queries/handlers/list-normalization-review-queue.handler';
 
+// GAP-CLOSURE PASS, Objectives 1/3/5: "add new master data" +
+// "confirm/reject pending master data" (a second, non-import-derived
+// creation/review path alongside the O2 queue above -- see
+// request-new-transporter.command.ts for the full decision record).
+import { RequestNewTransporterCommand } from './commands/request-new-transporter.command';
+import { RequestNewTransporterHandler } from './commands/handlers/request-new-transporter.handler';
+import { RequestNewVehicleCommand } from './commands/request-new-vehicle.command';
+import { RequestNewVehicleHandler } from './commands/handlers/request-new-vehicle.handler';
+import { ConfirmPendingMasterDataCommand } from './commands/confirm-pending-master-data.command';
+import { ConfirmPendingMasterDataHandler } from './commands/handlers/confirm-pending-master-data.handler';
+import { RejectPendingMasterDataCommand } from './commands/reject-pending-master-data.command';
+import { RejectPendingMasterDataHandler } from './commands/handlers/reject-pending-master-data.handler';
+import { ListPendingMasterDataQuery } from './queries/list-pending-master-data.query';
+import { ListPendingMasterDataHandler } from './queries/handlers/list-pending-master-data.handler';
+
 export function registerTransportCostCqrsHandlers(commandBus: CommandBus, queryBus: QueryBus): void {
   commandBus.register(
     ImportTransportCostCommand,
@@ -57,5 +72,24 @@ export function registerTransportCostCqrsHandlers(commandBus: CommandBus, queryB
   queryBus.register(
     ListNormalizationReviewQueueQuery,
     new ListNormalizationReviewQueueHandler(normalizationReviewRepository)
+  );
+
+  // GAP-CLOSURE PASS, Objectives 1/3/5.
+  commandBus.register(RequestNewTransporterCommand, new RequestNewTransporterHandler(transportPartnerRepository));
+  commandBus.register(
+    RequestNewVehicleCommand,
+    new RequestNewVehicleHandler(contractedVehicleRepository, transportPartnerRepository)
+  );
+  commandBus.register(
+    ConfirmPendingMasterDataCommand,
+    new ConfirmPendingMasterDataHandler(transportPartnerRepository, contractedVehicleRepository)
+  );
+  commandBus.register(
+    RejectPendingMasterDataCommand,
+    new RejectPendingMasterDataHandler(transportPartnerRepository, contractedVehicleRepository)
+  );
+  queryBus.register(
+    ListPendingMasterDataQuery,
+    new ListPendingMasterDataHandler(transportPartnerRepository, contractedVehicleRepository)
   );
 }
