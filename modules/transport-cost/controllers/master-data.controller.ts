@@ -69,7 +69,13 @@ function readMasterDataKind(kind: string): NormalizationKind {
 export class MasterDataController {
   // ── Customer ──────────────────────────────────────────────────────
 
-  /** GET /api/transport-cost/customers/search?q=... */
+  /**
+   * GET /api/transport-cost/customers/search?q=...
+   * PRODUCTION FIX: response body is now `{ results, hasMore }` rather
+   * than a bare array -- see MasterDataService's MasterDataSearchPage
+   * doc comment. `results` unwraps through the same successResponse()
+   * envelope as before; only its shape gained the `hasMore` sibling.
+   */
   async searchCustomers(req: NextRequest) {
     try {
       const context = await resolveTenantContext(req);
@@ -131,7 +137,7 @@ export class MasterDataController {
 
   // ── Destination ───────────────────────────────────────────────────
 
-  /** GET /api/transport-cost/destinations/search?q=... */
+  /** GET /api/transport-cost/destinations/search?q=... -- PRODUCTION FIX: `{ results, hasMore }` body, see searchCustomers above. */
   async searchDestinations(req: NextRequest) {
     try {
       const context = await resolveTenantContext(req);
@@ -193,7 +199,7 @@ export class MasterDataController {
 
   // ── Transporter / Vehicle (search only) ─────────────────────────────
 
-  /** GET /api/transport-cost/transporters/search?q=... -- confirmed TransportPartner rows only. */
+  /** GET /api/transport-cost/transporters/search?q=... -- confirmed TransportPartner rows only. PRODUCTION FIX: `{ results, hasMore }` body, see searchCustomers above -- this is the endpoint behind the "only ~20 transporters" defect. */
   async searchTransporters(req: NextRequest) {
     try {
       const context = await resolveTenantContext(req);
@@ -204,7 +210,7 @@ export class MasterDataController {
     }
   }
 
-  /** GET /api/transport-cost/vehicles/search?q=&transporterPartnerId=... -- confirmed ContractedVehicle rows only. */
+  /** GET /api/transport-cost/vehicles/search?q=&transporterPartnerId=... -- confirmed ContractedVehicle rows only. PRODUCTION FIX: `{ results, hasMore }` body, see searchCustomers above -- this is the endpoint behind the "only ~20 vehicles" defect. */
   async searchVehicles(req: NextRequest) {
     try {
       const context = await resolveTenantContext(req);

@@ -85,7 +85,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/frontend/shared/ui/data-display/table';
-import { IdentityPicker, type IdentityPickerResult } from './IdentityPicker';
+import { IdentityPicker, type IdentityPickerResult, type IdentityPickerPage } from './IdentityPicker';
 import { transportCostApi } from '../services/transport-cost.api';
 import { useRequestNewTransporter, useRequestNewVehicle } from '../hooks/useTransportCostMutations';
 import type { TransportCostSourceRecord, TransportCostLine } from '@/shared/types/transport-cost.types';
@@ -314,9 +314,9 @@ export function EditRecordDialog({ open, mode, record, isPosted, isSubmitting, o
     await onSubmit(patch);
   }
 
-  async function handleTransporterSearch(query: string): Promise<IdentityPickerResult[]> {
-    const rows = await transportCostApi.searchTransporters(query);
-    return rows.map((r) => ({ id: r.id, label: r.label }));
+  async function handleTransporterSearch(query: string): Promise<IdentityPickerPage> {
+    const page = await transportCostApi.searchTransporters(query);
+    return { results: page.results.map((r) => ({ id: r.id, label: r.label })), hasMore: page.hasMore };
   }
 
   async function handleTransporterRequestNew(rawName: string): Promise<IdentityPickerResult> {
@@ -336,10 +336,10 @@ export function EditRecordDialog({ open, mode, record, isPosted, isSubmitting, o
     setVehiclePending(false);
   }
 
-  async function handleVehicleSearch(query: string): Promise<IdentityPickerResult[]> {
-    if (!transporterPartnerId) return [];
-    const rows = await transportCostApi.searchVehicles(query, transporterPartnerId);
-    return rows.map((r) => ({ id: r.id, label: r.label }));
+  async function handleVehicleSearch(query: string): Promise<IdentityPickerPage> {
+    if (!transporterPartnerId) return { results: [], hasMore: false };
+    const page = await transportCostApi.searchVehicles(query, transporterPartnerId);
+    return { results: page.results.map((r) => ({ id: r.id, label: r.label })), hasMore: page.hasMore };
   }
 
   async function handleVehicleRequestNew(rawRegistration: string): Promise<IdentityPickerResult> {

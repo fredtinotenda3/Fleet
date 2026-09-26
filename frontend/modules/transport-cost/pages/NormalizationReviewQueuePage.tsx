@@ -48,7 +48,7 @@ import {
   useRejectPendingMasterData,
 } from '../hooks/useTransportCostMutations';
 import { transportCostApi } from '../services/transport-cost.api';
-import { IdentityPicker, type IdentityPickerResult } from '../components/IdentityPicker';
+import { IdentityPicker, type IdentityPickerResult, type IdentityPickerPage } from '../components/IdentityPicker';
 import type { NormalizationKind, NormalizationReviewItem, BusinessStream, TransportPartner, ContractedVehicle } from '../types';
 
 const PAGE_SIZE = 20;
@@ -70,12 +70,12 @@ function ReviewItemCard({ item, canDecide }: { item: NormalizationReviewItem; ca
 
   const isMutating = confirmMatch.isPending || confirmNew.isPending || rejectItem.isPending;
 
-  async function handleAlternativeSearch(query: string): Promise<IdentityPickerResult[]> {
-    const rows =
+  async function handleAlternativeSearch(query: string): Promise<IdentityPickerPage> {
+    const page =
       item.kind === 'transporter'
         ? await transportCostApi.searchTransporters(query)
         : await transportCostApi.searchVehicles(query);
-    return rows.map((r) => ({ id: r.id, label: r.label }));
+    return { results: page.results.map((r) => ({ id: r.id, label: r.label })), hasMore: page.hasMore };
   }
 
   async function handleReject() {

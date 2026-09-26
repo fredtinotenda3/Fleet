@@ -27,7 +27,6 @@ import { formatDate } from '@/shared/utils/date.utils';
 import { formatMoney } from '@/frontend/modules/finance/utils/money.utils';
 import { useCommandCentreSummary } from '../hooks/useTransportCost';
 import { transportCostApi } from '../services/transport-cost.api';
-import { VehicleDrillDownDialog } from '../components/VehicleDrillDownDialog';
 import { DimensionDrillDownDialog } from '../components/DimensionDrillDownDialog';
 import { DataQualityEvidenceDialog } from '../components/DataQualityEvidenceDialog';
 import { COST_FACING_COMPANIES, TRANSPORT_COST_CATEGORY_OPTIONS } from '../types';
@@ -185,7 +184,13 @@ export function CommandCentrePage() {
   const [filters, setFilters] = useState<CommandCentreFilters>({});
   const [vehicleLabel, setVehicleLabel] = useState<string | undefined>();
   const [transporterLabel, setTransporterLabel] = useState<string | undefined>();
-  const [drillDownVehicleId, setDrillDownVehicleId] = useState<string | null>(null);
+  // PRODUCTION FIX (Slice 1-5 verification pass): drillDownVehicleId/
+  // VehicleDrillDownDialog removed from THIS page -- "By vehicle" now
+  // goes through the same filter-aware setDimensionDrillDown path as
+  // every other dimension below (see that onRowClick's own comment).
+  // VehicleDrillDownDialog itself is NOT removed from the codebase --
+  // TransportCostReportPage.tsx still legitimately uses it for its own,
+  // separate (non-Command-Centre, non-filtered) vehicle drill-down view.
   // GAP-CLOSURE PASS, Objective 4.
   const [dimensionDrillDown, setDimensionDrillDown] = useState<{
     title: string;
@@ -555,7 +560,31 @@ export function CommandCentrePage() {
               title="By vehicle"
               rows={summary.byVehicle}
               emptyHint="No postings in this period."
-              onRowClick={(r) => (r.key !== 'unavailable' ? setDrillDownVehicleId(r.key) : undefined)}
+              // PRODUCTION FIX (Slice 1-5 verification pass): this used
+              // to open VehicleDrillDownDialog via
+              // useTransportCostVehiclePostings, a Phase O4 hook that
+              // takes NO filters at all -- clicking a vehicle row while
+              // a company/category/transporter/destination/customer
+              // filter was active silently showed that vehicle's ENTIRE
+              // period postings, ignoring every active filter, unlike
+              // every other dimension's drill-down. 'vehicle' is
+              // already a supported CommandCentreDrillDownDimension
+              // (transport-cost-report.service.ts) with its own
+              // filter-aware route/service/repository path -- reusing
+              // the exact same setDimensionDrillDown mechanism every
+              // other dimension above already uses is the correct,
+              // minimal fix (no new backend code, no parallel drill-
+              // down engine).
+              onRowClick={(r) =>
+                r.key !== 'unavailable'
+                  ? setDimensionDrillDown({
+                      title: `By vehicle — ${r.label}`,
+                      periodStart,
+                      periodEnd,
+                      constraint: { dimension: 'vehicle', key: r.key },
+                    })
+                  : undefined
+              }
             />
             <DimensionTable
               title="By transporter"
@@ -688,14 +717,6 @@ export function CommandCentrePage() {
         </>
       )}
 
-      <VehicleDrillDownDialog
-        contractedVehicleId={drillDownVehicleId}
-        periodStart={periodStart}
-        periodEnd={periodEnd}
-        onOpenChange={(open) => {
-          if (!open) setDrillDownVehicleId(null);
-        }}
-      />
 
       {/* GAP-CLOSURE PASS, Objective 4. */}
       <DimensionDrillDownDialog

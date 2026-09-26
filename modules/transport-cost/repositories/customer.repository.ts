@@ -40,14 +40,29 @@ export class CustomerRepository extends BaseRepository<Customer> {
    * alphabetically, rather than nothing -- so opening the dropdown with
    * no typing yet still shows something to pick from, encouraging reuse
    * over free-text entry (the whole point of this slice).
+   *
+   * PRODUCTION FIX (Slice 1-5 verification pass): same "silent ~20 cap,
+   * no signal more exist" defect reported for Transporter/Vehicle search
+   * applies here too (identical `limit: number = 20` shape) -- fixed the
+   * same way: fetch `limit + 1`, detect `hasMore`, return it alongside
+   * the page instead of a bare array. See
+   * TransportPartnerRepository.searchConfirmedByName's doc comment for
+   * the full reasoning. `active: true` filtering and `containsMatch`
+   * are unchanged.
    */
-  async search(query: string, tenantId: string, limit: number = 20): Promise<Customer[]> {
+  async search(
+    query: string,
+    tenantId: string,
+    limit: number = 50
+  ): Promise<{ results: Customer[]; hasMore: boolean }> {
     const trimmed = query.trim();
     const filter: Filter<Customer> = {
       active: true,
       ...(trimmed ? { name: containsMatch(trimmed) } : {}),
     } as Filter<Customer>;
-    return this.findMany(filter, tenantId, { sortBy: 'name', sortOrder: 'asc', limit });
+    const rows = await this.findMany(filter, tenantId, { sortBy: 'name', sortOrder: 'asc', limit: limit + 1 });
+    const hasMore = rows.length > limit;
+    return { results: hasMore ? rows.slice(0, limit) : rows, hasMore };
   }
 
   async listPaginated(

@@ -83,7 +83,7 @@ describe.each([
     const inactive = await repo.create({ name: 'Retired Co', normalizedName: 'RETIRED CO', active: true } as any, TENANT_A, 'u1');
     await repo.update(inactive._id!, { active: false } as any, TENANT_A, 'u1');
 
-    const results = await repo.search('Co', TENANT_A);
+    const { results } = await repo.search('Co', TENANT_A);
     const ids = results.map((r) => r._id);
     expect(ids).toContain(active._id);
     expect(ids).not.toContain(inactive._id);
@@ -93,7 +93,7 @@ describe.each([
     const repo = makeRepo();
     await repo.create({ name: 'Northern Bulawayo Depot', normalizedName: 'NORTHERN BULAWAYO DEPOT', active: true } as any, TENANT_A, 'u1');
 
-    const results = await repo.search('bulawayo', TENANT_A);
+    const { results } = await repo.search('bulawayo', TENANT_A);
     expect(results).toHaveLength(1);
   });
 
@@ -102,8 +102,43 @@ describe.each([
     await repo.create({ name: 'Zeta', normalizedName: 'ZETA', active: true } as any, TENANT_A, 'u1');
     await repo.create({ name: 'Alpha', normalizedName: 'ALPHA', active: true } as any, TENANT_A, 'u1');
 
-    const results = await repo.search('', TENANT_A);
+    const { results } = await repo.search('', TENANT_A);
     expect(results.map((r) => r.name)).toEqual(['Alpha', 'Zeta']);
+  });
+
+  // PRODUCTION FIX (Slice 1-5 verification pass, HIGH PRIORITY): pins the
+  // exact defect reported in production for transporters/vehicles, which
+  // turned out to be latent here too (identical `limit: number = 20`
+  // shape) -- a search page silently truncated with no signal more rows
+  // existed. `hasMore` must be false when every matching row fit on one
+  // page, and true the moment there is at least one more beyond it,
+  // without ever leaking that (limit+1)-th row into `results` itself.
+  it('hasMore is false when every match fits on one page', async () => {
+    const repo = makeRepo();
+    await repo.create({ name: 'Only One', normalizedName: 'ONLY ONE', active: true } as any, TENANT_A, 'u1');
+
+    const { results, hasMore } = await repo.search('Only', TENANT_A);
+    expect(results).toHaveLength(1);
+    expect(hasMore).toBe(false);
+  });
+
+  it('hasMore is true, and results is capped at the page limit, when more rows match than fit on one page', async () => {
+    const repo = makeRepo();
+    for (let i = 0; i < 5; i += 1) {
+      await repo.create(
+        { name: `Depot ${String(i).padStart(2, '0')}`, normalizedName: `DEPOT ${String(i).padStart(2, '0')}`, active: true } as any,
+        TENANT_A,
+        'u1'
+      );
+    }
+
+    const { results, hasMore } = await repo.search('Depot', TENANT_A, 3);
+    expect(results).toHaveLength(3);
+    expect(hasMore).toBe(true);
+    // The page itself must still be the correct alphabetical top-3, not
+    // an arbitrary 3 of the 5 -- the (limit+1)-th row is detected and
+    // discarded, never surfaced as a phantom extra result.
+    expect(results.map((r) => r.name)).toEqual(['Depot 00', 'Depot 01', 'Depot 02']);
   });
 
   it('listPaginated with activeOnly=true excludes inactive rows; without it, both are returned', async () => {
@@ -128,9 +163,9 @@ describe.each([
 
     const asTenantA = await repo.search('Shared', TENANT_A);
     const asTenantB = await repo.search('Shared', TENANT_B);
-    expect(asTenantA).toHaveLength(1);
-    expect(asTenantB).toHaveLength(1);
-    expect(asTenantA[0]._id).not.toBe(asTenantB[0]._id);
+    expect(asTenantA.results).toHaveLength(1);
+    expect(asTenantB.results).toHaveLength(1);
+    expect(asTenantA.results[0]._id).not.toBe(asTenantB.results[0]._id);
   });
 
   it('findByNormalizedName never resolves another tenant\'s record', async () => {

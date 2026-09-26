@@ -45,6 +45,13 @@ import { RecordActionsMenu } from '../components/RecordActionsMenu';
 import { EditRecordDialog, type EditRecordDialogMode } from '../components/EditRecordDialog';
 import { AuditHistorySection } from '../components/AuditHistorySection';
 import type { SourceRecordPatch } from '../types';
+import { COST_FACING_COMPANIES } from '@/shared/types/cost-facing-company.types';
+// PRODUCTION FIX (Slice 1-5 verification pass): "data quality" section,
+// previously entirely absent from this page. Logic lives in a plain
+// .ts util (see its own header for why) so it stays unit-testable.
+import { collectDataQualityIssues } from '../utils/operation-data-quality.utils';
+
+const COST_FACING_COMPANY_LABEL_BY_VALUE = new Map(COST_FACING_COMPANIES.map((c) => [c.value, c.label]));
 
 interface TransportOperationDetailPageProps {
   sourceRecordId: string;
@@ -88,6 +95,7 @@ export function TransportOperationDetailPage({ sourceRecordId }: TransportOperat
 
   const { source, status, livePosting, postingHistory } = view;
   const loads = source.lines && source.lines.length > 0 ? source.lines : null;
+  const dataQualityIssues = collectDataQualityIssues(source);
 
   async function handleEditSubmit(patch: SourceRecordPatch) {
     if (dialogMode === 'edit') {
@@ -197,7 +205,10 @@ export function TransportOperationDetailPage({ sourceRecordId }: TransportOperat
             <DetailRow label="Date" value={source.date ? formatDate(source.date) : '—'} />
             <DetailRow label="Registration" value={source.registration ?? '—'} />
             <DetailRow label="Transporter" value={source.transporterNormalized ?? '—'} />
-            <DetailRow label="Cost-facing company" value={source.costFacingCompany ?? '—'} />
+            <DetailRow
+              label="Cost-facing company"
+              value={source.costFacingCompany ? COST_FACING_COMPANY_LABEL_BY_VALUE.get(source.costFacingCompany) ?? source.costFacingCompany : 'Unattributed'}
+            />
             <DetailRow label="Customer" value={source.customerName ?? '—'} />
             <DetailRow label="Destination" value={source.destinationTown ?? '—'} />
             <DetailRow label="Sales invoice no" value={source.salesInvoiceNo ?? '—'} />
@@ -215,6 +226,28 @@ export function TransportOperationDetailPage({ sourceRecordId }: TransportOperat
           </CardContent>
         </Card>
       </div>
+
+      {/* PRODUCTION FIX (Slice 1-5 verification pass): "Data quality" section,
+          previously entirely absent from this page -- see
+          collectDataQualityIssues' own doc comment for why every issue here
+          is a real, already-fetched field condition, never a fabricated or
+          estimated one. Deliberately renders nothing (not a fabricated "all
+          clear" banner) when the record has no issues, consistent with the
+          client's "do not fabricate ... only expose metrics supported by
+          real data" instruction. */}
+      {dataQualityIssues.length > 0 && (
+        <Card className="border-warning/40">
+          <CardHeader><CardTitle>Data quality ({dataQualityIssues.length})</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            {dataQualityIssues.map((issue) => (
+              <div key={issue.label} className="flex flex-col gap-0.5 border-l-2 border-warning/60 pl-3 text-body-sm">
+                <span className="font-medium text-foreground">{issue.label}</span>
+                <span className="text-muted-foreground">{issue.detail}</span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {loads && (
         <Card>

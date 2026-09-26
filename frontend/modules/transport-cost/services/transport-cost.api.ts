@@ -49,6 +49,21 @@ export interface MasterDataSearchResult {
   label: string;
 }
 
+/**
+ * PRODUCTION FIX (Slice 1-5 verification pass): mirrors backend's
+ * MasterDataSearchPage -- every master-data search endpoint now returns
+ * this shape instead of a bare `MasterDataSearchResult[]`, so the UI can
+ * tell "this is everything that matched" from "this is the first page
+ * of many" and render accordingly instead of silently truncating (the
+ * root cause of the reported "only ~20 transporters/vehicles show up"
+ * defect). See master-data.service.ts's MasterDataSearchPage doc comment
+ * for the full reasoning.
+ */
+export interface MasterDataSearchPage {
+  results: MasterDataSearchResult[];
+  hasMore: boolean;
+}
+
 /** Slice 3: the response of a Customer/Destination find-or-create POST. */
 export interface MasterDataCreateResult {
   id: string;
@@ -263,9 +278,9 @@ export const transportCostApi = {
   // -- see modules/transport-cost/services/master-data.service.ts's
   // header for why there is no createTransporter/createVehicle here.
 
-  /** GET /api/transport-cost/customers/search?q=... */
-  async searchCustomers(query: string): Promise<MasterDataSearchResult[]> {
-    return apiClient.get<MasterDataSearchResult[]>(`${BASE}/customers/search`, { params: { q: query } });
+  /** GET /api/transport-cost/customers/search?q=... -- PRODUCTION FIX: returns { results, hasMore }, see MasterDataSearchPage. */
+  async searchCustomers(query: string): Promise<MasterDataSearchPage> {
+    return apiClient.get<MasterDataSearchPage>(`${BASE}/customers/search`, { params: { q: query } });
   },
 
   /** POST /api/transport-cost/customers -- find-or-create, immediately selectable. */
@@ -273,9 +288,9 @@ export const transportCostApi = {
     return apiClient.post<MasterDataCreateResult>(`${BASE}/customers`, { name });
   },
 
-  /** GET /api/transport-cost/destinations/search?q=... */
-  async searchDestinations(query: string): Promise<MasterDataSearchResult[]> {
-    return apiClient.get<MasterDataSearchResult[]>(`${BASE}/destinations/search`, { params: { q: query } });
+  /** GET /api/transport-cost/destinations/search?q=... -- PRODUCTION FIX: returns { results, hasMore }, see MasterDataSearchPage. */
+  async searchDestinations(query: string): Promise<MasterDataSearchPage> {
+    return apiClient.get<MasterDataSearchPage>(`${BASE}/destinations/search`, { params: { q: query } });
   },
 
   /** POST /api/transport-cost/destinations -- find-or-create, immediately selectable. */
@@ -283,14 +298,14 @@ export const transportCostApi = {
     return apiClient.post<MasterDataCreateResult>(`${BASE}/destinations`, { name });
   },
 
-  /** GET /api/transport-cost/transporters/search?q=... -- confirmed TransportPartner rows only. */
-  async searchTransporters(query: string): Promise<MasterDataSearchResult[]> {
-    return apiClient.get<MasterDataSearchResult[]>(`${BASE}/transporters/search`, { params: { q: query } });
+  /** GET /api/transport-cost/transporters/search?q=... -- confirmed TransportPartner rows only. PRODUCTION FIX: returns { results, hasMore } -- this is the endpoint behind the "only ~20 transporters" defect, see MasterDataSearchPage. */
+  async searchTransporters(query: string): Promise<MasterDataSearchPage> {
+    return apiClient.get<MasterDataSearchPage>(`${BASE}/transporters/search`, { params: { q: query } });
   },
 
-  /** GET /api/transport-cost/vehicles/search?q=&transporterPartnerId=... -- confirmed ContractedVehicle rows only. */
-  async searchVehicles(query: string, transporterPartnerId?: string): Promise<MasterDataSearchResult[]> {
-    return apiClient.get<MasterDataSearchResult[]>(`${BASE}/vehicles/search`, {
+  /** GET /api/transport-cost/vehicles/search?q=&transporterPartnerId=... -- confirmed ContractedVehicle rows only. PRODUCTION FIX: returns { results, hasMore }, see MasterDataSearchPage. */
+  async searchVehicles(query: string, transporterPartnerId?: string): Promise<MasterDataSearchPage> {
+    return apiClient.get<MasterDataSearchPage>(`${BASE}/vehicles/search`, {
       params: { q: query, transporterPartnerId },
     });
   },

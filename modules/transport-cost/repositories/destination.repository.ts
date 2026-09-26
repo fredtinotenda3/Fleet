@@ -17,13 +17,25 @@ export class DestinationRepository extends BaseRepository<Destination> {
     return this.findOne({ normalizedName } as Filter<Destination>, tenantId);
   }
 
-  async search(query: string, tenantId: string, limit: number = 20): Promise<Destination[]> {
+  /**
+   * PRODUCTION FIX (Slice 1-5 verification pass): see
+   * CustomerRepository.search's doc comment (this class mirrors it
+   * exactly) -- fetches `limit + 1` and returns `hasMore` instead of a
+   * bare, silently-capped array.
+   */
+  async search(
+    query: string,
+    tenantId: string,
+    limit: number = 50
+  ): Promise<{ results: Destination[]; hasMore: boolean }> {
     const trimmed = query.trim();
     const filter: Filter<Destination> = {
       active: true,
       ...(trimmed ? { name: containsMatch(trimmed) } : {}),
     } as Filter<Destination>;
-    return this.findMany(filter, tenantId, { sortBy: 'name', sortOrder: 'asc', limit });
+    const rows = await this.findMany(filter, tenantId, { sortBy: 'name', sortOrder: 'asc', limit: limit + 1 });
+    const hasMore = rows.length > limit;
+    return { results: hasMore ? rows.slice(0, limit) : rows, hasMore };
   }
 
   async listPaginated(

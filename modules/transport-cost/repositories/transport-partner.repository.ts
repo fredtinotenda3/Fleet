@@ -29,15 +29,44 @@ export class TransportPartnerRepository extends BaseRepository<TransportPartner>
    * addAlias), not to be individually offered as separate search
    * results, which would surface the same transporter under multiple
    * rows in the dropdown.
+   *
+   * PRODUCTION FIX (Slice 1-5 verification pass): this used to return a
+   * bare `TransportPartner[]` capped at `limit` with NO signal that more
+   * rows existed beyond the cap -- opening the picker with an empty or
+   * broad query silently showed only the alphabetically-first ~20 rows
+   * and looked, to the operator, like "the complete list." The fix is
+   * NOT simply raising the cap (a bigger fixed number has the identical
+   * failure mode one row past it) -- it is fetching one row PAST the
+   * page boundary (`limit + 1`) so the caller can tell there is more
+   * without a second `countDocuments()` round trip, and surfacing that
+   * as `hasMore` all the way to the UI (see SearchCreateSelect.tsx /
+   * IdentityPicker.tsx), which now renders "keep typing to narrow" when
+   * true. Tenant scoping, the `reviewStatus: 'confirmed'` filter, and
+   * the `containsMatch` regex-escaping are unchanged -- this is a
+   * transparency fix, not a scoping or search-algorithm change. The
+   * default cap itself moved from 20 to 50 as a modest, secondary
+   * headroom improvement; it is not itself the fix, `hasMore` is.
+   * REVERSIBLE: callers that only destructure `.results` and ignore
+   * `.hasMore` see identical row data to before.
    */
-  async searchConfirmedByName(query: string, tenantId: string, limit: number = 20): Promise<TransportPartner[]> {
+  async searchConfirmedByName(
+    query: string,
+    tenantId: string,
+    limit: number = 50
+  ): Promise<{ results: TransportPartner[]; hasMore: boolean }> {
     const trimmed = query.trim();
     const filter: Filter<TransportPartner> = {
       reviewStatus: 'confirmed',
       mergedIntoPartnerId: { $exists: false },
       ...(trimmed ? { canonicalName: containsMatch(trimmed) } : {}),
     } as Filter<TransportPartner>;
-    return this.findMany(filter, tenantId, { sortBy: 'canonicalName', sortOrder: 'asc', limit });
+    const rows = await this.findMany(filter, tenantId, {
+      sortBy: 'canonicalName',
+      sortOrder: 'asc',
+      limit: limit + 1,
+    });
+    const hasMore = rows.length > limit;
+    return { results: hasMore ? rows.slice(0, limit) : rows, hasMore };
   }
 
   /**

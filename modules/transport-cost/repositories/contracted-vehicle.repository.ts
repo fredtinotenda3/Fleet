@@ -25,20 +25,36 @@ export class ContractedVehicleRepository extends BaseRepository<ContractedVehicl
    * transporter first, then only see that transporter's vehicles), but
    * is optional: omitted, this searches every confirmed vehicle in the
    * tenant.
+   *
+   * PRODUCTION FIX (Slice 1-5 verification pass): same defect and same
+   * fix as TransportPartnerRepository.searchConfirmedByName -- see that
+   * method's doc comment for the full reasoning. Fetches `limit + 1`
+   * rows to detect truncation and returns `hasMore` instead of silently
+   * capping at ~20 with no signal. Tenant scoping, the
+   * `reviewStatus: 'confirmed'` filter, the optional
+   * `transporterPartnerId` narrowing, and `containsMatch` regex-escaping
+   * are unchanged. REVERSIBLE: callers using only `.results` see
+   * identical row data to before.
    */
   async searchConfirmedByRegistration(
     query: string,
     tenantId: string,
     transporterPartnerId?: string,
-    limit: number = 20
-  ): Promise<ContractedVehicle[]> {
+    limit: number = 50
+  ): Promise<{ results: ContractedVehicle[]; hasMore: boolean }> {
     const trimmed = query.trim().replace(/\s+/g, '').toUpperCase();
     const filter: Filter<ContractedVehicle> = {
       reviewStatus: 'confirmed',
       ...(transporterPartnerId ? { transporterPartnerId } : {}),
       ...(trimmed ? { registration: containsMatch(trimmed) } : {}),
     } as Filter<ContractedVehicle>;
-    return this.findMany(filter, tenantId, { sortBy: 'registration', sortOrder: 'asc', limit });
+    const rows = await this.findMany(filter, tenantId, {
+      sortBy: 'registration',
+      sortOrder: 'asc',
+      limit: limit + 1,
+    });
+    const hasMore = rows.length > limit;
+    return { results: hasMore ? rows.slice(0, limit) : rows, hasMore };
   }
 
   /**

@@ -34,6 +34,20 @@ export interface SearchSelectResult {
   label: string;
 }
 
+/**
+ * PRODUCTION FIX (Slice 1-5 verification pass). `search()` used to
+ * resolve a bare array, capped server-side with no signal more rows
+ * existed -- see modules/transport-cost/services/master-data.service.ts's
+ * MasterDataSearchPage doc comment for the full reasoning (this
+ * component is used for the Command Centre's Vehicle/Transporter filters
+ * and the review queue's alternative-transporter picker, both backed by
+ * the same search endpoints).
+ */
+export interface SearchSelectPage {
+  results: SearchSelectResult[];
+  hasMore: boolean;
+}
+
 export interface SearchSelectProps {
   id?: string;
   label?: string;
@@ -43,7 +57,8 @@ export interface SearchSelectProps {
   /** The display label for the currently committed id, if known (the caller already has it from a prior search result or resolved display data). Falls back to the raw id when absent. */
   valueLabel?: string;
   onChange: (value: string | undefined) => void;
-  search: (query: string) => Promise<SearchSelectResult[]>;
+  /** Server-side type-ahead lookup. Resolves a page, not a bare array -- see SearchSelectPage. */
+  search: (query: string) => Promise<SearchSelectPage>;
   disabled?: boolean;
 }
 
@@ -54,6 +69,7 @@ export function SearchSelect({ id, label, placeholder = 'Search…', value, valu
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [results, setResults] = useState<SearchSelectResult[]>([]);
+  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestIdRef = useRef(0);
@@ -70,14 +86,16 @@ export function SearchSelect({ id, label, placeholder = 'Search…', value, valu
     setLoading(true);
     setError(null);
     search(debouncedQuery.trim())
-      .then((rows) => {
+      .then((page) => {
         if (cancelled || requestIdRef.current !== requestId) return;
-        setResults(rows);
+        setResults(page.results);
+        setHasMore(page.hasMore);
       })
       .catch((err: unknown) => {
         if (cancelled || requestIdRef.current !== requestId) return;
         setError(err instanceof Error ? err.message : 'Search failed.');
         setResults([]);
+        setHasMore(false);
       })
       .finally(() => {
         if (cancelled || requestIdRef.current !== requestId) return;
@@ -141,6 +159,11 @@ export function SearchSelect({ id, label, placeholder = 'Search…', value, valu
                 )}
               </CommandList>
             </Command>
+            {!loading && !error && hasMore && (
+              <p className="border-t border-border px-3 py-1.5 text-caption text-muted-foreground">
+                Showing the first {results.length} matches — keep typing to narrow the results.
+              </p>
+            )}
             {error && <p className="border-t border-border px-3 py-1.5 text-caption text-destructive">{error}</p>}
           </PopoverContent>
         </Popover>

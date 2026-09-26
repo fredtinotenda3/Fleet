@@ -43,6 +43,19 @@ import { EditRecordDialog, type EditRecordDialogMode } from '../components/EditR
 import type { TransportCostSourceRecord, TransportCostSheetFamily } from '@/shared/types/transport-cost.types';
 import type { SourceRecordPatch } from '../types';
 import { COST_FACING_COMPANIES } from '@/shared/types/cost-facing-company.types';
+import { COST_CATEGORY_LABEL_BY_FAMILY } from '../types';
+
+// PRODUCTION FIX (Slice 1-5 verification pass): the operational records
+// table below was missing Company/Category/Customer/Destination columns
+// even though the data is already present on every fetched record (see
+// shared/types/transport-cost.types.ts's costFacingCompany/customerName/
+// destinationTown fields) -- the client's own spec requires them ("date/
+// company/category/transporter/vehicle/customer/destination/cost/
+// loads/status/available actions"). This lookup renders the company's
+// display label from its stored value; a value with no match (should
+// never happen given the closed enum, but fails safe) falls back to the
+// raw stored value rather than hiding it.
+const COST_FACING_COMPANY_LABEL_BY_VALUE = new Map(COST_FACING_COMPANIES.map((c) => [c.value, c.label]));
 
 // OLIVINE LIVE OPERATING MODEL, item 2/3/5: required on every entry path
 // (manual and bulk), for all four sheet families -- see
@@ -580,9 +593,27 @@ export function TransportCostImportPage() {
                 <TableRow>
                   <TableHead>Row</TableHead>
                   <TableHead>Family</TableHead>
+                  {/* PRODUCTION FIX (Slice 1-5 verification pass): Category is a
+                      DIFFERENT dimension from the Family badge above -- Family is
+                      the raw sheetFamily (third-party/vansales/swift/depot-sto);
+                      Category is the cost category that dimension actually posts
+                      as (e.g. both third-party and swift post as "Third-party
+                      transport"). See COST_CATEGORY_LABEL_BY_FAMILY's doc comment. */}
+                  <TableHead>Category</TableHead>
                   <TableHead>Date</TableHead>
+                  {/* PRODUCTION FIX: cost-facing company was entered on every one of
+                      these records (Slice 1's required selector) but was never
+                      shown as its own column here -- do not confuse this with
+                      Transporter/Customer below, see cost-facing-company.types.ts. */}
+                  <TableHead>Company</TableHead>
                   <TableHead>Registration</TableHead>
                   <TableHead>Transporter</TableHead>
+                  {/* PRODUCTION FIX: Customer/Destination are per-line fields for a
+                      multi-load operation (Slice 2) -- this column shows line 1's
+                      value (the operation's own summary field), consistent with
+                      how EditRecordDialog treats line 1 as the operation's summary. */}
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Destination</TableHead>
                   <TableHead>Amount</TableHead>
                   {/* OLIVINE LIVE OPERATING MODEL, SLICE 2 (item 6/7): the
                       "TRANSPORT OPERATIONS vs TRANSPORT LINES/LOADS"
@@ -604,14 +635,14 @@ export function TransportCostImportPage() {
               <TableBody>
                 {isLoading && (
                   <TableRow>
-                    <TableCell colSpan={11} className="py-8 text-center text-muted-foreground">
+                    <TableCell colSpan={15} className="py-8 text-center text-muted-foreground">
                       Loading&hellip;
                     </TableCell>
                   </TableRow>
                 )}
                 {!isLoading && (result?.data.length ?? 0) === 0 && (
                   <TableRow>
-                    <TableCell colSpan={11} className="py-8 text-center text-muted-foreground">
+                    <TableCell colSpan={15} className="py-8 text-center text-muted-foreground">
                       No source records imported yet.
                     </TableCell>
                   </TableRow>
@@ -625,9 +656,21 @@ export function TransportCostImportPage() {
                         <TableCell>
                           <Badge variant="outline">{familyLabel(record.sheetFamily)}</Badge>
                         </TableCell>
+                        <TableCell>
+                          <span className="text-muted-foreground">{COST_CATEGORY_LABEL_BY_FAMILY[record.sheetFamily]?.label ?? '—'}</span>
+                        </TableCell>
                         <TableCell>{record.date ? new Date(record.date).toLocaleDateString() : '—'}</TableCell>
+                        <TableCell>
+                          {record.costFacingCompany ? (
+                            COST_FACING_COMPANY_LABEL_BY_VALUE.get(record.costFacingCompany) ?? record.costFacingCompany
+                          ) : (
+                            <span className="text-muted-foreground" title="No cost-facing company was captured for this record.">Unattributed</span>
+                          )}
+                        </TableCell>
                         <TableCell>{record.registration ?? '—'}</TableCell>
                         <TableCell>{record.transporterNormalized ?? '—'}</TableCell>
+                        <TableCell>{record.customerName ?? '—'}</TableCell>
+                        <TableCell>{record.destinationTown ?? '—'}</TableCell>
                         <TableCell>{record.amount === null ? '—' : record.amount.toLocaleString()}</TableCell>
                         <TableCell>
                           {loadCount > 1 ? (

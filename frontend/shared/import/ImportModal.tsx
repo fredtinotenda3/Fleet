@@ -49,8 +49,15 @@ export interface ImportColumnOption {
  * breaking.
  */
 export interface ImportColumnSearchSelectConfig {
-  /** Type-ahead lookup. Called with the current (trimmed) query text, debounced client-side. */
-  search: (query: string) => Promise<{ id: string; label: string }[]>;
+  /**
+   * Type-ahead lookup. Called with the current (trimmed) query text,
+   * debounced client-side. PRODUCTION FIX (Slice 1-5 verification
+   * pass): resolves `{ results, hasMore }` rather than a bare array, so
+   * SearchCreateSelect can tell an operator when a result page was
+   * truncated server-side instead of silently presenting it as complete
+   * -- see SearchCreateSelect.tsx's own doc comment.
+   */
+  search: (query: string) => Promise<{ results: { id: string; label: string }[]; hasMore: boolean }>;
   /** When present, "+ Add New <createLabel ?? label>" is offered; selecting it calls this with the typed text. Omit for search-only fields (Transporter/Vehicle). */
   onCreateNew?: (name: string) => Promise<{ id: string; label: string }>;
   /** Overrides the column's own `label` in the "+ Add New ..." action text and the empty-state copy. */

@@ -44,6 +44,21 @@ export interface IdentityPickerResult {
   reviewStatus?: 'auto-suggested' | 'confirmed' | 'needs-review';
 }
 
+/**
+ * PRODUCTION FIX (Slice 1-5 verification pass, HIGH PRIORITY). `search()`
+ * used to resolve a bare array capped server-side (originally 20) with
+ * no signal more rows existed -- this is the exact defect reported as
+ * "the production form appears to show only approximately 20
+ * transporters." `hasMore` lets this component render "keep typing to
+ * narrow" instead of presenting a truncated page as complete. See
+ * modules/transport-cost/services/master-data.service.ts's
+ * MasterDataSearchPage doc comment for the backend side of this fix.
+ */
+export interface IdentityPickerPage {
+  results: IdentityPickerResult[];
+  hasMore: boolean;
+}
+
 interface IdentityPickerProps {
   id?: string;
   label?: string;
@@ -56,7 +71,8 @@ interface IdentityPickerProps {
   /** True when the currently-selected identity is itself still needs-review -- shown as a pending badge next to the trigger. */
   valuePending?: boolean;
   onChange: (result: IdentityPickerResult | null) => void;
-  search: (query: string) => Promise<IdentityPickerResult[]>;
+  /** Server-side type-ahead lookup. Resolves a page, not a bare array -- see IdentityPickerPage. */
+  search: (query: string) => Promise<IdentityPickerPage>;
   /** Present only where requesting a new identity is safe/supported (Transporter, and Vehicle once a transporter is chosen). Omitted disables the "+ Request new" action entirely. */
   onRequestNew?: (rawInput: string) => Promise<IdentityPickerResult>;
   requestNewLabel?: string;
@@ -85,6 +101,7 @@ export function IdentityPicker({
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [results, setResults] = useState<IdentityPickerResult[]>([]);
+  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -102,14 +119,16 @@ export function IdentityPicker({
     setLoading(true);
     setError(null);
     search(debouncedQuery.trim())
-      .then((rows) => {
+      .then((page) => {
         if (cancelled || requestIdRef.current !== requestId) return;
-        setResults(rows);
+        setResults(page.results);
+        setHasMore(page.hasMore);
       })
       .catch((err: unknown) => {
         if (cancelled || requestIdRef.current !== requestId) return;
         setError(err instanceof Error ? err.message : 'Search failed.');
         setResults([]);
+        setHasMore(false);
       })
       .finally(() => {
         if (cancelled || requestIdRef.current !== requestId) return;
@@ -228,6 +247,11 @@ export function IdentityPicker({
               )}
             </CommandList>
           </Command>
+          {!loading && !error && hasMore && (
+            <p className="border-t border-border px-3 py-1.5 text-caption text-muted-foreground">
+              Showing the first {results.length} matches — keep typing to narrow the results.
+            </p>
+          )}
           {error && <p className="border-t border-border px-3 py-1.5 text-caption text-destructive">{error}</p>}
         </PopoverContent>
       </Popover>

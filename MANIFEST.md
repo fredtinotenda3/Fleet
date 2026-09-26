@@ -1,69 +1,35 @@
-# Fleet — export audit, AI scoping, high-risk type errors
+# Manifest — Olivine Transport Cost Slice 1–5 Production Verification Pass
 
-7 files.
+FILE / WHY CHANGED
 
-## 1. Export audit — NO LEAK FOUND
+- `modules/transport-cost/repositories/transport-partner.repository.ts` — Root-cause fix for the reported "only ~20 transporters" defect: `searchConfirmedByName` now fetches `limit+1` and returns `{results, hasMore}` instead of a silently-capped bare array. Default page size 20→50.
+- `modules/transport-cost/repositories/contracted-vehicle.repository.ts` — Identical fix for `searchConfirmedByRegistration` (the vehicle/truck-registration search equivalent of the transporter defect).
+- `modules/transport-cost/repositories/customer.repository.ts` — Same latent defect found in `search()` (identical `limit=20` shape); fixed identically for consistency.
+- `modules/transport-cost/repositories/destination.repository.ts` — Same fix, mirrors CustomerRepository exactly.
+- `modules/transport-cost/services/master-data.service.ts` — Threads the new `hasMore` signal through `searchCustomers`/`searchDestinations`/`searchTransporters`/`searchVehicles`; adds the `MasterDataSearchPage` type.
+- `modules/transport-cost/controllers/master-data.controller.ts` — Doc-comment only; response body shape changes automatically since the service's return type changed (no code change needed).
+- `frontend/modules/transport-cost/services/transport-cost.api.ts` — Frontend API client mirror of `MasterDataSearchPage`; all four search methods now return `{results, hasMore}`.
+- `frontend/shared/ui/forms/SearchCreateSelect.tsx` — Renders "Showing the first N matches — keep typing to narrow" when `hasMore` is true (Customer/Destination picker, also used by bulk-import manual-entry columns).
+- `frontend/shared/ui/forms/SearchSelect.tsx` — Same hint, for the Command Centre's Vehicle/Transporter filters and the Review Queue's alternative-transporter picker.
+- `frontend/modules/transport-cost/components/IdentityPicker.tsx` — Same hint, for Transporter/Vehicle pickers (Edit dialog, Review Queue alternative-match picker).
+- `frontend/modules/transport-cost/components/EditRecordDialog.tsx` — Updates `handleTransporterSearch`/`handleVehicleSearch` for the new `{results, hasMore}` shape.
+- `frontend/modules/transport-cost/pages/NormalizationReviewQueuePage.tsx` — Updates `handleAlternativeSearch` for the new shape.
+- `frontend/modules/transport-cost/pages/CommandCentrePage.tsx` — (a) search-shape update where needed; (b) Slice 4 fix: "By vehicle" drill-down now uses the same filter-aware `DimensionDrillDownDialog` mechanism every other dimension already used, instead of the older, filter-blind `VehicleDrillDownDialog` path.
+- `frontend/modules/transport-cost/pages/TransportCostImportPage.tsx` — Slice 5 fix: operational records table gains Category/Company/Customer/Destination columns (data was already fetched, just never rendered).
+- `frontend/modules/transport-cost/pages/TransportOperationDetailPage.tsx` — Slice 5 fix: new "Data quality" section, derived from real already-fetched fields (never fabricated); cost-facing company now shows its display label instead of the raw enum value.
+- `frontend/modules/transport-cost/types/index.ts` — Adds `COST_CATEGORY_LABEL_BY_FAMILY`, a display-only, drift-guarded mirror of the backend's `COST_CATEGORY_BY_FAMILY` (frontend cannot import the server-only service file directly).
+- `frontend/modules/transport-cost/utils/operation-data-quality.utils.ts` — NEW. Pure function backing the detail page's data-quality section; extracted to a plain `.ts` file so it stays unit-testable under this project's JSX-less Jest config.
+- `frontend/shared/import/ImportModal.tsx` — Type-signature update for `ImportColumnSearchSelectConfig.search`'s new `{results, hasMore}` return shape.
+- `tests/unit/transport-cost/transporter-vehicle-search.repository.spec.ts` — NEW. Direct repository-level coverage of the search fix: reviewStatus/merge filtering, `hasMore` true/false, adversarial tenant isolation, fail-closed empty tenant.
+- `tests/unit/transport-cost/cost-category-label-sync.spec.ts` — NEW. Drift guard between the frontend's display-only category label map and the real backend `COST_CATEGORY_BY_FAMILY`.
+- `tests/unit/transport-cost/operation-detail-data-quality.spec.ts` — NEW. Unit tests for the data-quality section's derivation logic (9 cases, including a "no issues" case and a "multiple simultaneous issues" case).
+- `tests/unit/transport-cost/master-data.service.spec.ts` — Updated mocks/assertions for the new `{results, hasMore}` shape; added `hasMore=true` propagation tests for customers/transporters/vehicles.
+- `tests/unit/transport-cost/customer-destination.repository.spec.ts` — Updated existing assertions for the new shape; added `hasMore` true/false tests with an explicit "the (limit+1)-th row is never surfaced as a phantom result" assertion.
+- `OLIVINE_SLICE_1_5_PRODUCTION_VERIFICATION_REPORT.md` — NEW. Full root-cause/fix/security/test/remaining-gaps documentation for this pass.
 
-I flagged these as a suspected leak in two previous rounds. Audited all five
-export endpoints end to end (controller → repository → Mongo query):
+## What is NOT in this ZIP
 
-| Export | Controller resolves context | Repository applies org-unit filter |
-|---|---|---|
-| expenses | yes | `buildScopedMatch` |
-| fuel | yes | `buildScopedQuery` |
-| maintenance | yes | `buildScopedQuery` |
-| trips | yes | `buildScopedQuery` |
-| vehicles | yes | `buildScopedQuery` |
-
-Every one takes `TenantContext` (not `tenantId`) and applies
-`tenantScopeService.buildFilter(context, 'orgUnitId')` — in the vehicles case via
-`Object.assign(query, scopeFilter)` **last**, so filters can't widen it. My earlier
-suspicion was wrong; nothing to fix.
-
-Added `tests/security/export-scope-conformance.spec.ts` (11 tests) so this stays
-true: it fails if any export repository method takes a bare `tenantId`, if a
-controller stops resolving a context, or if an export loses its row cap. An audit
-is a snapshot; this is the invariant.
-
-## 2. AI services — fleet health genuinely scoped, four still gated
-
-**`fleetHealthService.calculateHealthScore`** now takes `TenantContext` and applies
-one org-unit predicate across all five of its input reads (vehicles, maintenance,
-expenses, trips, fuel). Scoped users get **real numbers** — the placeholder is gone
-for this endpoint.
-
-The other four (driver-risk, fuel-fraud, predictive-maintenance, expense-anomaly)
-build their own multi-stage aggregations and **remain behind the fail-closed gate**.
-
-Deliberate: fleet health was scopeable because its inputs are five plain collection
-reads. A partially-scoped AI panel is worse than a blocked one — the numbers look
-authoritative while silently mixing one branch's vehicles with another's expenses.
-So each service is unblocked only when its *whole* input set is narrowed. The
-single shared `scope` predicate in fleet-health exists for the same reason: five
-independently-scoped reads could disagree.
-
-## 3. Type errors — 83 → 79, all four were broken endpoints
-
-Triaged by runtime risk rather than count. The four fixed were not cosmetic:
-
-- **`POST /api/trips/import`** called `tripController.importTrips`, which **does not
-  exist anywhere**. Every call threw `TypeError: ... is not a function` → opaque 500.
-  TS2551 said *"Did you mean 'exportTrips'?"*. Now returns an explicit **501** —
-  trip import needs a column mapping, duplicate policy and partial-failure
-  behaviour; guessing those would create bad data, which is worse than an honest
-  "not built".
-- **3 reporting routes** (execution download, KPI evaluate, template instantiate)
-  passed the awaited `params` **object** where the controller takes `id: string`, so
-  `id` arrived as `{ id: "..." }` and every call 404'd or queried for
-  `"[object Object]"`. TS2345 flagged all three.
-
-That's **four endpoints broken in production**, each flagged by tsc and shipped by
-`ignoreBuildErrors: true`. The remaining 79 are overwhelmingly frontend (42)
-`null`-vs-`undefined` mismatches with no runtime consequence.
-
-**The real lesson is the config, not the count.** These four cost nothing to find —
-the compiler had already found them. Turning off `ignoreBuildErrors` is now within
-reach and is the highest-value follow-up.
-
-## Verification
-`npm run test:security` **211/211** (15 new) · `npx tsc --noEmit` **79** (was 83).
+No `node_modules`, `.next`, `.git`, `coverage`, caches, build artifacts,
+or any file this pass did not change. Every file above is a real,
+already-existing project file this pass modified, or a genuinely new
+file this pass added — nothing here is a full-project export.

@@ -59,6 +59,27 @@ export interface MasterDataSearchResult {
   label: string;
 }
 
+/**
+ * PRODUCTION FIX (Slice 1-5 verification pass, HIGH PRIORITY). Every
+ * search* method below used to resolve a bare `MasterDataSearchResult[]`
+ * capped at the repository's default `limit` with no way for the caller
+ * to tell "this is everything" from "this is the first N of many" --
+ * the root cause of the reported "the form only shows ~20 transporters"
+ * defect (identical shape existed for vehicles, customers, and
+ * destinations too; all four repositories shared the same
+ * `limit: number = 20` pattern). `hasMore` is threaded straight through
+ * from the repository's own `limit + 1` truncation check (see
+ * TransportPartnerRepository.searchConfirmedByName's doc comment) so the
+ * UI can render "keep typing to narrow" instead of presenting a
+ * truncated page as complete. This is additive to the response shape,
+ * not a behavioural change to which rows match -- every existing
+ * tenant/reviewStatus/active filter is untouched.
+ */
+export interface MasterDataSearchPage {
+  results: MasterDataSearchResult[];
+  hasMore: boolean;
+}
+
 export interface CreateMasterDataResult<T> {
   record: T;
   /** false when `findByNormalizedName` already had a match -- see findOrCreateNamed's header. The caller was NOT created; the existing record is returned so the UI can select it immediately, per the client's "already exists -- select the existing record" requirement. */
@@ -93,9 +114,9 @@ export class MasterDataService {
 
   // ── Customer ──────────────────────────────────────────────────────
 
-  async searchCustomers(query: string, tenantId: string): Promise<MasterDataSearchResult[]> {
-    const rows = await this.customerRepo.search(query, tenantId);
-    return rows.map((c) => ({ id: c._id!, label: c.name }));
+  async searchCustomers(query: string, tenantId: string): Promise<MasterDataSearchPage> {
+    const { results, hasMore } = await this.customerRepo.search(query, tenantId);
+    return { results: results.map((c) => ({ id: c._id!, label: c.name })), hasMore };
   }
 
   async createCustomer(name: string, tenantId: string, userId: string): Promise<CreateMasterDataResult<Customer>> {
@@ -120,9 +141,9 @@ export class MasterDataService {
 
   // ── Destination ───────────────────────────────────────────────────
 
-  async searchDestinations(query: string, tenantId: string): Promise<MasterDataSearchResult[]> {
-    const rows = await this.destinationRepo.search(query, tenantId);
-    return rows.map((d) => ({ id: d._id!, label: d.name }));
+  async searchDestinations(query: string, tenantId: string): Promise<MasterDataSearchPage> {
+    const { results, hasMore } = await this.destinationRepo.search(query, tenantId);
+    return { results: results.map((d) => ({ id: d._id!, label: d.name })), hasMore };
   }
 
   async createDestination(name: string, tenantId: string, userId: string): Promise<CreateMasterDataResult<Destination>> {
@@ -147,9 +168,9 @@ export class MasterDataService {
 
   // ── Transporter (search only -- see this file's header) ────────────
 
-  async searchTransporters(query: string, tenantId: string): Promise<MasterDataSearchResult[]> {
-    const rows = await this.partnerRepo.searchConfirmedByName(query, tenantId);
-    return rows.map((p) => ({ id: p._id!, label: p.canonicalName }));
+  async searchTransporters(query: string, tenantId: string): Promise<MasterDataSearchPage> {
+    const { results, hasMore } = await this.partnerRepo.searchConfirmedByName(query, tenantId);
+    return { results: results.map((p) => ({ id: p._id!, label: p.canonicalName })), hasMore };
   }
 
   // ── Vehicle (search only -- see this file's header) ─────────────────
@@ -166,9 +187,13 @@ export class MasterDataService {
     query: string,
     tenantId: string,
     transporterPartnerId?: string
-  ): Promise<MasterDataSearchResult[]> {
-    const rows = await this.vehicleRepo.searchConfirmedByRegistration(query, tenantId, transporterPartnerId);
-    if (rows.length === 0) return [];
+  ): Promise<MasterDataSearchPage> {
+    const { results: rows, hasMore } = await this.vehicleRepo.searchConfirmedByRegistration(
+      query,
+      tenantId,
+      transporterPartnerId
+    );
+    if (rows.length === 0) return { results: [], hasMore: false };
 
     const partnerIds = Array.from(new Set(rows.map((v) => v.transporterPartnerId)));
     const partners = await Promise.all(partnerIds.map((id) => this.partnerRepo.findById(id, tenantId)));
@@ -176,13 +201,14 @@ export class MasterDataService {
       partners.filter((p): p is NonNullable<typeof p> => p !== null).map((p) => [p._id!, p.canonicalName])
     );
 
-    return rows.map((v) => {
+    const results = rows.map((v) => {
       const transporterName = partnerNameById.get(v.transporterPartnerId);
       return {
         id: v._id!,
         label: transporterName ? `${v.registration} — ${transporterName}` : v.registration,
       };
     });
+    return { results, hasMore };
   }
 
   // ── Shared helpers ───────────────────────────────────────────────

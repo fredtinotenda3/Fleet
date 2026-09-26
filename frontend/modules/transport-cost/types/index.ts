@@ -127,3 +127,32 @@ export const TRANSPORT_COST_CATEGORY_OPTIONS: Array<{ value: 'third-party-transp
   { value: 'transport-retainer', label: 'Transport retainer' },
   { value: 'stock-transfer', label: 'Stock transfer' },
 ];
+
+/**
+ * PRODUCTION FIX (Slice 1-5 verification pass). The operational records
+ * table (TransportCostImportPage.tsx) previously had no "Category"
+ * column at all, even though the client's spec requires one -- the
+ * table's own "Family" badge (sheetFamily: third-party/vansales/swift/
+ * depot-sto) is a DIFFERENT dimension, not the cost category a posting
+ * actually carries. Same restated-not-imported technique as
+ * TRANSPORT_COST_CATEGORY_OPTIONS above, for the same reason: the real
+ * source of truth, COST_CATEGORY_BY_FAMILY, lives in
+ * modules/transport-cost/services/transport-cost-posting.service.ts (a
+ * server-only module with repository/DB dependencies frontend code must
+ * never import into a client bundle). This is a DISPLAY-ONLY mirror --
+ * never used for any financial calculation, only to label an existing
+ * read-only table column -- and a dedicated backend test
+ * (tests/unit/transport-cost/cost-category-label-sync.spec.ts) imports
+ * the real `COST_CATEGORY_BY_FAMILY` and asserts every family here maps
+ * to the same category value, so a drift fails CI loudly rather than
+ * silently mislabeling a row.
+ */
+export const COST_CATEGORY_LABEL_BY_FAMILY: Record<
+  'third-party' | 'vansales' | 'swift' | 'depot-sto',
+  { value: 'third-party-transport' | 'transport-retainer' | 'stock-transfer'; label: string }
+> = {
+  'third-party': { value: 'third-party-transport', label: 'Third-party transport' },
+  vansales: { value: 'transport-retainer', label: 'Transport retainer' },
+  swift: { value: 'third-party-transport', label: 'Third-party transport' },
+  'depot-sto': { value: 'stock-transfer', label: 'Stock transfer' },
+};

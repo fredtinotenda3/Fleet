@@ -16,12 +16,18 @@ import { ValidationError, ConflictError, NotFoundError } from '../../../server/e
 const TENANT = 'olivine-group-slice3';
 const USER = 'user-1';
 
+// PRODUCTION FIX (Slice 1-5 verification pass): every search* repository
+// method now resolves { results, hasMore } instead of a bare array (see
+// master-data.service.ts's MasterDataSearchPage doc comment) -- these
+// mock factories' defaults were updated to match, and per-test overrides
+// below now pass { results: [...], hasMore: ... } rather than a bare
+// array.
 function makeCustomerRepo(overrides: Record<string, jest.Mock> = {}) {
   return {
     findByNormalizedName: jest.fn().mockResolvedValue(null),
     create: jest.fn(),
     update: jest.fn(),
-    search: jest.fn().mockResolvedValue([]),
+    search: jest.fn().mockResolvedValue({ results: [], hasMore: false }),
     listPaginated: jest.fn(),
     ...overrides,
   } as any;
@@ -33,7 +39,7 @@ function makeDestinationRepo(overrides: Record<string, jest.Mock> = {}) {
 
 function makePartnerRepo(overrides: Record<string, jest.Mock> = {}) {
   return {
-    searchConfirmedByName: jest.fn().mockResolvedValue([]),
+    searchConfirmedByName: jest.fn().mockResolvedValue({ results: [], hasMore: false }),
     findById: jest.fn().mockResolvedValue(null),
     ...overrides,
   } as any;
@@ -41,7 +47,7 @@ function makePartnerRepo(overrides: Record<string, jest.Mock> = {}) {
 
 function makeVehicleRepo(overrides: Record<string, jest.Mock> = {}) {
   return {
-    searchConfirmedByRegistration: jest.fn().mockResolvedValue([]),
+    searchConfirmedByRegistration: jest.fn().mockResolvedValue({ results: [], hasMore: false }),
     ...overrides,
   } as any;
 }
@@ -135,32 +141,68 @@ describe('MasterDataService.createCustomer / createDestination (find-or-create)'
 describe('MasterDataService.searchCustomers / searchDestinations', () => {
   it('maps repository rows to {id, label} for the type-ahead dropdown', async () => {
     const customerRepo = makeCustomerRepo({
-      search: jest.fn().mockResolvedValue([
-        { _id: 'c1', name: 'Alpha Co', normalizedName: 'ALPHA CO', active: true },
-        { _id: 'c2', name: 'Beta Co', normalizedName: 'BETA CO', active: true },
-      ]),
+      search: jest.fn().mockResolvedValue({
+        results: [
+          { _id: 'c1', name: 'Alpha Co', normalizedName: 'ALPHA CO', active: true },
+          { _id: 'c2', name: 'Beta Co', normalizedName: 'BETA CO', active: true },
+        ],
+        hasMore: false,
+      }),
     });
     const service = makeService({ customerRepo });
 
-    const results = await service.searchCustomers('Co', TENANT);
+    const page = await service.searchCustomers('Co', TENANT);
 
-    expect(results).toEqual([
+    expect(page.results).toEqual([
       { id: 'c1', label: 'Alpha Co' },
       { id: 'c2', label: 'Beta Co' },
     ]);
+    expect(page.hasMore).toBe(false);
     expect(customerRepo.search).toHaveBeenCalledWith('Co', TENANT);
+  });
+
+  // PRODUCTION FIX (Slice 1-5 verification pass, HIGH PRIORITY): pins the
+  // exact defect reported in production -- a search result page silently
+  // truncated with no signal more rows existed. This proves the signal
+  // now reaches the service's own return value.
+  it('propagates hasMore=true from the repository so the UI can tell the page was truncated', async () => {
+    const customerRepo = makeCustomerRepo({
+      search: jest.fn().mockResolvedValue({
+        results: [{ _id: 'c1', name: 'Alpha Co', normalizedName: 'ALPHA CO', active: true }],
+        hasMore: true,
+      }),
+    });
+    const service = makeService({ customerRepo });
+
+    const page = await service.searchCustomers('Co', TENANT);
+    expect(page.hasMore).toBe(true);
   });
 });
 
 describe('MasterDataService.searchTransporters / searchVehicles -- search only, no create path', () => {
   it('searchTransporters delegates to searchConfirmedByName and maps canonicalName as the label', async () => {
     const partnerRepo = makePartnerRepo({
-      searchConfirmedByName: jest.fn().mockResolvedValue([{ _id: 'p1', canonicalName: 'PRINORTH' }]),
+      searchConfirmedByName: jest.fn().mockResolvedValue({ results: [{ _id: 'p1', canonicalName: 'PRINORTH' }], hasMore: false }),
     });
     const service = makeService({ partnerRepo });
 
-    const results = await service.searchTransporters('prin', TENANT);
-    expect(results).toEqual([{ id: 'p1', label: 'PRINORTH' }]);
+    const page = await service.searchTransporters('prin', TENANT);
+    expect(page.results).toEqual([{ id: 'p1', label: 'PRINORTH' }]);
+    expect(page.hasMore).toBe(false);
+  });
+
+  // PRODUCTION FIX (Slice 1-5 verification pass, HIGH PRIORITY): this is
+  // the exact scenario the client reported -- "the production form
+  // appears to show only approximately 20 transporters." Confirms
+  // searchTransporters surfaces hasMore rather than silently truncating.
+  it('surfaces hasMore=true for transporters so the picker can render "keep typing to narrow" instead of silently truncating', async () => {
+    const partnerRepo = makePartnerRepo({
+      searchConfirmedByName: jest.fn().mockResolvedValue({ results: [{ _id: 'p1', canonicalName: 'PRINORTH' }], hasMore: true }),
+    });
+    const service = makeService({ partnerRepo });
+
+    const page = await service.searchTransporters('', TENANT);
+    expect(page.hasMore).toBe(true);
   });
 
   it('MasterDataService has no createTransporter/createVehicle method -- the O2 review-gated identity path is never bypassed', () => {
@@ -173,38 +215,54 @@ describe('MasterDataService.searchTransporters / searchVehicles -- search only, 
     const vehicleRepo = makeVehicleRepo({
       searchConfirmedByRegistration: jest
         .fn()
-        .mockResolvedValue([{ _id: 'v1', registration: 'AGL8230', transporterPartnerId: 'p1' }]),
+        .mockResolvedValue({ results: [{ _id: 'v1', registration: 'AGL8230', transporterPartnerId: 'p1' }], hasMore: false }),
     });
     const partnerRepo = makePartnerRepo({
       findById: jest.fn().mockResolvedValue({ _id: 'p1', canonicalName: 'PRINORTH' }),
     });
     const service = makeService({ vehicleRepo, partnerRepo });
 
-    const results = await service.searchVehicles('AGL', TENANT, 'p1');
+    const page = await service.searchVehicles('AGL', TENANT, 'p1');
 
     expect(vehicleRepo.searchConfirmedByRegistration).toHaveBeenCalledWith('AGL', TENANT, 'p1');
-    expect(results).toEqual([{ id: 'v1', label: 'AGL8230 — PRINORTH' }]);
+    expect(page.results).toEqual([{ id: 'v1', label: 'AGL8230 — PRINORTH' }]);
+    expect(page.hasMore).toBe(false);
+  });
+
+  it('surfaces hasMore=true for vehicles so the "only ~20 vehicles" defect is fixed the same way as transporters', async () => {
+    const vehicleRepo = makeVehicleRepo({
+      searchConfirmedByRegistration: jest
+        .fn()
+        .mockResolvedValue({ results: [{ _id: 'v1', registration: 'AGL8230', transporterPartnerId: 'p1' }], hasMore: true }),
+    });
+    const partnerRepo = makePartnerRepo({
+      findById: jest.fn().mockResolvedValue({ _id: 'p1', canonicalName: 'PRINORTH' }),
+    });
+    const service = makeService({ vehicleRepo, partnerRepo });
+
+    const page = await service.searchVehicles('AGL', TENANT);
+    expect(page.hasMore).toBe(true);
   });
 
   it('searchVehicles falls back to the bare registration when the transporter cannot be resolved', async () => {
     const vehicleRepo = makeVehicleRepo({
       searchConfirmedByRegistration: jest
         .fn()
-        .mockResolvedValue([{ _id: 'v1', registration: 'AGL8230', transporterPartnerId: 'missing' }]),
+        .mockResolvedValue({ results: [{ _id: 'v1', registration: 'AGL8230', transporterPartnerId: 'missing' }], hasMore: false }),
     });
     const partnerRepo = makePartnerRepo({ findById: jest.fn().mockResolvedValue(null) });
     const service = makeService({ vehicleRepo, partnerRepo });
 
-    const results = await service.searchVehicles('AGL', TENANT);
-    expect(results).toEqual([{ id: 'v1', label: 'AGL8230' }]);
+    const page = await service.searchVehicles('AGL', TENANT);
+    expect(page.results).toEqual([{ id: 'v1', label: 'AGL8230' }]);
   });
 
-  it('returns an empty array without querying transporters at all when no vehicle matches', async () => {
+  it('returns an empty page without querying transporters at all when no vehicle matches', async () => {
     const partnerRepo = makePartnerRepo();
     const service = makeService({ partnerRepo });
 
-    const results = await service.searchVehicles('ZZZZZZ', TENANT);
-    expect(results).toEqual([]);
+    const page = await service.searchVehicles('ZZZZZZ', TENANT);
+    expect(page).toEqual({ results: [], hasMore: false });
     expect(partnerRepo.findById).not.toHaveBeenCalled();
   });
 });

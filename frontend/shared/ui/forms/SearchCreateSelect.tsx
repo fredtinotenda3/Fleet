@@ -67,6 +67,21 @@ export interface SearchCreateSelectResult {
   label: string;
 }
 
+/**
+ * PRODUCTION FIX (Slice 1-5 verification pass). `search()` used to
+ * resolve a bare array, capped server-side with no signal that more
+ * rows existed beyond the cap -- the root cause of the reported "the
+ * form only shows the first ~20 records" defect. `hasMore` lets this
+ * component render "keep typing to narrow" instead of presenting a
+ * truncated page as if it were complete. See
+ * modules/transport-cost/services/master-data.service.ts's
+ * MasterDataSearchPage doc comment for the backend side of this fix.
+ */
+export interface SearchCreateSelectPage {
+  results: SearchCreateSelectResult[];
+  hasMore: boolean;
+}
+
 export interface SearchCreateSelectProps {
   id?: string;
   label?: string;
@@ -75,8 +90,8 @@ export interface SearchCreateSelectProps {
   /** The committed value -- a plain string, exactly like the free-text field this replaces. */
   value: string;
   onChange: (value: string) => void;
-  /** Server-side type-ahead lookup. Called with the trimmed query text, ~220ms after the operator stops typing. */
-  search: (query: string) => Promise<SearchCreateSelectResult[]>;
+  /** Server-side type-ahead lookup. Called with the trimmed query text, ~220ms after the operator stops typing. Resolves a page, not a bare array -- see SearchCreateSelectPage. */
+  search: (query: string) => Promise<SearchCreateSelectPage>;
   /** Present only for fields where creating a new master-data record synchronously is safe (Customer, Destination). Omitted for Transporter/Truck registration -- see this file's header and master-data.service.ts's. */
   onCreateNew?: (name: string) => Promise<SearchCreateSelectResult>;
   /** Overrides the column label in the "+ Add New ..." action and empty-state copy. */
@@ -102,6 +117,7 @@ export function SearchCreateSelect({
   const [query, setQuery] = useState(value);
   const [debouncedQuery, setDebouncedQuery] = useState(value);
   const [results, setResults] = useState<SearchCreateSelectResult[]>([]);
+  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -119,14 +135,16 @@ export function SearchCreateSelect({
     setLoading(true);
     setError(null);
     search(debouncedQuery.trim())
-      .then((rows) => {
+      .then((page) => {
         if (cancelled || requestIdRef.current !== requestId) return;
-        setResults(rows);
+        setResults(page.results);
+        setHasMore(page.hasMore);
       })
       .catch((err: unknown) => {
         if (cancelled || requestIdRef.current !== requestId) return;
         setError(err instanceof Error ? err.message : 'Search failed.');
         setResults([]);
+        setHasMore(false);
       })
       .finally(() => {
         if (cancelled || requestIdRef.current !== requestId) return;
@@ -254,6 +272,11 @@ export function SearchCreateSelect({
               )}
             </CommandList>
           </Command>
+          {!loading && !error && hasMore && (
+            <p className="border-t border-border px-3 py-1.5 text-caption text-muted-foreground">
+              Showing the first {results.length} matches — keep typing to narrow the results.
+            </p>
+          )}
           {error && <p className="border-t border-border px-3 py-1.5 text-caption text-destructive">{error}</p>}
         </PopoverContent>
       </Popover>
