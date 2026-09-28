@@ -268,26 +268,40 @@ export const NAV_SECTIONS: NavSection[] = [
       {
         key: 'transport-cost',
         label: 'Transport Cost',
-        href: '/transport-cost/report',
+        // PRODUCTION FIX (Olivine live readiness pass, Oct 2026 cutover).
+        // Was '/transport-cost/report' -- the OLD standalone O4 report
+        // screen. The client's own instruction: "The Command Centre is
+        // now the primary transport-cost intelligence experience...
+        // [the old report page] has already been removed. Do NOT
+        // recreate it... one clear transport-cost intelligence
+        // experience." The page/route are kept (redirected, not
+        // deleted -- see app/(protected)/transport-cost/report/page.tsx)
+        // for reversibility, but this nav entry -- the only in-app path
+        // to it -- now goes straight to the Command Centre, matching
+        // this section's own "listed first as the primary landing view"
+        // comment on the child entry below, which this parent href was
+        // actually contradicting.
+        href: '/transport-cost/command-centre',
         icon: Banknote,
-        hint: 'Third-party transporter spend: the Command Centre, the O4 vehicle report, and the source-file import pipeline',
-        // TRANSPORT_COST_VIEW to match the O4 report route's own gate. The
+        hint: 'Third-party transporter spend: the Command Centre and the source-file import pipeline',
+        // TRANSPORT_COST_VIEW to match the Command Centre route's own gate. The
         // import child below carries its own, stricter permission per rule 1.
         permissions: [Permission.TRANSPORT_COST_VIEW],
         children: [
-          {
-            // ADDED, OLIVINE LIVE OPERATING MODEL, SLICE 4. The Command
-            // Centre -- filters/KPI cards/charts/trust panel across every
-            // cost-facing company, category, vehicle, transporter,
-            // destination, and customer, not just the Stream -> Vehicle
-            // drill-down the existing report screen offers. Same
-            // TRANSPORT_COST_VIEW gate; listed first as the primary
-            // landing view for this section.
-            key: 'transport-cost-command-centre',
-            label: 'Command Centre',
-            href: '/transport-cost/command-centre',
-            permissions: [Permission.TRANSPORT_COST_VIEW],
-          },
+          // PRODUCTION FIX (Olivine live readiness pass, Oct 2026
+          // cutover): a separate 'transport-cost-command-centre' child
+          // entry used to live here, pointing at the same
+          // '/transport-cost/command-centre' href as this section's own
+          // parent entry above -- harmless before this pass (the parent
+          // pointed at the old report page instead), but once the
+          // parent was repointed at the Command Centre (see that
+          // entry's own comment) the two became a literal duplicate
+          // destination, which tests/unit/navigation/nav-config.spec.ts
+          // (the nav redesign's own regression guard) correctly caught:
+          // "does not list the same destination twice". Removed rather
+          // than re-pointed, since the parent entry now already IS that
+          // primary landing link -- carrying a second, identical child
+          // link added nothing.
           {
             key: 'transport-cost-import',
             label: 'Import Data',

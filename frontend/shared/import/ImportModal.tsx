@@ -58,10 +58,36 @@ export interface ImportColumnSearchSelectConfig {
    * -- see SearchCreateSelect.tsx's own doc comment.
    */
   search: (query: string) => Promise<{ results: { id: string; label: string }[]; hasMore: boolean }>;
-  /** When present, "+ Add New <createLabel ?? label>" is offered; selecting it calls this with the typed text. Omit for search-only fields (Transporter/Vehicle). */
+  /**
+   * When present, "+ Add New <createLabel ?? label>" is offered;
+   * selecting it calls this with the typed text.
+   *
+   * PRODUCTION FIX (Olivine live readiness pass, Oct 2026 cutover):
+   * previously omitted for Transporter/Vehicle so those fields never
+   * showed "+ Add New" at all -- the client's reported "Transporter/
+   * Truck registration does not consistently show + Add New" defect.
+   * Now wired for those fields too, but pointed at the existing
+   * review-gated request-new flow (transportCostApi.requestNewTransporter
+   * / requestNewVehicle -- reviewStatus: 'needs-review') rather than a
+   * synchronous confirmed create, so this never bypasses Slice 3's
+   * human-review architecture. See TransportCostImportPage.tsx's
+   * createTransporterVehicleSearchSelect() for the wiring.
+   */
   onCreateNew?: (name: string) => Promise<{ id: string; label: string }>;
   /** Overrides the column's own `label` in the "+ Add New ..." action text and the empty-state copy. */
   createLabel?: string;
+  /**
+   * PRODUCTION FIX (Olivine live readiness pass): fired whenever the
+   * operator commits ANY result -- existing (picked from the dropdown)
+   * or newly created -- so a caller can capture its `id`, not just the
+   * label `onChange` already carries. Needed for Vehicle/Truck
+   * registration's "+ Add New" action, which requires the already-
+   * resolved Transporter's id (ContractedVehicle.transporterPartnerId is
+   * required -- a vehicle cannot exist without a transporter) and has no
+   * other way to learn it, since this field's own committed `value` is
+   * just the transporter's display name, not its id.
+   */
+  onResultSelected?: (result: { id: string; label: string }) => void;
 }
 
 export interface ImportColumnDef {

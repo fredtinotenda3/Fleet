@@ -52,7 +52,6 @@ const DIM = '\x1b[2m';
 const RED = '\x1b[31m';
 const GREEN = '\x1b[32m';
 const YELLOW = '\x1b[33m';
-const CYAN = '\x1b[36m';
 const RESET = '\x1b[0m';
 
 interface Entry {
@@ -129,6 +128,30 @@ const CLEAR: Entry[] = [
 
   // ── Reference data tied to operations ─────────────────────────────
   { collection: 'tblfuelcards', reason: 'Fuel cards bound to cleared vehicles' },
+
+  // ── Transport-cost module (Olivine live readiness pass, Oct 2026 ──
+  //    cutover). PRODUCTION FIX: this script previously did not know
+  //    about ANY of the transport-cost module's 8 collections at all
+  //    (a genuine gap, not an intentional omission -- confirmed by
+  //    diffing every `collectionName = '...'` in modules/transport-cost/
+  //    against this file's classification), which meant the
+  //    reconciliation check below would REFUSE TO RUN this entire
+  //    script against any database containing transport-cost data --
+  //    exactly the kind of database this reset is now needed for. Only
+  //    the three OPERATIONAL collections go here; the module's five
+  //    master-data/config collections are intentionally listed under
+  //    PRESERVE below, per the client's own explicit instruction: "Do
+  //    not remove master-data functionality... Preserve tenant/org-unit
+  //    architecture." tblallocationledger above already covers this
+  //    module's ledger postings too (AllocationPosting.sourceCollection
+  //    distinguishes them internally, but at TENANT-WIDE reset
+  //    granularity -- what this script does, and what "clean operating
+  //    database" in the client's own cutover plan means -- there is no
+  //    reason to spare one module's postings while clearing every
+  //    other's).
+  { collection: 'tbltransportcostsourcerecords', reason: 'Imported transport-cost source rows (3rd Party/Swift/Vansales/Depot STO)' },
+  { collection: 'tbltransportcostimportexceptions', reason: 'Transport-cost import validation failures/rejections/duplicates' },
+  { collection: 'tblnormalizationreviewitems', reason: 'Transport-cost normalization review queue (pending Transporter/Vehicle match decisions)' },
 ];
 
 /**
@@ -191,6 +214,21 @@ const PRESERVE: Entry[] = [
   { collection: 'tbloauth_tokens', reason: 'Live OAuth tokens' },
   { collection: 'tblsubscriptions', reason: 'Billing subscription state' },
   { collection: 'tblusagerecords', reason: 'Billing usage history' },
+
+  // ── Transport-cost module master data / config (see CLEAR list ────
+  //    above for why this module is newly classified here at all).
+  //    These five carry NO orgUnitId at all by deliberate, pre-existing
+  //    design (a transporter/vehicle/customer/destination can serve
+  //    several org units -- see server/tenancy/module-scope.registry.ts's
+  //    "MIXED-LEVEL MODULE" rationale) and are exactly the kind of
+  //    reusable reference data an administrator would otherwise have to
+  //    retype from scratch -- the same reasoning this file already
+  //    applies to tblvendors/tblfuelstations above.
+  { collection: 'tbltransportpartners', reason: 'Confirmed + pending transporter master data' },
+  { collection: 'tblcontractedvehicles', reason: 'Confirmed + pending contracted vehicle (truck) master data' },
+  { collection: 'tblcustomers', reason: 'Transport-cost customer master data' },
+  { collection: 'tbldestinations', reason: 'Transport-cost destination master data' },
+  { collection: 'tbltransportcostvatconfigs', reason: 'Per-sheet-family currency/VAT-basis configuration' },
 ];
 
 /**

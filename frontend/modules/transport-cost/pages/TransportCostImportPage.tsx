@@ -44,6 +44,7 @@ import type { TransportCostSourceRecord, TransportCostSheetFamily } from '@/shar
 import type { SourceRecordPatch } from '../types';
 import { COST_FACING_COMPANIES } from '@/shared/types/cost-facing-company.types';
 import { COST_CATEGORY_LABEL_BY_FAMILY } from '../types';
+import { createTransporterVehicleSearchSelect } from '../utils/transporter-vehicle-search-select.utils';
 
 // PRODUCTION FIX (Slice 1-5 verification pass): the operational records
 // table below was missing Company/Category/Customer/Destination columns
@@ -180,21 +181,32 @@ const DESTINATION_SEARCH_SELECT: NonNullable<ImportColumnDef['searchSelect']> = 
   createLabel: 'Destination',
 };
 
-// Search only -- no `onCreateNew`. See master-data.service.ts's header
-// for why manual entry never silently creates a confirmed Transporter/
-// Vehicle identity: a genuinely new one still goes through the existing
-// O1/O2 normalization-review queue exactly as it did before this slice.
-const TRANSPORTER_SEARCH_SELECT: NonNullable<ImportColumnDef['searchSelect']> = {
-  search: (q: string) => transportCostApi.searchTransporters(q),
+// PRODUCTION FIX (Olivine live readiness pass, Oct 2026 cutover). See
+// createTransporterVehicleSearchSelect's own header comment in
+// transporter-vehicle-search-select.utils.ts (pulled out to a plain
+// .ts file so its branching is unit-testable under this project's
+// JSX-less Jest config) for the full root-cause and design record. Each
+// of the three families that has both fields (3rd Party, Vansales,
+// Depot STO) gets its OWN call here -- and therefore its own private
+// closure -- so resolving a transporter in one family's manual-entry
+// modal can never leak into another's. Swift has neither field (see
+// SWIFT_COLUMNS' own comment: the real source data has none), so it
+// gets no call here.
+const TRANSPORTER_VEHICLE_SEARCH_SELECT_DEPS = {
+  searchTransporters: (q: string) => transportCostApi.searchTransporters(q),
+  requestNewTransporter: (name: string) => transportCostApi.requestNewTransporter(name),
+  searchVehicles: (q: string, transporterPartnerId?: string) => transportCostApi.searchVehicles(q, transporterPartnerId),
+  requestNewVehicle: (params: { registration: string; transporterPartnerId: string }) =>
+    transportCostApi.requestNewVehicle(params),
 };
 
-const VEHICLE_SEARCH_SELECT: NonNullable<ImportColumnDef['searchSelect']> = {
-  search: (q: string) => transportCostApi.searchVehicles(q),
-};
+const THIRD_PARTY_TRANSPORTER_VEHICLE_SEARCH_SELECT = createTransporterVehicleSearchSelect(
+  TRANSPORTER_VEHICLE_SEARCH_SELECT_DEPS
+);
 
 const THIRD_PARTY_PARENT_MANUAL_COLUMNS = withSearchSelect(THIRD_PARTY_PARENT_COLUMNS, {
-  transporter: TRANSPORTER_SEARCH_SELECT,
-  registration: VEHICLE_SEARCH_SELECT,
+  transporter: THIRD_PARTY_TRANSPORTER_VEHICLE_SEARCH_SELECT.transporter,
+  registration: THIRD_PARTY_TRANSPORTER_VEHICLE_SEARCH_SELECT.vehicle,
 });
 
 const THIRD_PARTY_LINE_MANUAL_COLUMNS = withSearchSelect(THIRD_PARTY_LINE_COLUMNS, {
@@ -277,9 +289,14 @@ const DEPOT_STO_COLUMNS: ImportColumnDef[] = [
 // Slice 3 manual-only variants -- see withSearchSelect's own header
 // comment above THIRD_PARTY_PARENT_MANUAL_COLUMNS for the full
 // reasoning and the field-mapping decision record.
+// Own factory call -- own closure -- see createTransporterVehicleSearchSelect's header.
+const VANSALES_TRANSPORTER_VEHICLE_SEARCH_SELECT = createTransporterVehicleSearchSelect(
+  TRANSPORTER_VEHICLE_SEARCH_SELECT_DEPS
+);
+
 const VANSALES_MANUAL_COLUMNS = withSearchSelect(VANSALES_COLUMNS, {
-  truck: TRANSPORTER_SEARCH_SELECT,
-  registration: VEHICLE_SEARCH_SELECT,
+  truck: VANSALES_TRANSPORTER_VEHICLE_SEARCH_SELECT.transporter,
+  registration: VANSALES_TRANSPORTER_VEHICLE_SEARCH_SELECT.vehicle,
 });
 
 const SWIFT_MANUAL_COLUMNS = withSearchSelect(SWIFT_COLUMNS, {
@@ -287,10 +304,15 @@ const SWIFT_MANUAL_COLUMNS = withSearchSelect(SWIFT_COLUMNS, {
   destinationLocation: DESTINATION_SEARCH_SELECT,
 });
 
+// Own factory call -- own closure -- see createTransporterVehicleSearchSelect's header.
+const DEPOT_STO_TRANSPORTER_VEHICLE_SEARCH_SELECT = createTransporterVehicleSearchSelect(
+  TRANSPORTER_VEHICLE_SEARCH_SELECT_DEPS
+);
+
 const DEPOT_STO_MANUAL_COLUMNS = withSearchSelect(DEPOT_STO_COLUMNS, {
   customerName: CUSTOMER_SEARCH_SELECT,
-  transporter: TRANSPORTER_SEARCH_SELECT,
-  registration: VEHICLE_SEARCH_SELECT,
+  transporter: DEPOT_STO_TRANSPORTER_VEHICLE_SEARCH_SELECT.transporter,
+  registration: DEPOT_STO_TRANSPORTER_VEHICLE_SEARCH_SELECT.vehicle,
   destinationTown: DESTINATION_SEARCH_SELECT,
 });
 

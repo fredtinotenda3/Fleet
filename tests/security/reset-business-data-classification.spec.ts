@@ -149,6 +149,39 @@ describe('reset classification: derived state is cleared with its source', () =>
   });
 });
 
+describe('reset classification: transport-cost module (Olivine live readiness pass)', () => {
+  // PRODUCTION FIX: this module's 8 collections were previously
+  // unclassified entirely, which meant the "covers the module-scope
+  // registry" test below -- and the script's own reconciliation check
+  // at runtime -- would REFUSE TO RUN this whole script against any
+  // database containing transport-cost data. Asserted explicitly, not
+  // just via the generic registry sweep above, so a future refactor
+  // that moves one of these into the wrong list fails here with a
+  // specific, readable reason.
+  const cleared = new Set(names(CLEAR));
+  const preserved = new Set(names(PRESERVE));
+
+  it.each([
+    'tbltransportcostsourcerecords',
+    'tbltransportcostimportexceptions',
+    'tblnormalizationreviewitems',
+  ])('%s (operational transport-cost data) is cleared', (collection) => {
+    expect(cleared.has(collection)).toBe(true);
+    expect(preserved.has(collection)).toBe(false);
+  });
+
+  it.each([
+    'tbltransportpartners',
+    'tblcontractedvehicles',
+    'tblcustomers',
+    'tbldestinations',
+    'tbltransportcostvatconfigs',
+  ])('%s (transport-cost master data / config) is preserved', (collection) => {
+    expect(preserved.has(collection)).toBe(true);
+    expect(cleared.has(collection)).toBe(false);
+  });
+});
+
 describe('reset classification: covers the module-scope registry', () => {
   it('every collection the registry declares is classified', () => {
     // The registry is the codebase's own inventory of collections. A

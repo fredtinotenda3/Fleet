@@ -164,6 +164,7 @@ function FieldInput({
           search={col.searchSelect.search}
           onCreateNew={col.searchSelect.onCreateNew}
           createLabel={col.searchSelect.createLabel}
+          onResultSelected={col.searchSelect.onResultSelected}
         />
       );
     }

@@ -97,6 +97,17 @@ export interface SearchCreateSelectProps {
   /** Overrides the column label in the "+ Add New ..." action and empty-state copy. */
   createLabel?: string;
   disabled?: boolean;
+  /**
+   * PRODUCTION FIX (Olivine live readiness pass): fired on every commit
+   * of an actual result -- an existing row picked from the dropdown, or
+   * a freshly created one -- with its full `{id, label}`, not just the
+   * label `onChange` carries. Additive and optional: every existing
+   * caller (Customer/Destination) is unaffected. Added so a dependent
+   * field (Vehicle, which needs the just-resolved Transporter's id to
+   * request a new truck) can observe the resolved id without this
+   * component needing to know anything about that dependency itself.
+   */
+  onResultSelected?: (result: SearchCreateSelectResult) => void;
 }
 
 const DEBOUNCE_MS = 220;
@@ -112,6 +123,7 @@ export function SearchCreateSelect({
   onCreateNew,
   createLabel,
   disabled,
+  onResultSelected,
 }: SearchCreateSelectProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState(value);
@@ -176,6 +188,7 @@ export function SearchCreateSelect({
     setQuery(result.label);
     onChange(result.label);
     setOpen(false);
+    onResultSelected?.(result);
   }
 
   async function handleCreateNew() {
