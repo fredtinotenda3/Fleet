@@ -22,10 +22,19 @@ FILE / WHY CHANGED
 
 ## Demo dataset (all synthetic — see OLIVINE_DEMO_DATA_README.md)
 
-- `demo-data/olivine_demo_3rd_party.xlsx` — 25 rows, import-ready.
-- `demo-data/olivine_demo_swift.xlsx` — 16 rows, import-ready.
-- `demo-data/olivine_demo_vansales.xlsx` — 10 rows, import-ready (set period-month to 2026-10).
-- `demo-data/olivine_demo_depot_sto.xlsx` — 13 rows, import-ready.
+**Revised 2026-09-28**: dates re-anchored to 1 Aug – 28 Sep 2026 (today),
+with explicit today/yesterday anchor rows, so the dataset shows up
+immediately under the Command Centre's default date filters. The original
+version (spread across October 2026) was invisible under those filters
+today, since they are correctly relative to the real current date, not to
+the data. See `OLIVINE_DEMO_DATA_README.md`'s revision note for the full
+explanation. Business content, entity names, and import schema are
+unchanged — only dates moved, plus a few anchor rows added.
+
+- `demo-data/olivine_demo_3rd_party.xlsx` — 28 rows, import-ready.
+- `demo-data/olivine_demo_swift.xlsx` — 19 rows, import-ready.
+- `demo-data/olivine_demo_vansales.xlsx` — 10 rows, import-ready (set period-month to 2026-09).
+- `demo-data/olivine_demo_depot_sto.xlsx` — 15 rows, import-ready.
 - `demo-data/olivine_demo_transport_cost_overview.xlsx` — human-readable overview only, not for upload.
 
 ## Documentation

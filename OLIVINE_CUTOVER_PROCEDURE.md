@@ -86,14 +86,14 @@ a summary of exactly what was deleted to `tbltenant_repair_audit` — the
 same audit collection every other repair/reset action in this platform
 uses, so "what happened to this database and who did it" has one answer.
 
-### 4. Load demo data (for the Olivine walkthrough, before October 1)
+### 4. Load demo data (for the Olivine walkthrough, before live cutover)
 
 See `OLIVINE_DEMO_DATA_README.md` for the full walkthrough. In short:
 upload the four `demo-data/olivine_demo_*.xlsx` files via **Transport Cost
 → Import Data**, post them, and use the Command Centre / manual-entry /
 Add New / Review Queue steps described there.
 
-### 5. Before October 1 — remove the demo data, load real October data
+### 5. Before live cutover — remove the demo data, load real operating data
 
 Repeat step 1–3 (dry run, then `--confirm`) against the same tenant. This
 clears the demo rows exactly as it cleared the earlier historical/
@@ -112,8 +112,8 @@ Transporter/Vehicle master-data screens — this reset intentionally does
 not delete master data automatically, so a demo-only test record does not
 get silently swept up alongside something Olivine genuinely needs kept.
 
-Then import Olivine's real October 2026 operating data through the same
-import pipeline used throughout this procedure.
+Then import Olivine's real live operating data through the same import
+pipeline used throughout this procedure.
 
 ## Rollback
 

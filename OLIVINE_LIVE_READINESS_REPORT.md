@@ -174,7 +174,7 @@ the real environment.
 
 ## 12. Which analytics/charts the demo data populates
 
-Real, computed-from-data charts the 64-row demo dataset will populate:
+Real, computed-from-data charts the 72-row demo dataset will populate:
 cost trend (daily/weekly/monthly), cost by company (all three), cost by
 category (all four families), cost by transporter, cost by vehicle, cost
 by destination, cost by customer, cost per operation. Deliberately
@@ -183,22 +183,31 @@ cost-per-km, distance, ROI, savings, margin, productivity/utilization —
 the app shows "Unavailable" for these, and the demo data does not try to
 manufacture a value.
 
+**Revised 2026-09-28**: the dataset's dates were re-anchored to
+1 Aug – 28 Sep 2026 (today), with explicit today/yesterday anchor rows, so
+every one of these charts renders real data under the Command Centre's
+*default* filters (Today/Yesterday/This Week/This Month/Previous Month) —
+not only under a manually-set Custom Range. See
+`OLIVINE_DEMO_DATA_README.md`'s revision note for why the original
+October-dated version needed this correction.
+
 ## 13. Exact steps before Olivine arrives
 
 1. Read `OLIVINE_CUTOVER_PROCEDURE.md` §1–3 (dry run first) if a reset
    of historical/dev data is wanted before the demo.
 2. Upload the four `demo-data/olivine_demo_*.xlsx` files (Transport Cost
-   → Import Data), post them.
+   → Import Data), post them. For Vansales, set the period-month picker
+   to `2026-09`.
 3. Walk `OLIVINE_DEMO_DATA_README.md`'s "Demo walkthrough" once, live, in
    the real environment, before Olivine arrives.
 
-## 14. Exact steps for replacing demo data with real October 1 data
+## 14. Exact steps for replacing demo data with real live data
 
 `OLIVINE_CUTOVER_PROCEDURE.md` §5: re-run the same dry-run-then-`--confirm`
 reset against Olivine's tenant to clear the demo rows (master data
 created/confirmed during the demo is preserved, correctly — see that
-section for why), then import the real October data through the same
-pipeline.
+section for why), then import Olivine's real live operating data through
+the same pipeline.
 
 ## ZIP output
 

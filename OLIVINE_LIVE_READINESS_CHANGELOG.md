@@ -31,7 +31,11 @@
 - Synthetic demo dataset (`demo-data/`): four import-ready single-family
   workbooks plus one human-readable overview workbook, covering all three
   companies, nine transporters, twelve vehicles, eight destinations, ten
-  customers, spread across October 2026. See `OLIVINE_DEMO_DATA_README.md`.
+  customers, spread across 1 Aug – 28 Sep 2026 (today), with explicit
+  today/yesterday anchor rows. See `OLIVINE_DEMO_DATA_README.md`.
+  **(Revised 2026-09-28** — originally spread across October 2026, which
+  made it invisible under the Command Centre's default, real-date-relative
+  filters; re-anchored to today so it demos with no manual filter setup.)
 - `tests/unit/transport-cost/demo-data-import-validation.spec.ts` — runs
   every demo-data row through the real `ImportTransportCostHandler`
   validation methods; fails on any future schema drift between the demo
