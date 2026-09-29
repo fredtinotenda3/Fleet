@@ -10,12 +10,25 @@
 //
 // Section order follows PART 12's suggested flow, adapted to what this
 // report actually computes (never padded with a section that would have
-// nothing in it):
-//   Executive Summary -> Overall Position -> What Changed ->
-//   What's Driving Cost -> Driver Findings -> Abnormal/Exception
-//   Findings -> Financial Reconciliation -> Data Quality ->
-//   Findings & Recommended Actions (the director's punch-list) ->
-//   Next-Month Monitoring.
+// nothing in it), and is kept aligned 1:1 with the Excel workbook's nine
+// numbered sheets (fuel-intelligence-excel.generator.ts) so a director
+// reading either document sees the same set of sections -- see PART 24
+// ("all data on the Excel report should also be on the PDF, all nine
+// sections"):
+//   Executive Summary (01) -> What Changed (02, MoM) -> What's Driving
+//   Cost (03) -> Driver Findings (04) -> Fuel Type Mix (05) ->
+//   Abnormal/Exception Findings, incl. vehicle cost spikes (06) ->
+//   Financial Reconciliation (07) -> Data Quality (08) -> Findings &
+//   Recommended Actions (09, the director's punch-list) -> Next-Month
+//   Monitoring (a PDF-only synthesis of each finding's `monitor` field;
+//   no separate Excel sheet).
+//
+// The vehicle-cost-driver and driver-fuel-cost lists are capped at the
+// top 10 (by cost) with an explicit "+N more -- see the Excel workbook"
+// pointer when truncated, matching the pattern already used for
+// Abnormal Findings: a director-facing PDF summarizes; the Excel
+// workbook is the full-detail source of record. Nothing is silently
+// dropped -- every truncation is disclosed in the text.
 
 import PDFDocument from 'pdfkit';
 import type {
@@ -168,7 +181,9 @@ export async function buildFuelIntelligencePdfBuffer(report: MonthlyFuelIntellig
     );
     r.keyValueRow('Total fuel cost this period', labeledText(report.fleetPosition.totalFuelCost, (v) => v.toFixed(2)));
     r.keyValueRow('Total litres fuelled', labeledText(report.fleetPosition.totalLitres, (v) => v.toFixed(2)));
+    r.keyValueRow('Fuel log count', labeledText(report.fleetPosition.logCount));
     r.keyValueRow('Vehicles active', labeledText(report.fleetPosition.vehiclesActive));
+    r.keyValueRow('Average cost per litre', labeledText(report.fleetPosition.averageCostPerLitre, (v) => v.toFixed(3)));
     r.keyValueRow(
       'Ledger reconciliation',
       report.allocationReconciliation.reconciled === null
@@ -201,7 +216,8 @@ export async function buildFuelIntelligencePdfBuffer(report: MonthlyFuelIntellig
         ? `The top ${conc.value!.vehicleCount} vehicle(s) by fuel cost account for ${fmtPercent(conc.value!.costSharePercent)} of total fleet fuel spend this period.`
         : labeledText(conc)
     );
-    const topRows = [...report.costDrivers.rows].sort((a, b) => (b.totalCost.value ?? 0) - (a.totalCost.value ?? 0)).slice(0, 10);
+    const sortedCostDriverRows = [...report.costDrivers.rows].sort((a, b) => (b.totalCost.value ?? 0) - (a.totalCost.value ?? 0));
+    const topRows = sortedCostDriverRows.slice(0, 10);
     for (const row of topRows) {
       const tag = row.classification === 'abnormal_cost' ? ' [ABNORMAL]' : row.classification === 'high_cost' ? ' [HIGH COST]' : '';
       r.bullet(
@@ -211,19 +227,39 @@ export async function buildFuelIntelligencePdfBuffer(report: MonthlyFuelIntellig
       if (row.abnormalReason) r.para(row.abnormalReason, { color: MUTED, size: 9, italic: true });
     }
     if (topRows.length === 0) r.para('No fuel cost recorded for any vehicle this period.');
+    if (sortedCostDriverRows.length > 10) {
+      r.para(`+ ${sortedCostDriverRows.length - 10} more vehicle(s) -- see the Excel workbook's Cost Drivers by Vehicle sheet for the full list.`, { color: FAINT, size: 9 });
+    }
 
     // ─── Driver Findings ──────────────────────────────────────────────
     r.sectionHeader('Driver Fuel Findings');
     r.para(report.driverFindings.attributionNote, { color: MUTED, size: 9, italic: true });
-    const topDrivers = [...report.driverFindings.rows].sort((a, b) => (b.totalCost.value ?? 0) - (a.totalCost.value ?? 0)).slice(0, 10);
+    const sortedDriverRows = [...report.driverFindings.rows].sort((a, b) => (b.totalCost.value ?? 0) - (a.totalCost.value ?? 0));
+    const topDrivers = sortedDriverRows.slice(0, 10);
     for (const d of topDrivers) {
       r.bullet(`${d.driverName} — ${labeledText(d.totalCost, (v) => v.toFixed(2))} across ${labeledText(d.vehicleCount)} vehicle(s)`);
+    }
+    if (sortedDriverRows.length > 10) {
+      r.para(`+ ${sortedDriverRows.length - 10} more driver(s) -- see the Excel workbook's Driver Fuel Intelligence sheet for the full list.`, { color: FAINT, size: 9 });
     }
     r.keyValueRow('Unattributed fuel cost', labeledText(report.driverFindings.unassignedCost, (v) => v.toFixed(2)));
     r.keyValueRow('Unattributed share of fleet cost', labeledText(report.driverFindings.unassignedSharePercent, fmtPercent));
 
+    // ─── Fuel Type Mix ──────────────────────────────────────────────────
+    r.sectionHeader('Fuel Type Mix');
+    if (report.fuelTypeMix.length === 0) {
+      r.para('No fuel type data recorded for this period.');
+    } else {
+      for (const t of report.fuelTypeMix) {
+        r.bullet(
+          `${t.fuelType} — ${labeledText(t.litres, (v) => v.toFixed(2))} litres, ${labeledText(t.cost, (v) => v.toFixed(2))} (${labeledText(t.percentage, fmtPercent)} of litres)`
+        );
+      }
+    }
+
     // ─── Abnormal / Exception Findings ─────────────────────────────────
     r.sectionHeader('Abnormal & Exception Findings');
+    r.subheading('Individual fill-up volume anomalies');
     r.para(report.abnormalFindings.volumeAnomalyBasis, { color: MUTED, size: 9, italic: true });
     if (report.abnormalFindings.volumeAnomalies.length === 0) {
       r.para('No individual fill-up volume anomalies flagged this period.');
@@ -235,6 +271,17 @@ export async function buildFuelIntelligencePdfBuffer(report: MonthlyFuelIntellig
         r.para(`+ ${report.abnormalFindings.volumeAnomalies.length - 15} more -- see the Excel workbook's Abnormal & Exceptions sheet for the full list.`, { color: FAINT, size: 9 });
       }
     }
+    r.subheading('Vehicle-level month-over-month cost spikes');
+    if (report.abnormalFindings.vehicleCostSpikes.length === 0) {
+      r.para('None flagged this period.');
+    } else {
+      for (const s of report.abnormalFindings.vehicleCostSpikes.slice(0, 15)) {
+        r.bullet(`${s.license_plate} — ${labeledText(s.totalCost, (v) => v.toFixed(2))}${s.abnormalReason ? ` — ${s.abnormalReason}` : ''}`, { color: ATTENTION });
+      }
+      if (report.abnormalFindings.vehicleCostSpikes.length > 15) {
+        r.para(`+ ${report.abnormalFindings.vehicleCostSpikes.length - 15} more -- see the Excel workbook's Abnormal & Exceptions sheet for the full list.`, { color: FAINT, size: 9 });
+      }
+    }
 
     // ─── Financial Reconciliation ───────────────────────────────────
     r.sectionHeader('Financial Position: Allocation Ledger Reconciliation');
@@ -243,6 +290,14 @@ export async function buildFuelIntelligencePdfBuffer(report: MonthlyFuelIntellig
     r.keyValueRow('Variance', labeledText(report.allocationReconciliation.variance, (v) => v.toFixed(2)), {
       valueColor: report.allocationReconciliation.reconciled === false ? URGENT : INK,
     });
+    r.keyValueRow('Variance %', labeledText(report.allocationReconciliation.variancePercent, fmtPercent), {
+      valueColor: report.allocationReconciliation.reconciled === false ? URGENT : INK,
+    });
+    r.keyValueRow(
+      'Reconciled?',
+      report.allocationReconciliation.reconciled === null ? 'Not evaluated' : report.allocationReconciliation.reconciled ? 'Yes' : 'No',
+      { valueColor: report.allocationReconciliation.reconciled === false ? URGENT : INK }
+    );
     r.para(report.allocationReconciliation.note, { color: MUTED, size: 9, italic: true });
 
     // ─── Data Quality ─────────────────────────────────────────────────

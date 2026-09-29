@@ -131,6 +131,57 @@ function buildReport(overrides: Partial<MonthlyFuelIntelligenceReport> = {}): Mo
   };
 }
 
+// PART 24 ("all data on the Excel report should also be on the PDF, all
+// nine sections"): a report shaped like the real one that exposed the
+// gap -- more cost-driver vehicles and drivers than the top-10 caps show,
+// a populated fuel type mix, and a flagged vehicle-level cost spike --
+// so every new/changed code path (Fuel Type Mix, the two "+N more"
+// overflow disclosures, and the cost-spikes subsection) runs in the same
+// call, not just the single-row happy path buildReport() already covers.
+function buildFullDataReport(): MonthlyFuelIntelligenceReport {
+  const base = buildReport();
+  const manyCostDriverRows = Array.from({ length: 14 }, (_, i) => ({
+    license_plate: `PLT${i}`,
+    totalCost: fact(1000 - i * 10),
+    totalLitres: fact(500 - i * 5),
+    logCount: fact(5),
+    shareOfFleetCostPercent: calculated(5),
+    classification: 'normal' as const,
+  }));
+  const manyDriverRows = Array.from({ length: 12 }, (_, i) => ({
+    driver_id: `d${i}`,
+    driverName: `Driver ${i}`,
+    totalCost: fact(500 - i * 5),
+    totalLitres: fact(250 - i * 2),
+    logCount: fact(4),
+    vehicleCount: fact(1),
+  }));
+  return {
+    ...base,
+    costDrivers: { rows: manyCostDriverRows, topVehicleConcentration: calculated({ vehicleCount: 5, costSharePercent: 61.4 }) },
+    driverFindings: { ...base.driverFindings, rows: manyDriverRows },
+    fuelTypeMix: [
+      { fuelType: 'Diesel', litres: fact(17959.32), cost: fact(35025.54), percentage: calculated(94.8) },
+      { fuelType: 'Petrol', litres: fact(977.01), cost: fact(1912.27), percentage: calculated(5.2) },
+    ],
+    abnormalFindings: {
+      volumeAnomalies: base.abnormalFindings.volumeAnomalies,
+      volumeAnomalyBasis: base.abnormalFindings.volumeAnomalyBasis,
+      vehicleCostSpikes: [
+        {
+          license_plate: 'PLT0',
+          totalCost: fact(990),
+          totalLitres: fact(495),
+          logCount: fact(5),
+          shareOfFleetCostPercent: calculated(5),
+          classification: 'abnormal_cost',
+          abnormalReason: 'Cost rose sharply vs. prior period.',
+        },
+      ],
+    },
+  };
+}
+
 function buildEmptyReport(): MonthlyFuelIntelligenceReport {
   const period = resolveReportPeriod('2026-01');
   return {
@@ -210,6 +261,22 @@ describe('buildFuelIntelligencePdfBuffer', () => {
     // roughly tripled whatever the real count was (2 blank pages added
     // per real page from the footer loop).
     expect(pageCount(buffer)).toBeLessThanOrEqual(15);
+  });
+
+  // PART 24: the PDF must carry every section the Excel workbook carries,
+  // with the vehicle-cost-driver and driver-fuel-cost lists disclosing
+  // (not silently dropping) rows past the top-10 cap. This exercises the
+  // Fuel Type Mix section, both "+N more" overflow paragraphs, and the
+  // vehicle-level cost-spikes subsection added under Abnormal & Exception
+  // Findings, together, against a report shaped like the real one that
+  // was missing them.
+  it('renders without error and stays page-bounded for a full, multi-section report (Fuel Type Mix, cost-spikes, and >10-row overflow disclosures all present)', async () => {
+    const buffer = await buildFuelIntelligencePdfBuffer(buildFullDataReport());
+    expect(buffer.length).toBeGreaterThan(500);
+    expect(buffer.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+    // A handful of extra bullets and one extra section should not, by
+    // itself, balloon page count the way the footer-margin bug did.
+    expect(pageCount(buffer)).toBeLessThanOrEqual(4);
   });
 });
 
