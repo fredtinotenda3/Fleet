@@ -249,6 +249,17 @@ export const NAV_SECTIONS: NavSection[] = [
         children: [
           { key: 'fuel-logs', label: 'Fuel Logs', href: '/fuel/logs', permissions: [Permission.FUEL_VIEW] },
           { key: 'fuel-analytics', label: 'Fuel Analytics', href: '/fuel/analytics', permissions: [Permission.FUEL_VIEW] },
+          {
+            key: 'fuel-intelligence-report',
+            label: 'Intelligence Report',
+            href: '/fuel/intelligence-report',
+            // ANALYTICS_EXPORT, not FUEL_VIEW: this is the Monthly Fuel &
+            // Fleet Intelligence Report (backend at
+            // GET /api/fuel/monthly-intelligence-report), gated on the same
+            // permission as its Excel/PDF export and matching the ESG
+            // export's own precedent for this permission.
+            permissions: [Permission.ANALYTICS_EXPORT],
+          },
           { key: 'fuel-stations', label: 'Stations', href: '/fuel/stations', permissions: [Permission.FUEL_VIEW] },
           { key: 'fuel-cards', label: 'Fuel Cards', href: '/fuel/cards', permissions: [Permission.FUEL_VIEW] },
         ],

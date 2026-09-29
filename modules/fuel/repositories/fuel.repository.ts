@@ -33,6 +33,7 @@ import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.serv
 import { EXPORT_ROW_CAP, ExportDataset } from '@/shared/export';
 import { AnalyticsScope } from '@/shared/types/analytics-scope.types';
 import { analyticsScopeService } from '@/modules/analytics/services/analytics-scope.service';
+import { groupFuelTypeDistribution } from '@/modules/fuel/utils/fuel-type.utils';
 
 interface VehiclePeriodAggregate {
   _id: string;
@@ -922,16 +923,20 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     ];
 
     const results = await collection.aggregate(pipeline).toArray();
-    const totalLitres = results.reduce((sum, r) => sum + r.litres, 0);
 
-    return results
-      .map((r) => ({
-        fuelType: r._id as string,
-        litres: Math.round(r.litres * 100) / 100,
-        cost: Math.round(r.cost * 100) / 100,
-        percentage: totalLitres > 0 ? Math.round((r.litres / totalLitres) * 1000) / 10 : 0,
-      }))
-      .sort((a, b) => b.litres - a.litres);
+    /**
+     * PART 1 FIX. Mongo's own $group above is still case-sensitive, so
+     * without this step "Diesel" and "diesel" would still land in two
+     * buckets even after fuel_type is normalized at write time. See
+     * fuel-type.utils.ts's groupFuelTypeDistribution for the full
+     * rationale and its own unit tests
+     * (tests/unit/fuel/fuel-type.utils.spec.ts) -- extracted as a pure
+     * function specifically so this regrouping is tested without a
+     * database.
+     */
+    return groupFuelTypeDistribution(
+      results.map((r) => ({ _id: String(r._id), litres: r.litres, cost: r.cost }))
+    );
   }
 
   /** #7 Fueling Frequency by Vehicle -- entry count + volume/cost totals per license plate. */

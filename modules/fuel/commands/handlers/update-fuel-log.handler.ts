@@ -14,6 +14,7 @@ import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { FuelLogUpdatedEvent } from '@/modules/fuel/events/FuelLogUpdatedEvent';
 import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-resolver.service';
 import { driverWriteResolver } from '@/modules/drivers/services/driver-write-resolver.service';
+import { normalizeFuelType } from '@/modules/fuel/utils/fuel-type.utils';
 
 const UPDATABLE_FIELDS = [
   'license_plate',
@@ -124,6 +125,19 @@ export class UpdateFuelLogHandler implements ICommandHandler<UpdateFuelLogComman
     if (updateData.driver_id != null) {
       await driverWriteResolver.resolveForWrite(String(updateData.driver_id), command.scope);
       updateData.driver_id = String(updateData.driver_id);
+    }
+
+    /**
+     * PART 1 FIX, same rationale as create-fuel-log.handler.ts. Reached
+     * only when fuel_type was actually part of this update (the loop
+     * above already skipped an absent or empty value), so an edit that
+     * doesn't touch fuel_type never rewrites fuel_type_raw either.
+     */
+    if (updateData.fuel_type) {
+      const fuelType = normalizeFuelType(String(updateData.fuel_type));
+      updateData.fuel_type = fuelType.normalized ?? undefined;
+      updateData.fuel_type_raw = fuelType.raw;
+      if (updateData.fuel_type === undefined) delete updateData.fuel_type;
     }
 
     if (updateData.unit_id) {

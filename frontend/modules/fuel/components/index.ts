@@ -22,3 +22,6 @@ export { FuelTypeDistributionChart } from './FuelTypeDistributionChart';
 export { FuelFrequencyByVehicleChart } from './FuelFrequencyByVehicleChart';
 export { FuelCostDistributionChart } from './FuelCostDistributionChart';
 export { FuelEntryHeatmapChart } from './FuelEntryHeatmapChart';
+
+// Monthly Fuel & Fleet Intelligence Report
+export * from './FuelIntelligenceReport';

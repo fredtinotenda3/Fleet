@@ -2,3 +2,4 @@
 
 export * from './useFuel';
 export * from './useFuelMutations';
+export * from './useFuelIntelligenceReport';

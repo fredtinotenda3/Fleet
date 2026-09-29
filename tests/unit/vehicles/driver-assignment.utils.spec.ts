@@ -7,10 +7,22 @@
 // Testing Library wired up (see tests/unit/drivers/driver-risk-utils.spec.ts
 // for the same convention).
 //
-// Covers the state DriverAssignmentPanel actually has to render today:
-// `assignedDriver` is always undefined for real API responses (see
-// docs/DRIVER_VEHICLE_ASSIGNMENT_MISSING_BACKEND.md), so the
-// "unassigned" branch is the one that matters most right now.
+// STALE-COMMENT FIX (Part 2/4 investigation): this file's header
+// previously claimed `assignedDriver` is "always undefined for real API
+// responses" -- true when this test was first written, no longer true.
+// VehicleController.withAssignedDriver (modules/vehicles/controllers/
+// vehicle.controller.ts) now resolves `currentDriverId` to a `DriverRef`
+// and getVehicle() returns it via VehicleResponseDto.assignedDriver, so
+// the Vehicle Operational Hub's detail page (the only page
+// DriverAssignmentPanel renders on) correctly shows the current driver.
+// docs/DRIVER_VEHICLE_ASSIGNMENT_MISSING_BACKEND.md's own "What shipped"
+// section confirms this. The assertions below were never wrong -- they
+// test the pure presentation function directly with each input shape --
+// only this comment's claim about which shape production code sends was
+// out of date. Kept covering both null and undefined defensively: list
+// endpoints (VehicleResponseDto.fromVehicles) still omit assignedDriver
+// by design (avoiding an N+1 driver lookup for bulk views), so a
+// component reused against list data still sees `undefined` there.
 
 import { formatDriverAssignmentStatus } from '@/frontend/modules/vehicles/utils';
 import type { DriverRef } from '@/shared/types/driver.types';
@@ -24,9 +36,9 @@ describe('formatDriverAssignmentStatus', () => {
     expect(status.detail).toBeUndefined();
   });
 
-  it('treats undefined the same as null (the current real-world case)', () => {
-    // VehicleResponseDto never sends assignedDriver today, so this is
-    // the shape every real API response actually produces.
+  it('treats undefined the same as null (list-endpoint shape)', () => {
+    // VehicleResponseDto.fromVehicles (list responses) still omits
+    // assignedDriver by design -- see this file's header comment.
     const status = formatDriverAssignmentStatus(undefined);
 
     expect(status.assigned).toBe(false);

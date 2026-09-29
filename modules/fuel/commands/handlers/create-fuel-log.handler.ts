@@ -14,6 +14,7 @@ import { FuelLoggedEvent } from '@/modules/fuel/events/FuelLoggedEvent';
 import { monitoring } from '@/infrastructure/monitoring/logger';
 import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-resolver.service';
 import { driverWriteResolver } from '@/modules/drivers/services/driver-write-resolver.service';
+import { normalizeFuelType } from '@/modules/fuel/utils/fuel-type.utils';
 
 export class CreateFuelLogHandler implements ICommandHandler<CreateFuelLogCommand, FuelLog> {
   constructor(private readonly fuelRepo: FuelRepository) {}
@@ -56,6 +57,19 @@ export class CreateFuelLogHandler implements ICommandHandler<CreateFuelLogComman
 
     const validated = result.data;
     const db = await connectToDatabase();
+
+    /**
+     * PART 1 FIX. Canonicalizes fuel_type at the one place every fuel log
+     * is born, so "Diesel"/"diesel"/"DIESEL" never fragment the Fuel Type
+     * Distribution chart (or any other fuel_type reader) again.
+     * fuel_type_raw preserves exactly what was submitted -- see
+     * shared/types/fuel.types.ts's FuelLog doc comments and
+     * modules/fuel/utils/fuel-type.utils.ts's own header for the full
+     * rationale. A blank/absent fuel_type normalizes to
+     * `{ normalized: null }` and both fields are simply omitted below,
+     * unchanged from the prior behavior of an optional field.
+     */
+    const fuelType = normalizeFuelType(validated.fuel_type as string | undefined);
 
     /**
      * SCOPE FIX. This lookup previously ran with neither a tenantId
@@ -165,7 +179,7 @@ export class CreateFuelLogHandler implements ICommandHandler<CreateFuelLogComman
       ...(validated.odometer != null ? { odometer: Number(validated.odometer) } : undefined),
       ...(validated.station_name ? { station_name: String(validated.station_name) } : undefined),
       ...(validated.fuel_station_id ? { fuel_station_id: String(validated.fuel_station_id) } : undefined),
-      ...(validated.fuel_type ? { fuel_type: String(validated.fuel_type) } : undefined),
+      ...(fuelType.normalized ? { fuel_type: fuelType.normalized, fuel_type_raw: fuelType.raw } : undefined),
       ...(validated.notes ? { notes: String(validated.notes) } : undefined),
       ...(validated.currency ? { currency: String(validated.currency) } : undefined),
       ...(validated.is_full_tank !== undefined && validated.is_full_tank !== null

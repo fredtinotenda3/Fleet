@@ -505,7 +505,7 @@ export function FuelForm({
         </div>
 
         <div>
-          <Label htmlFor="driver_id" className="form-label">Driver</Label>
+          <Label htmlFor="driver_id" className="form-label">Driver who fuelled the vehicle</Label>
           <Controller
             control={control}
             name="driver_id"
@@ -533,6 +533,12 @@ export function FuelForm({
             )}
           />
           {errors.driver_id && <p className="form-error" role="alert">{String(errors.driver_id.message)}</p>}
+          {!errors.driver_id && (
+            <p className="mt-1 text-caption text-muted-foreground">
+              Records who fuelled the vehicle on this date only. This does not change the vehicle&apos;s
+              assigned driver — assign or update that from the vehicle&apos;s Operational Hub page.
+            </p>
+          )}
         </div>
 
         <div>

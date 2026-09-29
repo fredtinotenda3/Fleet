@@ -19,6 +19,12 @@ export const FUEL_EXPORT_COLUMNS: ExportColumn<FuelLog>[] = [
   { header: 'Currency', accessor: (f) => f.currency ?? 'USD' },
   { header: 'Odometer', accessor: (f) => f.odometer ?? '' },
   { header: 'Fuel Type', accessor: (f) => f.fuel_type ?? '' },
+  // PART 1 FIX -- provenance column. fuel_type above is always the
+  // canonical value (Diesel/Petrol/Electric/Hybrid/Title-Case); this
+  // shows exactly what was typed/imported, for audit -- never destroyed
+  // by normalization. See shared/types/fuel.types.ts's FuelLog doc
+  // comments.
+  { header: 'Fuel Type (as entered)', accessor: (f) => f.fuel_type_raw ?? '' },
   { header: 'Station', accessor: (f) => f.fuel_station?.name ?? f.station_name ?? '' },
   { header: 'Driver', accessor: (f) => f.driver?.name ?? '' },
   { header: 'Payment Method', accessor: (f) => f.payment_method ?? '' },

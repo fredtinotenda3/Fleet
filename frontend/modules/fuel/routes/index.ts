@@ -8,4 +8,5 @@ export const FUEL_ROUTES = {
   create: '/fuel/logs/create',
   vehicleHistory: (plate: string) => `/fuel/vehicles/${encodeURIComponent(plate)}`,
   analytics: '/fuel/analytics',
+  intelligenceReport: '/fuel/intelligence-report',
 } as const;

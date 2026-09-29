@@ -102,3 +102,6 @@ export const PAYMENT_METHOD_LABELS: Record<FuelPaymentMethod, string> = {
   company_account: 'Company account',
   other: 'Other',
 };
+
+// Monthly Fuel & Fleet Intelligence Report
+export * from './fuelIntelligence.types';
