@@ -31,6 +31,7 @@ import {
   AllocationReconciliationSection,
   DataQualitySection,
   FindingsSection,
+  isValidCurrencyCode,
 } from '../components';
 import { useFuelIntelligenceReport } from '../hooks/useFuelIntelligenceReport';
 import { fuelIntelligenceApi } from '../services/fuelIntelligence.api';
@@ -141,6 +142,11 @@ export function FuelIntelligenceReportPage() {
               <span>Generated {formatDate(report.generatedAt, 'MMM d, yyyy \'at\' h:mm a')}</span>
               {report.dataQuality.truncated && (
                 <Badge variant="outline" className="border-warning text-warning">Log set truncated for this assessment</Badge>
+              )}
+              {!isValidCurrencyCode(report.fleetPosition.currency) && (
+                <Badge variant="outline" title={report.fleetPosition.currency}>
+                  Mixed / undetermined currency &mdash; amounts shown without a currency symbol
+                </Badge>
               )}
             </div>
 

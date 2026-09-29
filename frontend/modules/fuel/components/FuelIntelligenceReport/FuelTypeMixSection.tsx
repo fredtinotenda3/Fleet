@@ -2,8 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/frontend/shared/ui/data-display/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/frontend/shared/ui/data-display/table';
-import { formatCurrency } from '@/shared/utils/currency.utils';
-import { LabeledText, formatLabeledNumber } from './LabeledValue';
+import { LabeledText, formatLabeledNumber, formatMoney } from './LabeledValue';
 import type { FuelTypeMixRow } from '../../types';
 
 interface FuelTypeMixSectionProps {
@@ -36,7 +35,7 @@ export function FuelTypeMixSection({ fuelTypeMix, currency }: FuelTypeMixSection
                 <TableRow key={row.fuelType}>
                   <TableCell className="font-medium">{row.fuelType}</TableCell>
                   <TableCell><LabeledText labeled={row.litres} format={(v) => `${formatLabeledNumber(v, { maximumFractionDigits: 1 })} L`} /></TableCell>
-                  <TableCell><LabeledText labeled={row.cost} format={(v) => formatCurrency(v, { currency })} /></TableCell>
+                  <TableCell><LabeledText labeled={row.cost} format={(v) => formatMoney(v, currency)} /></TableCell>
                   <TableCell><LabeledText labeled={row.percentage} format={(v) => `${formatLabeledNumber(v, { maximumFractionDigits: 1 })}%`} /></TableCell>
                 </TableRow>
               ))}

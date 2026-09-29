@@ -8,8 +8,7 @@ import { CheckCircle2, XCircle, HelpCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/frontend/shared/ui/data-display/card';
 import { MetricCardGrid } from '@/frontend/shared/ui/patterns';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
-import { formatCurrency } from '@/shared/utils/currency.utils';
-import { LabeledMetric, formatLabeledNumber } from './LabeledValue';
+import { LabeledMetric, formatLabeledNumber, formatMoney } from './LabeledValue';
 import type { AllocationReconciliationSection as AllocationReconciliationSectionType } from '../../types';
 
 interface AllocationReconciliationSectionProps {
@@ -40,9 +39,9 @@ export function AllocationReconciliationSection({ allocationReconciliation, curr
       </CardHeader>
       <CardContent>
         <MetricCardGrid columns={4}>
-          <LabeledMetric label="Operational total" labeled={operationalTotal} format={(v) => formatCurrency(v, { currency })} />
-          <LabeledMetric label="Allocation Ledger total" labeled={ledgerTotal} format={(v) => formatCurrency(v, { currency })} />
-          <LabeledMetric label="Variance" labeled={variance} format={(v) => formatCurrency(v, { currency })} />
+          <LabeledMetric label="Operational total" labeled={operationalTotal} format={(v) => formatMoney(v, currency)} />
+          <LabeledMetric label="Allocation Ledger total" labeled={ledgerTotal} format={(v) => formatMoney(v, currency)} />
+          <LabeledMetric label="Variance" labeled={variance} format={(v) => formatMoney(v, currency)} />
           <LabeledMetric label="Variance %" labeled={variancePercent} format={(v) => `${formatLabeledNumber(v, { maximumFractionDigits: 2 })}%`} />
         </MetricCardGrid>
       </CardContent>

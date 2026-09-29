@@ -15,10 +15,53 @@
 
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
 import { MetricCard, type MetricCardProps } from '@/frontend/shared/ui/patterns';
+import { formatCurrency } from '@/shared/utils/currency.utils';
 import type { Labeled } from '../../types';
 
 export function formatLabeledNumber(value: number, options?: Intl.NumberFormatOptions): string {
   return new Intl.NumberFormat('en-US', options).format(value);
+}
+
+const ISO_4217_RE = /^[A-Z]{3}$/;
+
+/**
+ * True only for a real 3-letter ISO 4217 code. FleetPositionSection.currency
+ * (monthly-fuel-intelligence.service.ts's buildFleetPosition) is, by
+ * design, NOT always a real code: when a fleet has no single reporting
+ * currency across its fuel logs, the backend deliberately returns an
+ * explanatory sentence ("organization reporting currency (see
+ * individual fuel logs for per-transaction currency)") rather than
+ * guessing/fabricating one. This lets the UI detect that case instead
+ * of feeding the sentence straight to Intl.NumberFormat.
+ */
+export function isValidCurrencyCode(raw: string): boolean {
+  return ISO_4217_RE.test(raw.trim().toUpperCase());
+}
+
+/**
+ * Money formatting that never throws on the backend's non-code
+ * currency placeholder. A valid ISO 4217 code formats normally with
+ * its symbol; anything else (the explanatory sentence above) falls
+ * back to a plain grouped number with no currency symbol -- showing a
+ * currency symbol we can't actually confirm would be exactly the kind
+ * of fabrication the Labeled<T> pattern elsewhere in this report is
+ * built to avoid. Pair with the "Mixed currency" note this report's
+ * header shows via isValidCurrencyCode so the missing symbol is
+ * explained rather than silently different.
+ */
+export function formatMoney(
+  amount: number,
+  rawCurrency: string,
+  options?: { minimumFractionDigits?: number; maximumFractionDigits?: number }
+): string {
+  const code = rawCurrency.trim().toUpperCase();
+  if (ISO_4217_RE.test(code)) {
+    return formatCurrency(amount, { ...options, currency: code });
+  }
+  return formatLabeledNumber(amount, {
+    minimumFractionDigits: options?.minimumFractionDigits ?? 2,
+    maximumFractionDigits: options?.maximumFractionDigits ?? 2,
+  });
 }
 
 interface LabeledTextProps<T> {

@@ -3,8 +3,7 @@
 import { ArrowUp, ArrowDown, Minus, CircleHelp } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/frontend/shared/ui/data-display/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/frontend/shared/ui/data-display/table';
-import { formatCurrency } from '@/shared/utils/currency.utils';
-import { LabeledText, formatLabeledNumber } from './LabeledValue';
+import { LabeledText, formatLabeledNumber, formatMoney } from './LabeledValue';
 import type { WhatChangedSection as WhatChangedSectionType } from '../../types';
 
 interface WhatChangedSectionProps {
@@ -29,7 +28,7 @@ const DIRECTION_TONE: Record<string, string> = {
 function formatByUnit(unit: string, currency: string) {
   return (value: number) => {
     if (unit === 'currency' || unit === 'currency/litre') {
-      const formatted = formatCurrency(value, { currency });
+      const formatted = formatMoney(value, currency);
       return unit === 'currency/litre' ? `${formatted}/L` : formatted;
     }
     if (unit === 'litres') return `${formatLabeledNumber(value, { maximumFractionDigits: 1 })} L`;

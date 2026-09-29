@@ -1,6 +1,6 @@
 // frontend/modules/fuel/components/FuelIntelligenceReport/index.ts
 
-export { LabeledText, LabeledMetric, formatLabeledNumber } from './LabeledValue';
+export { LabeledText, LabeledMetric, formatLabeledNumber, formatMoney, isValidCurrencyCode } from './LabeledValue';
 export { FleetPositionCards } from './FleetPositionCards';
 export { WhatChangedSection } from './WhatChangedSection';
 export { CostDriversSection } from './CostDriversSection';

@@ -2,8 +2,7 @@
 
 import { Fuel, Droplets, Receipt, Truck, Gauge } from 'lucide-react';
 import { MetricCardGrid } from '@/frontend/shared/ui/patterns';
-import { formatCurrency } from '@/shared/utils/currency.utils';
-import { LabeledMetric, formatLabeledNumber } from './LabeledValue';
+import { LabeledMetric, formatLabeledNumber, formatMoney } from './LabeledValue';
 import type { FleetPositionSection } from '../../types';
 
 interface FleetPositionCardsProps {
@@ -11,14 +10,14 @@ interface FleetPositionCardsProps {
 }
 
 export function FleetPositionCards({ fleetPosition }: FleetPositionCardsProps) {
-  const currency = fleetPosition.currency || 'USD';
+  const currency = fleetPosition.currency;
 
   return (
     <MetricCardGrid columns={5}>
       <LabeledMetric
         label="Total fuel cost"
         labeled={fleetPosition.totalFuelCost}
-        format={(v) => formatCurrency(v, { currency })}
+        format={(v) => formatMoney(v, currency)}
         icon={<Receipt />}
       />
       <LabeledMetric
@@ -30,7 +29,7 @@ export function FleetPositionCards({ fleetPosition }: FleetPositionCardsProps) {
       <LabeledMetric
         label="Avg. cost per litre"
         labeled={fleetPosition.averageCostPerLitre}
-        format={(v) => formatCurrency(v, { currency, minimumFractionDigits: 3, maximumFractionDigits: 3 })}
+        format={(v) => formatMoney(v, currency, { minimumFractionDigits: 3, maximumFractionDigits: 3 })}
         icon={<Fuel />}
       />
       <LabeledMetric

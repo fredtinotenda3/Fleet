@@ -9,8 +9,7 @@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/frontend/shared/ui/data-display/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/frontend/shared/ui/data-display/table';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
-import { formatCurrency } from '@/shared/utils/currency.utils';
-import { LabeledText, formatLabeledNumber } from './LabeledValue';
+import { LabeledText, formatLabeledNumber, formatMoney } from './LabeledValue';
 import type { DriverFindingsSection as DriverFindingsSectionType } from '../../types';
 
 interface DriverFindingsSectionProps {
@@ -30,7 +29,7 @@ export function DriverFindingsSection({ driverFindings, currency }: DriverFindin
           <p className="text-body-sm">
             <span className="font-medium">Unassigned cost share: </span>
             <LabeledText labeled={driverFindings.unassignedSharePercent} format={(v) => `${formatLabeledNumber(v, { maximumFractionDigits: 1 })}%`} />
-            {' '}(<LabeledText labeled={driverFindings.unassignedCost} format={(v) => formatCurrency(v, { currency })} />)
+            {' '}(<LabeledText labeled={driverFindings.unassignedCost} format={(v) => formatMoney(v, currency)} />)
           </p>
         )}
 
@@ -57,7 +56,7 @@ export function DriverFindingsSection({ driverFindings, currency }: DriverFindin
                       row.driverName
                     )}
                   </TableCell>
-                  <TableCell><LabeledText labeled={row.totalCost} format={(v) => formatCurrency(v, { currency })} /></TableCell>
+                  <TableCell><LabeledText labeled={row.totalCost} format={(v) => formatMoney(v, currency)} /></TableCell>
                   <TableCell><LabeledText labeled={row.totalLitres} format={(v) => `${formatLabeledNumber(v, { maximumFractionDigits: 1 })} L`} /></TableCell>
                   <TableCell><LabeledText labeled={row.logCount} format={(v) => formatLabeledNumber(v)} /></TableCell>
                   <TableCell><LabeledText labeled={row.vehicleCount} format={(v) => formatLabeledNumber(v)} /></TableCell>

@@ -11,8 +11,7 @@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/frontend/shared/ui/data-display/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/frontend/shared/ui/data-display/table';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
-import { formatCurrency } from '@/shared/utils/currency.utils';
-import { LabeledText, formatLabeledNumber } from './LabeledValue';
+import { LabeledText, formatLabeledNumber, formatMoney } from './LabeledValue';
 import type { CostDriverSection as CostDriverSectionType } from '../../types';
 
 interface CostDriversSectionProps {
@@ -71,7 +70,7 @@ export function CostDriversSection({ costDrivers, currency }: CostDriversSection
                     <TableCell>
                       <Badge variant={badge.variant} title={row.abnormalReason}>{badge.label}</Badge>
                     </TableCell>
-                    <TableCell><LabeledText labeled={row.totalCost} format={(v) => formatCurrency(v, { currency })} /></TableCell>
+                    <TableCell><LabeledText labeled={row.totalCost} format={(v) => formatMoney(v, currency)} /></TableCell>
                     <TableCell><LabeledText labeled={row.totalLitres} format={(v) => `${formatLabeledNumber(v, { maximumFractionDigits: 1 })} L`} /></TableCell>
                     <TableCell><LabeledText labeled={row.shareOfFleetCostPercent} format={(v) => `${formatLabeledNumber(v, { maximumFractionDigits: 1 })}%`} /></TableCell>
                   </TableRow>

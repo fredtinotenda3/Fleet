@@ -5,8 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/fro
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/frontend/shared/ui/data-display/table';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
 import { formatDate } from '@/shared/utils/date.utils';
-import { formatCurrency } from '@/shared/utils/currency.utils';
-import { LabeledText, formatLabeledNumber } from './LabeledValue';
+import { LabeledText, formatLabeledNumber, formatMoney } from './LabeledValue';
 import type { AbnormalFindingsSection as AbnormalFindingsSectionType } from '../../types';
 
 interface AbnormalFindingsSectionProps {
@@ -72,7 +71,7 @@ export function AbnormalFindingsSection({ abnormalFindings, currency }: Abnormal
                 {vehicleCostSpikes.map((row) => (
                   <TableRow key={row.license_plate}>
                     <TableCell className="font-medium">{row.license_plate}</TableCell>
-                    <TableCell><LabeledText labeled={row.totalCost} format={(v) => formatCurrency(v, { currency })} /></TableCell>
+                    <TableCell><LabeledText labeled={row.totalCost} format={(v) => formatMoney(v, currency)} /></TableCell>
                     <TableCell className="text-body-sm text-muted-foreground">{row.abnormalReason}</TableCell>
                   </TableRow>
                 ))}
