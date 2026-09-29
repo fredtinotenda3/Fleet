@@ -9,10 +9,23 @@
 // test via a small local builder to avoid a cross-file dependency
 // between two independent test suites.
 
-import { buildFuelIntelligencePdfBuffer } from '../../../modules/fuel/reporting/fuel-intelligence-pdf.generator';
+import { buildFuelIntelligencePdfBuffer, fmtPercent } from '../../../modules/fuel/reporting/fuel-intelligence-pdf.generator';
 import type { MonthlyFuelIntelligenceReport, Finding } from '../../../modules/fuel/reporting/fuel-intelligence.types';
 import { fact, calculated, unavailable } from '../../../modules/fuel/reporting/fuel-intelligence.types';
 import { resolveReportPeriod } from '../../../modules/fuel/reporting/fuel-intelligence.utils';
+
+// pdfkit writes the document's true page count in the (uncompressed)
+// /Pages object's /Count entry -- unlike the rendered text itself,
+// which lives inside FlateDecode-compressed content streams and isn't
+// readable with a plain substring search. Reading /Count is what lets
+// the regression tests below catch a recurrence of the "every footer
+// draw silently appends a blank page" bug without needing a full PDF
+// text-extraction library.
+function pageCount(buf: Buffer): number {
+  const match = /\/Type\s*\/Pages.*?\/Count\s+(\d+)/s.exec(buf.toString('latin1'));
+  if (!match) throw new Error('Could not find /Count in the generated PDF -- pdfkit output format may have changed.');
+  return Number(match[1]);
+}
 
 function manyFindings(count: number): Finding[] {
   return Array.from({ length: count }, (_, i) => ({
@@ -174,5 +187,46 @@ describe('buildFuelIntelligencePdfBuffer', () => {
     const buffer = await buildFuelIntelligencePdfBuffer(buildReport({ findings: manyFindings(40) }));
     expect(buffer.length).toBeGreaterThan(500);
     expect(buffer.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+  });
+
+  // Regression coverage for a real defect a director hit in a generated
+  // report: the footer-stamping loop drew each page's footer text 20pt
+  // below the content area (i.e. inside the bottom margin, where a
+  // footer belongs), but pdfkit's automatic page-break-if-needed check
+  // treats anything below page.height - margins.bottom as overflow
+  // regardless of the explicit y given -- so every footer .text() call
+  // silently appended a blank page. A 3-content-page report came out as
+  // 9 pages (6 of them blank). The fix zeroes margins.bottom for the
+  // duration of the footer draw; these bounds would fail again at
+  // roughly 3x if that regressed.
+  it('does not balloon in page count when stamping footers (short report)', async () => {
+    const buffer = await buildFuelIntelligencePdfBuffer(buildReport());
+    expect(pageCount(buffer)).toBeLessThanOrEqual(3);
+  });
+
+  it('does not balloon in page count when stamping footers (report overflowing many pages)', async () => {
+    const buffer = await buildFuelIntelligencePdfBuffer(buildReport({ findings: manyFindings(40) }));
+    // Real content alone puts this fixture at ~10 pages; the pre-fix bug
+    // roughly tripled whatever the real count was (2 blank pages added
+    // per real page from the footer loop).
+    expect(pageCount(buffer)).toBeLessThanOrEqual(15);
+  });
+});
+
+// Regression coverage for a second real defect in the same report: a
+// director-facing PDF showed vehicle cost shares as e.g.
+// "15.600000000000001% of fleet cost" -- correct arithmetically
+// (ordinary floating-point division), but not something to hand a
+// director. Every percentage in this generator now routes through
+// fmtPercent, which rounds to one decimal place.
+describe('fmtPercent', () => {
+  it('rounds floating-point division artifacts to one decimal place', () => {
+    expect(fmtPercent(5500 / 35251.81 * 100)).toBe('15.6%');
+    expect(fmtPercent(15.600000000000001)).toBe('15.6%');
+  });
+
+  it('formats whole numbers without spurious decimals beyond the fixed precision', () => {
+    expect(fmtPercent(70)).toBe('70.0%');
+    expect(fmtPercent(0)).toBe('0.0%');
   });
 });

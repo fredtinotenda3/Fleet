@@ -44,6 +44,19 @@ function severityColor(sev: Finding['severity']): string {
   return sev === 'urgent' ? URGENT : sev === 'attention' ? ATTENTION : MUTED;
 }
 
+/**
+ * Percentages in this report come out of ordinary floating-point
+ * division upstream (e.g. shareOfFleetCostPercent = cost / total * 100)
+ * and were being interpolated straight into template strings with no
+ * rounding, so the PDF could show "15.600000000000001%" -- correct
+ * arithmetically, but not something to hand a director. One decimal
+ * place matches the precision this report's other percentage displays
+ * already use (see e.g. the frontend UI's maximumFractionDigits: 1).
+ */
+export function fmtPercent(value: number): string {
+  return `${value.toFixed(1)}%`;
+}
+
 class ReportRenderer {
   constructor(private doc: PDFKit.PDFDocument) {}
 
@@ -107,6 +120,18 @@ class ReportRenderer {
       .fillColor(opts.valueColor ?? INK)
       .font('Helvetica-Bold')
       .text(value, startX + labelWidth, y, { width: this.doc.page.width - this.doc.page.margins.right - startX - labelWidth });
+    // The value draw above passes an explicit x (startX + labelWidth), and
+    // pdfkit leaves doc.x sitting at that indented column afterward rather
+    // than restoring it to the margin. Every subsequent section header,
+    // paragraph, subheading, and bullet in this renderer positions itself
+    // with .text(str, { width }) alone -- no explicit x -- so it inherits
+    // whatever doc.x currently is. Left unset, that meant every block of
+    // text rendered after the first keyValueRow() call started ~220pt
+    // in from the margin while still being given a full-page-width box,
+    // so its right edge ran off the physical page and got silently
+    // clipped instead of wrapping. Restoring the margin here is what
+    // keeps every later text call starting where it visually appears to.
+    this.doc.x = startX;
     this.doc.font('Helvetica').moveDown(0.25);
   }
 }
@@ -162,7 +187,7 @@ export async function buildFuelIntelligencePdfBuffer(report: MonthlyFuelIntellig
     } else {
       for (const m of report.whatChanged.metrics) {
         const arrow = m.direction === 'up' ? '↑' : m.direction === 'down' ? '↓' : m.direction === 'flat' ? '→' : '';
-        const deltaText = m.deltaPercent.status === 'CALCULATED' ? `${arrow} ${m.deltaPercent.value! > 0 ? '+' : ''}${m.deltaPercent.value}%` : labeledText(m.deltaPercent);
+        const deltaText = m.deltaPercent.status === 'CALCULATED' ? `${arrow} ${m.deltaPercent.value! > 0 ? '+' : ''}${fmtPercent(m.deltaPercent.value!)}` : labeledText(m.deltaPercent);
         r.subheading(`${m.label}: ${labeledText(m.current, (v) => String(v))} (${deltaText} vs. ${report.whatChanged.comparisonPeriodLabel ?? 'prior period'})`);
         r.para(`Possible explanation: ${labeledText(m.possibleExplanation)}`, { color: MUTED, size: 9, italic: true });
       }
@@ -173,14 +198,14 @@ export async function buildFuelIntelligencePdfBuffer(report: MonthlyFuelIntellig
     const conc = report.costDrivers.topVehicleConcentration;
     r.para(
       conc.status === 'CALCULATED'
-        ? `The top ${conc.value!.vehicleCount} vehicle(s) by fuel cost account for ${conc.value!.costSharePercent}% of total fleet fuel spend this period.`
+        ? `The top ${conc.value!.vehicleCount} vehicle(s) by fuel cost account for ${fmtPercent(conc.value!.costSharePercent)} of total fleet fuel spend this period.`
         : labeledText(conc)
     );
     const topRows = [...report.costDrivers.rows].sort((a, b) => (b.totalCost.value ?? 0) - (a.totalCost.value ?? 0)).slice(0, 10);
     for (const row of topRows) {
       const tag = row.classification === 'abnormal_cost' ? ' [ABNORMAL]' : row.classification === 'high_cost' ? ' [HIGH COST]' : '';
       r.bullet(
-        `${row.license_plate}${tag} — ${labeledText(row.totalCost, (v) => v.toFixed(2))} (${labeledText(row.shareOfFleetCostPercent, (v) => `${v}%`)} of fleet cost)`,
+        `${row.license_plate}${tag} — ${labeledText(row.totalCost, (v) => v.toFixed(2))} (${labeledText(row.shareOfFleetCostPercent, fmtPercent)} of fleet cost)`,
         { color: row.classification === 'abnormal_cost' ? URGENT : INK }
       );
       if (row.abnormalReason) r.para(row.abnormalReason, { color: MUTED, size: 9, italic: true });
@@ -195,7 +220,7 @@ export async function buildFuelIntelligencePdfBuffer(report: MonthlyFuelIntellig
       r.bullet(`${d.driverName} — ${labeledText(d.totalCost, (v) => v.toFixed(2))} across ${labeledText(d.vehicleCount)} vehicle(s)`);
     }
     r.keyValueRow('Unattributed fuel cost', labeledText(report.driverFindings.unassignedCost, (v) => v.toFixed(2)));
-    r.keyValueRow('Unattributed share of fleet cost', labeledText(report.driverFindings.unassignedSharePercent, (v) => `${v}%`));
+    r.keyValueRow('Unattributed share of fleet cost', labeledText(report.driverFindings.unassignedSharePercent, fmtPercent));
 
     // ─── Abnormal / Exception Findings ─────────────────────────────────
     r.sectionHeader('Abnormal & Exception Findings');
@@ -225,7 +250,7 @@ export async function buildFuelIntelligencePdfBuffer(report: MonthlyFuelIntellig
     r.para(`${report.dataQuality.totalLogsInPeriod} fuel log(s) assessed. Overall assessment: ${report.dataQuality.overallAssessment.toUpperCase()}.${report.dataQuality.truncated ? ' NOTE: underlying data was truncated at the export row cap for this assessment.' : ''}`);
     for (const m of report.dataQuality.metrics) {
       if (m.affectedCount === 0) continue;
-      r.bullet(`${m.label}: ${m.affectedCount} of ${m.totalCount} (${m.percent}%)`, { color: severityColor(m.severity === 'urgent' ? 'urgent' : m.severity === 'attention' ? 'attention' : 'info') });
+      r.bullet(`${m.label}: ${m.affectedCount} of ${m.totalCount} (${fmtPercent(m.percent)})`, { color: severityColor(m.severity === 'urgent' ? 'urgent' : m.severity === 'attention' ? 'attention' : 'info') });
     }
     if (report.dataQuality.metrics.every((m) => m.affectedCount === 0) && report.dataQuality.metrics.length > 0) {
       r.para('No data quality issues detected for the fields assessed.');
@@ -263,10 +288,25 @@ export async function buildFuelIntelligencePdfBuffer(report: MonthlyFuelIntellig
     }
 
     // ─── Footer: page numbers on every page ─────────────────────────
+    // bottom is deliberately below the content area (page.height -
+    // margins.bottom + 20), i.e. inside the bottom margin, which is
+    // exactly where a footer belongs. But pdfkit's automatic
+    // page-break-if-needed check for .text() treats anything below
+    // page.height - margins.bottom as overflow regardless of the
+    // explicit y given, so drawing here triggered an unwanted
+    // doc.addPage() on *every* footer .text() call below -- silently
+    // appending a blank page after each real one (3 content pages
+    // became 9). Zeroing margins.bottom for the duration of these two
+    // calls tells pdfkit the full page height is available, so writing
+    // into the margin no longer reads as overflow; it's restored
+    // immediately after so page-break behavior for everything else is
+    // unaffected.
     const range = doc.bufferedPageRange();
     for (let i = range.start; i < range.start + range.count; i++) {
       doc.switchToPage(i);
       const bottom = doc.page.height - doc.page.margins.bottom + 20;
+      const savedBottomMargin = doc.page.margins.bottom;
+      doc.page.margins.bottom = 0;
       doc
         .fontSize(8)
         .fillColor(FAINT)
@@ -281,6 +321,7 @@ export async function buildFuelIntelligencePdfBuffer(report: MonthlyFuelIntellig
         align: 'right',
         lineBreak: false,
       });
+      doc.page.margins.bottom = savedBottomMargin;
     }
 
     doc.end();
