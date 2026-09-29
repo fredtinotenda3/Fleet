@@ -36,6 +36,19 @@ export interface FuelLog extends BaseEntity {
   station_name?: string;
   fuel_station_id?: string;
   fuel_type?: string;
+  /**
+   * Provenance sibling of `fuel_type`: exactly what was typed or
+   * imported, untouched by normalization. `fuel_type` itself holds the
+   * canonical, case-folded value (Diesel/Petrol/Electric/Hybrid) so
+   * every existing reader keeps working unchanged; this field exists
+   * purely for audit/display (see the "Fuel Type (as entered)" export
+   * column) and is never client-submitted -- CreateFuelLogHandler/
+   * UpdateFuelLogHandler derive it server-side via
+   * modules/fuel/utils/fuel-type.utils.ts, which is why it is absent
+   * from FuelLogCreateDTO/FuelLogUpdateDTO below. Absent on any row
+   * written before this fix; see scripts/backfill-fuel-type-normalization.ts.
+   */
+  fuel_type_raw?: string;
   notes?: string;
   currency?: string;
   is_full_tank?: boolean;
