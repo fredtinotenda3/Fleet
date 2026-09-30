@@ -224,23 +224,51 @@ describe('the hub shows live state and uses what it already knows', () => {
     expect(cluster).not.toMatch(/useLiveMap\(/);
   });
 
-  it('passes the assigned driver it already holds into the action forms', () => {
-    // `vehicle.assignedDriver` was fetched and rendered in the Driver
-    // tab while every form opened from the same page started empty.
-    expect(page).toMatch(/currentDriverId=\{vehicle\.assignedDriver\?\._id/);
+  it('does NOT pass the assigned driver into the fuel quick-action -- driver assignment lives only on the Operational Hub', () => {
+    /*
+      SUPERSEDES an earlier version of this test, which asserted the
+      opposite: that `vehicle.assignedDriver` was seeded into the fuel
+      quick-action's `currentDriverId`/`defaultDriverId` prop as a
+      convenience. That was a reasonable convenience at the time, but it
+      is exactly the coupling the driver-attribution fix (PART: "driver
+      assignment must only be on the Vehicle Operational Hub, not the
+      fuel log form modal") removes: seeding a NEW fuel log's driver_id
+      from the vehicle's current assignment, even invisibly, still lets
+      the fuel form influence driver attribution. The fuel form/modal no
+      longer accepts, seeds, or submits driver_id at all -- see
+      FuelForm.tsx (no driver field), FuelModal.tsx (no defaultDriverId
+      prop, no driver_id in toFormValues), and
+      VehicleQuickActions.tsx (no currentDriverId prop).
+    */
+    expect(page).not.toMatch(/currentDriverId=\{vehicle\.assignedDriver/);
+    const quickActions = read('frontend/modules/vehicles/components/operations/VehicleQuickActions.tsx');
+    expect(quickActions).not.toMatch(/currentDriverId/);
+    expect(quickActions).not.toMatch(/defaultDriverId/);
   });
 
-  it('seeding a driver applies to a NEW record only', () => {
+  it('the fuel modal never seeds or submits driver_id -- create and edit both leave it untouched', () => {
     /*
-      The fuel-driver fix turns on this: the chart must attribute a log
-      to the driver ON THE LOG, never to the vehicle's current driver.
-      Seeding a create form is a convenience; rewriting an existing
-      log's attribution would undo that fix.
+      SUPERSEDES an earlier version of this test, which asserted that
+      edit mode returns "the log's own driver, untouched" via an
+      explicit `driver_id: log.driver_id` line. Under the current fix
+      that guarantee holds even more strongly: FuelModal never
+      references driver_id in either branch of toFormValues, so the key
+      is simply absent from the submitted form values on every save
+      (create or edit) -- and UpdateFuelLogHandler already skips any
+      field that arrives as `undefined` rather than clearing it (see
+      tests/security/fuel-driver-attribution.spec.ts), so an edit that
+      never touches driver_id leaves a log's own historical attribution
+      exactly as it was.
     */
     const modal = read('frontend/modules/fuel/components/FuelModal.tsx');
-    expect(modal).toMatch(/if \(!log\) \{/);
-    // The edit path returns the log's own driver, untouched.
-    expect(modal).toMatch(/driver_id: log\.driver_id/);
+    // No seeding on create, no return-through on edit, no prop to carry
+    // a seed in on -- the three shapes the old seeding logic took.
+    expect(modal).not.toMatch(/seeded\.driver_id/);
+    expect(modal).not.toMatch(/driver_id:\s*log\.driver_id/);
+    expect(modal).not.toMatch(/defaultDriverId/);
+    const form = read('frontend/modules/fuel/components/FuelForm.tsx');
+    // The form itself carries no driver_id field at all any more.
+    expect(form).not.toMatch(/driver_id/);
   });
 
   it('the vehicle auto-fill rule runs on BOTH the manual and pre-filled paths', () => {

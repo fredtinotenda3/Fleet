@@ -33,8 +33,6 @@ interface FuelModalProps {
    * default is never silent.
    */
   defaultLicensePlate?: string;
-  /** Seeds a NEW log only; an existing log keeps its own attribution. */
-  defaultDriverId?: string;
   onOpenChange: (open: boolean) => void;
   onSubmit: (values: FuelFormValues) => Promise<unknown>;
 }
@@ -53,27 +51,29 @@ const DESCRIPTIONS: Record<FuelModalMode, string> = {
 
 function toFormValues(
   log: FuelLog | null | undefined,
-  defaultLicensePlate?: string,
-  defaultDriverId?: string
+  defaultLicensePlate?: string
 ): Partial<FuelFormValues> | undefined {
   if (!log) {
     /*
-      A NEW log opened from a vehicle's own page. Seeding the plate and
-      the vehicle's currently-assigned driver removes the two fields the
-      operator would otherwise re-enter for a vehicle they are already
-      looking at.
+      A NEW log opened from a vehicle's own page. Seeding the plate
+      removes a field the operator would otherwise re-enter for a
+      vehicle they are already looking at.
 
-      This seeds the CREATE path only. Editing an existing log returns
-      that log's own `driver_id` below, untouched -- a historical
-      attribution is never rewritten to the vehicle's current driver.
-      That distinction is the whole point of the fuel-driver fix: the
-      chart must show the driver on the log, not the driver on the
-      vehicle today.
+      FIX (driver assignment must live only on the Vehicle Operational
+      Hub): this used to also seed the vehicle's currently-assigned
+      driver onto driver_id, on the reasoning that it saved a field the
+      operator would otherwise retype. That reasoning doesn't hold under
+      this fix: `driver_id` is a fuel log's own transaction-time
+      attribution (who actually fuelled it that day), never the
+      vehicle's assignment, and the form no longer exposes it at all
+      (see FuelForm.tsx) -- so there is nothing left here to seed, and
+      doing so invisibly would silently stamp the vehicle's current
+      driver onto every new log's stored driver_id, which is the exact
+      coupling this fix removes. driver_id is simply omitted from the
+      create payload now; see create-fuel-log.handler.ts, which already
+      treats it as fully optional.
     */
-    const seeded: Partial<FuelFormValues> = {};
-    if (defaultLicensePlate) seeded.license_plate = defaultLicensePlate;
-    if (defaultDriverId) seeded.driver_id = defaultDriverId;
-    return Object.keys(seeded).length > 0 ? seeded : undefined;
+    return defaultLicensePlate ? { license_plate: defaultLicensePlate } : undefined;
   }
   return {
     license_plate: log.license_plate,
@@ -91,8 +91,12 @@ function toFormValues(
     receipt_url: log.receipt_url ?? '',
     payment_method: log.payment_method ?? 'cash',
     fuel_card_id: log.fuel_card_id ?? '',
-    // NEW: falls back to '' (Unassigned) for legacy records with no driver.
-    driver_id: log.driver_id ?? '',
+    // Deliberately NOT seeded here: driver_id is no longer editable via
+    // this form (see FuelForm.tsx), and UpdateFuelLogHandler skips any
+    // field that arrives as `undefined` rather than clearing it -- so
+    // omitting the key leaves this log's existing driver_id (its own
+    // historical transaction-time attribution) untouched by an edit
+    // that never intended to touch it.
   };
 }
 
@@ -101,7 +105,6 @@ export function FuelModal({
   mode,
   fuelLog,
   defaultLicensePlate,
-  defaultDriverId,
   onOpenChange,
   onSubmit,
 }: FuelModalProps) {
@@ -120,9 +123,9 @@ export function FuelModal({
         </DialogHeader>
         <FuelForm
           // Remounts the form when the seeded context changes, so a
-          // modal reopened for a different vehicle or driver starts clean.
-          key={`${mode}-${fuelLog?._id ?? `${defaultLicensePlate ?? 'new'}:${defaultDriverId ?? ''}`}`}
-          defaultValues={toFormValues(fuelLog, defaultLicensePlate, defaultDriverId)}
+          // modal reopened for a different vehicle starts clean.
+          key={`${mode}-${fuelLog?._id ?? `${defaultLicensePlate ?? 'new'}`}`}
+          defaultValues={toFormValues(fuelLog, defaultLicensePlate)}
           onSubmit={async (values) => {
             await onSubmit(values);
             if (mode !== 'view') onOpenChange(false);

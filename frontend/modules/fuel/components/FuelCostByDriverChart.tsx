@@ -1,6 +1,10 @@
 // frontend/modules/fuel/components/FuelCostByDriverChart.tsx
 // Enterprise analytics #2 -- reuses useFuelByDriver (sortBy='cost')
-// rather than a separate query, matching FuelRepository.getFuelByDriver.
+// rather than a separate query. As of the Vehicle-Operational-Hub
+// attribution fix, the service layer behind this hook backs it with
+// FuelRepository.getFuelByAssignedDriver (grouped by each vehicle's
+// CURRENT driver assignment), not getFuelByDriver (transaction-time) --
+// see fuel-query.service.ts's getFuelByDriver doc comment.
 
 'use client';
 
@@ -51,10 +55,27 @@ export function FuelCostByDriverChart({ dateRange, licensePlate }: FuelCostByDri
   const { open, setOpen, filter, openDrawer } = useFuelDrawer();
 
   function handleClick(row: DriverFuelConsumptionRow) {
+    // FIX (driver attribution must come from the Vehicle Operational
+    // Hub): this row's driver_id, when set, is now the driver CURRENTLY
+    // assigned to a vehicle -- not a value stored on any fuel log -- so
+    // filtering the drawer by driver_id would no longer match anything
+    // (tblfuellogs doesn't have this driver's id on it). Instead:
+    //  - a resolved driver maps to at most one currently-assigned
+    //    vehicle (enforced by a partial unique index -- see
+    //    Vehicle.currentDriverId's doc comment), so reuse the existing
+    //    license_plate filter with that vehicle's plate;
+    //  - the "Unassigned" bucket (driver_id === null) has no single
+    //    vehicle, so it uses the dedicated unassignedOnly filter instead.
+    // When this chart itself is Vehicle-Level-Analytics-scoped
+    // (licensePlate prop set), keep that scope on the drawer too --
+    // relevant for the "Unassigned" bucket, where a bare unassignedOnly
+    // filter would otherwise widen back out to every unassigned vehicle
+    // fleet-wide instead of staying on the one vehicle being viewed.
+    const targetPlate = row.driver_id ? row.vehiclePlates?.[0] : licensePlate;
     openDrawer({
       label: row.driverName,
-      driver_id: row.driver_id ?? undefined,
-      license_plate: licensePlate,
+      license_plate: targetPlate,
+      unassignedOnly: row.driver_id ? undefined : true,
       startDate: dateRange?.startDate,
       endDate: dateRange?.endDate,
     });

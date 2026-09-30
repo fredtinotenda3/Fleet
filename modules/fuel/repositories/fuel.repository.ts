@@ -128,17 +128,69 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     }
   }
 
-  private async enrichFuelLogs(logs: FuelLog[]): Promise<FuelLog[]> {
-    const driverIds = Array.from(
-      new Set(logs.map((l) => l.driver_id).filter((id): id is string => Boolean(id)))
-    );
+  /**
+   * FIX (driver attribution must come from the Vehicle Operational Hub):
+   * this previously resolved the displayed `.driver` field from each
+   * log's OWN `driver_id` -- which is deliberately transaction-time-only
+   * ("who fuelled the vehicle that day", see FuelLog.driver_id's doc
+   * comment) and is never updated when a vehicle is reassigned. That made
+   * the Fuel Logs table's Driver column, its export, and the "Fuel cost
+   * by driver" chart all disagree with the Vehicle Operational Hub the
+   * moment a fleet reassigned a vehicle to a new driver.
+   *
+   * Now resolves `.driver` from the VEHICLE's current assignment
+   * (Vehicle.currentDriverId, set exclusively via
+   * PATCH /api/vehicles/:id/driver) instead: a plate-keyed lookup against
+   * tblvehicles, then a driver-id lookup against tbldrivers. This is a
+   * live read-time derivation, not a one-time backfill -- a future
+   * reassignment is reflected on the very next read, with nothing to
+   * re-run and nothing that can go stale.
+   *
+   * `tenantId` is now required (previously this method took none) so the
+   * vehicle lookup can be tenant-scoped -- license_plate is not globally
+   * unique across tenants, so an unscoped lookup could resolve a driver
+   * belonging to a different tenant's vehicle sharing the same plate
+   * text. All 5 call sites already have a tenantId/organizationId in
+   * scope.
+   *
+   * Deliberately unrelated to getFuelByDriver below, which keeps
+   * grouping by the raw transaction-time driver_id for the Monthly Fuel
+   * & Fleet Intelligence Report's driverFindings section -- that
+   * section's whole point is "who actually fuelled this vehicle,"
+   * historically, and must not be affected by a later reassignment.
+   */
+  private async enrichFuelLogs(logs: FuelLog[], tenantId: string): Promise<FuelLog[]> {
     const stationIds = Array.from(
       new Set(logs.map((l) => l.fuel_station_id).filter((id): id is string => Boolean(id)))
     );
+    const plates = Array.from(
+      new Set(logs.map((l) => l.license_plate).filter((p): p is string => Boolean(p)))
+    );
 
-    if (driverIds.length === 0 && stationIds.length === 0) return logs;
+    if (plates.length === 0 && stationIds.length === 0) return logs;
 
     const db = await connectToDatabase();
+    const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
+
+    const plateToDriverId = new Map<string, string>();
+    if (plates.length > 0) {
+      const vehicleQuery: Record<string, unknown> = {
+        license_plate: { $in: plates },
+        currentDriverId: { $exists: true, $nin: [null, ''] },
+      };
+      if (!isSuperAdmin) vehicleQuery.tenantId = tenantId;
+      const vehicles = await db
+        .collection('tblvehicles')
+        .find(vehicleQuery, { projection: { license_plate: 1, currentDriverId: 1 } })
+        .toArray();
+      for (const v of vehicles) {
+        if (v.license_plate && v.currentDriverId) {
+          plateToDriverId.set(String(v.license_plate), String(v.currentDriverId));
+        }
+      }
+    }
+
+    const driverIds = Array.from(new Set(Array.from(plateToDriverId.values())));
 
     const driverMap = new Map<string, { _id: string; name: string; driver_code?: string }>();
     const validDriverObjectIds = driverIds.filter((id) => ObjectId.isValid(id)).map((id) => new ObjectId(id));
@@ -176,8 +228,9 @@ export class FuelRepository extends BaseRepository<FuelLog> {
 
     return logs.map((log) => {
       let enriched = log;
-      if (log.driver_id) {
-        const driver = driverMap.get(log.driver_id);
+      const assignedDriverId = log.license_plate ? plateToDriverId.get(log.license_plate) : undefined;
+      if (assignedDriverId) {
+        const driver = driverMap.get(assignedDriverId);
         if (driver) enriched = { ...enriched, driver };
       }
       if (log.fuel_station_id) {
@@ -186,6 +239,49 @@ export class FuelRepository extends BaseRepository<FuelLog> {
       }
       return enriched;
     });
+  }
+
+  /**
+   * Resolves a driver-based Fuel Logs filter (driver_id or
+   * unassignedOnly) into the license plate(s) it means, so it can be
+   * applied to tblfuellogs -- which does not store which driver a
+   * vehicle is CURRENTLY assigned to. Same source of truth as
+   * enrichFuelLogs/getFuelByAssignedDriver: Vehicle.currentDriverId, set
+   * exclusively via the Vehicle Operational Hub.
+   *
+   * Returns `null` when neither filter is set (nothing to resolve, no
+   * extra query clause needed) or an array of plates otherwise -- an
+   * empty array is a valid, meaningful result ("this driver currently
+   * holds no vehicle" / "every vehicle currently has a driver"), and is
+   * applied as `license_plate: { $in: [] }`, which correctly matches
+   * nothing rather than being mistaken for "no filter."
+   */
+  private async resolveDriverFilterPlates(
+    filters: Pick<FuelFilters, 'driver_id' | 'unassignedOnly'>,
+    tenantId: string
+  ): Promise<string[] | null> {
+    if (!filters.driver_id && !filters.unassignedOnly) return null;
+
+    const db = await connectToDatabase();
+    const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
+    const vehicleQuery: Record<string, unknown> = {};
+    if (!isSuperAdmin) vehicleQuery.tenantId = tenantId;
+
+    if (filters.driver_id) {
+      vehicleQuery.currentDriverId = filters.driver_id;
+    } else {
+      vehicleQuery.$or = [
+        { currentDriverId: { $exists: false } },
+        { currentDriverId: null },
+        { currentDriverId: '' },
+      ];
+    }
+
+    const vehicles = await db
+      .collection('tblvehicles')
+      .find(vehicleQuery, { projection: { license_plate: 1 } })
+      .toArray();
+    return vehicles.map((v) => String(v.license_plate));
   }
 
   async findByLicensePlate(
@@ -198,7 +294,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
       pagination,
       tenantId
     );
-    return { ...result, data: await this.enrichFuelLogs(result.data) };
+    return { ...result, data: await this.enrichFuelLogs(result.data, tenantId) };
   }
 
   async getFilteredLogs(
@@ -215,15 +311,24 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     if (filters.payment_method) filter.payment_method = filters.payment_method;
     if (filters.fuel_station_id) filter.fuel_station_id = filters.fuel_station_id;
     if (filters.fuel_card_id) filter.fuel_card_id = filters.fuel_card_id;
-    if (filters.driver_id) filter.driver_id = filters.driver_id;
     if (filters.startDate || filters.endDate) {
       filter.date = {};
       if (filters.startDate) (filter.date as any).$gte = filters.startDate;
       if (filters.endDate) (filter.date as any).$lte = filters.endDate;
     }
 
+    // driver_id/unassignedOnly are resolved to plates and applied via
+    // $and rather than a `driver_id` key -- see
+    // resolveDriverFilterPlates's doc comment. $and (not a top-level
+    // license_plate key) so this composes correctly alongside the
+    // license_plate substring filter above instead of overwriting it.
+    const driverPlates = await this.resolveDriverFilterPlates(filters, tenantId);
+    if (driverPlates !== null) {
+      filter.$and = [{ license_plate: { $in: driverPlates } }];
+    }
+
     const result = await this.findWithPagination(filter as Filter<FuelLog>, pagination, tenantId);
-    return { ...result, data: await this.enrichFuelLogs(result.data) };
+    return { ...result, data: await this.enrichFuelLogs(result.data, tenantId) };
   }
 
   /**
@@ -237,7 +342,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
    * query shared by getFilteredLogsInScope (paginated list) and
    * getFilteredLogsForExport (uncapped-by-pagination export).
    */
-  private buildScopedQuery(filters: FuelFilters, context: TenantContext): Record<string, unknown> {
+  private async buildScopedQuery(filters: FuelFilters, context: TenantContext): Promise<Record<string, unknown>> {
     const query: Record<string, unknown> = {
       isDeleted: { $ne: true },
     };
@@ -253,11 +358,17 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     if (filters.payment_method) query.payment_method = filters.payment_method;
     if (filters.fuel_station_id) query.fuel_station_id = filters.fuel_station_id;
     if (filters.fuel_card_id) query.fuel_card_id = filters.fuel_card_id;
-    if (filters.driver_id) query.driver_id = filters.driver_id;
     if (filters.startDate || filters.endDate) {
       query.date = {};
       if (filters.startDate) (query.date as any).$gte = filters.startDate;
       if (filters.endDate) (query.date as any).$lte = filters.endDate;
+    }
+
+    // See getFilteredLogs's identical comment: resolved to plates via
+    // $and, not a `driver_id` key.
+    const driverPlates = await this.resolveDriverFilterPlates(filters, context.organizationId);
+    if (driverPlates !== null) {
+      query.$and = [{ license_plate: { $in: driverPlates } }];
     }
 
     const scopeFilter = tenantScopeService.buildFilter<FuelLog>(context, 'orgUnitId');
@@ -272,7 +383,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     pagination: PaginationParams
   ): Promise<PaginatedResponse<FuelLog>> {
     const collection = await this.getCollection();
-    const query = this.buildScopedQuery(filters, context);
+    const query = await this.buildScopedQuery(filters, context);
 
     const { page, limit } = pagination;
     const skip = (page - 1) * limit;
@@ -299,7 +410,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
       },
     };
 
-    return { ...result, data: await this.enrichFuelLogs(result.data) };
+    return { ...result, data: await this.enrichFuelLogs(result.data, context.organizationId) };
   }
 
   /**
@@ -315,7 +426,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     cap: number = EXPORT_ROW_CAP
   ): Promise<ExportDataset<FuelLog>> {
     const collection = await this.getCollection();
-    const query = this.buildScopedQuery(filters, context);
+    const query = await this.buildScopedQuery(filters, context);
 
     const [rows, totalMatched] = await Promise.all([
       collection
@@ -326,7 +437,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
       collection.countDocuments(query as Filter<FuelLog>),
     ]);
 
-    const enriched = await this.enrichFuelLogs(rows as FuelLog[]);
+    const enriched = await this.enrichFuelLogs(rows as FuelLog[], context.organizationId);
 
     return {
       rows: enriched,
@@ -339,7 +450,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
   async findById(id: string, tenantId: string): Promise<FuelLog | null> {
     const log = await super.findById(id, tenantId);
     if (!log) return null;
-    const [enriched] = await this.enrichFuelLogs([log]);
+    const [enriched] = await this.enrichFuelLogs([log], tenantId);
     return enriched;
   }
 
@@ -519,11 +630,33 @@ export class FuelRepository extends BaseRepository<FuelLog> {
       { $limit: limit },
     ];
 
-    const grouped = await collection.aggregate(pipeline).toArray();
+    const grouped = await collection.aggregate(pipeline).toArray() as Array<{
+      _id: string | null;
+      totalFuel: number;
+      totalCost: number;
+      count: number;
+      vehicles?: string[];
+    }>;
+    return this.shapeDriverConsumptionRows(grouped);
+  }
 
+  /**
+   * Shared tail of getFuelByDriver and getFuelByAssignedDriver: resolves
+   * grouped `{_id: driverId|null, totalFuel, totalCost, count, vehicles}`
+   * rows into DriverFuelConsumptionRow[] via one batched tbldrivers
+   * lookup. Extracted so the two methods -- which group by different
+   * keys (transaction-time driver_id vs. the vehicle's current
+   * Operational Hub assignment) but need identical name-resolution and
+   * row-shaping -- can't drift apart on that shared part. Pure
+   * extraction: produces byte-identical output to what getFuelByDriver
+   * computed inline before this change.
+   */
+  private async shapeDriverConsumptionRows(
+    grouped: Array<{ _id: string | null; totalFuel: number; totalCost: number; count: number; vehicles?: string[] }>
+  ): Promise<DriverFuelConsumptionRow[]> {
     const driverIds = grouped
       .map((g) => g._id)
-      .filter((id): id is string => Boolean(id) && ObjectId.isValid(id));
+      .filter((id): id is string => id !== null && id !== '' && ObjectId.isValid(id));
 
     let driverNameMap = new Map<string, string>();
     if (driverIds.length > 0) {
@@ -544,9 +677,105 @@ export class FuelRepository extends BaseRepository<FuelLog> {
         totalCost: g.totalCost,
         logCount: g.count,
         vehicleCount: Array.isArray(g.vehicles) ? g.vehicles.length : 0,
+        vehiclePlates: Array.isArray(g.vehicles) ? g.vehicles : [],
         averageCostPerUnit: g.totalFuel > 0 ? g.totalCost / g.totalFuel : 0,
       };
     });
+  }
+
+  /**
+   * "Fuel cost by driver" / "Fuel consumption by driver" chart --
+   * ENTERPRISE-ATTRIBUTION SIBLING of getFuelByDriver above, not a
+   * replacement for it. Groups by the driver CURRENTLY assigned to each
+   * log's vehicle (Vehicle.currentDriverId, set via the Vehicle
+   * Operational Hub) instead of the log's own transaction-time
+   * driver_id -- so assigning or reassigning a vehicle in the
+   * Operational Hub is reflected on this chart immediately, including
+   * for that vehicle's entire fuel history, with no backfill to run.
+   *
+   * The Monthly Fuel & Fleet Intelligence Report's driverFindings
+   * section calls getFuelByDriver directly, not this method -- that
+   * report is deliberately about who actually fuelled each vehicle
+   * historically, and must not be rewritten by a later reassignment. Do
+   * not fold these two methods back together; do not swap the report's
+   * call site to this one.
+   */
+  async getFuelByAssignedDriver(
+    tenantId: string,
+    dateRange?: { startDate?: Date; endDate?: Date },
+    limit: number = 10,
+    sortBy: 'volume' | 'cost' = 'volume',
+    scope?: AnalyticsScope,
+    context?: TenantContext
+  ): Promise<DriverFuelConsumptionRow[]> {
+    const collection = await this.getCollection();
+    const matchStage = this.buildBaseMatch(tenantId, dateRange, scope, context);
+    const sortField = sortBy === 'cost' ? 'totalCost' : 'totalFuel';
+    const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
+
+    const pipeline = [
+      { $match: matchStage },
+      {
+        $lookup: {
+          from: 'tblvehicles',
+          let: { plate: '$license_plate' },
+          pipeline: [
+            {
+              $match: {
+                // Plate-keyed join: a $lookup sub-pipeline is a fresh
+                // query over the WHOLE tblvehicles collection, and
+                // license_plate is not globally unique across tenants --
+                // the tenant predicate must be repeated here, not just
+                // in the outer $match above. Same pattern/rationale as
+                // vehicle.repository.ts's meterlogs lookup and
+                // trip.repository.ts's fuel-cost lookup.
+                ...(isSuperAdmin ? {} : { tenantId }),
+                isDeleted: { $ne: true },
+                $expr: { $eq: ['$license_plate', '$$plate'] },
+              },
+            },
+            { $project: { currentDriverId: 1, _id: 0 } },
+          ],
+          as: '__vehicle',
+        },
+      },
+      {
+        $addFields: {
+          __driverKey: {
+            $let: {
+              vars: { cdi: { $arrayElemAt: ['$__vehicle.currentDriverId', 0] } },
+              in: {
+                $cond: [
+                  { $and: [{ $ne: ['$$cdi', null] }, { $ne: ['$$cdi', ''] }] },
+                  '$$cdi',
+                  null,
+                ],
+              },
+            },
+          },
+        },
+      },
+      {
+        $group: {
+          _id: '$__driverKey',
+          totalFuel: { $sum: '$fuel_volume' },
+          totalCost: { $sum: '$cost' },
+          count: { $sum: 1 },
+          vehicles: { $addToSet: '$license_plate' },
+        },
+      },
+      { $sort: { [sortField]: -1 } },
+      { $limit: limit },
+    ];
+
+    const grouped = await collection.aggregate(pipeline).toArray() as Array<{
+      _id: string | null;
+      totalFuel: number;
+      totalCost: number;
+      count: number;
+      vehicles?: string[];
+    }>;
+    return this.shapeDriverConsumptionRows(grouped);
   }
 
   async getFuelKpis(

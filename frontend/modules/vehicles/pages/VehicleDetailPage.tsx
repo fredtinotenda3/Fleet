@@ -180,13 +180,6 @@ export function VehicleDetailPage({ vehicleId }: VehicleDetailPageProps) {
       <VehicleQuickActions
         licensePlate={vehicle.license_plate}
         vehicleId={vehicle._id}
-        /*
-          The assigned driver was already on this record (rendered in the
-          Driver tab) and was not passed to the forms opened from this
-          same page, so every one of them started with an empty driver
-          field for a vehicle whose driver the page was displaying.
-        */
-        currentDriverId={vehicle.assignedDriver?._id ?? undefined}
       />
 
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value ?? 'overview')}>

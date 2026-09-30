@@ -84,6 +84,25 @@ export class FuelQueryService {
     return fuelRepository.getTopFuelConsumers(tenantId, limit, scope, context);
   }
 
+  /**
+   * Backs the "Fuel cost by driver" / "Fuel consumption by driver" chart.
+   *
+   * FIX (driver attribution must come from the Vehicle Operational Hub):
+   * now calls FuelRepository.getFuelByAssignedDriver -- which groups by
+   * each vehicle's CURRENT Operational Hub assignment
+   * (Vehicle.currentDriverId) -- instead of the repository's older
+   * getFuelByDriver, which groups by each fuel log's own
+   * transaction-time driver_id and stayed stale after a reassignment.
+   * The public method name/signature here is unchanged (so no hook,
+   * query-key, or API route needed to change) -- only which repository
+   * method backs it.
+   *
+   * getFuelByDriver itself is untouched and still used directly (not via
+   * this service method) by the Monthly Fuel & Fleet Intelligence
+   * Report's driverFindings section, which deliberately needs the
+   * transaction-time semantics -- see that repository method's doc
+   * comment. Do not repoint this service method back to it.
+   */
   async getFuelByDriver(
     tenantId: string,
     dateRange?: { startDate?: Date; endDate?: Date },
@@ -92,7 +111,7 @@ export class FuelQueryService {
     scope?: AnalyticsScope,
     context?: TenantContext
   ): Promise<DriverFuelConsumptionRow[]> {
-    return fuelRepository.getFuelByDriver(tenantId, dateRange, limit, sortBy, scope, context);
+    return fuelRepository.getFuelByAssignedDriver(tenantId, dateRange, limit, sortBy, scope, context);
   }
 
   /**

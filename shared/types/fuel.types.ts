@@ -75,6 +75,18 @@ export interface FuelLog extends BaseEntity {
     card_last4: string;
     provider: string;
   };
+  /**
+   * Display-only field, populated by FuelRepository.enrichFuelLogs.
+   *
+   * NOT derived from this log's own `driver_id` (see that field's doc
+   * comment). Resolved instead from the vehicle's CURRENT Operational
+   * Hub assignment (Vehicle.currentDriverId, set exclusively via
+   * PATCH /api/vehicles/:id/driver) -- so this reflects "who is assigned
+   * to this vehicle today," and updates immediately when that assignment
+   * changes, with no backfill required. This is the field the Fuel Logs
+   * table's Driver column, its CSV/PDF export, and the "Fuel cost by
+   * driver" chart all read.
+   */
   driver?: {
     _id?: string;
     name: string;
@@ -108,7 +120,21 @@ export interface FuelLogUpdateDTO extends Partial<FuelLogCreateDTO> {
 export interface FuelFilters {
   license_plate?: string;
   unit_id?: string;
+  /**
+   * Filters to the vehicle(s) this driver is CURRENTLY assigned to via
+   * the Vehicle Operational Hub (Vehicle.currentDriverId) -- not to logs
+   * whose own transaction-time driver_id equals this id. See
+   * FuelLog.driver's doc comment for why. Resolved server-side in
+   * FuelRepository; mutually exclusive with unassignedOnly in practice
+   * (both may be sent, but together they can only ever match nothing).
+   */
   driver_id?: string;
+  /**
+   * Filters to fuel logs for vehicles that currently have NO Operational
+   * Hub driver assignment -- backs the "Unassigned" bucket drill-through
+   * on the "Fuel cost by driver" chart. See driver_id's doc comment.
+   */
+  unassignedOnly?: boolean;
   startDate?: Date;
   endDate?: Date;
   payment_method?: FuelPaymentMethod;
@@ -165,6 +191,16 @@ export interface DriverFuelConsumptionRow {
   totalCost: number;
   logCount: number;
   vehicleCount: number;
+  /**
+   * License plate(s) behind this row's totals. For a resolved driver
+   * (driver_id set), a driver can currently hold at most one vehicle
+   * (partial unique index -- see Vehicle.currentDriverId), so this is
+   * normally a single plate; consumers such as the chart's drill-through
+   * use vehiclePlates[0] rather than assuming a driver_id-based filter
+   * still applies. For the "Unassigned" row it lists every plate with no
+   * current driver.
+   */
+  vehiclePlates?: string[];
   averageCostPerUnit: number;
 }
 

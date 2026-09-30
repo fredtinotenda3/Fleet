@@ -24,13 +24,11 @@ import { useFuelVolumeUnits } from '../hooks/useFuel';
 import { useUploadReceipt } from '../hooks/useFuelMutations';
 import { useFuelStationsList } from '@/frontend/modules/fuel-stations/hooks/useFuelStations';
 import { useFuelCardsList } from '@/frontend/modules/fuel-cards/hooks/useFuelCards';
-import { useDriversList } from '@/frontend/modules/drivers/hooks/useDrivers';
 import { TripSelect } from '@/frontend/modules/trips/components/TripSelect';
 
 const CURRENCIES = ['USD', 'ZWG', 'ZAR', 'EUR', 'GBP'];
 const FUEL_TYPES = ['diesel', 'petrol', 'electric', 'hybrid'];
 const NO_STATION = '__none__';
-const NO_DRIVER = '__unassigned__';
 const NO_CARD = '__no_card__';
 
 interface FuelFormProps {
@@ -57,7 +55,6 @@ const FALLBACK_DEFAULTS: FuelFormValues = {
   receipt_url: '',
   payment_method: 'cash',
   fuel_card_id: '',
-  driver_id: '',
   tripId: '',
 };
 
@@ -70,7 +67,6 @@ const ID_FIELDS = new Set<keyof FuelFormValues>([
   'unit_id',
   'payment_method',
   'fuel_card_id',
-  'driver_id',
   'fuel_station_id',
 ]);
 
@@ -129,17 +125,6 @@ export function FuelForm({
   const { data: volumeUnits, isLoading: unitsLoading } = useFuelVolumeUnits();
   const { data: stations, isLoading: stationsLoading } = useFuelStationsList({ isActive: true });
   const { data: cards, isLoading: cardsLoading } = useFuelCardsList({ status: 'active' });
-  /**
-   * FIX (driver never renders / never resolves on edit): real tbldrivers
-   * documents in this tenant do NOT carry a `status` field at all
-   * (confirmed from a live document) -- only `name`, `driver_code`,
-   * `isDeleted`. Filtering this picker by `status: 'active'` therefore
-   * matches zero drivers server-side, so the dropdown is always empty
-   * and an existing fuel log's `driver_id` can never be resolved to a
-   * name. Drop the status filter for this picker; `limit: 1000` (now
-   * actually honored -- see pagination.utils.ts) still bounds it.
-   */
-  const { data: drivers, isLoading: driversLoading } = useDriversList({ limit: 1000 });
   const uploadReceipt = useUploadReceipt();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadedName, setUploadedName] = useState<string | null>(null);
@@ -230,7 +215,7 @@ export function FuelForm({
    * -- it renders the raw `value` verbatim unless you pass it a
    * children render-function that maps value -> label yourself. Every
    * Select here that's keyed by an id (license_plate, unit_id,
-   * payment_method, fuel_card_id, driver_id, fuel_station_id) does that
+   * payment_method, fuel_card_id, fuel_station_id) does that
    * explicitly. `value` is run through normalizeId() first as a
    * belt-and-braces guard against the object-leak bug described above.
    */
@@ -259,13 +244,6 @@ export function FuelForm({
     if (!value || value === NO_CARD) return 'No card selected';
     const match = cards?.data?.find((c) => c._id === value);
     return match ? `${match.provider} •••• ${match.card_last4}` : cardsLoading ? 'Loading cards…' : value;
-  }
-
-  function getDriverLabel(rawValue: string | null | undefined): string {
-    const value = normalizeId(rawValue);
-    if (!value || value === NO_DRIVER) return 'Unassigned';
-    const match = drivers?.data?.find((d) => d._id === value);
-    return match ? match.name : driversLoading ? 'Loading drivers…' : 'Unassigned';
   }
 
   function getStationLabel(rawValue: string | null | undefined): string {
@@ -502,43 +480,6 @@ export function FuelForm({
             {...register('odometer', numericFieldOptions)}
           />
           {errors.odometer && <p className="form-error" role="alert">{errors.odometer.message}</p>}
-        </div>
-
-        <div>
-          <Label htmlFor="driver_id" className="form-label">Driver who fuelled the vehicle</Label>
-          <Controller
-            control={control}
-            name="driver_id"
-            render={({ field }) => (
-              <Select
-                value={normalizeId(field.value) || NO_DRIVER}
-                onValueChange={(v) => field.onChange(v === NO_DRIVER ? '' : normalizeId(v))}
-                disabled={readOnly}
-              >
-                <SelectTrigger id="driver_id" className="w-full">
-                  <SelectValue placeholder="Unassigned">
-                    {(value: string) => getDriverLabel(value)}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NO_DRIVER}>Unassigned</SelectItem>
-                  {driversLoading && (
-                    <div className="px-2 py-1.5 text-sm text-muted-foreground">Loading drivers…</div>
-                  )}
-                  {drivers?.data?.map((d) => (
-                    <SelectItem key={d._id} value={d._id!}>{d.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          />
-          {errors.driver_id && <p className="form-error" role="alert">{String(errors.driver_id.message)}</p>}
-          {!errors.driver_id && (
-            <p className="mt-1 text-caption text-muted-foreground">
-              Records who fuelled the vehicle on this date only. This does not change the vehicle&apos;s
-              assigned driver — assign or update that from the vehicle&apos;s Operational Hub page.
-            </p>
-          )}
         </div>
 
         <div>

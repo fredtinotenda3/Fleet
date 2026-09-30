@@ -245,6 +245,7 @@ export class FuelController {
         fuel_station_id: searchParams.get('fuel_station_id') || undefined,
         fuel_card_id: searchParams.get('fuel_card_id') || undefined,
         driver_id: searchParams.get('driver_id') || undefined,
+        unassignedOnly: searchParams.get('unassignedOnly') === 'true' ? true : undefined,
         startDate: searchParams.get('start')
           ? new Date(searchParams.get('start')!)
           : undefined,
@@ -304,6 +305,7 @@ export class FuelController {
         fuel_station_id: searchParams.get('fuel_station_id') || undefined,
         fuel_card_id: searchParams.get('fuel_card_id') || undefined,
         driver_id: searchParams.get('driver_id') || undefined,
+        unassignedOnly: searchParams.get('unassignedOnly') === 'true' ? true : undefined,
         startDate: searchParams.get('start')
           ? new Date(searchParams.get('start')!)
           : undefined,
