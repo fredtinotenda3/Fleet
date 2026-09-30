@@ -30,6 +30,7 @@ jest.mock('@/modules/fuel/repositories/fuel.repository', () => ({
     getFuelStats: jest.fn(),
     getFuelingFrequencyByVehicle: jest.fn(),
     getFuelByDriver: jest.fn(),
+    getFuelByAssignedDriver: jest.fn(),
     getFuelTypeDistribution: jest.fn(),
     getAbnormalConsumption: jest.fn(),
     getFilteredLogsForExport: jest.fn(),
@@ -67,6 +68,7 @@ function mockAllEmpty() {
   mockedFuel.getFuelStats.mockResolvedValue(EMPTY_STATS as never);
   mockedFuel.getFuelingFrequencyByVehicle.mockResolvedValue([]);
   mockedFuel.getFuelByDriver.mockResolvedValue([]);
+  mockedFuel.getFuelByAssignedDriver.mockResolvedValue([]);
   mockedFuel.getFuelTypeDistribution.mockResolvedValue([]);
   mockedFuel.getAbnormalConsumption.mockResolvedValue([]);
   mockedFuel.getFilteredLogsForExport.mockResolvedValue(EMPTY_EXPORT as never);
@@ -114,6 +116,7 @@ describe('MonthlyFuelIntelligenceService: TenantContext threading across scope s
     for (const call of mockedFuel.getFuelStats.mock.calls) expect(call).toContain(context);
     for (const call of mockedFuel.getFuelingFrequencyByVehicle.mock.calls) expect(call).toContain(context);
     for (const call of mockedFuel.getFuelByDriver.mock.calls) expect(call).toContain(context);
+    for (const call of mockedFuel.getFuelByAssignedDriver.mock.calls) expect(call).toContain(context);
     for (const call of mockedFuel.getFuelTypeDistribution.mock.calls) expect(call).toContain(context);
     for (const call of mockedFuel.getAbnormalConsumption.mock.calls) expect(call).toContain(context);
     for (const call of mockedFuel.getFilteredLogsForExport.mock.calls) expect(call).toContain(context);
@@ -151,6 +154,7 @@ describe('MonthlyFuelIntelligenceService: TenantContext threading across scope s
       ...mockedFuel.getFuelStats.mock.calls,
       ...mockedFuel.getFuelingFrequencyByVehicle.mock.calls,
       ...mockedFuel.getFuelByDriver.mock.calls,
+      ...mockedFuel.getFuelByAssignedDriver.mock.calls,
       ...mockedFuel.getFuelTypeDistribution.mock.calls,
       ...mockedFuel.getAbnormalConsumption.mock.calls,
       ...mockedFuel.getFilteredLogsForExport.mock.calls,

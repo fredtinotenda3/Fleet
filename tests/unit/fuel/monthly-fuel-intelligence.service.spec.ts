@@ -16,6 +16,7 @@ jest.mock('@/modules/fuel/repositories/fuel.repository', () => ({
     getFuelStats: jest.fn(),
     getFuelingFrequencyByVehicle: jest.fn(),
     getFuelByDriver: jest.fn(),
+    getFuelByAssignedDriver: jest.fn(),
     getFuelTypeDistribution: jest.fn(),
     getAbnormalConsumption: jest.fn(),
     getFilteredLogsForExport: jest.fn(),
@@ -46,6 +47,7 @@ function mockAllEmpty() {
   mockedFuel.getFuelStats.mockResolvedValue(EMPTY_STATS as never);
   mockedFuel.getFuelingFrequencyByVehicle.mockResolvedValue([]);
   mockedFuel.getFuelByDriver.mockResolvedValue([]);
+  mockedFuel.getFuelByAssignedDriver.mockResolvedValue([]);
   mockedFuel.getFuelTypeDistribution.mockResolvedValue([]);
   mockedFuel.getAbnormalConsumption.mockResolvedValue([]);
   mockedFuel.getFilteredLogsForExport.mockResolvedValue(EMPTY_EXPORT as never);
@@ -72,6 +74,12 @@ describe('MonthlyFuelIntelligenceService.buildReport -- empty period', () => {
     // rather than a false "not reconciled" verdict.
     expect(report.allocationReconciliation.operationalTotal.status).toBe('UNAVAILABLE');
     expect(report.allocationReconciliation.reconciled).toBeNull();
+    // Current-assignment ("Vehicle Hub coverage") lens is UNAVAILABLE too
+    // for an empty period, same as the transaction-time figures -- never
+    // a fabricated 0.
+    expect(report.driverFindings.currentAssignmentUnassignedCost.status).toBe('UNAVAILABLE');
+    expect(report.driverFindings.currentAssignmentUnassignedSharePercent.status).toBe('UNAVAILABLE');
+    expect(report.driverFindings.currentAssignmentNote).toMatch(/live snapshot/);
   });
 
   it('passes the resolved period start/end through to every scoped repository call', async () => {
@@ -91,6 +99,9 @@ describe('MonthlyFuelIntelligenceService.buildReport -- empty period', () => {
     await monthlyFuelIntelligenceService.buildReport('org-1', context, '2026-09');
 
     for (const call of mockedFuel.getFuelStats.mock.calls) {
+      expect(call).toContain(context);
+    }
+    for (const call of mockedFuel.getFuelByAssignedDriver.mock.calls) {
       expect(call).toContain(context);
     }
     for (const call of mockedLedger.getNetTotalsGrouped.mock.calls) {
@@ -135,6 +146,61 @@ describe('MonthlyFuelIntelligenceService.buildReport -- populated period', () =>
     const costMetric = report.whatChanged.metrics.find((m) => m.label === 'Total fuel cost')!;
     expect(costMetric.direction).toBe('up');
     expect(costMetric.delta).toEqual({ status: 'CALCULATED', value: 300 });
+  });
+
+  it('computes the current-assignment ("Vehicle Hub coverage") unassigned share independently from the transaction-time one, and never merges the two', async () => {
+    mockAllEmpty();
+    mockedFuel.getFuelStats.mockResolvedValue({
+      totalFuel: 500,
+      totalCost: 1000,
+      averageCostPerUnit: 2,
+      logCount: 20,
+      efficiency: null,
+      paymentBreakdown: [],
+    } as never);
+    // Transaction-time: half the cost has no driver_id recorded at entry.
+    mockedFuel.getFuelByDriver.mockResolvedValue([
+      { driver_id: 'drv-1', driverName: 'Tendai Moyo', totalFuel: 250, totalCost: 500, logCount: 10, vehicleCount: 1 },
+      { driver_id: null, driverName: 'Unassigned', totalFuel: 250, totalCost: 500, logCount: 10, vehicleCount: 1 },
+    ] as never);
+    // Current-assignment: only a fifth of cost sits with a vehicle that
+    // currently has no Hub driver -- a deliberately DIFFERENT figure from
+    // the transaction-time one above, to prove the two lenses never get
+    // conflated.
+    mockedFuel.getFuelByAssignedDriver.mockResolvedValue([
+      { driver_id: 'drv-1', driverName: 'Tendai Moyo', totalFuel: 400, totalCost: 800, logCount: 16, vehicleCount: 1 },
+      { driver_id: null, driverName: 'Unassigned', totalFuel: 100, totalCost: 200, logCount: 4, vehicleCount: 1 },
+    ] as never);
+
+    const report = await monthlyFuelIntelligenceService.buildReport('org-1', context, '2026-09');
+
+    // Transaction-time figures unchanged by the presence of the new lens.
+    expect(report.driverFindings.unassignedCost).toEqual({ status: 'FACT', value: 500 });
+    expect(report.driverFindings.unassignedSharePercent).toEqual({ status: 'CALCULATED', value: 50 });
+
+    // Current-assignment figures computed from the separate repository call.
+    expect(report.driverFindings.currentAssignmentUnassignedCost).toEqual({ status: 'FACT', value: 200 });
+    expect(report.driverFindings.currentAssignmentUnassignedSharePercent).toEqual({ status: 'CALCULATED', value: 20 });
+    expect(report.driverFindings.currentAssignmentNote).toMatch(/live snapshot/);
+    expect(report.driverFindings.attributionNote).toMatch(/PART 4|permanent audit trail/);
+
+    // getFuelByAssignedDriver was called with the same period/scope
+    // discipline as every other repository read.
+    expect(mockedFuel.getFuelByAssignedDriver).toHaveBeenCalledWith(
+      'org-1',
+      { startDate: new Date('2026-09-01T00:00:00.000Z'), endDate: new Date('2026-09-30T23:59:59.999Z') },
+      2000,
+      'cost',
+      undefined,
+      context
+    );
+
+    // The "unassigned driver cost share" finding (>=20% threshold) fires
+    // off the transaction-time share and appends current-assignment
+    // context rather than substituting it.
+    const unassignedFinding = report.findings.find((f) => f.what.includes('no driver recorded at the moment of entry'));
+    expect(unassignedFinding).toBeDefined();
+    expect(unassignedFinding!.why).toMatch(/20% of this period's fuel cost sits with a vehicle that currently has no Hub driver assigned/);
   });
 
   it('flags a material allocation variance as a finding', async () => {

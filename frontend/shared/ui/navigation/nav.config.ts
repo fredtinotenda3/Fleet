@@ -274,6 +274,17 @@ export const NAV_SECTIONS: NavSection[] = [
         children: [
           { key: 'expenses-list', label: 'All Expenses', href: '/expenses/list', permissions: [Permission.EXPENSE_VIEW] },
           { key: 'expenses-analytics', label: 'Expense Analytics', href: '/expenses/analytics', permissions: [Permission.EXPENSE_VIEW] },
+          {
+            key: 'expenses-intelligence-report',
+            label: 'Intelligence Report',
+            href: '/expenses/intelligence-report',
+            // ANALYTICS_EXPORT, not EXPENSE_VIEW: this is the Monthly
+            // Expense Intelligence Report (backend at GET
+            // /api/expenses/monthly-intelligence-report), mirroring the
+            // fuel Intelligence Report nav entry's own permission choice
+            // immediately above -- same class of endpoint, same gate.
+            permissions: [Permission.ANALYTICS_EXPORT],
+          },
         ],
       },
       {

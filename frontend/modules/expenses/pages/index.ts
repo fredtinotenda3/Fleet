@@ -5,3 +5,4 @@ export { ExpenseDashboardPage } from './ExpenseDashboardPage';
 export { ExpenseListPage } from './ExpenseListPage';
 export { ExpenseDetailPage } from './ExpenseDetailPage';
 export { VehicleExpenseHistoryPage } from './VehicleExpenseHistoryPage';
+export { ExpenseIntelligenceReportPage } from './ExpenseIntelligenceReportPage';

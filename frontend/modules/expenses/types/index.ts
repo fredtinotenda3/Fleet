@@ -47,3 +47,6 @@ export const DEFAULT_EXPENSE_CATEGORIES = [
 ] as const;
 
 export type ExpenseCategory = (typeof DEFAULT_EXPENSE_CATEGORIES)[number];
+
+// Monthly Expense Intelligence Report
+export * from './expenseIntelligence.types';

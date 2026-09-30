@@ -40,25 +40,48 @@
 // ---------------------------------------------------------------------
 // WHY THIS DOES NOT TOUCH FUEL ANALYTICS -- READ THIS
 // ---------------------------------------------------------------------
-// It may look like this script is a prerequisite for fixing "Fuel cost
-// by driver" or similar fuel analytics. It is not, and running it will
-// not change a single number on those screens.
+// UPDATED after a later change in this engagement: this section
+// originally claimed running this script "will not change a single
+// number on those screens" for ANY fuel analytic. That is no longer
+// true for every screen, and this section now says precisely which
+// ones it does and doesn't affect, rather than repeat the old blanket
+// claim.
 //
-// Investigation of modules/fuel/commands/handlers/create-fuel-log.handler.ts
-// and update-fuel-log.handler.ts (see also
-// tests/security/fuel-form-never-assigns-vehicle-driver.spec.ts) confirmed
-// that FuelLog.driver_id is TRANSACTION-TIME attribution: it is set once,
-// explicitly, when a fuel log is created or edited, and is never derived
-// from -- or written back to -- Vehicle.currentDriverId. Every fuel
-// analytic that groups by driver (Fuel cost by driver, driver-level
-// intelligence, etc.) reads FuelLog.driver_id, not the vehicle's current
-// assignment. shared/types/fuel.types.ts documents this explicitly:
-// backfilling the vehicle's present driver onto historical fuel logs
-// would silently rewrite one person's fuel spend onto another, which is
-// exactly the failure mode PART 4 of the specification this script was
-// built for explicitly forbids ("Do not assume that historical fuel
-// records should automatically change driver when the current vehicle
-// assignment changes").
+// FuelLog.driver_id itself is still, and will always be, TRANSACTION-
+// TIME attribution: set once, explicitly, when a fuel log is created or
+// edited (see modules/fuel/commands/handlers/create-fuel-log.handler.ts,
+// update-fuel-log.handler.ts, and
+// tests/security/fuel-form-never-assigns-vehicle-driver.spec.ts), never
+// derived from -- or written back to -- Vehicle.currentDriverId. This
+// script never writes to tblfuellogs at all, so it cannot and does not
+// change what any past fuel log's own driver_id says. shared/types/fuel.types.ts
+// documents this explicitly: backfilling the vehicle's present driver
+// onto historical fuel logs would silently rewrite one person's fuel
+// spend onto another, exactly the failure mode PART 4 of the
+// specification this script was built for explicitly forbids ("Do not
+// assume that historical fuel records should automatically change
+// driver when the current vehicle assignment changes").
+//
+// What DOES currently read Vehicle.currentDriverId, and therefore DOES
+// change live, the next time it's viewed, when this script clears it:
+//   * The Fuel Logs table's Driver column and its CSV/PDF export
+//     (FuelRepository.enrichFuelLogs)
+//   * The "Fuel cost by driver" chart (FuelRepository.getFuelByAssignedDriver,
+//     via FuelQueryService.getFuelByDriver -- see that method's own doc
+//     comment for why it was deliberately repointed there and not left
+//     on the transaction-time method)
+//   * The Monthly Fuel & Fleet Intelligence Report's "Vehicle Hub
+//     coverage" figure in Driver Fuel Findings (added alongside, not in
+//     place of, the transaction-time figures -- see
+//     DriverFindingsSection's doc comment in fuel-intelligence.types.ts)
+// None of these are fuel records changing; they are live displays that
+// resolve "who is this vehicle's driver right now" and will always
+// reflect the Hub's current state, whatever that state is.
+//
+// What NEVER changes, however this script is run: FuelLog.driver_id on
+// any existing fuel log, the Driver Fuel Findings TABLE (grouped by
+// driver_id), and the "Unassigned cost share (entry-time)" figure next
+// to it -- all still exactly PART 4's transaction-time attribution.
 //
 // What THIS script actually resets is narrower and different: the
 // Vehicle Operational Hub's "current driver" field for each vehicle --
@@ -67,7 +90,7 @@
 // stale or incorrect currentDriverId (e.g. from data migration, a prior
 // bulk import, or manual DB edits before this rule was enforced), this
 // script clears that so an administrator can re-assign correctly from
-// the Vehicle Hub. It has no effect on any fuel report.
+// the Vehicle Hub.
 //
 // ---------------------------------------------------------------------
 // REVERSIBLE

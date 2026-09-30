@@ -99,6 +99,18 @@ export interface DriverFindingsSection {
   unassignedCost: Labeled<number>;
   unassignedSharePercent: Labeled<number>;
   attributionNote: string;
+  /**
+   * Second, independently-computed lens on the same period: fuel cost
+   * grouped by each vehicle's CURRENT Vehicle Hub driver assignment
+   * (the same resolution the Fuel Logs table/chart use for display),
+   * shown alongside -- never merged into -- the transaction-time
+   * figures above. See the backend's DriverFindingsSection doc comment
+   * (modules/fuel/reporting/fuel-intelligence.types.ts) for the full
+   * rationale.
+   */
+  currentAssignmentUnassignedCost: Labeled<number>;
+  currentAssignmentUnassignedSharePercent: Labeled<number>;
+  currentAssignmentNote: string;
 }
 
 export interface FuelTypeMixRow {

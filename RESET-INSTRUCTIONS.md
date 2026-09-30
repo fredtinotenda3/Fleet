@@ -41,17 +41,37 @@ script's actual source and fail the build if a future edit ever
 widens its scope beyond `currentDriverId`/`updatedAt` on
 `tblvehicles`.
 
-## Critically important: this has NO effect on fuel analytics
+## Critically important: this has NO effect on fuel history, and only a live-snapshot effect on current display
 
-Fuel cost/consumption "by driver" in the Monthly Fuel & Fleet
-Intelligence Report (and everywhere else in the platform) is
-**transaction-time attribution**: each fuel log records who fuelled
-the vehicle *at the moment of that fuel entry* (`FuelLog.driver_id`),
-set once when the entry is created and never re-derived from the
-vehicle's current assignment. This is a deliberate, pre-existing
-architectural decision (see `shared/types/fuel.types.ts`'s own doc
-comments, and PART 4 of this engagement's brief, which explicitly
-required this and was verified already correct).
+**This section was updated after a later change in this engagement --
+the claim below that transaction-time attribution applies
+"everywhere in the platform" is no longer accurate everywhere, and
+this section now says exactly where it still is and where it isn't.**
+
+The **Driver Fuel Findings table and the "Unassigned cost share
+(entry-time)" figure** in the Monthly Fuel & Fleet Intelligence Report
+remain **transaction-time attribution**: each fuel log records who
+fuelled the vehicle *at the moment of that fuel entry*
+(`FuelLog.driver_id`), set once when the entry is created and never
+re-derived from the vehicle's current assignment. This is a
+deliberate, pre-existing architectural decision (see
+`shared/types/fuel.types.ts`'s own doc comments, and PART 4 of this
+engagement's brief, which explicitly required this and was verified
+already correct) -- a permanent audit trail this reset script cannot
+touch and was never meant to.
+
+That report now ALSO shows a second, clearly separate "Vehicle Hub
+coverage" figure computed from each vehicle's *current* Hub
+assignment, and the **Fuel Logs table and the "Fuel cost by driver"
+chart** elsewhere in the platform resolve their displayed driver from
+the vehicle's *current* Hub assignment too, not `FuelLog.driver_id` --
+both of these DO reflect whatever this script (and any Vehicle Hub
+assignment change) sets `Vehicle.currentDriverId` to, live, the next
+time they're viewed or the report is regenerated. That is the
+narrower, correct sense in which this script "has an effect": it
+changes what those two live-snapshot surfaces show going forward. It
+never changes what any past fuel log is attributed to, and never
+touches the transaction-time table/figure described above.
 
 **Running this reset script will not change who any past fuel log is
 attributed to.** It only clears which driver each vehicle is

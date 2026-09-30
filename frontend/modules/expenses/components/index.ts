@@ -23,3 +23,6 @@ export * from './RunningMonthlySpendChart';
 export * from './TopExpenseTransactionsChart';
 export * from './VehicleAverageCostChart';
 export * from './ExpenseOutliersWidget';
+
+// Monthly Expense Intelligence Report
+export * from './ExpenseIntelligenceReport';
