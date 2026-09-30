@@ -38,7 +38,7 @@
 // nothing is dropped.
 //
 // ---------------------------------------------------------------------
-// WHY THIS DOES NOT TOUCH FUEL ANALYTICS -- READ THIS
+// EFFECT ON FUEL ANALYTICS -- READ THIS
 // ---------------------------------------------------------------------
 // UPDATED after a later change in this engagement: this section
 // originally claimed running this script "will not change a single
@@ -62,26 +62,19 @@
 // assume that historical fuel records should automatically change
 // driver when the current vehicle assignment changes").
 //
-// What DOES currently read Vehicle.currentDriverId, and therefore DOES
-// change live, the next time it's viewed, when this script clears it:
-//   * The Fuel Logs table's Driver column and its CSV/PDF export
-//     (FuelRepository.enrichFuelLogs)
-//   * The "Fuel cost by driver" chart (FuelRepository.getFuelByAssignedDriver,
-//     via FuelQueryService.getFuelByDriver -- see that method's own doc
-//     comment for why it was deliberately repointed there and not left
-//     on the transaction-time method)
-//   * The Monthly Fuel & Fleet Intelligence Report's "Vehicle Hub
-//     coverage" figure in Driver Fuel Findings (added alongside, not in
-//     place of, the transaction-time figures -- see
-//     DriverFindingsSection's doc comment in fuel-intelligence.types.ts)
-// None of these are fuel records changing; they are live displays that
-// resolve "who is this vehicle's driver right now" and will always
-// reflect the Hub's current state, whatever that state is.
-//
-// What NEVER changes, however this script is run: FuelLog.driver_id on
-// any existing fuel log, the Driver Fuel Findings TABLE (grouped by
-// driver_id), and the "Unassigned cost share (entry-time)" figure next
-// to it -- all still exactly PART 4's transaction-time attribution.
+// What DOES read Vehicle.currentDriverId, and therefore DOES change
+// live, the next time it's viewed, when this script clears it -- for ALL
+// periods, since the Hub keeps no assignment history:
+//   * The Fuel Logs table's Driver column, driver filter and export
+//     (FuelRepository.enrichFuelLogs / resolveDriverFilterPlates)
+//   * The "Fuel cost by driver" chart (FuelRepository.getFuelByAssignedDriver)
+//   * The Monthly Fuel & Fleet Intelligence Report's Driver Fuel Findings
+//     (driver table, unassigned cost share, unassigned-vehicle list) and
+//     its "no driver assigned" data-quality check -- same repository
+//     method, switched from entry-time driver_id on 2026-09-30.
+// Cleared vehicles show as Unassigned in all of these until a driver is
+// re-assigned on the Hub. Re-assign BEFORE regenerating a report that
+// will be circulated.
 //
 // What THIS script actually resets is narrower and different: the
 // Vehicle Operational Hub's "current driver" field for each vehicle --
@@ -248,8 +241,9 @@ async function run(db: Db, tenantArg: string, confirm: boolean): Promise<void> {
     console.log(`${DIM}Re-run with --confirm to apply.${RESET}`);
     console.log(
       `${DIM}After applying, reassign each vehicle's driver from the Vehicle Operational Hub\n` +
-        `(Vehicle -> Driver Assignment). This does not change any existing fuel log's own\n` +
-        `driver attribution -- see this script's header comment for why.${RESET}\n`
+        `(Vehicle -> Driver Assignment). No fuel log is written, but until a vehicle is\n` +
+        `re-assigned, ALL of its fuel (every period) shows as Unassigned on the Fuel Logs\n` +
+        `table, the "Fuel cost by driver" chart and the Fuel Intelligence Report.${RESET}\n`
     );
     return;
   }

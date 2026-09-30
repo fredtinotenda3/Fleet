@@ -201,8 +201,8 @@ describe('assessDataQuality', () => {
 
   it('is "good" when every field is complete and there are no duplicates', () => {
     const logs = [
-      { ...base, driver_id: 'd1', fuel_type: 'Diesel', odometer: 1000 },
-      { ...base, license_plate: 'AFU0079', driver_id: 'd2', fuel_type: 'Petrol', odometer: 2000 },
+      { ...base, assigned_driver_id: 'd1', fuel_type: 'Diesel', odometer: 1000 },
+      { ...base, license_plate: 'AFU0079', assigned_driver_id: 'd2', fuel_type: 'Petrol', odometer: 2000 },
     ];
     const result = assessDataQuality(logs, false);
     expect(result.overallAssessment).toBe('good');
@@ -211,20 +211,20 @@ describe('assessDataQuality', () => {
 
   it('flags missing driver/fuel_type/odometer with correct percentages', () => {
     const logs = [
-      { ...base, driver_id: null, fuel_type: null, odometer: null },
-      { ...base, license_plate: 'AFU0079', driver_id: 'd1', fuel_type: 'Diesel', odometer: 500 },
+      { ...base, assigned_driver_id: null, fuel_type: null, odometer: null },
+      { ...base, license_plate: 'AFU0079', assigned_driver_id: 'd1', fuel_type: 'Diesel', odometer: 500 },
     ];
     const result = assessDataQuality(logs, false);
-    const missingDriver = result.metrics.find((m) => m.label.includes('no driver'))!;
+    const missingDriver = result.metrics.find((m) => m.label.includes('no driver assigned (Vehicle Hub)'))!;
     expect(missingDriver.affectedCount).toBe(1);
     expect(missingDriver.percent).toBe(50);
   });
 
   it('flags suspected duplicates by (vehicle, date, volume, cost) signature', () => {
     const logs = [
-      { ...base, driver_id: 'd1', fuel_type: 'Diesel', odometer: 100 },
-      { ...base, driver_id: 'd1', fuel_type: 'Diesel', odometer: 100 }, // exact duplicate signature
-      { ...base, license_plate: 'AFU0079', driver_id: 'd2', fuel_type: 'Petrol', odometer: 200 },
+      { ...base, assigned_driver_id: 'd1', fuel_type: 'Diesel', odometer: 100 },
+      { ...base, assigned_driver_id: 'd1', fuel_type: 'Diesel', odometer: 100 }, // exact duplicate signature
+      { ...base, license_plate: 'AFU0079', assigned_driver_id: 'd2', fuel_type: 'Petrol', odometer: 200 },
     ];
     const result = assessDataQuality(logs, false);
     const dup = result.metrics.find((m) => m.label.includes('duplicate'))!;
@@ -233,8 +233,8 @@ describe('assessDataQuality', () => {
 
   it('does not flag two different fill-ups on the same day for the same vehicle as duplicates (different volume/cost)', () => {
     const logs = [
-      { ...base, driver_id: 'd1', fuel_type: 'Diesel', odometer: 100 },
-      { ...base, driver_id: 'd1', fuel_type: 'Diesel', odometer: 150, fuel_volume: 30, cost: 60 },
+      { ...base, assigned_driver_id: 'd1', fuel_type: 'Diesel', odometer: 100 },
+      { ...base, assigned_driver_id: 'd1', fuel_type: 'Diesel', odometer: 150, fuel_volume: 30, cost: 60 },
     ];
     const result = assessDataQuality(logs, false);
     const dup = result.metrics.find((m) => m.label.includes('duplicate'))!;
@@ -245,7 +245,7 @@ describe('assessDataQuality', () => {
     const logs = Array.from({ length: 10 }, (_, i) => ({
       ...base,
       license_plate: `V${i}`,
-      driver_id: null,
+      assigned_driver_id: null,
       fuel_type: null,
       odometer: null,
     }));
@@ -254,7 +254,7 @@ describe('assessDataQuality', () => {
   });
 
   it('carries through the truncated flag from the caller', () => {
-    const logs = [{ ...base, driver_id: 'd1', fuel_type: 'Diesel', odometer: 100 }];
+    const logs = [{ ...base, assigned_driver_id: 'd1', fuel_type: 'Diesel', odometer: 100 }];
     expect(assessDataQuality(logs, true).truncated).toBe(true);
     expect(assessDataQuality(logs, false).truncated).toBe(false);
   });

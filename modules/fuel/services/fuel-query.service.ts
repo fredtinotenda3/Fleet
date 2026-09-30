@@ -97,11 +97,10 @@ export class FuelQueryService {
    * query-key, or API route needed to change) -- only which repository
    * method backs it.
    *
-   * getFuelByDriver itself is untouched and still used directly (not via
-   * this service method) by the Monthly Fuel & Fleet Intelligence
-   * Report's driverFindings section, which deliberately needs the
-   * transaction-time semantics -- see that repository method's doc
-   * comment. Do not repoint this service method back to it.
+   * The Monthly Fuel & Fleet Intelligence Report's driverFindings section
+   * calls getFuelByAssignedDriver too, so the chart, the Fuel Logs table
+   * and the report share one attribution. Do not repoint this service
+   * method back to getFuelByDriver.
    */
   async getFuelByDriver(
     tenantId: string,

@@ -115,7 +115,6 @@ describe('MonthlyFuelIntelligenceService: TenantContext threading across scope s
 
     for (const call of mockedFuel.getFuelStats.mock.calls) expect(call).toContain(context);
     for (const call of mockedFuel.getFuelingFrequencyByVehicle.mock.calls) expect(call).toContain(context);
-    for (const call of mockedFuel.getFuelByDriver.mock.calls) expect(call).toContain(context);
     for (const call of mockedFuel.getFuelByAssignedDriver.mock.calls) expect(call).toContain(context);
     for (const call of mockedFuel.getFuelTypeDistribution.mock.calls) expect(call).toContain(context);
     for (const call of mockedFuel.getAbnormalConsumption.mock.calls) expect(call).toContain(context);
@@ -153,7 +152,6 @@ describe('MonthlyFuelIntelligenceService: TenantContext threading across scope s
     const allCalls = [
       ...mockedFuel.getFuelStats.mock.calls,
       ...mockedFuel.getFuelingFrequencyByVehicle.mock.calls,
-      ...mockedFuel.getFuelByDriver.mock.calls,
       ...mockedFuel.getFuelByAssignedDriver.mock.calls,
       ...mockedFuel.getFuelTypeDistribution.mock.calls,
       ...mockedFuel.getAbnormalConsumption.mock.calls,

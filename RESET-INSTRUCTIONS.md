@@ -41,46 +41,30 @@ script's actual source and fail the build if a future edit ever
 widens its scope beyond `currentDriverId`/`updatedAt` on
 `tblvehicles`.
 
-## Critically important: this has NO effect on fuel history, and only a live-snapshot effect on current display
+## Critically important: what this does and does not change in fuel reporting
 
-**This section was updated after a later change in this engagement --
-the claim below that transaction-time attribution applies
-"everywhere in the platform" is no longer accurate everywhere, and
-this section now says exactly where it still is and where it isn't.**
+**Updated 2026-09-30.** Every fuel driver surface now attributes each
+fuel log to the driver assigned to its vehicle on the Vehicle
+Operational Hub (`Vehicle.currentDriverId`): the **Fuel Logs table** (and
+its driver filter and export), the **"Fuel cost by driver" chart**, and
+the **Driver Fuel Findings section of the Monthly Fuel & Fleet
+Intelligence Report** (its driver table, "Unassigned cost share", the
+unassigned-vehicle list, and the "Fuel logs on a vehicle with no driver
+assigned" data-quality check).
 
-The **Driver Fuel Findings table and the "Unassigned cost share
-(entry-time)" figure** in the Monthly Fuel & Fleet Intelligence Report
-remain **transaction-time attribution**: each fuel log records who
-fuelled the vehicle *at the moment of that fuel entry*
-(`FuelLog.driver_id`), set once when the entry is created and never
-re-derived from the vehicle's current assignment. This is a
-deliberate, pre-existing architectural decision (see
-`shared/types/fuel.types.ts`'s own doc comments, and PART 4 of this
-engagement's brief, which explicitly required this and was verified
-already correct) -- a permanent audit trail this reset script cannot
-touch and was never meant to.
+**Running this script therefore DOES change fuel reporting.** It clears
+`currentDriverId` on the vehicles it touches, so until drivers are
+re-assigned on the Hub, all fuel on those vehicles -- including past
+months, since the Hub holds no assignment history -- shows as
+**Unassigned** in every surface above, and a regenerated Intelligence
+Report will show a correspondingly higher unassigned share. Re-assign
+drivers on the Hub before regenerating any report you intend to
+circulate.
 
-That report now ALSO shows a second, clearly separate "Vehicle Hub
-coverage" figure computed from each vehicle's *current* Hub
-assignment, and the **Fuel Logs table and the "Fuel cost by driver"
-chart** elsewhere in the platform resolve their displayed driver from
-the vehicle's *current* Hub assignment too, not `FuelLog.driver_id` --
-both of these DO reflect whatever this script (and any Vehicle Hub
-assignment change) sets `Vehicle.currentDriverId` to, live, the next
-time they're viewed or the report is regenerated. That is the
-narrower, correct sense in which this script "has an effect": it
-changes what those two live-snapshot surfaces show going forward. It
-never changes what any past fuel log is attributed to, and never
-touches the transaction-time table/figure described above.
-
-**Running this reset script will not change who any past fuel log is
-attributed to.** It only clears which driver each vehicle is
-*currently* assigned to going forward, on the Vehicle Hub. If you
-expected clearing driver assignments to also clear "Driver Fuel
-Intelligence" history, that is a different operation this script does
-not perform (and the platform does not have a feature to "rewrite"
-historical fuel attribution -- by design, since doing so would corrupt
-the audit trail of who actually fuelled which vehicle when).
+What it still never changes: no fuel log is written. `FuelLog.driver_id`
+(the optional driver typed onto a log at entry) is untouched; it is no
+longer used for attribution on any screen or report, but it remains in
+the database and the raw-data export.
 
 ## How to run it
 

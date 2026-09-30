@@ -73,10 +73,8 @@ function buildPopulatedReport(): MonthlyFuelIntelligenceReport {
       ],
       unassignedCost: fact(400),
       unassignedSharePercent: calculated(40),
-      attributionNote: 'Driver attribution is transaction-time.',
-      currentAssignmentUnassignedCost: fact(150),
-      currentAssignmentUnassignedSharePercent: calculated(15),
-      currentAssignmentNote: 'Vehicle Hub coverage is a live snapshot, not an audit trail.',
+      unassignedVehiclePlates: ['GENERATOR', 'AFU0080'],
+      attributionNote: 'Each fuel log is attributed to the driver assigned to its vehicle on the Vehicle Operational Hub.',
     },
     fuelTypeMix: [
       { fuelType: 'Diesel', litres: fact(450), cost: fact(900), percentage: calculated(90) },
@@ -152,10 +150,8 @@ function buildEmptyReport(): MonthlyFuelIntelligenceReport {
       rows: [],
       unassignedCost: unavailable('No fuel logs recorded for this period.'),
       unassignedSharePercent: unavailable('No fuel cost recorded for this period.'),
+      unassignedVehiclePlates: [],
       attributionNote: 'note',
-      currentAssignmentUnassignedCost: unavailable('No fuel logs recorded for this period.'),
-      currentAssignmentUnassignedSharePercent: unavailable('No fuel cost recorded for this period.'),
-      currentAssignmentNote: 'note',
     },
     fuelTypeMix: [],
     abnormalFindings: { volumeAnomalies: [], volumeAnomalyBasis: 'basis', vehicleCostSpikes: [] },
@@ -211,7 +207,7 @@ describe('buildFuelIntelligenceExcelBuffer', () => {
     expect(totalCostCell).toMatch(/Unavailable/);
   });
 
-  it('renders the Vehicle Hub coverage lens alongside, never merged into, the entry-time unassigned figures', async () => {
+  it('renders Hub-based unassigned cost, share and the plates to fix -- and no leftover entry-time figures', async () => {
     const buffer = await buildFuelIntelligenceExcelBuffer(buildPopulatedReport());
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(buffer);
@@ -219,20 +215,19 @@ describe('buildFuelIntelligenceExcelBuffer', () => {
 
     // Scan column A for the labels rather than hardcoding row numbers,
     // since row position shifts with the number of driver rows above it.
+    const labels: string[] = [];
+    for (let r = 1; r <= ws.rowCount; r++) labels.push(String(ws.getCell(`A${r}`).value ?? ''));
     const labelRow = (label: string): number => {
-      for (let r = 1; r <= ws.rowCount; r++) {
-        if (ws.getCell(`A${r}`).value === label) return r;
-      }
-      throw new Error(`Label not found: ${label}`);
+      const idx = labels.indexOf(label);
+      if (idx === -1) throw new Error(`Label not found: ${label}`);
+      return idx + 1;
     };
 
-    const entryTimeRow = labelRow('Unattributed fuel cost (entry-time):');
-    expect(ws.getCell(`B${entryTimeRow}`).value).toBe('400.00');
-
-    const hubHeaderRow = labelRow('Vehicle Hub coverage (live snapshot, not an audit trail):');
-    expect(hubHeaderRow).toBeGreaterThan(entryTimeRow);
-    expect(ws.getCell(`B${labelRow('Fuel cost with no current Hub driver:')}`).value).toBe('150.00');
-    expect(ws.getCell(`B${labelRow('Share of fleet cost:')}`).value).toBe('15%');
+    expect(ws.getCell(`B${labelRow('Unassigned fuel cost (no Hub driver):')}`).value).toBe('400.00');
+    expect(ws.getCell(`B${labelRow('Unassigned share of fleet cost:')}`).value).toBe('40%');
+    expect(ws.getCell(`B${labelRow('Vehicles with no Hub driver:')}`).value).toBe('GENERATOR, AFU0080');
+    // The retired two-lens layout must not come back.
+    expect(labels.some((l) => /entry-time|Vehicle Hub coverage/.test(l))).toBe(false);
   });
 
   it('applies frozen header + autofilter to the cost drivers sheet', async () => {

@@ -60,6 +60,8 @@ import {
   Gauge,
   Scale,
   Banknote,
+  Droplets,
+  ReceiptText,
 } from 'lucide-react';
 import { Permission } from '@/server/permissions/roles';
 
@@ -249,17 +251,6 @@ export const NAV_SECTIONS: NavSection[] = [
         children: [
           { key: 'fuel-logs', label: 'Fuel Logs', href: '/fuel/logs', permissions: [Permission.FUEL_VIEW] },
           { key: 'fuel-analytics', label: 'Fuel Analytics', href: '/fuel/analytics', permissions: [Permission.FUEL_VIEW] },
-          {
-            key: 'fuel-intelligence-report',
-            label: 'Intelligence Report',
-            href: '/fuel/intelligence-report',
-            // ANALYTICS_EXPORT, not FUEL_VIEW: this is the Monthly Fuel &
-            // Fleet Intelligence Report (backend at
-            // GET /api/fuel/monthly-intelligence-report), gated on the same
-            // permission as its Excel/PDF export and matching the ESG
-            // export's own precedent for this permission.
-            permissions: [Permission.ANALYTICS_EXPORT],
-          },
           { key: 'fuel-stations', label: 'Stations', href: '/fuel/stations', permissions: [Permission.FUEL_VIEW] },
           { key: 'fuel-cards', label: 'Fuel Cards', href: '/fuel/cards', permissions: [Permission.FUEL_VIEW] },
         ],
@@ -274,17 +265,6 @@ export const NAV_SECTIONS: NavSection[] = [
         children: [
           { key: 'expenses-list', label: 'All Expenses', href: '/expenses/list', permissions: [Permission.EXPENSE_VIEW] },
           { key: 'expenses-analytics', label: 'Expense Analytics', href: '/expenses/analytics', permissions: [Permission.EXPENSE_VIEW] },
-          {
-            key: 'expenses-intelligence-report',
-            label: 'Intelligence Report',
-            href: '/expenses/intelligence-report',
-            // ANALYTICS_EXPORT, not EXPENSE_VIEW: this is the Monthly
-            // Expense Intelligence Report (backend at GET
-            // /api/expenses/monthly-intelligence-report), mirroring the
-            // fuel Intelligence Report nav entry's own permission choice
-            // immediately above -- same class of endpoint, same gate.
-            permissions: [Permission.ANALYTICS_EXPORT],
-          },
         ],
       },
       {
@@ -351,6 +331,32 @@ export const NAV_SECTIONS: NavSection[] = [
     id: 'intelligence',
     title: 'Intelligence',
     items: [
+      // The two monthly intelligence reports are TOP-LEVEL here, not
+      // children of Fuel / Expenses. As children they sat inside a
+      // collapsed-by-default group under the identical label
+      // "Intelligence Report", so the expense one was effectively
+      // undiscoverable. Listed once only (see "does not list the same
+      // destination twice" in nav-config.spec.ts).
+      {
+        key: 'fuel-intelligence-report',
+        label: 'Fuel Intelligence',
+        href: '/fuel/intelligence-report',
+        icon: Droplets,
+        hint: 'Monthly fuel report: cost drivers, drivers, anomalies, reconciliation',
+        // ANALYTICS_EXPORT, not FUEL_VIEW: gated on the same permission as
+        // GET /api/fuel/monthly-intelligence-report and its Excel/PDF export
+        // (the ESG export's precedent for this permission).
+        permissions: [Permission.ANALYTICS_EXPORT],
+      },
+      {
+        key: 'expenses-intelligence-report',
+        label: 'Expense Intelligence',
+        href: '/expenses/intelligence-report',
+        icon: ReceiptText,
+        hint: 'Monthly expense report: cost drivers, categories, anomalies, reconciliation',
+        // Same gate as GET /api/expenses/monthly-intelligence-report.
+        permissions: [Permission.ANALYTICS_EXPORT],
+      },
       {
         key: 'driver-scorecard',
         label: 'Driver Scorecard',
