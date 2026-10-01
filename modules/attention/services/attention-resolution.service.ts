@@ -11,8 +11,10 @@ import { ValueLedgerEntry, LedgerEligibleSource } from '../types/value-ledger.ty
 import { attentionItemRepository } from '../repositories/attention-item.repository';
 import { valueLedgerRepository } from '../repositories/value-ledger.repository';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
-import { ResolveAttentionItemInput } from '@/shared/validations/attention.schema';
+import { ResolveAttentionItemInput, VerifyAttentionOutcomeInput } from '@/shared/validations/attention.schema';
 import { NotFoundError, ConflictError, ValidationError } from '@/server/errors/app.errors';
+// Module augmentation for outcomeStatus/outcomeVerifiedAt/outcomeVerifiedBy/outcomeNote.
+import '../types/attention-outcome-addendum';
 
 /**
  * PHASE 6: widened to include the maintenance sources, because an
@@ -138,6 +140,85 @@ export class AttentionResolutionService {
     );
 
     return { item: resolved, ledgerEntry };
+  }
+
+  /**
+   * MODULE CONNECTIVITY UPGRADE -- "Attention/Actions ↔ Outcome
+   * Verification". Records whether a person who checked, AFTER an item
+   * was resolved, confirms the underlying problem is actually gone.
+   * See attention-outcome-addendum.ts for why this is a human
+   * confirmation rather than an automatic re-check against the source
+   * AI service.
+   *
+   * Deliberately does NOT flip `status` back to 'open' on a 'reopened'
+   * outcome -- see AttentionItemRepository.recordOutcomeVerification's
+   * own header. A reopened outcome is surfaced via `ledgerEntryWarning`
+   * below and the item's own `outcomeStatus` field; turning that into
+   * an automatic status change would be exactly the silent flip-flop
+   * attention-item.types.ts's header already documents choosing not to
+   * do for source re-detection, now reintroduced through a side door.
+   */
+  async verifyOutcome(
+    tenantId: string,
+    itemKey: string,
+    verifiedBy: string,
+    context: TenantContext,
+    input: VerifyAttentionOutcomeInput
+  ): Promise<{ item: AttentionItem; ledgerEntryWarning: string | null }> {
+    const existing = await attentionItemRepository.findByItemKey(tenantId, itemKey);
+    if (!existing) {
+      throw new NotFoundError('Attention item not found.');
+    }
+
+    if (
+      context.accessibleOrgUnitIds !== null &&
+      (!existing.orgUnitId || !context.accessibleOrgUnitIds.includes(existing.orgUnitId))
+    ) {
+      throw new NotFoundError('Attention item not found.');
+    }
+
+    if (existing.status !== 'resolved') {
+      throw new ConflictError(
+        'Only a resolved item can have its outcome verified. Resolve it first, then verify whether the fix held.'
+      );
+    }
+
+    if (input.outcome === 'reopened' && (!input.note || input.note.trim().length === 0)) {
+      throw new ValidationError(
+        'A note explaining what is still wrong is required to mark an outcome as reopened.'
+      );
+    }
+
+    const updated = await attentionItemRepository.recordOutcomeVerification(tenantId, itemKey, {
+      status: input.outcome,
+      verifiedBy,
+      note: input.note,
+    });
+    if (!updated) {
+      throw new NotFoundError('Attention item not found.');
+    }
+
+    // A ledger entry already posted for this item's resolution is a
+    // FINANCIAL record -- this service does not reverse or edit it
+    // automatically (that is a proper accounting correction, not a
+    // field update, and out of scope here). Reopening after a ledger
+    // posting is surfaced as an explicit warning so the caller -- and
+    // the Value Ledger export, which still shows the original entry
+    // unchanged -- is never silently out of step with what actually
+    // happened operationally.
+    let ledgerEntryWarning: string | null = null;
+    if (input.outcome === 'reopened') {
+      const postings = await valueLedgerRepository.findByAttentionItemKeyInScope(tenantId, itemKey);
+      if (postings.length > 0) {
+        ledgerEntryWarning =
+          `This item already posted ${postings.length} value-ledger ` +
+          `${postings.length === 1 ? 'entry' : 'entries'} on resolution. Reopening it does ` +
+          'NOT reverse those entries automatically -- review the Value Ledger and post a ' +
+          'correcting entry if the realised value needs to change.';
+      }
+    }
+
+    return { item: updated, ledgerEntryWarning };
   }
 }
 

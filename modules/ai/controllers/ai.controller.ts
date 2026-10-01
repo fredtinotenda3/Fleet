@@ -11,7 +11,7 @@ import {
 import { needsAttentionService } from '../services/needs-attention.service';
 import { attentionResolutionService } from '@/modules/attention/services/attention-resolution.service';
 import { attentionDispatchTrigger } from '@/modules/attention/services/attention-dispatch.trigger';
-import { resolveAttentionItemSchema } from '@/shared/validations/attention.schema';
+import { resolveAttentionItemSchema, verifyAttentionOutcomeSchema } from '@/shared/validations/attention.schema';
 
 import { successResponse, createdResponse, errorResponse } from '@/server/utils/response.utils';
 import { AppError, isAppError, describeError, ValidationError } from '@/server/errors/app.errors';
@@ -336,6 +336,36 @@ export class AIController {
       );
 
       return createdResponse(result);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /**
+   * MODULE CONNECTIVITY UPGRADE -- "Attention/Actions ↔ Outcome
+   * Verification". POST /api/ai/needs-attention/:id/verify-outcome.
+   * See attention-resolution.service.ts#verifyOutcome.
+   */
+  async verifyNeedsAttentionOutcome(req: NextRequest, rawItemKey: string) {
+    try {
+      const itemKey = decodeURIComponent(rawItemKey);
+      const { context, userId } = await resolveTenantContextWithUser(req);
+
+      const body = await req.json().catch(() => ({}));
+      const parsed = verifyAttentionOutcomeSchema.safeParse(body);
+      if (!parsed.success) {
+        throw new ValidationError('Invalid verify-outcome request', parsed.error.flatten());
+      }
+
+      const result = await attentionResolutionService.verifyOutcome(
+        context.organizationId,
+        itemKey,
+        userId,
+        context,
+        parsed.data
+      );
+
+      return successResponse(result);
     } catch (error) {
       return this.handleError(error);
     }

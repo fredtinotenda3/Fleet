@@ -4,6 +4,8 @@ import { AnyBulkWriteOperation } from 'mongodb';
 import { TenantScopedRepository } from '@/server/repositories/tenant-scoped.repository';
 import { AttentionItem } from '../types/attention-item.types';
 import type { NeedsAttentionItem } from '@/modules/ai/types/needs-attention.types';
+// Module augmentation for outcomeStatus/outcomeVerifiedAt/outcomeVerifiedBy/outcomeNote -- see that file's header.
+import '../types/attention-outcome-addendum';
 
 export interface UpsertFeedResult {
   upsertedCount: number;
@@ -142,6 +144,40 @@ export class AttentionItemRepository extends TenantScopedRepository<AttentionIte
           status: 'resolved',
           resolvedAt: now,
           resolvedBy,
+          updatedAt: now,
+        },
+      } as any,
+      { returnDocument: 'after' }
+    );
+    return this.normalizeDoc<AttentionItem | null>(result ?? null);
+  }
+
+  /**
+   * Records a human's post-resolution outcome check (see
+   * attention-outcome-addendum.ts for why this is a human confirmation
+   * rather than an automatic re-check). Deliberately narrow, same
+   * rationale as resolveByItemKey above: sets only the outcome fields
+   * plus updatedAt, never the substantive fields upsertFeedItems()
+   * owns. Does NOT touch `status` -- a 'reopened' outcome is a signal
+   * for a human to act on, not a silent status flip that would make
+   * the item vanish from a "resolved" filter and reappear in "open"
+   * without anyone having decided that on purpose.
+   */
+  async recordOutcomeVerification(
+    tenantId: string,
+    itemKey: string,
+    outcome: { status: 'verified_resolved' | 'reopened'; verifiedBy: string; note?: string }
+  ): Promise<AttentionItem | null> {
+    const collection = await this.getCollection();
+    const now = new Date();
+    const result = await collection.findOneAndUpdate(
+      { tenantId, itemKey, isDeleted: { $ne: true } } as any,
+      {
+        $set: {
+          outcomeStatus: outcome.status,
+          outcomeVerifiedAt: now,
+          outcomeVerifiedBy: outcome.verifiedBy,
+          outcomeNote: outcome.note,
           updatedAt: now,
         },
       } as any,

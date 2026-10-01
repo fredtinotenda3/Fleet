@@ -300,6 +300,33 @@ export class OrganizationService {
     return updated;
   }
 
+  /**
+   * Adaptive Onboarding / Setup Centre.
+   *
+   * MERGES onto the existing `fleetProfile` rather than replacing it --
+   * unlike updateTaxSettings/updateBusinessHours above (whose forms
+   * always resubmit their complete shape), each fleet-profile field is
+   * written by a DIFFERENT action at a different time: declining GPS
+   * happens independently of marking the Setup Centre complete.
+   * BaseRepository.update() does `$set: { fleetProfile: <value> }`,
+   * which REPLACES the whole sub-document -- without this merge, a
+   * driver declaring "no odometer" today would silently erase
+   * yesterday's "no GPS" declaration.
+   */
+  async updateFleetProfile(
+    organizationId: string,
+    data: import('@/shared/validations/organization.settings-addendum.schema').FleetProfileUpdateInput,
+    tenantId: string,
+    userId: string
+  ): Promise<Organization> {
+    const before = await this.getOrganization(organizationId, tenantId);
+    const merged = { ...(before.fleetProfile ?? {}), ...data };
+    const updated = await this.repo.update(organizationId, { fleetProfile: merged } as any, tenantId, userId, true);
+    if (!updated) throw new NotFoundError('Organization not found');
+    await auditLog.logUpdate(userId, tenantId, 'organization', organizationId, before, updated);
+    return updated;
+  }
+
   async updateLogo(
     organizationId: string,
     logoUrl: string,

@@ -24,6 +24,7 @@ import {
   ACCESS_TOKEN_COOKIE_NAME,
 } from '@/infrastructure/security/edge-token-verify';
 import { resolveLandingPath } from '@/server/permissions/landing';
+import { shouldRouteToSetupCentre } from '@/server/onboarding/setup-landing.service';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,6 +48,20 @@ export default async function Home() {
 
   if (!verified) {
     redirect('/auth/login');
+  }
+
+  /**
+   * ADAPTIVE ONBOARDING: a first-time setup-permission holder whose
+   * organization has zero vehicles and has neither finished nor
+   * explicitly skipped the Setup Centre lands there instead of their
+   * usual page. This is this function's ONLY new behaviour -- every
+   * other login still resolves exactly as it did before
+   * (resolveLandingPath is untouched), and shouldRouteToSetupCentre
+   * fails closed (false) on any error, so it can never turn into a
+   * redirect loop or a login failure.
+   */
+  if (await shouldRouteToSetupCentre(verified.roles ?? [], verified.tenantId)) {
+    redirect('/setup');
   }
 
   redirect(resolveLandingPath(verified.roles ?? []));

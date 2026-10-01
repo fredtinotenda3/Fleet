@@ -266,10 +266,22 @@ export default function ExecutiveDashboard() {
               }
               color="orange"
             />
-            <StatsCard title="Total Distance" value={formatDistance(fleetKPIs.data.totalDistance)} color="purple" />
+            <StatsCard
+              title="Total Distance"
+              value={formatDistance(fleetKPIs.data.totalDistance)}
+              description={
+                fleetKPIs.data.estimatedDistanceKm > 0
+                  ? fleetKPIs.data.estimatedDistanceKm >= fleetKPIs.data.totalDistance
+                    ? 'Fully estimated (map-derived/manual, no GPS or odometer)'
+                    : `${formatDistance(fleetKPIs.data.estimatedDistanceKm)} estimated (no GPS/odometer)`
+                  : undefined
+              }
+              color="purple"
+            />
             <StatsCard
               title="Avg Fuel Efficiency"
               value={fleetKPIs.data.averageFuelEfficiency != null ? `${fleetKPIs.data.averageFuelEfficiency.toFixed(2)} km/L` : 'N/A'}
+              description={fleetKPIs.data.estimatedDistanceKm > 0 ? 'Partly based on estimated distance' : undefined}
               color="indigo"
             />
             <StatsCard

@@ -14,6 +14,14 @@ import { organizationKeys, orgUnitKeys } from '@/frontend/modules/organizations/
 import { telematicsKeys } from '@/frontend/modules/telematics/hooks/useLiveMap';
 import { driverKeys } from '@/frontend/modules/drivers/hooks/useDrivers';
 import { useOrganizationStore } from '@/frontend/modules/organizations/store/organization.store';
+import { fuelCardsApi } from '@/frontend/modules/fuel-cards/services/fuel-cards.api';
+import { fuelCardKeys } from '@/frontend/modules/fuel-cards/hooks/useFuelCards';
+import { fuelStationsApi } from '@/frontend/modules/fuel-stations/services/fuel-stations.api';
+import { fuelStationKeys } from '@/frontend/modules/fuel-stations/hooks/useFuelStations';
+import { maintenanceApi } from '@/frontend/modules/maintenance/services/maintenance.api';
+import { maintenanceKeys } from '@/frontend/modules/maintenance/hooks/useMaintenance';
+import { tripsApi } from '@/frontend/modules/trips/services/trips.api';
+import { tripKeys } from '@/frontend/modules/trips/hooks/useTrips';
 import {
   buildSetupChecklist,
   summariseSetup,
@@ -59,6 +67,15 @@ function useCanAll(roles: string[]) {
       members: permissionService.hasPermission(roles, Permission.ORG_MEMBERS_MANAGE),
       telematics: permissionService.hasPermission(roles, Permission.ORG_SETTINGS),
       operatingData: permissionService.hasPermission(roles, Permission.FUEL_CREATE),
+      // ADAPTIVE ONBOARDING additions. Gated on the READ permission each
+      // probe query actually needs (GET .../FUEL_VIEW etc.), not the
+      // write permission the step's own action requires -- a step whose
+      // write permission a user holds but whose read permission they
+      // don't would otherwise 403 on every page load. See the matching
+      // `readPermission` fields in setup-checklist.ts's STEP_DEFINITIONS.
+      fuelSetupRead: permissionService.hasPermission(roles, Permission.FUEL_VIEW),
+      maintenanceSetupRead: permissionService.hasPermission(roles, Permission.MAINTENANCE_VIEW),
+      tripOperationsRead: permissionService.hasPermission(roles, Permission.TRIP_VIEW),
     }),
     [roles]
   );
@@ -139,6 +156,38 @@ export function useSetupProgress(roles: string[], enabled: boolean): SetupProgre
     enabled: on(can.operatingData),
   });
 
+  // --- ADAPTIVE ONBOARDING additions -----------------------------------
+  // Each is a `limit: 1` existence probe exactly like the `drivers` query
+  // above: the answer needed is "does at least one exist", not a roster,
+  // so `pagination.total` is the whole answer and the payload stays tiny.
+  const fuelCards = useQuery({
+    queryKey: fuelCardKeys.list({ page: 1, limit: 1 }),
+    queryFn: () => fuelCardsApi.list({ page: 1, limit: 1 }),
+    staleTime: SETUP_STALE_TIME,
+    enabled: on(can.fuelSetupRead),
+  });
+
+  const fuelStations = useQuery({
+    queryKey: fuelStationKeys.list({ page: 1, limit: 1 }),
+    queryFn: () => fuelStationsApi.list({ page: 1, limit: 1 }),
+    staleTime: SETUP_STALE_TIME,
+    enabled: on(can.fuelSetupRead),
+  });
+
+  const maintenanceReminders = useQuery({
+    queryKey: maintenanceKeys.list({ page: 1, limit: 1 }),
+    queryFn: () => maintenanceApi.list({ page: 1, limit: 1 }),
+    staleTime: SETUP_STALE_TIME,
+    enabled: on(can.maintenanceSetupRead),
+  });
+
+  const trips = useQuery({
+    queryKey: tripKeys.list({ page: 1, limit: 1 }),
+    queryFn: () => tripsApi.list({ page: 1, limit: 1 }),
+    staleTime: SETUP_STALE_TIME,
+    enabled: on(can.tripOperationsRead),
+  });
+
   const facts: SetupFacts = useMemo(() => {
     // `settled` distinguishes "answered" from "still working / failed". A
     // pending or failed query must yield null, never 0 — see the note on
@@ -154,24 +203,47 @@ export function useSetupProgress(roles: string[], enabled: boolean): SetupProgre
           )
         : null;
 
+    // The currently-selected organization, resolved once and reused for
+    // both memberCount (already existed) and the two fleet-profile
+    // declarations below — same org, same lookup, no second query.
+    const activeOrganization = organizations.isSuccess
+      ? organizations.data.find((org) => org._id === currentOrganizationId) ?? organizations.data[0]
+      : undefined;
+
     return {
       ...EMPTY_SETUP_FACTS,
       vehicleCount: settled(vehicleStats, (data) => data.total) as number | null,
       orgUnitCount: settled(orgUnits, (data) => data.length) as number | null,
       driverCount: settled(drivers, (data) => data.pagination?.total ?? data.data.length) as number | null,
       telematicsConnected,
-      // The currently-selected organization's roster size. Falls back to
-      // the first organization when no id is selected yet, which is what
-      // the switcher itself does on first load.
-      memberCount: settled(organizations, (orgs) => {
-        const active =
-          orgs.find((org) => org._id === currentOrganizationId) ?? orgs[0];
-        return active?.members?.length ?? 0;
-      }) as number | null,
+      // More than one member means somebody other than the founding
+      // account exists. A count of exactly 1 is the owner alone.
+      memberCount: organizations.isSuccess ? (activeOrganization?.members?.length ?? 0) : null,
       // ExpenseStats.total is the aggregate produced by
       // ExpenseRepository.getExpenseStats. Any non-zero value means the
       // fleet has recorded at least one operating cost.
       hasOperatingData: settled(expenseStats, (data) => (data?.total ?? 0) > 0) as boolean | null,
+      // Operator DECLARATIONS (OrganizationFleetProfile), read off the
+      // SAME organizations query `memberCount` already depends on — this
+      // is a cache hit everywhere `organizations` was already enabled,
+      // never a new request. `undefined` on the stored field (never
+      // declared) correctly collapses to `null` (undeclared), same as
+      // every other not-yet-answered fact in this hook.
+      operatesWithoutGps: organizations.isSuccess
+        ? (activeOrganization?.fleetProfile?.operatesWithoutGps ?? null)
+        : null,
+      operatesWithoutOdometers: organizations.isSuccess
+        ? (activeOrganization?.fleetProfile?.operatesWithoutOdometers ?? null)
+        : null,
+      fuelSetupDone:
+        fuelCards.isSuccess && fuelStations.isSuccess
+          ? (fuelCards.data.pagination?.total ?? 0) > 0 || (fuelStations.data.pagination?.total ?? 0) > 0
+          : null,
+      maintenanceSetupDone: settled(
+        maintenanceReminders,
+        (data) => (data.pagination?.total ?? 0) > 0
+      ) as boolean | null,
+      tripRecorded: settled(trips, (data) => (data.pagination?.total ?? 0) > 0) as boolean | null,
     };
   }, [
     vehicleStats.isSuccess,
@@ -180,6 +252,14 @@ export function useSetupProgress(roles: string[], enabled: boolean): SetupProgre
     orgUnits.data,
     drivers.isSuccess,
     drivers.data,
+    fuelCards.isSuccess,
+    fuelCards.data,
+    fuelStations.isSuccess,
+    fuelStations.data,
+    maintenanceReminders.isSuccess,
+    maintenanceReminders.data,
+    trips.isSuccess,
+    trips.data,
     eagletrack.isSuccess,
     eagletrack.data,
     cartrack.isSuccess,
@@ -201,7 +281,11 @@ export function useSetupProgress(roles: string[], enabled: boolean): SetupProgre
       organizations.isLoading ||
       eagletrack.isLoading ||
       cartrack.isLoading ||
-      expenseStats.isLoading);
+      expenseStats.isLoading ||
+      fuelCards.isLoading ||
+      fuelStations.isLoading ||
+      maintenanceReminders.isLoading ||
+      trips.isLoading);
 
   return { ...progress, isLoading };
 }

@@ -53,8 +53,25 @@ export interface ResolveAttentionInput {
  * be percent-encoded. The controller calls decodeURIComponent on the segment,
  * so an un-encoded id would resolve to a different key or a 404.
  */
-function itemPath(itemKey: string, action: 'resolve' | 'dispatch'): string {
+function itemPath(itemKey: string, action: 'resolve' | 'dispatch' | 'verify-outcome'): string {
   return `/api/ai/needs-attention/${encodeURIComponent(itemKey)}/${action}`;
+}
+
+/**
+ * MODULE CONNECTIVITY UPGRADE -- "Attention/Actions ↔ Outcome
+ * Verification". Mirrors ResolveAttentionInput/useResolveAttentionItem
+ * exactly; see attention-resolution.service.ts#verifyOutcome for why
+ * `note` is required only when `outcome` is 'reopened'.
+ */
+export interface VerifyAttentionOutcomeInput {
+  outcome: 'verified_resolved' | 'reopened';
+  evidenceRefs?: string[];
+  note?: string;
+}
+
+export interface VerifyOutcomeResult {
+  item: { itemKey: string; outcomeStatus: 'verified_resolved' | 'reopened' };
+  ledgerEntryWarning: string | null;
 }
 
 /** Which actions this user may take. Mirrors each route's own gate exactly. */
@@ -101,6 +118,38 @@ export function useResolveAttentionItem() {
     },
     onError: (error: unknown) => {
       toast.error('Could not resolve this item', {
+        description: error instanceof Error ? error.message : undefined,
+      });
+    },
+  });
+}
+
+/**
+ * MODULE CONNECTIVITY UPGRADE -- "Attention/Actions ↔ Outcome
+ * Verification". Only callable against an item the caller already
+ * knows the itemKey of (today: via the Value Ledger export/summary,
+ * which lists resolved items by itemKey -- the live Command Centre
+ * queue itself does not yet surface a "resolved" view to browse from,
+ * so this hook is ready for that surface without depending on it).
+ */
+export function useVerifyAttentionOutcome() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ itemKey, input }: { itemKey: string; input: VerifyAttentionOutcomeInput }) =>
+      apiClient.post<VerifyOutcomeResult>(itemPath(itemKey, 'verify-outcome'), input),
+    onSuccess: (result) => {
+      invalidateAttention(queryClient);
+      if (result.item.outcomeStatus === 'verified_resolved') {
+        toast.success('Outcome verified', { description: 'Confirmed the underlying issue is resolved.' });
+      } else {
+        toast.info('Marked as reopened', {
+          description: result.ledgerEntryWarning ?? 'The underlying issue is still present.',
+        });
+      }
+    },
+    onError: (error: unknown) => {
+      toast.error('Could not record this outcome check', {
         description: error instanceof Error ? error.message : undefined,
       });
     },

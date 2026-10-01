@@ -21,12 +21,27 @@ interface OnboardingState {
   isDismissed: (userId: string | undefined) => boolean;
   dismiss: (userId: string | undefined) => void;
   restore: (userId: string | undefined) => void;
+
+  /**
+   * ADAPTIVE ONBOARDING -- "Command Centre introduction" (stage 12 of
+   * the Setup Centre). Whether THIS person has seen the one-time tour
+   * of /needs-attention. Deliberately client-side-only, same rationale
+   * as `dismissed` above: this is "has this browser's user seen a UI
+   * tour", not an operational fact about the fleet (contrast with
+   * OrganizationFleetProfile's GPS/odometer declarations, which ARE
+   * operational facts and are persisted server-side for exactly that
+   * reason -- see shared/types/organization.settings-addendum.ts).
+   */
+  commandCentreIntroSeen: Record<string, boolean>;
+  hasSeenCommandCentreIntro: (userId: string | undefined) => boolean;
+  markCommandCentreIntroSeen: (userId: string | undefined) => void;
 }
 
 export const useOnboardingStore = create<OnboardingState>()(
   persist(
     (set, get) => ({
       dismissed: {},
+      commandCentreIntroSeen: {},
 
       isDismissed: (userId) => (userId ? Boolean(get().dismissed[userId]) : false),
 
@@ -40,6 +55,14 @@ export const useOnboardingStore = create<OnboardingState>()(
         const next = { ...get().dismissed };
         delete next[userId];
         set({ dismissed: next });
+      },
+
+      hasSeenCommandCentreIntro: (userId) =>
+        userId ? Boolean(get().commandCentreIntroSeen[userId]) : false,
+
+      markCommandCentreIntroSeen: (userId) => {
+        if (!userId) return;
+        set({ commandCentreIntroSeen: { ...get().commandCentreIntroSeen, [userId]: true } });
       },
     }),
     { name: 'fleet-onboarding-store' }

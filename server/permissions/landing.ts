@@ -33,6 +33,34 @@ import { Permission, Role, permissionService } from './roles';
 export const DEFAULT_LANDING_PATH = '/dashboard';
 
 /**
+ * Holding one of these is what makes someone "a person setting this
+ * organization up" -- the same anchor used by the Setup Centre
+ * (frontend/modules/onboarding/utils/setup-checklist.ts) to decide
+ * whether to show its checklist at all, and by the post-login landing
+ * redirect below to decide whether it is even worth checking whether
+ * this organization's setup is incomplete. Defined here (not in
+ * setup-checklist.ts, which that file still re-exports for backward
+ * compatibility) so this server-only module never has to import from
+ * frontend/modules/* to reuse it.
+ *
+ * Deliberately excludes VEHICLE_EDIT and FUEL_CREATE: both are
+ * operational permissions held by people who RUN a fleet rather than
+ * configure one -- see setup-checklist.ts's own note on this, found by
+ * that file's unit test, not by inspection.
+ */
+export const ANCHOR_SETUP_PERMISSIONS: Permission[] = [
+  Permission.ORG_UNIT_MANAGE,
+  Permission.VEHICLE_CREATE,
+  Permission.ORG_MEMBERS_MANAGE,
+  Permission.ORG_SETTINGS,
+];
+
+/** True when this user is someone who configures the organization (not just operates within it). */
+export function hasAnySetupPermission(roles: string[]): boolean {
+  return permissionService.hasAnyPermission(roles, ANCHOR_SETUP_PERMISSIONS);
+}
+
+/**
  * Ordered candidates. The FIRST entry whose permission the user holds
  * wins, so this list is a priority order, not a set: a mechanic who is
  * also a fleet manager should land on the richer page.

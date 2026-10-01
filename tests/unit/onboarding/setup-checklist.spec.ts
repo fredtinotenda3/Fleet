@@ -30,6 +30,16 @@ const CONFIGURED: SetupFacts = {
   memberCount: 9,
   telematicsConnected: true,
   hasOperatingData: true,
+  // ADAPTIVE ONBOARDING: a "fully configured" fleet has answered every
+  // declaration (not left it null/undeclared) and has real records for
+  // every new operational step -- otherwise summariseSetup's isComplete
+  // could never be true, since an undeclared field resolves a step to
+  // indeterminate, not done.
+  operatesWithoutGps: false,
+  operatesWithoutOdometers: false,
+  fuelSetupDone: true,
+  maintenanceSetupDone: true,
+  tripRecorded: true,
 };
 
 const BRAND_NEW: SetupFacts = {
@@ -39,6 +49,15 @@ const BRAND_NEW: SetupFacts = {
   memberCount: 1,
   telematicsConnected: false,
   hasOperatingData: false,
+  // A fresh organization has genuinely never been asked -- undeclared,
+  // not "declared no". See the distance-tracking/telematics tests below
+  // for why that distinction matters (an undeclared posture step is
+  // indeterminate, not simply "not done").
+  operatesWithoutGps: null,
+  operatesWithoutOdometers: null,
+  fuelSetupDone: false,
+  maintenanceSetupDone: false,
+  tripRecorded: false,
 };
 
 describe('setup checklist — permission gating', () => {
@@ -104,6 +123,10 @@ describe('setup checklist — permission gating', () => {
       vehicles: Permission.VEHICLE_CREATE,
       drivers: Permission.VEHICLE_EDIT,
       telematics: Permission.ORG_SETTINGS,
+      'distance-tracking': Permission.VEHICLE_CREATE,
+      'fuel-setup': Permission.FUEL_CREATE,
+      'maintenance-setup': Permission.MAINTENANCE_CREATE,
+      'trip-operations': Permission.TRIP_CREATE,
       members: Permission.ORG_MEMBERS_MANAGE,
       'operating-data': Permission.FUEL_CREATE,
     };
@@ -191,6 +214,66 @@ describe('setup checklist — unknown is not the same as incomplete', () => {
     const facts: SetupFacts = { ...BRAND_NEW, orgUnitCount: 2 };
     const progress = summariseSetup(buildSetupChecklist([Role.ORGANIZATION_OWNER], facts));
     expect(progress.nextStep?.id).toBe('vehicles');
+  });
+});
+
+describe('setup checklist — adaptive onboarding (GPS/odometer declarations never block)', () => {
+  it('leaves the telematics step indeterminate when neither telemetry nor a declaration exists yet', () => {
+    const steps = buildSetupChecklist([Role.ORGANIZATION_OWNER], {
+      ...BRAND_NEW,
+      telematicsConnected: null,
+      operatesWithoutGps: null,
+    });
+    const telematics = steps.find((step) => step.id === 'telematics');
+    expect(telematics!.indeterminate).toBe(true);
+    expect(telematics!.done).toBe(false);
+  });
+
+  it('completes the telematics step when a provider is genuinely connected', () => {
+    const steps = buildSetupChecklist([Role.ORGANIZATION_OWNER], {
+      ...BRAND_NEW,
+      telematicsConnected: true,
+    });
+    expect(steps.find((step) => step.id === 'telematics')?.done).toBe(true);
+  });
+
+  it('completes the telematics step when the operator explicitly declares no GPS -- the step is never permanently stuck', () => {
+    const steps = buildSetupChecklist([Role.ORGANIZATION_OWNER], {
+      ...BRAND_NEW,
+      telematicsConnected: false,
+      operatesWithoutGps: true,
+    });
+    const telematics = steps.find((step) => step.id === 'telematics');
+    expect(telematics!.done).toBe(true);
+    expect(telematics!.indeterminate).toBe(false);
+    expect(telematics!.detail).toMatch(/without GPS/i);
+  });
+
+  it('exposes the "declare no GPS" secondary action only on the telematics step', () => {
+    const steps = buildSetupChecklist([Role.ORGANIZATION_OWNER], BRAND_NEW);
+    expect(steps.find((s) => s.id === 'telematics')?.secondaryAction?.kind).toBe('declare-no-gps');
+    expect(steps.find((s) => s.id !== 'telematics')?.secondaryAction).toBeUndefined();
+  });
+
+  it('leaves distance-tracking indeterminate until an odometer posture is declared either way', () => {
+    const steps = buildSetupChecklist([Role.ORGANIZATION_OWNER], {
+      ...BRAND_NEW,
+      operatesWithoutOdometers: null,
+    });
+    expect(steps.find((s) => s.id === 'distance-tracking')?.indeterminate).toBe(true);
+  });
+
+  it('completes distance-tracking on EITHER declaration -- "no reliable odometers" is not a lesser answer than "yes"', () => {
+    const declaredNo = buildSetupChecklist([Role.ORGANIZATION_OWNER], {
+      ...BRAND_NEW,
+      operatesWithoutOdometers: true,
+    });
+    const declaredYes = buildSetupChecklist([Role.ORGANIZATION_OWNER], {
+      ...BRAND_NEW,
+      operatesWithoutOdometers: false,
+    });
+    expect(declaredNo.find((s) => s.id === 'distance-tracking')?.done).toBe(true);
+    expect(declaredYes.find((s) => s.id === 'distance-tracking')?.done).toBe(true);
   });
 });
 

@@ -24,3 +24,22 @@ export const resolveAttentionItemSchema = z.object({
 });
 
 export type ResolveAttentionItemInput = z.infer<typeof resolveAttentionItemSchema>;
+
+/**
+ * Body for POST /api/ai/needs-attention/:id/verify-outcome.
+ *
+ * See modules/attention/types/attention-outcome-addendum.ts for why
+ * this is a human-confirmed step rather than an automatic re-check, and
+ * attention-resolution.service.ts#verifyOutcome for why `note` is
+ * required when `outcome` is 'reopened' but not for 'verified_resolved'
+ * (a conditional-on-the-value rule the service enforces after this
+ * schema, the same convention resolveAttentionItemSchema above uses).
+ */
+export const verifyAttentionOutcomeSchema = z.object({
+  outcome: z.enum(['verified_resolved', 'reopened']),
+  /** References to whatever was actually checked -- same convention as resolveAttentionItemSchema.evidenceRefs. */
+  evidenceRefs: z.array(z.string().min(1).max(200)).max(20).optional(),
+  note: z.string().max(2000).optional(),
+});
+
+export type VerifyAttentionOutcomeInput = z.infer<typeof verifyAttentionOutcomeSchema>;

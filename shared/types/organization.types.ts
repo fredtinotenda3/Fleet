@@ -5,6 +5,7 @@ import {
   OrganizationContactDetails,
   OrganizationBusinessHours,
   OrganizationTaxSettings,
+  OrganizationFleetProfile,
 } from './organization.settings-addendum';
 
 export interface Organization extends BaseEntity {
@@ -24,6 +25,8 @@ export interface Organization extends BaseEntity {
   contact?: OrganizationContactDetails;
   businessHours?: OrganizationBusinessHours;
   taxSettings?: OrganizationTaxSettings;
+  /** Adaptive Onboarding / Setup Centre: see organization.settings-addendum.ts. */
+  fleetProfile?: OrganizationFleetProfile;
 }
 
 export interface OrganizationBranding {

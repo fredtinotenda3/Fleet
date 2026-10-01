@@ -137,6 +137,15 @@ export function GetStartedPanel({ className }: { className?: string }) {
                 {progress.completed} of {progress.known} done
               </span>
             )}
+            {/* ADAPTIVE ONBOARDING: the full Setup Centre (/setup) covers
+                stages this compact panel has no room for -- fuel/
+                maintenance/trip-ops setup, data coverage, the Command
+                Centre tour, and the GPS/odometer opt-out declarations.
+                Purely additive: this panel's own steps/logic are
+                unchanged. */}
+            <Button variant="ghost" size="xs" render={<Link href="/setup" />} nativeButton={false}>
+              Open Setup Centre
+            </Button>
             <Button
               variant="ghost"
               size="icon-xs"

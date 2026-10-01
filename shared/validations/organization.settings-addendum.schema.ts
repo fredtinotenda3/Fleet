@@ -38,3 +38,30 @@ export const taxSettingsUpdateSchema = z.object({
 export type ContactDetailsUpdateInput = z.infer<typeof contactDetailsUpdateSchema>;
 export type BusinessHoursUpdateInput = z.infer<typeof businessHoursUpdateSchema>;
 export type TaxSettingsUpdateInput = z.infer<typeof taxSettingsUpdateSchema>;
+
+/**
+ * Adaptive Onboarding / Setup Centre -- see OrganizationFleetProfile
+ * (organization.settings-addendum.ts) for what each field means.
+ *
+ * Deliberately `.partial()`, unlike taxSettingsUpdateSchema/
+ * businessHoursUpdateSchema above: those forms always submit their
+ * whole shape on every save, but each fleet-profile field is set by a
+ * DIFFERENT action at a different time (declining GPS, declaring
+ * odometer reliability, finishing or skipping the Setup Centre), so a
+ * caller sends only the one or two fields that action concerns. The
+ * service merges onto the existing fleetProfile rather than replacing
+ * it -- see OrganizationService.updateFleetProfile.
+ */
+export const fleetProfileUpdateSchema = z
+  .object({
+    operatesWithoutGps: z.boolean(),
+    operatesWithoutOdometers: z.boolean(),
+    setupCompletedAt: z.string().datetime(),
+    setupDismissedAt: z.string().datetime(),
+  })
+  .partial()
+  .refine((data) => Object.keys(data).length > 0, {
+    message: 'At least one fleet-profile field must be provided.',
+  });
+
+export type FleetProfileUpdateInput = z.infer<typeof fleetProfileUpdateSchema>;

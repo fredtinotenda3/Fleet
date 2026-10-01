@@ -18,6 +18,20 @@ export interface FleetKPIs {
   totalFuelCost: number | null;
   totalFuelVolume: number;
   totalDistance: number;
+  /**
+   * The portion of `totalDistance` that came from a map-derived route or a
+   * manual entry rather than GPS telematics or an odometer delta -- i.e.
+   * the part of the figure above that is an estimate, not an observation.
+   * Zero for a fully-instrumented fleet; equal to `totalDistance` for a
+   * fleet (or period) with no GPS/odometer coverage at all, such as a
+   * branch running entirely on map-assisted trip logging.
+   *
+   * Exists so a consumer rendering `totalDistance`/`averageFuelEfficiency`
+   * can flag that figure as partly/wholly estimated instead of presenting
+   * a blended total with the same confidence as fully-observed data --
+   * see TripStats.estimatedDistance, which this is summed from.
+   */
+  estimatedDistanceKm: number;
   averageFuelEfficiency: number | null;
   /** `null` either because there is no distance to divide by, or because the caller lacks financial view access -- see `financialAccessRestricted`. */
   costPerKm: number | null;
@@ -148,6 +162,7 @@ export class FleetAnalyticsService {
       totalFuelCost: hasFinancialAccess ? fuelStats.totalCost : null,
       totalFuelVolume,
       totalDistance,
+      estimatedDistanceKm: tripStats.estimatedDistance ?? 0,
       averageFuelEfficiency,
       costPerKm: hasFinancialAccess ? costPerKm : null,
       pendingMaintenance: maintenanceStats.pending,

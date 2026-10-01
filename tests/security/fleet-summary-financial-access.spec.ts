@@ -129,6 +129,85 @@ describe('getFleetKPIs: financial fields are withheld server-side when the calle
   });
 });
 
+describe('getFleetKPIs: estimatedDistanceKm (provenance propagation for a no-GPS/no-odometer branch)', () => {
+  afterEach(() => {
+    vehicleRepository.getVehicleStats = originals.getVehicleStats;
+    expenseRepository.getExpenseStats = originals.getExpenseStats;
+    fuelRepository.getFuelStats = originals.getFuelStats;
+    maintenanceRepository.getMaintenanceStats = originals.getMaintenanceStats;
+    tripRepository.getTripStats = originals.getTripStats;
+  });
+
+  function mockRepositoriesWithTripStats(tripStats: Record<string, unknown>) {
+    vehicleRepository.getVehicleStats = jest.fn(async () => ({ total: 1, active: 1, maintenance: 0 })) as any;
+    expenseRepository.getExpenseStats = jest.fn(async () => ({ total: 0, byType: {} })) as any;
+    fuelRepository.getFuelStats = jest.fn(async () => ({ totalFuel: 50, totalCost: 100 })) as any;
+    maintenanceRepository.getMaintenanceStats = jest.fn(async () => ({
+      pending: 0,
+      overdue: 0,
+      completionRate: null,
+    })) as any;
+    tripRepository.getTripStats = jest.fn(async () => tripStats) as any;
+  }
+
+  it('is 0 when TripStats carries no estimatedDistance (fully GPS/odometer-observed fleet)', async () => {
+    mockRepositoriesWithTripStats({ totalDistance: 500, totalTrips: 5, estimatedDistance: 0 });
+
+    const result = await fleetAnalyticsService.getFleetKPIs(TENANT, undefined, undefined, true);
+
+    expect(result.estimatedDistanceKm).toBe(0);
+  });
+
+  it('defaults to 0 (never undefined/NaN) when a caller\'s TripStats predates this field entirely', async () => {
+    // Exactly the shape the OTHER describe block in this file mocks --
+    // `{ totalDistance, totalTrips }` with no distanceBySource/
+    // estimatedDistance/observedDistance at all. getFleetKPIs must not
+    // crash or propagate `undefined` into a numeric API field.
+    mockRepositoriesWithTripStats({ totalDistance: 20000, totalTrips: 40 });
+
+    const result = await fleetAnalyticsService.getFleetKPIs(TENANT, undefined, undefined, true);
+
+    expect(result.estimatedDistanceKm).toBe(0);
+  });
+
+  it('equals the full totalDistance for a branch with zero GPS/odometer coverage (the Harare ABC123 scenario)', async () => {
+    // Vehicle ABC123: no telematics, no reliable odometer -- every trip
+    // this period was logged map-assisted, so 100% of the distance this
+    // KPI reports is map-derived, not observed.
+    mockRepositoriesWithTripStats({
+      totalDistance: 42,
+      totalTrips: 1,
+      distanceBySource: { 'map-derived': 42 },
+      observedDistance: 0,
+      estimatedDistance: 42,
+    });
+
+    const result = await fleetAnalyticsService.getFleetKPIs(TENANT, undefined, undefined, true);
+
+    expect(result.totalDistance).toBe(42);
+    expect(result.estimatedDistanceKm).toBe(42);
+    // The frontend's "fully estimated" branch keys off this exact
+    // relationship (estimatedDistanceKm >= totalDistance) -- pin it.
+    expect(result.estimatedDistanceKm).toBeGreaterThanOrEqual(result.totalDistance);
+  });
+
+  it('is a partial figure for a fleet mixing GPS/odometer trips with map-assisted ones', async () => {
+    mockRepositoriesWithTripStats({
+      totalDistance: 1000,
+      totalTrips: 10,
+      distanceBySource: { 'gps-path': 600, 'odometer': 200, 'map-derived': 150, manual: 50 },
+      observedDistance: 800,
+      estimatedDistance: 200,
+    });
+
+    const result = await fleetAnalyticsService.getFleetKPIs(TENANT, undefined, undefined, true);
+
+    expect(result.totalDistance).toBe(1000);
+    expect(result.estimatedDistanceKm).toBe(200);
+    expect(result.estimatedDistanceKm).toBeLessThan(result.totalDistance);
+  });
+});
+
 describe('WORKSHOP_MANAGER: the concrete role this redaction protects', () => {
   it('holds ANALYTICS_VIEW + REPORT_VIEW (can reach the Fleet Summary) but neither EXPENSE_VIEW nor FUEL_VIEW nor FINANCE_VIEW', () => {
     const perms = rolePermissions[Role.WORKSHOP_MANAGER];

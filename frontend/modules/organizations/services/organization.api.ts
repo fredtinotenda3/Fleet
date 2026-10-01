@@ -80,6 +80,26 @@ export const organizationApi = {
     apiClient.patch(`${BASE}/${id}/tax-settings`, data),
 
   /**
+   * Adaptive Onboarding / Setup Centre -- declares GPS/odometer
+   * posture, or records the Setup Centre's completion/skip.
+   * Backing route: PATCH /api/organizations/[id]/fleet-profile
+   */
+  updateFleetProfile: (
+    id: string,
+    data: import('@/shared/validations/organization.settings-addendum.schema').FleetProfileUpdateInput
+  ): Promise<Organization> => apiClient.patch(`${BASE}/${id}/fleet-profile`, data),
+
+  /**
+   * Whether THIS login should land on the Setup Centre instead of the
+   * usual post-login page -- called once, right after a successful
+   * sign-in, by LoginPage.tsx/MfaVerifyPage.tsx.
+   * Backing route: GET /api/organizations/setup-status
+   */
+  async getSetupStatus(): Promise<{ shouldRouteToSetup: boolean }> {
+    return apiClient.get(`${BASE}/setup-status`);
+  },
+
+  /**
    * Backing route: POST /api/organizations/[id]/members/invite
    */
   async inviteMember(id: string, payload: InviteMemberPayload): Promise<OrganizationInvite> {

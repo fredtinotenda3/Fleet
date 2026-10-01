@@ -17,6 +17,9 @@
 //      org units  POST /api/tenancy/org-units ORG_UNIT_MANAGE
 //      members    /organizations/members      ORG_MEMBERS_MANAGE
 //      telematics GET/PUT .../config          ORG_SETTINGS
+//      fuel cards POST /api/fuel-cards         FUEL_CREATE
+//      maintenance POST /api/reminders         MAINTENANCE_CREATE
+//      trips      POST /api/trips              TRIP_CREATE
 //
 // 2. A step must be VERIFIABLE. Every step's `done` is computed from a real
 //    count or a real config flag the frontend can already read. Nothing here
@@ -29,6 +32,7 @@
 //    routes too).
 
 import { Permission, permissionService } from '@/server/permissions/roles';
+import { ANCHOR_SETUP_PERMISSIONS, hasAnySetupPermission } from '@/server/permissions/landing';
 
 export type SetupStepId =
   | 'org-units'
@@ -36,6 +40,10 @@ export type SetupStepId =
   | 'drivers'
   | 'members'
   | 'telematics'
+  | 'distance-tracking'
+  | 'fuel-setup'
+  | 'maintenance-setup'
+  | 'trip-operations'
   | 'operating-data';
 
 export interface SetupStep {
@@ -56,6 +64,20 @@ export interface SetupStep {
   indeterminate?: boolean;
   /** Shown next to the step when known, e.g. "12 vehicles". */
   detail?: string;
+  /**
+   * A second, non-destructive way to satisfy this step without doing
+   * the primary action -- used only by the telematics and
+   * distance-tracking steps, so a fleet with no GPS and no reliable
+   * odometers is never stuck on a step it has no way to complete.
+   * Resolved by the Setup Centre page (frontend/modules/onboarding/
+   * components/SetupCentrePage.tsx) into a real PATCH
+   * /api/organizations/[id]/fleet-profile call; this module stays a
+   * pure function and does not perform it.
+   */
+  secondaryAction?: {
+    label: string;
+    kind: 'declare-no-gps' | 'declare-odometer-posture';
+  };
 }
 
 /**
@@ -74,6 +96,20 @@ export interface SetupFacts {
   telematicsConnected: boolean | null;
   /** True once the fleet has produced any operating record (fuel, expense or trip). */
   hasOperatingData: boolean | null;
+  /**
+   * Operator DECLARATIONS, not observations -- see
+   * OrganizationFleetProfile (shared/types/organization.settings-
+   * addendum.ts). `null` means undeclared, not "no": a fleet that has
+   * never been asked is not the same as one that said no.
+   */
+  operatesWithoutGps: boolean | null;
+  operatesWithoutOdometers: boolean | null;
+  /** At least one fuel card OR fuel station is on file. */
+  fuelSetupDone: boolean | null;
+  /** At least one maintenance reminder/schedule exists for any vehicle. */
+  maintenanceSetupDone: boolean | null;
+  /** At least one trip has been recorded (by any entry method -- map-assisted, odometer, manual distance, or telemetry-generated). */
+  tripRecorded: boolean | null;
 }
 
 export const EMPTY_SETUP_FACTS: SetupFacts = {
@@ -83,6 +119,11 @@ export const EMPTY_SETUP_FACTS: SetupFacts = {
   memberCount: null,
   telematicsConnected: null,
   hasOperatingData: null,
+  operatesWithoutGps: null,
+  operatesWithoutOdometers: null,
+  fuelSetupDone: null,
+  maintenanceSetupDone: null,
+  tripRecorded: null,
 };
 
 interface StepDefinition {
@@ -101,14 +142,14 @@ interface StepDefinition {
    */
   readPermission?: Permission;
   resolve: (facts: SetupFacts) => { done: boolean | null; detail?: string };
+  secondaryAction?: {
+    label: string;
+    kind: 'declare-no-gps' | 'declare-odometer-posture';
+  };
 }
 
 /**
- * Holding one of these is what makes someone "a person setting this
- * organization up", and therefore what makes a setup checklist the right
- * thing to show them at all.
- *
- * WHY THIS GATE EXISTS — found by the unit test in
+ * WHY AN ANCHOR-PERMISSION GATE EXISTS — found by the unit test in
  * tests/unit/onboarding/setup-checklist.spec.ts, not by inspection: a DRIVER
  * holds FUEL_CREATE, because logging a refuel is their job. Without an anchor
  * check, a driver was handed a panel headed "Finish setting up your fleet"
@@ -120,15 +161,11 @@ interface StepDefinition {
  * would have 403'd and the item would have sat on "status unavailable"
  * permanently, with no way to dismiss it short of the X button.
  *
- * Deliberately excludes VEHICLE_EDIT and FUEL_CREATE: both are operational
- * permissions held by people who run a fleet rather than configure one.
+ * The anchor list itself now lives in server/permissions/landing.ts (which
+ * the post-login redirect also needs, and which must not import from
+ * frontend/modules/*). Nothing in this file ever exported the list
+ * itself (only this boolean), so there is nothing else to re-export.
  */
-const ANCHOR_PERMISSIONS: Permission[] = [
-  Permission.ORG_UNIT_MANAGE,
-  Permission.VEHICLE_CREATE,
-  Permission.ORG_MEMBERS_MANAGE,
-  Permission.ORG_SETTINGS,
-];
 
 function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
   return `${count.toLocaleString()} ${count === 1 ? singular : pluralForm}`;
@@ -186,12 +223,82 @@ const STEP_DEFINITIONS: StepDefinition[] = [
     id: 'telematics',
     title: 'Connect telematics',
     description:
-      'Connecting a tracking provider turns the platform live: real positions on the map, automatic odometer and fuel readings, and alerts raised without anyone filing them.',
+      'Connecting a tracking provider turns the platform live: real positions on the map, automatic odometer and fuel readings, and alerts raised without anyone filing them. No tracker yet? Say so — trips still work from the map and manual entry.',
     href: '/telematics/trackers',
     actionLabel: 'Connect a provider',
     permission: Permission.ORG_SETTINGS,
+    // ADAPTIVE ONBOARDING: `operatesWithoutGps` is an explicit operator
+    // declaration (shared/types/organization.settings-addendum.ts), not
+    // an observation -- a fleet that says so is DONE with this step, not
+    // "not done yet". Without this branch, a fleet with genuinely no GPS
+    // would sit on this step forever with no way to ever resolve it,
+    // which is exactly the blocking behaviour PART 2 of this upgrade
+    // forbids. `secondaryAction` surfaces the opt-out in the Setup
+    // Centre; GetStartedPanel's compact view ignores it harmlessly.
     resolve: (facts) =>
-      facts.telematicsConnected === null ? { done: null } : { done: facts.telematicsConnected },
+      facts.telematicsConnected === null && facts.operatesWithoutGps === null
+        ? { done: null }
+        : {
+            done: facts.telematicsConnected === true || facts.operatesWithoutGps === true,
+            detail: facts.operatesWithoutGps === true ? 'Operating without GPS' : undefined,
+          },
+    secondaryAction: { label: 'We operate without GPS', kind: 'declare-no-gps' },
+  },
+  {
+    id: 'distance-tracking',
+    title: 'Confirm odometer reliability',
+    description:
+      'Distance can come from GPS, odometer readings, a map-drawn route, or a manual entry — in that order of trust (see every trip\'s "Distance" field). Telling us odometers are not reliable here means trips default to map-assisted or manual distance instead of asking for a reading nobody can supply.',
+    href: '/vehicles',
+    actionLabel: 'Our odometers are reliable',
+    permission: Permission.VEHICLE_CREATE,
+    // A genuine declaration either way resolves this step -- "no
+    // reliable odometers" is not a lesser answer than "yes", it is the
+    // honest one for plenty of real fleets (PART 2's own examples).
+    resolve: (facts) =>
+      facts.operatesWithoutOdometers === null ? { done: null } : { done: true },
+    secondaryAction: { label: "We don't have reliable odometers", kind: 'declare-odometer-posture' },
+  },
+  {
+    id: 'fuel-setup',
+    title: 'Set up fuel tracking',
+    description:
+      'Add the fuel cards or stations your drivers actually use. Cost-per-km and fuel-fraud detection are only as good as this list.',
+    href: '/fuel/cards',
+    actionLabel: 'Add a fuel card or station',
+    permission: Permission.FUEL_CREATE,
+    // The completion probe lists fuel cards/stations, which GET /api/fuel-cards
+    // gates on FUEL_VIEW separately from the POST route's FUEL_CREATE.
+    readPermission: Permission.FUEL_VIEW,
+    resolve: (facts) =>
+      facts.fuelSetupDone === null ? { done: null } : { done: facts.fuelSetupDone },
+  },
+  {
+    id: 'maintenance-setup',
+    title: 'Set up maintenance schedules',
+    description:
+      'A service reminder on at least one vehicle is what turns the Maintenance module from a blank list into a working schedule.',
+    href: '/maintenance',
+    actionLabel: 'Add a reminder',
+    permission: Permission.MAINTENANCE_CREATE,
+    // GET /api/reminders gates on MAINTENANCE_VIEW, separate from the
+    // POST route's MAINTENANCE_CREATE.
+    readPermission: Permission.MAINTENANCE_VIEW,
+    resolve: (facts) =>
+      facts.maintenanceSetupDone === null ? { done: null } : { done: facts.maintenanceSetupDone },
+  },
+  {
+    id: 'trip-operations',
+    title: 'Log your first trip',
+    description:
+      'Map-assisted, odometer, or manual — however this fleet records a journey, one real trip is what connects a vehicle and driver to an actual route, distance and (optionally) a fuel transaction.',
+    href: '/trips',
+    actionLabel: 'Log a trip',
+    permission: Permission.TRIP_CREATE,
+    // GET /api/trips gates on TRIP_VIEW, separate from the POST route's
+    // TRIP_CREATE.
+    readPermission: Permission.TRIP_VIEW,
+    resolve: (facts) => (facts.tripRecorded === null ? { done: null } : { done: facts.tripRecorded }),
   },
   {
     id: 'members',
@@ -226,7 +333,7 @@ const STEP_DEFINITIONS: StepDefinition[] = [
 
 /** True when this user is someone who configures the organization. */
 export function shouldShowSetupChecklist(roles: string[]): boolean {
-  return permissionService.hasAnyPermission(roles, ANCHOR_PERMISSIONS);
+  return hasAnySetupPermission(roles);
 }
 
 /**
@@ -257,6 +364,7 @@ export function buildSetupChecklist(roles: string[], facts: SetupFacts): SetupSt
       done: done === true,
       indeterminate: done === null,
       detail,
+      secondaryAction: definition.secondaryAction,
     };
   });
 }

@@ -54,3 +54,38 @@ export const DEFAULT_TAX_SETTINGS: OrganizationTaxSettings = {
   taxRate: 0,
   taxInclusivePricing: false,
 };
+
+// ---------------------------------------------------------------------
+// ADAPTIVE ONBOARDING / SETUP CENTRE -- fleet operating posture
+// ---------------------------------------------------------------------
+// What the operator has TOLD us about how this fleet actually runs, so
+// the Setup Centre (frontend/modules/onboarding) can stop asking and the
+// rest of the platform can stop treating "no GPS yet" as "broken".
+//
+// Every field here is a DECLARATION, not an observation: it is written
+// exactly once, by a person, through PATCH /api/organizations/[id]/
+// fleet-profile, and is never inferred from telemetry/odometer data
+// itself. `operatesWithoutGps: true` does not mean "no telematics
+// device is currently reporting" (that is `telematicsConnected` in
+// setup-checklist.ts, a real-time fact) -- it means an operator
+// explicitly said this fleet does not use one, so the Setup Centre and
+// the distance-source hierarchy (shared/types/evidence.types.ts) can
+// stop nudging them toward a step that will never resolve on its own.
+//
+// Stored on Organization rather than a new collection: this is exactly
+// the shape contact/businessHours/taxSettings already use, and a fourth
+// instance of the same pattern does not earn a new collection (and
+// therefore no module-scope.registry.ts entry is needed -- it is a
+// field on the existing tblorganizations document).
+export interface OrganizationFleetProfile {
+  /** Operator declared this fleet runs without GPS/telematics for now. */
+  operatesWithoutGps?: boolean;
+  /** Operator declared this fleet's vehicles do not have reliable odometers. */
+  operatesWithoutOdometers?: boolean;
+  /** ISO timestamp set once a setup-permission holder finishes the Setup Centre. Absent = not yet completed. */
+  setupCompletedAt?: string;
+  /** Who completed it (userId) -- for the audit trail, same convention as `resolvedBy` elsewhere in this codebase. */
+  setupCompletedBy?: string;
+  /** ISO timestamp set if a setup-permission holder explicitly skips the Setup Centre without finishing. Honored by the post-login landing redirect: a fleet that chose to skip is never forced back onto it. */
+  setupDismissedAt?: string;
+}

@@ -61,7 +61,11 @@ export function FuelKpiCards({ licensePlate, dateRange }: FuelKpiCardsProps = {}
       <StatisticCard
         title="Fuel efficiency"
         value={`${kpis.averageFuelEfficiency.toFixed(2)} km/L`}
-        description={`${kpis.totalDistance.toLocaleString()} km driven`}
+        description={
+          kpis.fallbackVehicleCount > 0
+            ? `${kpis.totalDistance.toLocaleString()} km driven · ${kpis.fallbackVehicleCount} vehicle${kpis.fallbackVehicleCount === 1 ? '' : 's'} estimated from trip distance (no odometer data)`
+            : `${kpis.totalDistance.toLocaleString()} km driven`
+        }
         icon={trendIcon(kpis.efficiencyTrend, true)}
       />
       <StatisticCard

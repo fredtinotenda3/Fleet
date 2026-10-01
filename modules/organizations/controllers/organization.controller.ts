@@ -266,6 +266,26 @@ export class OrganizationController {
     }
   }
 
+  async updateFleetProfile(req: NextRequest, id: string) {
+    try {
+      const tenantId = await getTenantFromRequest(req);
+      const userId = await getUserIdFromRequest(req);
+      const body = await req.json();
+      const { fleetProfileUpdateSchema } = await import(
+        '@/shared/validations/organization.settings-addendum.schema'
+      );
+      const parsed = fleetProfileUpdateSchema.safeParse(body);
+      if (!parsed.success) {
+        return errorResponse('Invalid fleet profile', 'VALIDATION_ERROR', 400, parsed.error.flatten());
+      }
+
+      const org = await organizationService.updateFleetProfile(id, parsed.data, tenantId, userId);
+      return successResponse(org);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
   async updateLogo(req: NextRequest, id: string) {
     try {
       const tenantId = await getTenantFromRequest(req);

@@ -17,6 +17,7 @@ import {
   TripCostAnalyticsRow,
   TripCostSummary,
 } from '@/shared/types/trip.types';
+import { DistanceSource } from '@/shared/types/evidence.types';
 import {
   PaginationParams,
   PaginatedResponse,
@@ -296,13 +297,43 @@ export class TripRepository extends BaseRepository<Trip> {
             },
             { $sort: { distance: -1 } },
           ],
+          // Same total, broken out by how each trip's distance was
+          // measured -- see the `distanceBySource`/`observedDistance`/
+          // `estimatedDistance` doc on TripStats for why this exists.
+          // `$ifNull` buckets any trip predating this field (or an
+          // otherwise missing value) under 'unavailable' rather than a
+          // bare `null` key, mirroring how `distance_source` is treated
+          // as absent-safe everywhere else it's read.
+          bySource: [
+            {
+              $group: {
+                _id: { $ifNull: ['$distance_source', 'unavailable'] },
+                distance: { $sum: '$distance_calculated' },
+              },
+            },
+          ],
         },
       },
     ];
 
     const result = await collection.aggregate(pipeline).toArray();
-    const data = result[0] || { totals: [], byVehicle: [], byDriver: [] };
+    const data = result[0] || { totals: [], byVehicle: [], byDriver: [], bySource: [] };
     const totals = data.totals[0] || { totalDistance: 0, totalTrips: 0 };
+
+    const OBSERVED_SOURCES = new Set(['gps-path', 'odometer']);
+    const distanceBySource: Partial<Record<DistanceSource, number>> = {};
+    let observedDistance = 0;
+    let estimatedDistance = 0;
+    for (const row of data.bySource || []) {
+      const source = (row._id || 'unavailable') as DistanceSource;
+      const distance = row.distance || 0;
+      distanceBySource[source] = distance;
+      if (OBSERVED_SOURCES.has(source)) {
+        observedDistance += distance;
+      } else {
+        estimatedDistance += distance;
+      }
+    }
 
     return {
       totalDistance: totals.totalDistance,
@@ -320,6 +351,9 @@ export class TripRepository extends BaseRepository<Trip> {
           d.distance,
         ])
       ),
+      distanceBySource,
+      observedDistance,
+      estimatedDistance,
     };
   }
 

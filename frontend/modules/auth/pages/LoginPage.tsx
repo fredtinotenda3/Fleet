@@ -9,6 +9,7 @@ import { MfaVerificationForm } from '../components/MfaVerificationForm';
 import { AuthLayout, AuthCard } from '@/frontend/shared/ui/auth';
 import { useSessionStore } from '@/frontend/shared/store/session.store';
 import { resolveLandingPath, isSafeRedirectPath } from '@/server/permissions/landing';
+import { organizationApi } from '@/frontend/modules/organizations/services/organization.api';
 
 export function LoginPage() {
   const router = useRouter();
@@ -34,11 +35,30 @@ export function LoginPage() {
   const goToLanding = useCallback(() => {
     const callbackUrl = searchParams?.get('callbackUrl');
     if (isSafeRedirectPath(callbackUrl)) {
+      // A deep link always wins over onboarding -- someone who clicked
+      // a link to a specific page is not asking to be shown the Setup
+      // Centre instead.
       router.push(callbackUrl as string);
       return;
     }
     const roles = useSessionStore.getState().user?.roles ?? [];
-    router.push(resolveLandingPath(roles));
+
+    /**
+     * ADAPTIVE ONBOARDING: mirrors app/page.tsx's server-side redirect
+     * for the one path that does not go through that page -- logging
+     * in while already sitting on /auth/login. One extra request, made
+     * exactly once per sign-in, and it fails open: any error (network,
+     * 401 racing the token cookie being set) falls through to the
+     * normal resolveLandingPath() destination, never a stuck screen.
+     */
+    organizationApi
+      .getSetupStatus()
+      .then(({ shouldRouteToSetup }) => {
+        router.push(shouldRouteToSetup ? '/setup' : resolveLandingPath(roles));
+      })
+      .catch(() => {
+        router.push(resolveLandingPath(roles));
+      });
   }, [router, searchParams]);
 
   return (

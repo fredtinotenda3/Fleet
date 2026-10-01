@@ -1,7 +1,7 @@
 // shared/types/trip.types.ts
 
 import { BaseEntity, Mode } from './common.types';
-import type { TripStop } from './evidence.types';
+import type { TripStop, DistanceSource } from './evidence.types';
 
 /**
  * PHASE 1 (Trip-as-operational-hub): status lets Trip answer
@@ -148,6 +148,31 @@ export interface TripStats {
   averageDistance: number;
   byVehicle: Record<string, number>;
   byDriver: Record<string, number>;
+  /**
+   * ADAPTIVE ONBOARDING / module-connectivity round: `totalDistance` is a
+   * single number blended across every trip regardless of how its
+   * distance was measured -- a GPS-path trip, an odometer-delta trip, and
+   * a map-derived trip (the only option for a vehicle with no GPS and no
+   * reliable odometer, per the Distance Source Hierarchy in
+   * evidence.types.ts) all sum into it identically. That is correct for
+   * "how far did the fleet drive", but a consumer presenting this as an
+   * "observed"/"actual" figure (e.g. fuel efficiency) would be fabricating
+   * precision the map-derived/manual portion does not have.
+   *
+   * `distanceBySource` lets a caller split the total back out without a
+   * second query. `observedDistance` (gps-path + odometer -- a device or
+   * the vehicle's own odometer measured it) and `estimatedDistance`
+   * (map-derived + manual + unavailable's zero -- a route or a person
+   * estimated it) are provided as the two convenience sums every known
+   * caller actually needs; nothing here collapses a multi-source total
+   * into a single mislabeled number.
+   *
+   * Optional so a test or caller supplying only the legacy
+   * `{ totalDistance, totalTrips }` shape keeps compiling/behaving.
+   */
+  distanceBySource?: Partial<Record<DistanceSource, number>>;
+  observedDistance?: number;
+  estimatedDistance?: number;
 }
 
 /**

@@ -52,8 +52,24 @@ export default function AnalyticsOverview() {
         <StatsCard title="Active" value={kpis?.activeVehicles ?? 0} color="green" />
         <StatsCard title="Total Expenses" value={formatCurrency(kpis?.totalExpenses ?? 0)} color="red" />
         <StatsCard title="Total Fuel Cost" value={formatCurrency(kpis?.totalFuelCost ?? 0)} color="yellow" />
-        <StatsCard title="Total Distance" value={formatDistance(kpis?.totalDistance ?? 0)} color="purple" />
-        <StatsCard title="Fuel Efficiency" value={kpis?.averageFuelEfficiency != null ? formatEfficiency(kpis.averageFuelEfficiency) : 'N/A'} color="indigo" />
+        <StatsCard
+          title="Total Distance"
+          value={formatDistance(kpis?.totalDistance ?? 0)}
+          description={
+            kpis && kpis.estimatedDistanceKm > 0
+              ? kpis.estimatedDistanceKm >= kpis.totalDistance
+                ? 'Fully estimated (map-derived/manual, no GPS or odometer)'
+                : `${formatDistance(kpis.estimatedDistanceKm)} estimated (no GPS/odometer)`
+              : undefined
+          }
+          color="purple"
+        />
+        <StatsCard
+          title="Fuel Efficiency"
+          value={kpis?.averageFuelEfficiency != null ? formatEfficiency(kpis.averageFuelEfficiency) : 'N/A'}
+          description={kpis && kpis.estimatedDistanceKm > 0 ? 'Partly based on estimated distance' : undefined}
+          color="indigo"
+        />
         <StatsCard title="Cost per Km" value={kpis?.costPerKm != null ? formatCurrency(kpis.costPerKm) : 'N/A'} color="orange" />
         <StatsCard title="Pending Maintenance" value={kpis?.pendingMaintenance ?? 0} color="yellow" />
       </div>
