@@ -7,16 +7,12 @@
 // mirroring frontend/modules/fuel/services/fuelIntelligence.api.ts's
 // own precedent for the same reasoning.
 //
-// BACKEND-ONLY PHASE: only `getReport` (format=json) is wired up here.
-// `downloadExcel`/`downloadPdf` are deliberately NOT added yet -- the
-// backend's excel/pdf formats currently return 501 Not Implemented
-// (see the controller's header), so adding download buttons that lead
-// to a guaranteed error would be worse than not offering them. Add
-// these two methods, mirroring fuelIntelligenceApi.downloadExcel/
-// downloadPdf exactly, once modules/expenses/reporting's Excel/PDF
-// generators exist.
+// Same two request shapes as the rest of the app: apiClient.get<T> for
+// the JSON report, and apiClient.getBlob for the file downloads --
+// identical pattern to fuelIntelligenceApi's downloadExcel/downloadPdf.
 
 import { apiClient } from '@/shared/utils/api-client.utils';
+import { downloadBlob } from '@/shared/utils/file-download.utils';
 import type { MonthlyExpenseIntelligenceReport } from '../types';
 
 const BASE = '/api/expenses/monthly-intelligence-report';
@@ -33,6 +29,24 @@ export const expenseIntelligenceApi = {
     return apiClient.get<MonthlyExpenseIntelligenceReport>(BASE, {
       params: { month, format: 'json' },
     });
+  },
+
+  /** Downloads the Excel workbook and saves it via the browser -- no return value, matching expenseApi's file-producing calls. */
+  async downloadExcel(month: string): Promise<void> {
+    assertMonth(month);
+    const { blob, filename } = await apiClient.getBlob(BASE, {
+      params: { month, format: 'excel' },
+    });
+    downloadBlob(blob, filename ?? `expense-intelligence-report-${month}.xlsx`);
+  },
+
+  /** Downloads the narrative PDF report and saves it via the browser. */
+  async downloadPdf(month: string): Promise<void> {
+    assertMonth(month);
+    const { blob, filename } = await apiClient.getBlob(BASE, {
+      params: { month, format: 'pdf' },
+    });
+    downloadBlob(blob, filename ?? `expense-intelligence-report-${month}.pdf`);
   },
 };
 

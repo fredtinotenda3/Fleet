@@ -8,9 +8,7 @@
 // surface, not expense CRUD, so it deliberately does not reuse
 // Permission.EXPENSE_VIEW.
 //
-// BACKEND-ONLY PHASE: "excel" and "pdf" are accepted as valid format
-// values but currently return 501 Not Implemented -- see
-// expense-intelligence.controller.ts's header for why.
+// Serves "json", "excel" and "pdf", same as the fuel report's endpoint.
 
 import { NextRequest } from 'next/server';
 import { expenseIntelligenceController } from '@/modules/expenses/controllers/expense-intelligence.controller';

@@ -7,24 +7,20 @@
 // request and thread it into the service, never accept a caller-supplied
 // org/tenant id for the data itself.
 //
-// BACKEND-ONLY PHASE -- see monthly-expense-intelligence.service.ts's
-// header and the delivery MANIFEST for the full context. Per the user's
-// own chosen build sequencing (backend first, then PDF/Excel/UI as a
-// separate, later delivery), this endpoint currently serves "json" only.
-// "excel" and "pdf" are kept as RECOGNIZED, VALID format values -- not
-// rejected as a bad request -- so that the query contract this endpoint
-// exposes today does not have to change (a breaking change for any
-// caller) once the Excel/PDF generators are actually built; they return
-// a 501 Not Implemented with a clear message instead of a generic 400,
-// so a caller/consumer can tell "this format doesn't exist yet" apart
-// from "you asked for something invalid."
+// Serves all three formats ("json", "excel", "pdf"), same as the fuel
+// report's controller -- the Excel and PDF generators
+// (expense-intelligence-excel.generator.ts, expense-intelligence-pdf.generator.ts)
+// are built to the same discipline as the fuel report's own generators.
 
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { monthlyExpenseIntelligenceService } from '../reporting/monthly-expense-intelligence.service';
+import { buildExpenseIntelligenceExcelBuffer } from '../reporting/expense-intelligence-excel.generator';
+import { buildExpenseIntelligencePdfBuffer } from '../reporting/expense-intelligence-pdf.generator';
 import { successResponse, errorResponse } from '@/server/utils/response.utils';
-import { isAppError, describeError, ValidationError, AppError } from '@/server/errors/app.errors';
+import { isAppError, describeError, ValidationError } from '@/server/errors/app.errors';
 import { getTenantFromRequest } from '@/server/utils/context.utils';
 import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
+import { applySecurityHeaders } from '@/infrastructure/security/security-headers';
 
 type ReportFormat = 'json' | 'excel' | 'pdf';
 
@@ -53,16 +49,40 @@ export class ExpenseIntelligenceController {
         throw new ValidationError('A "month" query parameter in "YYYY-MM" format is required.');
       }
 
-      if (formatParam === 'excel' || formatParam === 'pdf') {
-        throw new AppError(
-          `The Expense Intelligence Report's "${formatParam}" export is not available yet -- only "json" is currently supported. Excel and PDF exports are planned as a follow-up delivery.`,
-          'NOT_IMPLEMENTED',
-          501
-        );
+      const report = await monthlyExpenseIntelligenceService.buildReport(tenantId, context, monthParam);
+
+      if (formatParam === 'json') {
+        return successResponse(report);
       }
 
-      const report = await monthlyExpenseIntelligenceService.buildReport(tenantId, context, monthParam);
-      return successResponse(report);
+      if (formatParam === 'excel') {
+        const buffer = await buildExpenseIntelligenceExcelBuffer(report);
+        const filename = `expense-intelligence-report-${monthParam}.xlsx`;
+        const response = new NextResponse(new Uint8Array(buffer), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'Content-Disposition': `attachment; filename="${filename}"`,
+            'Content-Length': String(buffer.length),
+            'Cache-Control': 'no-store',
+          },
+        });
+        return applySecurityHeaders(response);
+      }
+
+      // pdf
+      const buffer = await buildExpenseIntelligencePdfBuffer(report);
+      const filename = `expense-intelligence-report-${monthParam}.pdf`;
+      const response = new NextResponse(new Uint8Array(buffer), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `attachment; filename="${filename}"`,
+          'Content-Length': String(buffer.length),
+          'Cache-Control': 'no-store',
+        },
+      });
+      return applySecurityHeaders(response);
     } catch (error) {
       return this.handleError(error);
     }

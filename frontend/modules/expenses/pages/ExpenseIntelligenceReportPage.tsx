@@ -3,15 +3,8 @@
 // UI for GET /api/expenses/monthly-intelligence-report. Mirrors
 // frontend/modules/fuel/pages/FuelIntelligenceReportPage.tsx's
 // established patterns: DataState for the load/error/permission
-// machinery, isForbiddenError for the 403 branch.
-//
-// BACKEND-ONLY PHASE: no Excel/PDF download buttons yet. The backend
-// currently returns 501 Not Implemented for those formats (see
-// expense-intelligence.controller.ts), so offering buttons that lead
-// to a guaranteed error would be worse than omitting them. Add them
-// back, mirroring the fuel page's handleDownload exactly, once
-// modules/expenses/reporting's Excel/PDF generators exist and
-// expenseIntelligenceApi grows downloadExcel/downloadPdf methods.
+// machinery, isForbiddenError for the 403 branch, and the same
+// getBlob-then-downloadBlob download pattern for Excel/PDF export.
 //
 // NO DRIVER SECTION -- see expenseIntelligence.types.ts's header for
 // why; this is a scope decision, not an omission.
@@ -20,7 +13,8 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, FileSpreadsheet, FileText } from 'lucide-react';
+import { toast } from 'sonner';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { Label } from '@/frontend/shared/ui/forms/label';
@@ -40,6 +34,7 @@ import {
   isValidCurrencyCode,
 } from '../components';
 import { useExpenseIntelligenceReport } from '../hooks/useExpenseIntelligenceReport';
+import { expenseIntelligenceApi } from '../services/expenseIntelligence.api';
 import { EXPENSE_ROUTES } from '../routes';
 
 function currentMonth(): string {
@@ -50,10 +45,29 @@ function currentMonth(): string {
 export function ExpenseIntelligenceReportPage() {
   const router = useRouter();
   const [month, setMonth] = useState(currentMonth());
+  const [downloading, setDownloading] = useState<'excel' | 'pdf' | null>(null);
 
   const { data: report, isLoading, isError, error, refetch } = useExpenseIntelligenceReport(month);
 
   const restricted = isForbiddenError(error);
+
+  async function handleDownload(format: 'excel' | 'pdf') {
+    setDownloading(format);
+    try {
+      if (format === 'excel') {
+        await expenseIntelligenceApi.downloadExcel(month);
+      } else {
+        await expenseIntelligenceApi.downloadPdf(month);
+      }
+      toast.success(`${format === 'excel' ? 'Excel workbook' : 'PDF report'} downloaded.`);
+    } catch (err) {
+      toast.error(`Failed to download the ${format === 'excel' ? 'Excel workbook' : 'PDF report'}.`, {
+        description: describeQueryError(err),
+      });
+    } finally {
+      setDownloading(null);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -81,9 +95,26 @@ export function ExpenseIntelligenceReportPage() {
           />
         </div>
 
-        <p className="text-caption text-muted-foreground">
-          Excel and PDF export for this report are coming in a follow-up release.
-        </p>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!report || downloading !== null}
+            onClick={() => void handleDownload('excel')}
+          >
+            <FileSpreadsheet className="h-3.5 w-3.5" />
+            {downloading === 'excel' ? 'Downloading…' : 'Download Excel'}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!report || downloading !== null}
+            onClick={() => void handleDownload('pdf')}
+          >
+            <FileText className="h-3.5 w-3.5" />
+            {downloading === 'pdf' ? 'Downloading…' : 'Download PDF'}
+          </Button>
+        </div>
       </div>
 
       <DataState
