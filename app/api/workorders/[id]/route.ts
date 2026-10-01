@@ -1,4 +1,4 @@
-// app/api/workorders/[id]/route.ts
+// app/api/workorders/[id]/status/route.ts
 import { withAuth } from '@/server/middleware/with-auth';
 import { workOrderController } from '@/modules/workorders/controllers/workorder.controller';
 import { Permission } from '@/server/permissions/roles';
@@ -7,10 +7,10 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-export const GET = withAuth<RouteParams>(
+export const PUT = withAuth<RouteParams>(
   async (req, _ctx, { params }) => {
     const { id } = await params;
-    return workOrderController.get(req, id);
+    return workOrderController.changeStatus(req, id);
   },
-  { permission: Permission.WORKORDER_VIEW }
+  { permission: Permission.WORKORDER_MANAGE }
 );

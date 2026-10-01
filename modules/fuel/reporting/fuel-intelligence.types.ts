@@ -160,39 +160,39 @@ export interface DriverFindingRow {
   vehicleCount: Labeled<number>;
 }
 
-/**
- * Driver attribution for the Monthly Fuel & Fleet Intelligence Report.
- *
- * SINGLE SOURCE OF TRUTH: every figure here is resolved from each fuel
- * log's vehicle's driver assignment on the Vehicle Operational Hub
- * (Vehicle.currentDriverId) via FuelRepository.getFuelByAssignedDriver --
- * the exact resolution the Fuel Logs table, its export, its driver
- * filter and the "Fuel cost by driver" chart use. The report therefore
- * can never disagree with those screens about who a fuel log belongs to
- * or how much fuel cost is unassigned.
- *
- * History: an earlier revision computed these from FuelLog.driver_id
- * (the optional driver typed onto the log at entry) and later showed
- * that "entry-time" figure alongside a Hub figure. Drivers in this
- * platform are assigned to VEHICLES on the Hub, not typed onto each
- * purchase, so the entry-time figure reported ~2/3 of spend as
- * "unassigned" on a fully-assigned fleet and contradicted every other
- * fuel screen. It was removed. FuelLog.driver_id itself is still stored
- * untouched and still appears in the raw data export.
- *
- * Known limitation (stated in `attributionNote`, not hidden): there is no
- * assignment-history record, so a vehicle reassigned mid-period has the
- * whole period's fuel attributed to its CURRENT driver.
- */
 export interface DriverFindingsSection {
-  /** One row per assigned driver. Never contains the unassigned bucket. */
   rows: DriverFindingRow[];
-  /** Fuel cost this period on vehicles with no driver assigned on the Hub. */
   unassignedCost: Labeled<number>;
   unassignedSharePercent: Labeled<number>;
-  /** Plates carrying that unassigned cost -- the actionable list (assign a driver to each on the Hub). */
-  unassignedVehiclePlates: string[];
   attributionNote: string;
+  /**
+   * A second, independently-computed lens on the SAME reporting period:
+   * fuel cost grouped by each vehicle's CURRENT Vehicle Operational Hub
+   * driver assignment (Vehicle.currentDriverId) -- the same resolution
+   * the Fuel Logs table and "Fuel cost by driver" chart use for
+   * display. `currentAssignmentUnassignedCost`/`...SharePercent` is the
+   * cost/share belonging to vehicles with NO current Hub driver.
+   *
+   * Deliberately shown SIDE BY SIDE with `unassignedCost`/
+   * `unassignedSharePercent` above, never merged into them:
+   * `unassignedCost` answers "how much of this period's fuel cost has
+   * no driver recorded at the moment of entry" (transaction-time, the
+   * permanent audit trail -- PART 4 requires this never be rewritten by
+   * a later reassignment) while this answers "how much of this period's
+   * fuel cost belongs to a vehicle with nobody currently assigned on
+   * the Hub, right now" (a live operational snapshot that changes the
+   * moment someone is assigned or unassigned). The two numbers will
+   * usually differ, often by a lot -- that is expected and correct, not
+   * a bug: most historical fuel logs were never stamped with a
+   * driver_id at entry (drivers are assigned to VEHICLES via the Hub,
+   * not stamped onto every past fuel purchase), so
+   * unassignedSharePercent is typically high while
+   * currentAssignmentUnassignedSharePercent is typically low on a fleet
+   * with good Hub assignment hygiene.
+   */
+  currentAssignmentUnassignedCost: Labeled<number>;
+  currentAssignmentUnassignedSharePercent: Labeled<number>;
+  currentAssignmentNote: string;
 }
 
 export interface FuelTypeMixRow {

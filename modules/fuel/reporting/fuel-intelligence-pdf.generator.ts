@@ -242,11 +242,13 @@ export async function buildFuelIntelligencePdfBuffer(report: MonthlyFuelIntellig
     if (sortedDriverRows.length > 10) {
       r.para(`+ ${sortedDriverRows.length - 10} more driver(s) -- see the Excel workbook's Driver Fuel Intelligence sheet for the full list.`, { color: FAINT, size: 9 });
     }
-    r.keyValueRow('Unassigned fuel cost (no Hub driver)', labeledText(report.driverFindings.unassignedCost, (v) => v.toFixed(2)));
-    r.keyValueRow('Unassigned share of fleet cost', labeledText(report.driverFindings.unassignedSharePercent, fmtPercent));
-    if (report.driverFindings.unassignedVehiclePlates.length > 0) {
-      r.keyValueRow('Vehicles with no Hub driver', report.driverFindings.unassignedVehiclePlates.join(', '));
-    }
+    r.keyValueRow('Unattributed fuel cost (entry-time)', labeledText(report.driverFindings.unassignedCost, (v) => v.toFixed(2)));
+    r.keyValueRow('Unattributed share of fleet cost (entry-time)', labeledText(report.driverFindings.unassignedSharePercent, fmtPercent));
+
+    r.subheading('Vehicle Hub coverage (live snapshot, not an audit trail)');
+    r.para(report.driverFindings.currentAssignmentNote, { color: MUTED, size: 9, italic: true });
+    r.keyValueRow('Fuel cost with no current Hub driver', labeledText(report.driverFindings.currentAssignmentUnassignedCost, (v) => v.toFixed(2)));
+    r.keyValueRow('Share of fleet cost', labeledText(report.driverFindings.currentAssignmentUnassignedSharePercent, fmtPercent));
 
     // ─── Fuel Type Mix ──────────────────────────────────────────────────
     r.sectionHeader('Fuel Type Mix');

@@ -153,10 +153,11 @@ export class FuelRepository extends BaseRepository<FuelLog> {
    * text. All 5 call sites already have a tenantId/organizationId in
    * scope.
    *
-   * Same attribution as getFuelByAssignedDriver below, which backs the
-   * "Fuel cost by driver" chart AND the Monthly Fuel & Fleet
-   * Intelligence Report's driverFindings section -- keep the two in
-   * step, or the report and this table will disagree again.
+   * Deliberately unrelated to getFuelByDriver below, which keeps
+   * grouping by the raw transaction-time driver_id for the Monthly Fuel
+   * & Fleet Intelligence Report's driverFindings section -- that
+   * section's whole point is "who actually fuelled this vehicle,"
+   * historically, and must not be affected by a later reassignment.
    */
   private async enrichFuelLogs(logs: FuelLog[], tenantId: string): Promise<FuelLog[]> {
     const stationIds = Array.from(
@@ -692,11 +693,12 @@ export class FuelRepository extends BaseRepository<FuelLog> {
    * Operational Hub is reflected on this chart immediately, including
    * for that vehicle's entire fuel history, with no backfill to run.
    *
-   * Also backs the Monthly Fuel & Fleet Intelligence Report's
-   * driverFindings section, so the report, this chart and the Fuel Logs
-   * table (enrichFuelLogs) share one attribution. getFuelByDriver above
-   * (per-log entry-time driver_id) is kept only for the legacy
-   * GetFuelByDriverQuery CQRS handler.
+   * The Monthly Fuel & Fleet Intelligence Report's driverFindings
+   * section calls getFuelByDriver directly, not this method -- that
+   * report is deliberately about who actually fuelled each vehicle
+   * historically, and must not be rewritten by a later reassignment. Do
+   * not fold these two methods back together; do not swap the report's
+   * call site to this one.
    */
   async getFuelByAssignedDriver(
     tenantId: string,

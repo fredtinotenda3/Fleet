@@ -1,42 +1,35 @@
-// app/api/workflows/instances/[id]/route.ts
+// app/api/workflows/instances/[id]/steps/[stepId]/route.ts
 //
-// PHASE 0, F-4 -- ROUTING DEFECT FOUND DURING REMEDIATION.
+// PHASE 0, F-4. This file previously contained a mis-pasted copy of
+// app/api/workflows/instances/[id]/route.ts -- same header comment,
+// `params: { id }` with no `stepId`, handlers calling getInstance and
+// cancelInstance. The `[stepId]` segment was required by the path and
+// then never read, so ANY value satisfied it: a caller could cancel
+// instance `abc` by requesting DELETE /instances/abc/steps/anything.
 //
-// This file did not exist. Its intended contents had been pasted into
-// app/api/workflows/instances/[id]/steps/[stepId]/route.ts instead --
-// that file still carried this file's header comment, declared
-// `params: { id }` with no `stepId`, and called getInstance /
-// cancelInstance. Two consequences, both real:
+// Those handlers are gone (restored to their correct path). Approving
+// and rejecting are separate sub-routes rather than one verb on this
+// path, because they take different payloads (comment vs a required
+// reason) and carry different permissions -- collapsing them into one
+// handler with an `action` discriminator would mean one route gate for
+// two different privileges.
 //
-//   1. approveStep / rejectStep had NO HTTP route at all. The
-//      controller methods existed and nothing reached them.
-//   2. Instance read and cancellation were served at a path with a
-//      REQUIRED but completely ignored `[stepId]` segment, so any
-//      arbitrary value in that position worked
-//      (/instances/abc/steps/anything -> cancel instance abc).
-//
-// Restored to the correct path here, with the permissions F-4 requires.
-import { NextRequest } from 'next/server';
-import { workflowController } from '@/modules/workflows/controllers/workflow.controller';
-import { withAuth } from '@/server/middleware/with-auth';
-import { Permission } from '@/server/permissions/roles';
+// Retained as an explicit 410 rather than deleted, following the
+// precedent set by app/api/vehicles/direct/route.ts: a silent 404 on a
+// path that used to work reads as an outage to whoever calls it, and
+// this one had a genuine (if wrongly-routed) caller contract.
+import { NextResponse } from 'next/server';
 
-interface RouteParams {
-  params: Promise<{ id: string }>;
+export async function GET() {
+  return NextResponse.json(
+    {
+      error:
+        'This endpoint has been removed. Use GET /api/workflows/instances/{id} to read an instance, ' +
+        'or POST /api/workflows/instances/{id}/steps/{stepId}/approve|reject to decide a step.',
+      code: 'ENDPOINT_RETIRED',
+    },
+    { status: 410 }
+  );
 }
 
-export const GET = withAuth<RouteParams>(
-  async (req, _context, { params }) => {
-    const { id } = await params;
-    return workflowController.getInstance(req, id);
-  },
-  { permission: Permission.WORKFLOW_VIEW }
-);
-
-export const DELETE = withAuth<RouteParams>(
-  async (req, _context, { params }) => {
-    const { id } = await params;
-    return workflowController.cancelInstance(req, id);
-  },
-  { permission: Permission.WORKFLOW_CANCEL }
-);
+export const DELETE = GET;

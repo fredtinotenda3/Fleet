@@ -1,4 +1,4 @@
-// app/api/scheduling/[id]/route.ts
+// app/api/scheduling/[id]/start/route.ts
 import { withAuth } from '@/server/middleware/with-auth';
 import { schedulingController } from '@/modules/scheduling/controllers/scheduling.controller';
 import { Permission } from '@/server/permissions/roles';
@@ -7,17 +7,10 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-export const GET = withAuth<RouteParams>(
+export const POST = withAuth<RouteParams>(
   async (req, _ctx, { params }) => {
     const { id } = await params;
-    return schedulingController.get(req, id);
-  },
-  { permission: Permission.SCHEDULE_SHIFT_VIEW }
-);
-export const PUT = withAuth<RouteParams>(
-  async (req, _ctx, { params }) => {
-    const { id } = await params;
-    return schedulingController.update(req, id);
+    return schedulingController.start(req, id);
   },
   { permission: Permission.SCHEDULE_SHIFT_MANAGE }
 );

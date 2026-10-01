@@ -295,12 +295,7 @@ export interface RawFuelLogQualityInput {
   date: string; // ISO
   fuel_volume: number;
   cost: number;
-  /**
-   * The driver assigned to the log's vehicle on the Vehicle Operational
-   * Hub (as resolved for the Fuel Logs table), NOT FuelLog.driver_id --
-   * drivers are assigned to vehicles, not typed onto each purchase.
-   */
-  assigned_driver_id?: string | null;
+  driver_id?: string | null;
   fuel_type?: string | null;
   odometer?: number | null;
 }
@@ -308,8 +303,9 @@ export interface RawFuelLogQualityInput {
 /**
  * Assesses field-completeness and suspected duplicate entries for the
  * raw fuel logs in a reporting period. This is descriptive, not
- * accusatory: a vehicle with no Hub driver is not itself wrong (pool
- * equipment such as a generator legitimately has none), but a director benefits from
+ * accusatory: a missing driver_id is not itself wrong (unattributed
+ * fuel is a legitimate, already-supported state -- see
+ * getFuelByDriver's "Unassigned" bucket), but a director benefits from
  * knowing HOW MUCH of the period's data carries each gap, since it
  * bounds how much confidence to place in driver- or vehicle-level
  * findings built from the same data.
@@ -329,7 +325,7 @@ export function assessDataQuality(
     };
   }
 
-  const missingDriver = logs.filter((l) => !l.assigned_driver_id).length;
+  const missingDriver = logs.filter((l) => !l.driver_id).length;
   const missingFuelType = logs.filter((l) => !l.fuel_type).length;
   const missingOdometer = logs.filter((l) => l.odometer === undefined || l.odometer === null).length;
 
@@ -352,12 +348,12 @@ export function assessDataQuality(
 
   const metrics: DataQualityMetric[] = [
     {
-      label: 'Fuel logs on a vehicle with no driver assigned (Vehicle Hub)',
+      label: 'Fuel logs with no driver recorded',
       affectedCount: missingDriver,
       totalCount: total,
       percent: pct(missingDriver),
       severity: severityFor(pct(missingDriver)),
-      detail: 'Assign a driver to these vehicles on the Vehicle Operational Hub. Until then these logs are shown as unassigned in driver findings; they are still included in fleet and vehicle totals.',
+      detail: 'These logs cannot contribute to driver-level fuel cost findings; they are included in fleet and vehicle totals.',
     },
     {
       label: 'Fuel logs with no fuel type recorded',

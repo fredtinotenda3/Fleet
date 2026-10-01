@@ -1,7 +1,12 @@
-// app/(protected)/trips/page.tsx
+// app/(protected)/trips/vehicles/[plate]/page.tsx
 
-import { TripsListPage } from '@/frontend/modules/trips/pages/TripsListPage';
+import { VehicleTripHistoryPage } from '@/frontend/modules/trips/pages/VehicleTripHistoryPage';
 
-export default function Page() {
-  return <TripsListPage />;
+interface PageProps {
+  params: Promise<{ plate: string }>;
+}
+
+export default async function Page({ params }: PageProps) {
+  const { plate } = await params;
+  return <VehicleTripHistoryPage licensePlate={decodeURIComponent(plate)} />;
 }

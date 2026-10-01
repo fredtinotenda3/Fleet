@@ -214,19 +214,31 @@ function addDriverSheet(workbook: ExcelJS.Workbook, report: MonthlyFuelIntellige
   ws.getColumn('litres').numFmt = '#,##0.00';
 
   const noteRow = ws.lastRow!.number + 2;
-  ws.getCell(`A${noteRow}`).value = 'Unassigned fuel cost (no Hub driver):';
+  ws.getCell(`A${noteRow}`).value = 'Unattributed fuel cost (entry-time):';
   ws.getCell(`A${noteRow}`).font = { bold: true };
   ws.getCell(`B${noteRow}`).value = labeledText(report.driverFindings.unassignedCost, (v) => v.toFixed(2));
-  ws.getCell(`A${noteRow + 1}`).value = 'Unassigned share of fleet cost:';
+  ws.getCell(`A${noteRow + 1}`).value = 'Unattributed share of fleet cost (entry-time):';
   ws.getCell(`B${noteRow + 1}`).value = labeledText(report.driverFindings.unassignedSharePercent, (v) => `${v}%`);
-  ws.getCell(`A${noteRow + 2}`).value = 'Vehicles with no Hub driver:';
-  ws.getCell(`B${noteRow + 2}`).value = report.driverFindings.unassignedVehiclePlates.length > 0
-    ? report.driverFindings.unassignedVehiclePlates.join(', ')
-    : 'None';
-  ws.getCell(`A${noteRow + 4}`).value = report.driverFindings.attributionNote;
-  ws.getCell(`A${noteRow + 4}`).font = SUBTLE_FONT;
-  ws.getCell(`A${noteRow + 4}`).alignment = { wrapText: true };
-  ws.mergeCells(`A${noteRow + 4}:E${noteRow + 6}`);
+  ws.getCell(`A${noteRow + 3}`).value = report.driverFindings.attributionNote;
+  ws.getCell(`A${noteRow + 3}`).font = SUBTLE_FONT;
+  ws.getCell(`A${noteRow + 3}`).alignment = { wrapText: true };
+  ws.mergeCells(`A${noteRow + 3}:E${noteRow + 5}`);
+
+  // Vehicle Hub coverage -- a second, independently-computed lens shown
+  // alongside the transaction-time figures above; see
+  // DriverFindingsSection's own doc comment for why this is never
+  // merged into them.
+  const hubRow = noteRow + 6;
+  ws.getCell(`A${hubRow}`).value = 'Vehicle Hub coverage (live snapshot, not an audit trail):';
+  ws.getCell(`A${hubRow}`).font = { bold: true };
+  ws.getCell(`A${hubRow + 1}`).value = 'Fuel cost with no current Hub driver:';
+  ws.getCell(`B${hubRow + 1}`).value = labeledText(report.driverFindings.currentAssignmentUnassignedCost, (v) => v.toFixed(2));
+  ws.getCell(`A${hubRow + 2}`).value = 'Share of fleet cost:';
+  ws.getCell(`B${hubRow + 2}`).value = labeledText(report.driverFindings.currentAssignmentUnassignedSharePercent, (v) => `${v}%`);
+  ws.getCell(`A${hubRow + 4}`).value = report.driverFindings.currentAssignmentNote;
+  ws.getCell(`A${hubRow + 4}`).font = SUBTLE_FONT;
+  ws.getCell(`A${hubRow + 4}`).alignment = { wrapText: true };
+  ws.mergeCells(`A${hubRow + 4}:E${hubRow + 6}`);
 }
 
 function addFuelTypeSheet(workbook: ExcelJS.Workbook, report: MonthlyFuelIntelligenceReport): void {

@@ -1,19 +1,98 @@
-// app/api/reports/route.ts
+// app/api/reports/schedule/route.ts
 //
-// Legacy alias for the report list/create endpoints. Proxies straight to
-// the real reporting system (modules/reporting) instead of the removed
-// modules/reports module.
+// Legacy alias for scheduling a report. There's no separate "schedule"
+// entity in modules/reporting — a schedule is just the `schedule` field on
+// a ReportDefinition (see report-scheduler.service.ts). This route updates
+// that field on the given definition and syncs it onto the cron catalogue,
+// the same way report-definition.controller.ts#update does internally.
 import { NextRequest } from 'next/server';
+import { z } from 'zod';
 import { withAuth } from '@/server/middleware/with-auth';
 import { Permission } from '@/server/permissions/roles';
-import { reportDefinitionController } from '@/modules/reporting/controllers/report-definition.controller';
+import { reportBuilderService } from '@/modules/reporting/services/report-builder.service';
+import { reportSchedulerService } from '@/modules/reporting/services/report-scheduler.service';
+import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
+import { successResponse, errorResponse } from '@/server/utils/response.utils';
+import { AppError } from '@/server/errors/app.errors';
+import { validateWithZod } from '@/shared/utils/validation.utils';
 
-export const GET = withAuth(
-  async (req: NextRequest, context) => reportDefinitionController.list(req, context),
-  { permission: Permission.REPORT_VIEW }
-);
+const scheduleRequestSchema = z.object({
+  reportDefinitionId: z.string().min(1),
+  schedule: z.object({
+    enabled: z.boolean(),
+    frequency: z.enum(['daily', 'weekly', 'monthly']),
+    dayOfWeek: z.number().int().min(0).max(6).optional(),
+    dayOfMonth: z.number().int().min(1).max(28).optional(),
+    hourOfDay: z.number().int().min(0).max(23),
+    format: z.enum(['pdf', 'excel', 'csv', 'word']),
+    recipients: z.array(z.string().email()).min(1),
+  }),
+});
+
+/**
+ * ReportScheduleConfig only persists a cron string (see
+ * report-scheduler.service.ts) — the frequency/hourOfDay/dayOfWeek/
+ * dayOfMonth fields here are this legacy route's friendlier input shape,
+ * mirroring frontend/modules/reports/utils/scheduleParser.ts#buildCronExpression.
+ */
+function buildCronFromFrequency(schedule: {
+  frequency: 'daily' | 'weekly' | 'monthly';
+  hourOfDay: number;
+  dayOfWeek?: number;
+  dayOfMonth?: number;
+}): string {
+  switch (schedule.frequency) {
+    case 'daily':
+      return `0 ${schedule.hourOfDay} * * *`;
+    case 'weekly':
+      return `0 ${schedule.hourOfDay} * * ${schedule.dayOfWeek ?? 1}`;
+    case 'monthly':
+      return `0 ${schedule.hourOfDay} ${schedule.dayOfMonth ?? 1} * *`;
+  }
+}
 
 export const POST = withAuth(
-  async (req: NextRequest, context) => reportDefinitionController.create(req, context),
-  { permission: Permission.REPORT_CREATE }
+  async (req: NextRequest, context) => {
+    try {
+      const body = await req.json();
+      const result = await validateWithZod(scheduleRequestSchema, body);
+      if (!result.success || !result.data) {
+        return errorResponse('Validation failed', 'VALIDATION_ERROR', 400, result.errors);
+      }
+
+      const { reportDefinitionId, schedule } = result.data;
+      const updated = await reportBuilderService.update(
+        reportDefinitionId,
+        {
+          schedule: {
+            enabled: schedule.enabled,
+            cron: buildCronFromFrequency(schedule),
+            format: schedule.format,
+            recipients: schedule.recipients,
+          },
+        },
+        context.tenantId,
+        context.userId
+      );
+      // The caller's org-unit scope, frozen onto the schedule. Without
+      // it a scheduled export runs organization-wide in the worker and
+      // is emailed to the recipient list. See ReportSchedulerService.
+      const scheduleContext = await resolveTenantContext(req);
+      await reportSchedulerService.syncSchedule(
+        updated,
+        context.tenantId,
+        context.userId,
+        scheduleContext.accessibleOrgUnitIds
+      );
+
+      return successResponse(updated);
+    } catch (error) {
+      if (error instanceof AppError) {
+        return errorResponse(error.message, error.code, error.statusCode, error.details);
+      }
+      console.error('[POST /api/reports/schedule] Unexpected error:', error);
+      return errorResponse('Internal server error', 'INTERNAL_ERROR', 500);
+    }
+  },
+  { permission: Permission.REPORT_SCHEDULE }
 );

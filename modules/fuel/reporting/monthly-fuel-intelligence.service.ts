@@ -63,6 +63,7 @@ export class MonthlyFuelIntelligenceService {
       previousStats,
       currentByVehicle,
       previousByVehicle,
+      currentByDriver,
       currentByAssignedDriver,
       fuelTypeDistribution,
       abnormalConsumption,
@@ -73,12 +74,17 @@ export class MonthlyFuelIntelligenceService {
       fuelRepository.getFuelStats(tenantId, { startDate: previousPeriod.start, endDate: previousPeriod.end }, undefined, context),
       fuelRepository.getFuelingFrequencyByVehicle(tenantId, { startDate: period.start, endDate: period.end }, ENTITY_LIMIT, undefined, context),
       fuelRepository.getFuelingFrequencyByVehicle(tenantId, { startDate: previousPeriod.start, endDate: previousPeriod.end }, ENTITY_LIMIT, undefined, context),
-      // Driver attribution via the Vehicle Operational Hub
-      // (Vehicle.currentDriverId) -- the SAME resolution the Fuel Logs
-      // table, its driver filter/export and the "Fuel cost by driver"
-      // chart use, so this report cannot disagree with them. See
-      // DriverFindingsSection's doc comment for why the per-log
-      // entry-time driver_id is no longer used here.
+      // Transaction-time attribution (who fuelled it, per-log driver_id)
+      // -- PART 4's permanent audit trail. Deliberately untouched.
+      fuelRepository.getFuelByDriver(tenantId, { startDate: period.start, endDate: period.end }, ENTITY_LIMIT, 'cost', undefined, context),
+      // Current-assignment attribution (Vehicle.currentDriverId, via the
+      // Vehicle Operational Hub) -- the same resolution the Fuel Logs
+      // table/chart use for display (see fuel-query.service.ts's own
+      // doc comment on why the two methods are deliberate siblings, not
+      // one repointed to the other). Added so buildDriverFindings can
+      // show both lenses side by side rather than only the
+      // transaction-time one, which on its own now visibly disagrees
+      // with what the table/chart show for the same period.
       fuelRepository.getFuelByAssignedDriver(tenantId, { startDate: period.start, endDate: period.end }, ENTITY_LIMIT, 'cost', undefined, context),
       fuelRepository.getFuelTypeDistribution(tenantId, { startDate: period.start, endDate: period.end }, undefined, context),
       // Not period-scoped internally (see fuel.repository.ts's own comment on
@@ -93,7 +99,7 @@ export class MonthlyFuelIntelligenceService {
     const fleetPosition = this.buildFleetPosition(currentStats, currentByVehicle);
     const whatChanged = this.buildWhatChanged(currentStats, previousStats, currentByVehicle, previousByVehicle, previousPeriod.label);
     const costDrivers = this.buildCostDrivers(currentByVehicle, previousByVehicle);
-    const driverFindings = this.buildDriverFindings(currentByAssignedDriver, currentStats);
+    const driverFindings = this.buildDriverFindings(currentByDriver, currentByAssignedDriver, currentStats);
     const fuelTypeMix = this.buildFuelTypeMix(fuelTypeDistribution);
     const abnormalFindings = this.buildAbnormalFindings(abnormalConsumption, period, costDrivers);
     const allocationReconciliation = this.buildAllocationReconciliation(currentStats, ledgerRows);
@@ -103,11 +109,7 @@ export class MonthlyFuelIntelligenceService {
         date: new Date(l.date).toISOString(),
         fuel_volume: l.fuel_volume,
         cost: l.cost,
-        // Hub-resolved driver (set by enrichFuelLogs from
-        // Vehicle.currentDriverId), NOT the log's own entry-time
-        // driver_id -- so the data-quality check measures the same
-        // thing the driver findings and the Fuel Logs table do.
-        assigned_driver_id: l.driver?._id ?? null,
+        driver_id: l.driver_id,
         fuel_type: l.fuel_type,
         odometer: l.odometer,
       })),
@@ -268,10 +270,11 @@ export class MonthlyFuelIntelligenceService {
   }
 
   private buildDriverFindings(
+    byDriver: Awaited<ReturnType<typeof fuelRepository.getFuelByDriver>>,
     byAssignedDriver: Awaited<ReturnType<typeof fuelRepository.getFuelByAssignedDriver>>,
     stats: Awaited<ReturnType<typeof fuelRepository.getFuelStats>>
   ): DriverFindingsSection {
-    const rows: DriverFindingRow[] = byAssignedDriver
+    const rows: DriverFindingRow[] = byDriver
       .filter((d) => d.driver_id !== null)
       .map((d) => ({
         driver_id: d.driver_id,
@@ -282,21 +285,33 @@ export class MonthlyFuelIntelligenceService {
         vehicleCount: fact(d.vehicleCount),
       }));
 
-    // The null bucket = fuel logs whose vehicle has no driver assigned
-    // on the Hub (or whose assigned driver record no longer resolves).
-    const unassigned = byAssignedDriver.find((d) => d.driver_id === null);
+    const unassigned = byDriver.find((d) => d.driver_id === null);
     const unassignedCost = unassigned?.totalCost ?? 0;
-    const hasLogs = stats.logCount > 0;
+
+    // Current-assignment lens -- see DriverFindingsSection's own doc
+    // comment for why this is computed independently and shown
+    // alongside the transaction-time figures above, never merged into
+    // them. byAssignedDriver's null bucket is "vehicles with no current
+    // Vehicle Hub driver assignment," a completely different question
+    // from byDriver's null bucket ("fuel logs with no driver_id
+    // recorded at entry").
+    const currentUnassigned = byAssignedDriver.find((d) => d.driver_id === null);
+    const currentUnassignedCost = currentUnassigned?.totalCost ?? 0;
 
     return {
       rows,
-      unassignedCost: hasLogs ? fact(unassignedCost) : unavailable('No fuel logs recorded for this period.'),
+      unassignedCost: byDriver.length > 0 ? fact(unassignedCost) : unavailable('No fuel logs recorded for this period.'),
       unassignedSharePercent: stats.totalCost > 0
         ? calculated(Math.round((unassignedCost / stats.totalCost) * 1000) / 10)
         : unavailable('No fuel cost recorded for this period.'),
-      unassignedVehiclePlates: [...(unassigned?.vehiclePlates ?? [])].sort(),
       attributionNote:
-        'Each fuel log is attributed to the driver assigned to its vehicle on the Vehicle Operational Hub -- the same attribution the Fuel Logs table and "Fuel cost by driver" chart use. "Unassigned" means the vehicle has no driver assigned on the Hub; assigning one there moves that cost to the driver on the next report run. The Hub holds the current assignment only (no assignment history), so a vehicle reassigned during the period has the whole period attributed to its current driver.',
+        'Driver attribution above is transaction-time: each fuel log carries the driver recorded at the moment of entry, independent of the vehicle’s current driver assignment on the Vehicle Operational Hub. A fuel log with no driver recorded is shown as unattributed rather than assigned to whoever currently drives that vehicle -- see shared/types/fuel.types.ts and PART 4 of this engagement’s findings. This is a permanent audit trail: a later reassignment on the Hub never rewrites it. See "Vehicle Hub coverage" below for a live snapshot of current assignment instead.',
+      currentAssignmentUnassignedCost: byAssignedDriver.length > 0 ? fact(currentUnassignedCost) : unavailable('No fuel logs recorded for this period.'),
+      currentAssignmentUnassignedSharePercent: stats.totalCost > 0
+        ? calculated(Math.round((currentUnassignedCost / stats.totalCost) * 1000) / 10)
+        : unavailable('No fuel cost recorded for this period.'),
+      currentAssignmentNote:
+        'Vehicle Hub coverage is a live snapshot, not an audit trail: it reflects each vehicle’s CURRENT Vehicle Operational Hub driver assignment (Vehicle.currentDriverId) applied to this period’s fuel cost -- the same resolution the Fuel Logs table and "Fuel cost by driver" chart use for display. It answers "how much of this period’s fuel cost sits with a vehicle nobody is currently assigned to," not "who fuelled it." It will typically differ from the transaction-time figures above, often by a lot, because most fuel logs were never stamped with a driver_id at entry -- that difference is expected, not an error in either number.',
     };
   }
 
@@ -453,28 +468,26 @@ export class MonthlyFuelIntelligenceService {
       });
     }
 
-    // Fuel cost on vehicles with no Hub driver. Fires on ANY unassigned
-    // cost because the remedy is concrete and cheap (assign a driver on
-    // the Hub, per plate listed) -- escalates to 'attention' once it
-    // is large enough to materially distort the driver rows above.
-    const unassignedShare = input.driverFindings.unassignedSharePercent;
-    if (unassignedShare.status === 'CALCULATED' && (unassignedShare.value ?? 0) > 0) {
-      const plates = input.driverFindings.unassignedVehiclePlates;
-      const plateList = plates.length > 0
-        ? ` Vehicle(s): ${plates.slice(0, 10).join(', ')}${plates.length > 10 ? ` and ${plates.length - 10} more` : ''}.`
+    // Unassigned driver cost share (transaction-time). Deliberately
+    // notes the current-assignment number alongside it (when available)
+    // so this finding doesn't read as an alarm about live driver
+    // coverage when the Vehicle Hub is actually well-assigned -- this
+    // finding is specifically about entry-time attribution, a different
+    // question from "does every vehicle currently have a driver."
+    if (input.driverFindings.unassignedSharePercent.status === 'CALCULATED' && (input.driverFindings.unassignedSharePercent.value ?? 0) >= 20) {
+      const currentShare = input.driverFindings.currentAssignmentUnassignedSharePercent;
+      const currentContext = currentShare.status === 'CALCULATED'
+        ? ` For comparison, only ${currentShare.value}% of this period's fuel cost sits with a vehicle that currently has no Hub driver assigned -- this finding is about entry-time recording, not live assignment coverage.`
         : '';
       findings.push({
         id: nextId(),
-        what: `${unassignedShare.value}% of this period's fuel cost is on ${plates.length} vehicle(s) with no driver assigned on the Vehicle Operational Hub.${plateList}`,
-        why: 'Fuel cost on a vehicle with no assigned driver cannot be analysed at driver level, so the driver findings above cover only the remaining share of fleet fuel spend.',
-        impact: input.driverFindings.unassignedCost.status === 'FACT'
-          ? fact(`${input.driverFindings.unassignedCost.value} not attributed to any driver.`)
-          : unavailable('Amount unavailable.'),
-        action: 'Assign a driver to each listed vehicle on the Vehicle Operational Hub (or confirm the vehicle is legitimately pool/unassigned, e.g. a generator or forklift).',
-        how: 'Vehicles -> open the vehicle -> Operational Hub -> Driver. The change applies to this report on its next run.',
-        prevention: 'Assign a driver on the Hub when a vehicle is commissioned or handed over.',
-        monitor: 'Unassigned fuel cost share next period.',
-        severity: (unassignedShare.value ?? 0) >= 20 ? 'attention' : 'info',
+        what: `${input.driverFindings.unassignedSharePercent.value}% of this period's fuel cost has no driver recorded at the moment of entry.`,
+        why: `Driver-level fuel cost findings above only cover fuel logs that had a driver recorded at entry; a large unrecorded share limits how much of the fleet’s fuel spend can be analysed at the driver level this way.${currentContext}`,
+        impact: input.driverFindings.unassignedCost.status === 'FACT' ? fact(`${input.driverFindings.unassignedCost.value} unattributed at entry time.`) : unavailable('Amount unavailable.'),
+        action: 'Reinforce recording the driver at the time of fuel entry for transactions currently logged without one.',
+        prevention: 'Consider making the driver field required on the fuel entry form where operationally feasible.',
+        monitor: 'Unassigned fuel cost share (entry-time) next period.',
+        severity: 'info',
       });
     }
 

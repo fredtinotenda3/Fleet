@@ -1,7 +1,7 @@
-// app/(protected)/drivers/page.tsx
+// app/(protected)/drivers/scorecard/page.tsx
 
-import { DriversListPage } from '@/frontend/modules/drivers/pages/DriversListPage';
+import { DriverScorecardPage } from '@/frontend/modules/ai/pages';
 
 export default function Page() {
-  return <DriversListPage />;
+  return <DriverScorecardPage />;
 }

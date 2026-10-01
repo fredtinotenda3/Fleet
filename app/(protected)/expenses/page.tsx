@@ -1,8 +1,13 @@
 
-// app/(protected)/expenses/page.tsx
+// app/(protected)/expenses/vehicles/[plate]/page.tsx
 
-import { ExpenseDashboardPage } from '@/frontend/modules/expenses/pages/ExpenseDashboardPage';
+import { VehicleExpenseHistoryPage } from '@/frontend/modules/expenses/pages/VehicleExpenseHistoryPage';
 
-export default function Page() {
-  return <ExpenseDashboardPage />;
+interface PageProps {
+  params: Promise<{ plate: string }>;
+}
+
+export default async function Page({ params }: PageProps) {
+  const { plate } = await params;
+  return <VehicleExpenseHistoryPage licensePlate={decodeURIComponent(plate)} />;
 }

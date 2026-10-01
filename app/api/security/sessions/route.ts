@@ -1,9 +1,18 @@
-// app/api/security/sessions/route.ts
+// app/api/security/sessions/users/[userId]/route.ts
 
 import { NextRequest } from 'next/server';
 import { sessionController } from '@/modules/security/controllers/session.controller';
 import { withAuth } from '@/server/middleware/with-auth';
+import { Permission } from '@/server/permissions/roles';
 
-export const GET = withAuth(
-  (req: NextRequest, context) => sessionController.listMySessions(req, context)
+interface RouteParams {
+  params: Promise<{ userId: string }>;
+}
+
+export const GET = withAuth<RouteParams>(
+  async (req: NextRequest, context, { params }) => {
+    const { userId } = await params;
+    return sessionController.listSessionsForUser(req, context, userId);
+  },
+  { permission: Permission.SESSION_VIEW }
 );
