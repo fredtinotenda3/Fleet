@@ -1,6 +1,7 @@
 // shared/types/trip.types.ts
 
 import { BaseEntity, Mode } from './common.types';
+import type { TripStop } from './evidence.types';
 
 /**
  * PHASE 1 (Trip-as-operational-hub): status lets Trip answer
@@ -26,7 +27,24 @@ export const TRIP_TYPES: TripType[] = ['delivery', 'pickup', 'transfer', 'servic
  * future dispatch/GPS auto-creation) without needing a separate audit
  * lookup -- mirrors how FuelLog distinguishes receipt-derived rows.
  */
-export type TripCreatedFrom = 'manual' | 'import' | 'dispatch' | 'gps';
+/**
+ * 'reconstructed' added, Operational-Connectivity upgrade PART 13: a
+ * trip with no direct telemetry or odometer evidence but assembled from
+ * several SUPPORTING records (e.g. a dispatch assignment + delivery
+ * confirmations + a fuel receipt) rather than typed in from nothing.
+ * Distinct from 'manual' so the Trip Detail page can show which kind of
+ * "no telemetry" trip this is -- a plain manual entry has only the
+ * operator's word, while a reconstructed one would be assembled from
+ * several named supporting records. Nothing in this codebase writes
+ * 'reconstructed' yet -- there is no dispatch/delivery-confirmation
+ * linkage in this upgrade to assemble it from, and PART 13 is explicit
+ * that evidence must never be invented to fill the gap. The value exists
+ * so `created_from`'s type already accounts for it, and the Trip Detail
+ * / filters render it correctly, whenever a future dispatch-linked write
+ * path starts producing it -- added now rather than as a second
+ * breaking migration later.
+ */
+export type TripCreatedFrom = 'manual' | 'import' | 'dispatch' | 'gps' | 'reconstructed';
 
 export interface Trip extends BaseEntity {
   license_plate: string;
@@ -88,6 +106,14 @@ export interface TripCreateDTO {
   end_time?: Date | string;
   trip_type?: TripType;
   routeId?: string;
+  /**
+   * PART 3: present when `mode === 'map'`. Stop coordinates only --
+   * `route`/`distance_evidence.mapDerived` are never accepted from the
+   * client; the server recomputes them from these stops via
+   * route-distance.service.ts so a caller cannot submit a forged route
+   * distance. See CreateTripHandler.
+   */
+  stops?: TripStop[];
 }
 
 export interface TripUpdateDTO extends Partial<TripCreateDTO> {

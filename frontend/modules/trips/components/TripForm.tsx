@@ -18,9 +18,10 @@ import {
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { Spinner } from '@/frontend/shared/ui/feedback/spinner';
 import { tripFormSchema, type TripFormValues } from '../schemas';
-import { TRIP_MODES } from '../types';
+import { TRIP_MODES, type TripStop } from '../types';
 import { tripModeLabel } from '../utils';
 import { useVehiclesList } from '@/frontend/modules/vehicles/hooks/useVehicles';
+import { MapAssistedTripLog } from './MapAssistedTripLog';
 
 interface TripFormProps {
   defaultValues?: Partial<TripFormValues>;
@@ -42,6 +43,7 @@ const FALLBACK_DEFAULTS: TripFormValues = {
   start_location: '',
   end_location: '',
   driver_id: '',
+  stops: undefined,
 };
 
 /**
@@ -224,7 +226,7 @@ export function TripForm({
           {errors.unit_id && <p className="form-error" role="alert">{errors.unit_id.message}</p>}
         </div>
 
-        {mode === 'distance' ? (
+        {mode === 'distance' && (
           <div>
             <Label htmlFor="trip_distance" className="form-label form-required">Trip distance</Label>
             <Input
@@ -236,7 +238,8 @@ export function TripForm({
             />
             {errors.trip_distance && <p className="form-error" role="alert">{errors.trip_distance.message}</p>}
           </div>
-        ) : (
+        )}
+        {mode === 'odometer' && (
           <>
             <div>
               <Label htmlFor="start_odometer" className="form-label form-required">Start odometer</Label>
@@ -290,6 +293,23 @@ export function TripForm({
           />
         </div>
       </div>
+
+      {mode === 'map' && (
+        <div>
+          <Label className="form-label form-required">Stops</Label>
+          <Controller
+            control={control}
+            name="stops"
+            render={({ field }) => (
+              <MapAssistedTripLog
+                value={(field.value as TripStop[] | undefined) ?? []}
+                onChange={(stops) => field.onChange(stops)}
+              />
+            )}
+          />
+          {errors.stops && <p className="form-error" role="alert">{errors.stops.message as string}</p>}
+        </div>
+      )}
 
       <div>
         <Label htmlFor="notes" className="form-label">Notes</Label>

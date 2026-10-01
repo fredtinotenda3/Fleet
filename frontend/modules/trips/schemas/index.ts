@@ -2,7 +2,20 @@
 
 import { z } from 'zod';
 
-export const tripModeEnum = z.enum(['distance', 'odometer']);
+export const tripModeEnum = z.enum(['distance', 'odometer', 'map']);
+
+/** PART 3: client-side mirror of shared/validations/trip.schema.ts's tripStopSchema -- shape only, never a distance claim. */
+export const tripStopFormSchema = z.object({
+  sequence: z.number().int().nonnegative(),
+  role: z.enum(['start', 'waypoint', 'end']),
+  label: z.string().min(1, 'Each stop needs a label').max(200),
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180),
+  address: z.string().max(300).optional(),
+  geocodeProvenance: z.enum(['nominatim-search', 'map-click', 'map-drag', 'manual-coordinates']),
+  geocodeProvider: z.enum(['nominatim']).optional(),
+  geocodedAt: z.string().optional(),
+});
 
 export const tripFormSchema = z
   .object({
@@ -17,8 +30,18 @@ export const tripFormSchema = z
     start_location: z.string().max(200).optional().or(z.literal('')),
     end_location: z.string().max(200).optional().or(z.literal('')),
     driver_id: z.string().optional().or(z.literal('')),
+    stops: z.array(tripStopFormSchema).optional(),
   })
   .superRefine((data, ctx) => {
+    if (data.mode === 'map') {
+      if (!data.stops || data.stops.length < 2) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Add at least a start and an end stop',
+          path: ['stops'],
+        });
+      }
+    }
     if (data.mode === 'distance') {
       if (!data.trip_distance || data.trip_distance <= 0) {
         ctx.addIssue({

@@ -33,6 +33,7 @@ import { financeApi, startOfMonth, previousMonthRange } from '@/frontend/modules
 import { buildTrend } from '@/frontend/modules/finance/hooks/useFinance';
 import { formatMoney } from '@/frontend/modules/finance/utils/money.utils';
 import { cn } from '@/lib/utils';
+import { EvidencePopover } from '@/frontend/shared/ui/evidence/EvidencePopover';
 
 /** Hard cap on how many vehicles this widget will price. Keeps the widget well inside the 100-request rate limit. */
 const SAMPLE_SIZE = 20;
@@ -158,9 +159,26 @@ export function CostPerKmWidget() {
         </p>
       ) : (
         <div className="space-y-2">
-          <p className="text-h2 font-semibold text-foreground">
+          <p className="text-h2 font-semibold text-foreground flex items-center gap-1.5">
             {formatMoney(data.averageCostPerKm as number, data.reportingCurrency, { maximumFractionDigits: 2 })}
-            <span className="ml-1 text-body-sm font-normal text-muted-foreground">/km</span>
+            <span className="text-body-sm font-normal text-muted-foreground">/km</span>
+            {/*
+              PART 9: this figure is a SAMPLE mean, not a fleet-wide
+              aggregate (see this file's header) -- the popover says so
+              explicitly rather than letting the headline number imply
+              more coverage than was actually measured.
+            */}
+            <EvidencePopover
+              title="Cost per km — how calculated"
+              sourceLabel="Sample average"
+              sourceTone="calculated"
+              method={`Mean of (allocated cost ÷ logged distance) across ${data.pricedCount} of ${data.sampledCount} sampled vehicle${data.sampledCount === 1 ? '' : 's'}${data.sampledCount < data.totalVehicles ? ` (${data.totalVehicles} total in fleet)` : ''}. Vehicles with no logged distance or mixed reporting currencies this month are excluded, not treated as zero.`}
+              reason={
+                data.sampledCount < data.totalVehicles
+                  ? 'This is a sample, not a fleet-wide average — a true fleet figure needs a backend aggregate across every vehicle.'
+                  : undefined
+              }
+            />
           </p>
           <TrendArrow current={data.averageCostPerKm} previous={data.previousAverageCostPerKm} />
           <p className="text-caption text-muted-foreground">

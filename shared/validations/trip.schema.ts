@@ -4,9 +4,31 @@ import { z } from 'zod';
 import { TRIP_STATUSES, TRIP_TYPES } from '@/shared/types/trip.types';
 import { partialForUpdate } from './update-schema.utils';
 
-const modeSchema = z.enum(['distance', 'odometer']);
+const modeSchema = z.enum(['distance', 'odometer', 'map']);
 const statusSchema = z.enum(TRIP_STATUSES as [string, ...string[]]);
 const tripTypeSchema = z.enum(TRIP_TYPES as [string, ...string[]]);
+
+/**
+ * PART 3: a map-assisted trip's stop coordinates. Deliberately a THIN
+ * schema -- it validates shape (sequence, role, finite lat/lng, a
+ * non-empty label) but NOT the route distance, which the server always
+ * recomputes itself from these coordinates (see CreateTripHandler /
+ * route-distance.service.ts) rather than trusting anything the client
+ * might submit about distance.
+ */
+const tripStopSchema = z.object({
+  sequence: z.number().int().nonnegative(),
+  role: z.enum(['start', 'waypoint', 'end']),
+  label: z.string().min(1, 'Each stop needs a label').max(200),
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180),
+  address: z.string().max(300).optional(),
+  geocodeProvenance: z.enum(['nominatim-search', 'map-click', 'map-drag', 'manual-coordinates']),
+  geocodeProvider: z.enum(['nominatim']).optional(),
+  geocodedAt: z.union([z.date(), z.string()]).optional(),
+  arrivalTime: z.union([z.date(), z.string()]).optional(),
+  departureTime: z.union([z.date(), z.string()]).optional(),
+});
 
 /**
  * PHASE 1: configurable tolerance for the trip_distance vs.
@@ -48,6 +70,9 @@ export const tripBaseSchema = z.object({
   end_time: z.union([z.date(), z.string()]).optional().nullable(),
   trip_type: tripTypeSchema.optional().nullable(),
   routeId: z.string().optional().nullable(),
+
+  // --- PART 3: map-assisted trip log ---
+  stops: z.array(tripStopSchema).optional().nullable(),
 });
 
 function applySharedRefinements(data: z.infer<typeof tripBaseSchema>, ctx: z.RefinementCtx) {
@@ -58,6 +83,31 @@ function applySharedRefinements(data: z.infer<typeof tripBaseSchema>, ctx: z.Ref
         message: 'Trip distance is required and must be positive for distance mode',
         path: ['trip_distance'],
       });
+    }
+  }
+  if (data.mode === 'map') {
+    if (!data.stops || data.stops.length < 2) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'A map-assisted trip needs at least a start and an end stop',
+        path: ['stops'],
+      });
+    } else {
+      const sorted = [...data.stops].sort((a, b) => a.sequence - b.sequence);
+      if (sorted[0].role !== 'start') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'The first stop must be marked as the start',
+          path: ['stops'],
+        });
+      }
+      if (sorted[sorted.length - 1].role !== 'end') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'The last stop must be marked as the end',
+          path: ['stops'],
+        });
+      }
     }
   }
   if (data.mode === 'odometer') {

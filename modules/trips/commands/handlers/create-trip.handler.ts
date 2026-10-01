@@ -5,6 +5,7 @@ import { CreateTripCommand } from '../create-trip.command';
 import { TripRepository } from '@/modules/trips/repositories/trip.repository';
 import { tripCreateSchema } from '@/shared/validations/trip.schema';
 import { Trip } from '@/shared/types/trip.types';
+import '@/shared/types/trip.map-assisted-addendum';
 import { ValidationError, AppError } from '@/server/errors/app.errors';
 import { validateWithZod } from '@/shared/utils/validation.utils';
 import connectToDatabase from '@/infrastructure/database/mongodb';
@@ -12,6 +13,13 @@ import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-
 import { driverWriteResolver } from '@/modules/drivers/services/driver-write-resolver.service';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { TripCreatedEvent } from '@/modules/trips/events/TripCreatedEvent';
+import { telematicsRepository } from '@/modules/telematics/repositories/telematics.repository';
+import { routeDistanceService } from '@/modules/telematics/services/route-distance.service';
+import {
+  resolveSelectedDistance,
+  buildDistanceMeasurement,
+} from '@/modules/trips/services/distance-source-resolver.service';
+import type { TripDistanceEvidence, TripStop, TripRouteEvidence } from '@/shared/types/evidence.types';
 
 function calculateDistance(data: {
   mode: string;
@@ -28,6 +36,101 @@ function calculateDistance(data: {
     return Math.max(0, end - start);
   }
   return 0;
+}
+
+interface ResolvedTripDistanceFields {
+  distance_calculated: number;
+  distance_source: 'odometer' | 'map-derived' | 'manual';
+  distance_evidence: TripDistanceEvidence;
+  route?: TripRouteEvidence;
+  stops?: TripStop[];
+}
+
+/**
+ * PART 3/5 -- resolves distance for the THREE entry modes this handler
+ * accepts (map/distance/odometer; a telemetry-GENERATED trip never
+ * passes through here, see trip-generation.service.ts).
+ *
+ * For 'map' mode, the server-side routing call is the ONLY source of
+ * the distance -- a client-submitted route/distance is never trusted
+ * (see TripCreateDTO's doc comment): a caller could otherwise submit a
+ * short set of stops alongside a forged large "route" to inflate a
+ * cost-per-km report. Stops are re-sorted by `sequence` here before
+ * being sent to the routing engine, so submission order never matters.
+ *
+ * For 'distance'/'odometer' modes this preserves the existing
+ * calculateDistance() result exactly (no behaviour change for those two
+ * paths) and additionally records it as evidence, so every trip --
+ * not only map-assisted ones -- can answer "where did this number come
+ * from" (PART 8/9).
+ */
+async function resolveTripDistance(validated: {
+  mode: string;
+  trip_distance?: number | null;
+  start_odometer?: number | null;
+  end_odometer?: number | null;
+  stops?: TripStop[] | null;
+}): Promise<ResolvedTripDistanceFields> {
+  if (validated.mode === 'map') {
+    const sortedStops = [...(validated.stops ?? [])].sort((a, b) => a.sequence - b.sequence);
+
+    const route = await routeDistanceService.computeRoute(
+      sortedStops.map((s) => ({ sequence: s.sequence, lat: s.lat, lng: s.lng }))
+    );
+
+    if (!route) {
+      throw new AppError(
+        'A map route could not be calculated for these stops. Check that each stop resolves to a real location, or record this trip using Direct Distance or Odometer mode instead.',
+        'MAP_ROUTE_UNAVAILABLE',
+        422
+      );
+    }
+
+    const mapDerived = buildDistanceMeasurement(
+      route.totalDistanceKm,
+      'map-derived',
+      `Routing engine (OSRM) over ${sortedStops.length} stops`
+    );
+
+    const resolved = resolveSelectedDistance({ mapDerived });
+
+    return {
+      distance_calculated: resolved.valueKm ?? 0,
+      distance_source: 'map-derived',
+      distance_evidence: { mapDerived },
+      route: {
+        provider: 'osrm',
+        calculatedAt: new Date(),
+        legs: route.legs,
+        totalDistanceKm: route.totalDistanceKm,
+        ...(route.geometry ? { geometry: route.geometry } : {}),
+      },
+      stops: sortedStops,
+    };
+  }
+
+  const distance_calculated = calculateDistance(validated);
+
+  if (validated.mode === 'odometer') {
+    const measurement = buildDistanceMeasurement(
+      distance_calculated,
+      'odometer',
+      'End odometer − start odometer'
+    );
+    return {
+      distance_calculated,
+      distance_source: 'odometer',
+      distance_evidence: { odometer: measurement },
+    };
+  }
+
+  // 'distance' mode: a person typed a distance with nothing backing it.
+  const measurement = buildDistanceMeasurement(distance_calculated, 'manual', 'Manually entered');
+  return {
+    distance_calculated,
+    distance_source: 'manual',
+    distance_evidence: { manual: measurement },
+  };
 }
 
 /**
@@ -72,6 +175,7 @@ export class CreateTripHandler implements ICommandHandler<CreateTripCommand, Tri
       end_time: raw.end_time,
       trip_type: raw.trip_type,
       routeId: raw.routeId,
+      stops: raw.stops,
       trip_distance:
         raw.trip_distance !== undefined && raw.trip_distance !== ''
           ? Number(raw.trip_distance)
@@ -162,16 +266,33 @@ export class CreateTripHandler implements ICommandHandler<CreateTripCommand, Tri
       );
     }
 
-    const distance_calculated = calculateDistance({
+    const distanceResolution = await resolveTripDistance({
       mode: validated.mode,
       trip_distance: validated.trip_distance ?? null,
       start_odometer: validated.start_odometer ?? null,
       end_odometer: validated.end_odometer ?? null,
+      stops: (validated.stops as TripStop[] | undefined) ?? null,
     });
+    const { distance_calculated } = distanceResolution;
 
     if (distance_calculated <= 0) {
       throw new ValidationError('Calculated distance must be greater than 0');
     }
+
+    /**
+     * PART 12/20: records, at write time, whether this vehicle had a
+     * registered telematics device when this trip was entered -- not
+     * derived later from the distance source, so a vehicle that gains a
+     * tracker after the fact does not retroactively imply its past
+     * manual/map trips secretly had GPS. A device must be `active` to
+     * count; a registered-but-offline device still means "no reliable
+     * telemetry for this trip" from the operator's point of view.
+     */
+    const telemetryDevice = await telematicsRepository.getDeviceForVehicle(
+      String(vehicle._id),
+      command.tenantId
+    );
+    const telemetry_available = telemetryDevice?.status === 'active';
 
     const start_time = validated.start_time ? new Date(validated.start_time as unknown as string) : undefined;
     const end_time = validated.end_time ? new Date(validated.end_time as unknown as string) : undefined;
@@ -219,9 +340,28 @@ export class CreateTripHandler implements ICommandHandler<CreateTripCommand, Tri
       ...(vehicleWriteResolver.orgUnitIdFor(vehicle) && {
         orgUnitId: vehicleWriteResolver.orgUnitIdFor(vehicle),
       }),
-      ...(validated.trip_distance != null && { trip_distance: Number(validated.trip_distance) }),
-      ...(validated.start_odometer != null && { start_odometer: Number(validated.start_odometer) }),
-      ...(validated.end_odometer != null && { end_odometer: Number(validated.end_odometer) }),
+      /**
+       * PART 3/5 FIX: these three are mode-specific inputs, not generic
+       * "distance figures" -- storing whichever ones happen to be
+       * present on the payload regardless of `mode` let a map-assisted
+       * trip (whose `distance_calculated` is always server-computed
+       * from `stops`) end up ALSO carrying a stray `trip_distance` or
+       * odometer pair left over from a form that had previously been in
+       * a different mode (TripForm does not clear these fields when the
+       * mode selector changes -- see TripForm.tsx). That stray field was
+       * never read by anything (distance_calculated is authoritative
+       * everywhere), but a raw record/export reader has no way to know
+       * that, and it is exactly the kind of "confusing, uninspectable
+       * number" PART 8/9's evidence model exists to prevent. Gating by
+       * mode here mirrors the discipline UpdateTripHandler already
+       * applies when a trip's mode changes.
+       */
+      ...(validated.mode === 'distance' &&
+        validated.trip_distance != null && { trip_distance: Number(validated.trip_distance) }),
+      ...(validated.mode === 'odometer' &&
+        validated.start_odometer != null && { start_odometer: Number(validated.start_odometer) }),
+      ...(validated.mode === 'odometer' &&
+        validated.end_odometer != null && { end_odometer: Number(validated.end_odometer) }),
       ...(validated.notes && { notes: String(validated.notes) }),
       ...(validated.start_location && { start_location: String(validated.start_location) }),
       ...(validated.end_location && { end_location: String(validated.end_location) }),
@@ -235,6 +375,14 @@ export class CreateTripHandler implements ICommandHandler<CreateTripCommand, Tri
       ...(validated.trip_type && { trip_type: validated.trip_type as Trip['trip_type'] }),
       ...(validated.routeId && { routeId: String(validated.routeId) }),
       created_from: (raw.created_from as Trip['created_from']) || 'manual',
+
+      // --- PART 3/5/8: distance source hierarchy + evidence ---
+      distance_source: distanceResolution.distance_source,
+      distance_km_known: true,
+      distance_evidence: distanceResolution.distance_evidence,
+      telemetry_available,
+      ...(distanceResolution.route && { route: distanceResolution.route }),
+      ...(distanceResolution.stops && { stops: distanceResolution.stops }),
     };
 
     const created = await this.tripRepo.create(tripData, command.tenantId, command.userId);

@@ -604,6 +604,27 @@ export class TelematicsRepository extends TenantScopedRepository<TelematicsData>
   }
 
   /**
+   * Whether a vehicle has ANY registered telematics device -- the
+   * question the Operational-Connectivity upgrade's PART 12 needs
+   * answered ("No telematics connected" vs. a broken/offline one).
+   *
+   * Deliberately returns the device itself (or null) rather than a bare
+   * boolean: a caller distinguishing "no device" from "device present
+   * but status=offline" needs more than one bit, and re-querying for it
+   * separately would be the same N+1 this method exists to avoid.
+   */
+  async getDeviceForVehicle(vehicleId: string, tenantId: string): Promise<TelematicsDevice | null> {
+    const collection = await this.devicesCollection();
+    const result = await collection.findOne({
+      vehicleId,
+      tenantId,
+      isDeleted: { $ne: true },
+    } as any);
+
+    return (result as TelematicsDevice) || null;
+  }
+
+  /**
    * Records a successful ingest for a device.
    *
    * `lastPingAt` is ALWAYS stamped with the real wall-clock "now" -- it

@@ -2,7 +2,7 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Pencil, Trash2 } from 'lucide-react';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
@@ -15,22 +15,29 @@ import { useTrip } from '../hooks/useTrips';
 import { useDeleteTrip, useUpdateTrip } from '../hooks/useTripMutations';
 import { TripPlaybackPanel } from '../components/TripPlaybackPanel';
 import { TripModal, type TripModalMode } from '../components/TripModal';
-import { tripModeLabel, getTripModeBadgeClass, canManageTrips, canDeleteTrips } from '../utils';
+import {
+  tripModeLabel,
+  getTripModeBadgeClass,
+  canManageTrips,
+  canDeleteTrips,
+  buildDistanceEvidence,
+} from '../utils';
 import { formatDate } from '@/shared/utils/date.utils';
 import { formatDistance } from '@/shared/utils/distance.utils';
 import { TRIP_ROUTES } from '../routes';
 import type { TripFormValues } from '../schemas';
 import { cn } from '@/lib/utils';
+import { EvidencePopover } from '@/frontend/shared/ui/evidence/EvidencePopover';
 
 interface TripDetailPageProps {
   tripId: string;
 }
 
-function DetailRow({ label, value }: { label: string; value: string }) {
+function DetailRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-4 text-body-sm">
       <span className="text-muted-foreground">{label}</span>
-      <span className="font-medium text-foreground">{value}</span>
+      <span className="font-medium text-foreground flex items-center gap-1.5">{value}</span>
     </div>
   );
 }
@@ -113,7 +120,56 @@ export function TripDetailPage({ tripId }: TripDetailPageProps) {
             <DetailRow label="Vehicle" value={trip.license_plate} />
             <DetailRow label="Date" value={formatDate(trip.date)} />
             <DetailRow label="Mode" value={tripModeLabel(trip.mode)} />
-            <DetailRow label="Distance" value={formatDistance(trip.distance_calculated)} />
+            <DetailRow
+              label="Distance"
+              value={
+                <>
+                  {formatDistance(trip.distance_calculated)}
+                  {(() => {
+                    const evidence = buildDistanceEvidence(trip);
+                    return evidence ? (
+                      <EvidencePopover
+                        title="Distance — how calculated"
+                        sourceLabel={evidence.sourceLabel}
+                        sourceTone={evidence.sourceTone}
+                        method={evidence.method}
+                        calculatedAt={evidence.calculatedAt}
+                        reference={evidence.reference}
+                        reason={evidence.reason}
+                      />
+                    ) : null;
+                  })()}
+                </>
+              }
+            />
+            {/*
+              PART 10 -- honesty over fabrication: this trip's distance did
+              not come from telemetry (a map-assisted or manually logged
+              trip never implies a tracker exists), and this line says so
+              explicitly rather than leaving the reader to guess from the
+              distance source alone whether this vehicle is tracked at all.
+            */}
+            <DetailRow
+              label="Telematics"
+              value={(() => {
+                /**
+                 * `telemetry_available` is only recorded going forward
+                 * (see CreateTripHandler/UpdateTripHandler) -- a trip
+                 * logged before this field existed has it as
+                 * `undefined`, which is NOT the same fact as "no tracker"
+                 * and must not be rendered as one. A gps-path source is
+                 * itself proof a tracker was involved regardless of what
+                 * this field says.
+                 */
+                if (trip.telemetry_available === true || trip.distance_source === 'gps-path') {
+                  return <span className="text-success">Tracker active on this vehicle</span>;
+                }
+                if (trip.telemetry_available === false) {
+                  return <span className="text-muted-foreground italic">No telematics connected</span>;
+                }
+                return <span className="text-muted-foreground italic">Not recorded for this trip</span>;
+              })()}
+            />
             <DetailRow label="Driver" value={trip.driver_id || 'Unassigned'} />
           </CardContent>
         </Card>
@@ -125,7 +181,7 @@ export function TripDetailPage({ tripId }: TripDetailPageProps) {
           <CardContent className="space-y-3">
             <DetailRow label="Start location" value={trip.start_location || 'Not recorded'} />
             <DetailRow label="End location" value={trip.end_location || 'Not recorded'} />
-            {trip.mode === 'odometer' ? (
+            {trip.mode === 'odometer' && (
               <>
                 <DetailRow
                   label="Start odometer"
@@ -136,11 +192,40 @@ export function TripDetailPage({ tripId }: TripDetailPageProps) {
                   value={trip.end_odometer != null ? formatDistance(trip.end_odometer) : 'N/A'}
                 />
               </>
-            ) : (
+            )}
+            {trip.mode === 'distance' && (
               <DetailRow
                 label="Logged distance"
                 value={trip.trip_distance != null ? formatDistance(trip.trip_distance) : 'N/A'}
               />
+            )}
+            {trip.mode === 'map' && trip.stops && trip.stops.length > 0 && (
+              <div className="space-y-2 pt-1">
+                <p className="text-caption font-medium uppercase tracking-wide text-muted-foreground">
+                  Route (map-derived, not GPS)
+                </p>
+                <ol className="space-y-1">
+                  {[...trip.stops]
+                    .sort((a, b) => a.sequence - b.sequence)
+                    .map((stop, i) => (
+                      <li key={stop.sequence} className="text-body-sm flex items-center gap-2">
+                        <span className="text-caption text-muted-foreground w-14 shrink-0">
+                          {stop.role === 'start' ? 'Start' : stop.role === 'end' ? 'End' : `Stop ${i + 1}`}
+                        </span>
+                        <span className="text-foreground">{stop.label}</span>
+                      </li>
+                    ))}
+                </ol>
+                {trip.route?.legs && trip.route.legs.length > 0 && (
+                  <ul className="text-caption text-muted-foreground space-y-0.5 pl-14">
+                    {trip.route.legs.map((leg, i) => (
+                      <li key={i}>
+                        Leg {i + 1}: {formatDistance(leg.distanceKm)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             )}
           </CardContent>
         </Card>

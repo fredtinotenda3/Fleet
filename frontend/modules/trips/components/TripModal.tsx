@@ -11,8 +11,47 @@ import {
 } from '@/frontend/shared/ui/feedback/dialog';
 import { TripForm } from './TripForm';
 import { useDistanceUnits } from '../hooks/useTrips';
-import type { Trip } from '../types';
+import type { Trip, TripStop } from '../types';
 import type { TripFormValues } from '../schemas';
+
+/**
+ * `Trip.stops[].geocodedAt` (shared/types/evidence.types.ts) is typed as
+ * `string | Date` because a server-side caller may stamp it with a real
+ * `Date`. By the time it reaches the browser as JSON it is always
+ * already a string, but the TYPE still says `string | Date`, which the
+ * form's stricter `tripStopFormSchema` (string only) rejects at compile
+ * time. This normalizes it defensively (handles either shape) rather
+ * than just asserting the type away, and drops `arrivalTime`/
+ * `departureTime`, which the map-assisted form does not model yet.
+ */
+function toFormStop(stop: TripStop): {
+  sequence: number;
+  role: TripStop['role'];
+  label: string;
+  lat: number;
+  lng: number;
+  address?: string;
+  geocodeProvenance: TripStop['geocodeProvenance'];
+  geocodeProvider?: 'nominatim';
+  geocodedAt?: string;
+} {
+  return {
+    sequence: stop.sequence,
+    role: stop.role,
+    label: stop.label,
+    lat: stop.lat,
+    lng: stop.lng,
+    address: stop.address,
+    geocodeProvenance: stop.geocodeProvenance,
+    geocodeProvider: stop.geocodeProvider,
+    geocodedAt:
+      stop.geocodedAt == null
+        ? undefined
+        : typeof stop.geocodedAt === 'string'
+          ? stop.geocodedAt
+          : stop.geocodedAt.toISOString(),
+  };
+}
 
 export type TripModalMode = 'create' | 'edit';
 
@@ -54,6 +93,11 @@ function toFormValues(
     start_location: trip.start_location ?? '',
     end_location: trip.end_location ?? '',
     driver_id: trip.driver_id ?? '',
+    // PART 3: carries an existing map-assisted trip's stops into the
+    // form when editing, so MapAssistedTripLog opens pre-populated
+    // instead of empty. See shared/types/trip.map-assisted-addendum.ts
+    // for where `stops` is added to the Trip type.
+    stops: trip.stops?.map(toFormStop),
   };
 }
 

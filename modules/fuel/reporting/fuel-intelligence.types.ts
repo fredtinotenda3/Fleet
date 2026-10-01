@@ -40,31 +40,31 @@
 //
 // A Labeled<T> value is never rendered without checking `status` first --
 // see both generators' formatLabeled() helpers.
-
-export type FindingStatus = 'FACT' | 'CALCULATED' | 'ESTIMATED' | 'UNAVAILABLE' | 'DATA_QUALITY_ISSUE';
-
-export interface Labeled<T> {
-  status: FindingStatus;
-  value: T | null;
-  /** Required when status is UNAVAILABLE, ESTIMATED or DATA_QUALITY_ISSUE. Optional (but encouraged) for FACT/CALCULATED. */
-  reason?: string;
-}
-
-export function fact<T>(value: T): Labeled<T> {
-  return { status: 'FACT', value };
-}
-export function calculated<T>(value: T, reason?: string): Labeled<T> {
-  return { status: 'CALCULATED', value, reason };
-}
-export function estimated<T>(value: T, reason: string): Labeled<T> {
-  return { status: 'ESTIMATED', value, reason };
-}
-export function unavailable<T = never>(reason: string): Labeled<T> {
-  return { status: 'UNAVAILABLE', value: null, reason };
-}
-export function dataQualityIssue<T>(value: T | null, reason: string): Labeled<T> {
-  return { status: 'DATA_QUALITY_ISSUE', value, reason };
-}
+//
+// OPERATIONAL-CONNECTIVITY UPGRADE, PART 8: this primitive is no longer
+// specific to the fuel report -- trips (distance), telematics (routing)
+// and cross-module reporting now use the same vocabulary, so the
+// definitions moved to shared/types/evidence.types.ts. Re-exported here
+// verbatim so every existing import in this module (and its two
+// generators) keeps working unchanged -- this file's behaviour is
+// identical before and after, verified by diff.
+// FIX: `export type { X } from '...'` re-exports X for OTHER modules to
+// import from this file, but does NOT bring X into scope for use
+// WITHIN this file -- every type below that references `Labeled<...>`
+// was compiling against an undeclared name until this `import type`
+// was added alongside the re-export (caught by `tsc --noEmit`, which
+// is exactly the check this comment is here to explain to the next
+// person wondering why both an import and an export of the same names
+// appear together).
+import type { FindingStatus, Labeled } from '@/shared/types/evidence.types';
+export type { FindingStatus, Labeled };
+export {
+  fact,
+  calculated,
+  estimated,
+  unavailable,
+  dataQualityIssue,
+} from '@/shared/types/evidence.types';
 
 // ---------------------------------------------------------------------
 // PART 13: every finding answers WHAT / WHY / IMPACT / ACTION / HOW /

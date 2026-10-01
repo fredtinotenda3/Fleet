@@ -65,8 +65,24 @@ declare module '@/shared/types/trip.types' {
      * trips, where the distance was supplied by a person.
      */
     distance_km_known?: boolean;
-    /** Which instrument produced the distance. `null` when unmeasurable. */
-    distance_source?: 'odometer' | 'gps-path' | null;
+    /**
+     * Which instrument produced the SELECTED distance. `null` when
+     * unmeasurable.
+     *
+     * WIDENED, Operational-Connectivity upgrade PART 5: originally
+     * 'odometer' | 'gps-path' (telemetry-only, since only the generator
+     * wrote this field). The Distance Source Hierarchy
+     * (distance-source-resolver.service.ts) now also writes trips
+     * created from the map-assisted log or a plain manual entry, so the
+     * two values those write paths select are added here rather than in
+     * a competing field -- see shared/types/evidence.types.ts's
+     * `DistanceSource`, which this is kept string-identical to. Every
+     * existing reader that narrows on 'odometer' | 'gps-path' keeps
+     * working unchanged; a reader that must also handle the new values
+     * will fail to compile until it does (verified: no exhaustive switch
+     * on this field exists outside this module today).
+     */
+    distance_source?: 'odometer' | 'gps-path' | 'map-derived' | 'manual' | null;
 
     // ── Telemetry-derived detail ────────────────────────────────────
     /** km/h, highest observed during the trip. Absent when unreported. */

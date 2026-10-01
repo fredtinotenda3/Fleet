@@ -318,6 +318,15 @@ export const MODULE_SCOPE_REGISTRY: ModuleScopeEntry[] = [
       // geocode-cache.repository.ts for why a global cache would be a
       // cross-tenant movement-inference channel.
       'tblgeocode_cache',
+      // Forward-geocoding ("type a place name") cache for the
+      // map-assisted trip log, PART 3. Same tenancy reasoning as
+      // tblgeocode_cache immediately above -- see
+      // geocode-search-cache.repository.ts's header -- and deliberately
+      // NOT merged into that collection: the documents have a different
+      // shape (query text + candidate list vs. one coordinate cell) and
+      // a different, longer TTL (place names are far more durable than
+      // "no new building here since the last 90-day window").
+      'tblgeocode_search_cache',
       // PHASE 4 daily aggregates, read by the reporting path added in
       // BACKLOG ITEM 5. Registered here because a rollup carries the
       // orgUnitId of the readings it summarises and is read through the

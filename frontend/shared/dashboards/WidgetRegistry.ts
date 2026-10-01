@@ -13,6 +13,7 @@ import { AIRecommendationsWidget } from './widgets/AIRecommendationsWidget';
 import { NeedsAttentionWidget } from './widgets/NeedsAttentionWidget';
 import { MapsWidget } from './widgets/MapsWidget';
 import { CostPerKmWidget } from './widgets/CostPerKmWidget';
+import { DataQualityCoverageWidget } from './widgets/DataQualityCoverageWidget';
 
 export type WidgetKey =
   | 'kpis'
@@ -25,6 +26,7 @@ export type WidgetKey =
   | 'alerts'
   | 'aiRecommendations'
   | 'costPerKm'
+  | 'dataQualityCoverage'
   | 'map';
 
 export type WidgetSize = 'sm' | 'md' | 'lg' | 'full';
@@ -145,6 +147,14 @@ export const WIDGET_REGISTRY: Record<WidgetKey, WidgetDefinition> = {
     component: MapsWidget,
     permission: [Permission.VEHICLE_VIEW],
   },
+  dataQualityCoverage: {
+    key: 'dataQualityCoverage',
+    title: 'Data quality & coverage',
+    description: 'GPS, odometer, fuel, driver, trip, and maintenance record coverage across the fleet in scope.',
+    size: 'lg',
+    component: DataQualityCoverageWidget,
+    permission: [Permission.ANALYTICS_VIEW],
+  },
 };
 
 export const WIDGET_ORDER: WidgetKey[] = [
@@ -153,6 +163,7 @@ export const WIDGET_ORDER: WidgetKey[] = [
   'needsAttention',
   'aiRecommendations',
   'costPerKm',
+  'dataQualityCoverage',
   'maintenance',
   'fuel',
   'expenses',

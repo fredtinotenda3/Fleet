@@ -19,6 +19,23 @@ import type {
   TripCostSummary,
 } from '@/shared/types/trip.types';
 import type { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
+import type {
+  TripStop,
+  TripRouteEvidence,
+  TripRouteLeg,
+  TripDistanceEvidence,
+  DistanceMeasurement,
+  DistanceSource,
+} from '@/shared/types/evidence.types';
+
+export type {
+  TripStop,
+  TripRouteEvidence,
+  TripRouteLeg,
+  TripDistanceEvidence,
+  DistanceMeasurement,
+  DistanceSource,
+};
 
 export type {
   Trip,
@@ -43,9 +60,9 @@ export type {
   TripCostSummary,
 };
 
-export type TripMode = 'distance' | 'odometer';
+export type TripMode = 'distance' | 'odometer' | 'map';
 
-export const TRIP_MODES: TripMode[] = ['distance', 'odometer'];
+export const TRIP_MODES: TripMode[] = ['distance', 'odometer', 'map'];
 
 export const TRIP_STATUS_OPTIONS: TripStatus[] = ['planned', 'ongoing', 'completed', 'cancelled'];
 export const TRIP_TYPE_OPTIONS: TripType[] = ['delivery', 'pickup', 'transfer', 'service_call', 'other'];

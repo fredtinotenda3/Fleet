@@ -2,6 +2,7 @@
 
 import { NextRequest } from 'next/server';
 import { fleetAnalyticsService } from '../services/fleet-analytics.service';
+import { dataQualityCoverageService } from '../services/data-quality-coverage.service';
 import { successResponse, errorResponse } from '@/server/utils/response.utils';
 import { AppError, isAppError, describeError } from '@/server/errors/app.errors';
 import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
@@ -98,6 +99,15 @@ export class AnalyticsController {
           return successResponse(
             await fleetAnalyticsService.getMaintenanceForecast(tenantId, context)
           );
+
+        /**
+         * PART 11 -- Data Quality / Data Coverage. Gated by the same
+         * ANALYTICS_VIEW this whole route already requires; unlike
+         * 'kpis' this carries no financial figures, so it needs no
+         * additional EXPENSE_VIEW/FUEL_VIEW/FINANCE_VIEW check.
+         */
+        case 'data-quality-coverage':
+          return successResponse(await dataQualityCoverageService.getCoverage(context));
 
         default:
           return errorResponse(

@@ -53,7 +53,16 @@ export interface ApiResponse<T = unknown> {
 
 export type Status = 'active' | 'inactive' | 'maintenance' | 'archived';
 export type Priority = 'low' | 'medium' | 'high' | 'critical';
-export type Mode = 'distance' | 'odometer';
+/**
+ * Trip entry mode. 'map' added for the map-assisted trip log
+ * (Operational-Connectivity upgrade, PART 3): the operator places stops
+ * on a map/search box instead of typing a distance or odometer pair, and
+ * the server computes a MAP-DERIVED route distance from those stops --
+ * see distance-source-resolver.service.ts. `Mode` is Trip-only in this
+ * codebase (verified: no other entity's type alias references it), so
+ * widening it here is additive and does not affect any other module.
+ */
+export type Mode = 'distance' | 'odometer' | 'map';
 
 export interface DateRange {
   startDate: Date;

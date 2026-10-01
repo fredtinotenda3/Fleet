@@ -20,6 +20,8 @@ import type {
 import type { TripFormOutput } from '../schemas';
 import type { TripPlaybackData } from '../utils/playback';
 import type { ImportResponse } from '@/frontend/shared/import/ImportModal';
+import type { GeocodeSearchCandidate } from '../types/map-assisted';
+import type { RoutePreviewRequestStop, RoutePreviewResult } from '../types/map-assisted';
 
 const BASE = '/api/trips';
 
@@ -204,6 +206,27 @@ export const tripsApi = {
    * full authorized, filtered result set (capped at EXPORT_ROW_CAP)
    * rather than exporting only the currently-loaded page.
    */
+  /**
+   * PART 3: forward-geocode a search string typed into the map-assisted
+   * trip log's location box. GET /api/geocoding/search?q=...
+   */
+  async searchLocations(query: string): Promise<{ candidates: GeocodeSearchCandidate[]; cached: boolean }> {
+    return apiClient.get<{ candidates: GeocodeSearchCandidate[]; cached: boolean }>(
+      `/api/geocoding/search`,
+      { params: { q: query } }
+    );
+  },
+
+  /**
+   * PART 3/4: live route preview as stops are added/reordered/removed,
+   * before the trip is saved. POST /api/trips/route-preview. The
+   * server independently recomputes this at save time -- see
+   * CreateTripHandler -- so this result is for display only.
+   */
+  async previewRoute(stops: RoutePreviewRequestStop[]): Promise<RoutePreviewResult> {
+    return apiClient.post<RoutePreviewResult>(`${BASE}/route-preview`, { stops });
+  },
+
   async exportFile(filters: Partial<TripTableFilters>, format: ExportFormat = 'csv'): Promise<ExportBlobResponse> {
     return apiClient.getBlob(`${BASE}/export`, {
       params: {

@@ -30,6 +30,7 @@ import {
 } from '../export/trip-export.columns';
 import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
 import { userWriteScope } from '@/server/tenancy/write-scope';
+import { routeDistanceService } from '@/modules/telematics/services/route-distance.service';
 
 bootstrapCqrs();
 
@@ -281,6 +282,59 @@ export class TripController {
    * it to reject rows for vehicles outside the caller's accessible org
    * units, same fail-closed rule as the read side.
    */
+  /**
+   * PART 3/4: live route preview for the map-assisted trip log, as the
+   * operator adds/reorders/removes stops -- before the trip is saved.
+   * Authenticated (so this cannot become an open proxy to OSRM) but
+   * otherwise a pure computation: it touches no vehicle, no trip, and
+   * writes nothing, so it only needs TRIP_CREATE (the same permission
+   * the eventual save requires) rather than any vehicle-scope check.
+   *
+   * This is NOT the source of truth for a saved trip's distance --
+   * CreateTripHandler/UpdateTripHandler independently recompute the
+   * route from the stops actually submitted at save time, exactly so a
+   * preview result can never be trusted as-is for the persisted figure.
+   */
+  async previewRoute(req: NextRequest) {
+    try {
+      await resolveTenantContext(req); // auth only; see doc comment above
+      const body = await req.json();
+      const stopsInput = Array.isArray(body?.stops) ? body.stops : null;
+
+      if (!stopsInput || stopsInput.length < 2) {
+        throw new ValidationError('At least a start and an end stop are required');
+      }
+
+      const stops = stopsInput.map((s: Record<string, unknown>, i: number) => {
+        const lat = Number(s.lat);
+        const lng = Number(s.lng);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+          throw new ValidationError(`Stop ${i + 1} has an invalid coordinate`);
+        }
+        return { sequence: Number(s.sequence ?? i), lat, lng };
+      });
+
+      const route = await routeDistanceService.computeRoute(stops);
+
+      if (!route) {
+        return successResponse({
+          available: false,
+          reason:
+            'A map route could not be calculated for these stops. Check that each resolves to a real, road-connected location.',
+        });
+      }
+
+      return successResponse({
+        available: true,
+        legs: route.legs,
+        totalDistanceKm: route.totalDistanceKm,
+        geometry: route.geometry ?? [],
+      });
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
   async importTrips(req: NextRequest) {
     try {
       const tenantId = await getTenantFromRequest(req);

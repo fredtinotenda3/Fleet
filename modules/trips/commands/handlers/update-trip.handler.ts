@@ -5,6 +5,7 @@ import { UpdateTripCommand } from '../update-trip.command';
 import { TripRepository } from '@/modules/trips/repositories/trip.repository';
 import { tripUpdateSchema } from '@/shared/validations/trip.schema';
 import { Trip } from '@/shared/types/trip.types';
+import '@/shared/types/trip.map-assisted-addendum';
 import { NotFoundError, ValidationError, AppError } from '@/server/errors/app.errors';
 import { validateWithZod } from '@/shared/utils/validation.utils';
 import connectToDatabase from '@/infrastructure/database/mongodb';
@@ -12,6 +13,12 @@ import { vehicleWriteResolver } from '@/modules/vehicles/services/vehicle-write-
 import { driverWriteResolver } from '@/modules/drivers/services/driver-write-resolver.service';
 import { EventBusFactory } from '@/server/events/bus/EventBusFactory';
 import { TripUpdatedEvent } from '@/modules/trips/events/TripUpdatedEvent';
+import { routeDistanceService } from '@/modules/telematics/services/route-distance.service';
+import {
+  resolveSelectedDistance,
+  buildDistanceMeasurement,
+} from '@/modules/trips/services/distance-source-resolver.service';
+import type { TripStop } from '@/shared/types/evidence.types';
 
 const ALLOWED_FIELDS = [
   'license_plate',
@@ -31,6 +38,8 @@ const ALLOWED_FIELDS = [
   'end_time',
   'trip_type',
   'routeId',
+  // --- PART 3: map-assisted trip log ---
+  'stops',
 ] as const;
 
 const NUMERIC_FIELDS = ['trip_distance', 'start_odometer', 'end_odometer'];
@@ -126,10 +135,62 @@ export class UpdateTripHandler implements ICommandHandler<UpdateTripCommand, Tri
     }
 
     const mode = updateData.mode as string | undefined;
-    if (mode === 'distance' && updateData.trip_distance != null) {
+    if (mode === 'map') {
+      /**
+       * PART 3/5: editing a map-assisted trip's stops must re-run the
+       * SAME server-side routing call create does -- never trust a
+       * client-submitted distance for this mode, and never leave the
+       * trip's distance stale relative to its own stops after an edit
+       * (a changed waypoint with an unchanged distance_calculated would
+       * silently corrupt every downstream cost/km figure).
+       */
+      const stops = (updateData.stops as TripStop[] | undefined) ?? null;
+      if (!stops || stops.length < 2) {
+        throw new ValidationError('A map-assisted trip needs at least a start and an end stop');
+      }
+      const sortedStops = [...stops].sort((a, b) => a.sequence - b.sequence);
+      const route = await routeDistanceService.computeRoute(
+        sortedStops.map((s) => ({ sequence: s.sequence, lat: s.lat, lng: s.lng }))
+      );
+      if (!route) {
+        throw new AppError(
+          'A map route could not be calculated for these stops. Check that each stop resolves to a real location, or switch this trip to Direct Distance or Odometer mode instead.',
+          'MAP_ROUTE_UNAVAILABLE',
+          422
+        );
+      }
+      const mapDerived = buildDistanceMeasurement(
+        route.totalDistanceKm,
+        'map-derived',
+        `Routing engine (OSRM) over ${sortedStops.length} stops`
+      );
+      const resolved = resolveSelectedDistance({ mapDerived });
+      updateData.distance_calculated = resolved.valueKm ?? 0;
+      updateData.distance_source = 'map-derived';
+      updateData.distance_km_known = true;
+      updateData.distance_evidence = { mapDerived };
+      updateData.route = {
+        provider: 'osrm',
+        calculatedAt: new Date(),
+        legs: route.legs,
+        totalDistanceKm: route.totalDistanceKm,
+        ...(route.geometry ? { geometry: route.geometry } : {}),
+      };
+      updateData.stops = sortedStops;
+      updateData.trip_distance = null;
+      updateData.start_odometer = null;
+      updateData.end_odometer = null;
+    } else if (mode === 'distance' && updateData.trip_distance != null) {
       updateData.distance_calculated = Number(updateData.trip_distance);
       updateData.start_odometer = null;
       updateData.end_odometer = null;
+      updateData.distance_source = 'manual';
+      updateData.distance_km_known = true;
+      updateData.distance_evidence = {
+        manual: buildDistanceMeasurement(Number(updateData.trip_distance), 'manual', 'Manually entered'),
+      };
+      updateData.route = null;
+      updateData.stops = null;
     } else if (mode === 'odometer') {
       const start = updateData.start_odometer != null ? Number(updateData.start_odometer) : null;
       const end = updateData.end_odometer != null ? Number(updateData.end_odometer) : null;
@@ -138,8 +199,15 @@ export class UpdateTripHandler implements ICommandHandler<UpdateTripCommand, Tri
           throw new ValidationError('End odometer cannot be less than start odometer');
         }
         updateData.distance_calculated = end - start;
+        updateData.distance_source = 'odometer';
+        updateData.distance_km_known = true;
+        updateData.distance_evidence = {
+          odometer: buildDistanceMeasurement(end - start, 'odometer', 'End odometer − start odometer'),
+        };
       }
       updateData.trip_distance = null;
+      updateData.route = null;
+      updateData.stops = null;
     } else if (!mode) {
       if (updateData.trip_distance != null) {
         updateData.distance_calculated = Number(updateData.trip_distance);

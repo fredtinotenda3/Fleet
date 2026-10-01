@@ -60,16 +60,10 @@
 
 import { monitoring } from '@/infrastructure/monitoring/logger';
 import { geocodeCacheRepository, geocodeCell } from '../repositories/geocode-cache.repository';
+import { throttleNominatim, nominatimUserAgent } from './nominatim-rate-limiter';
 
 const PROVIDER = 'nominatim';
 const NOMINATIM_ENDPOINT = 'https://nominatim.openstreetmap.org/reverse';
-
-/**
- * Nominatim's stated minimum interval between requests from one source.
- * A little over a second, because the limit is enforced on arrival and
- * network jitter should not be what pushes a request over it.
- */
-const MIN_REQUEST_INTERVAL_MS = 1_100;
 
 /**
  * Short by design. This runs inside the vehicle-detail request, so the
@@ -97,42 +91,6 @@ export interface ResolvedAddress {
 
 function isEnabled(): boolean {
   return (process.env.TELEMATICS_REVERSE_GEOCODE ?? 'on').toLowerCase() !== 'off';
-}
-
-function userAgent(): string {
-  return (
-    process.env.NOMINATIM_USER_AGENT ??
-    'FleetPlatform/1.0 (self-hosted fleet management; set NOMINATIM_USER_AGENT to identify this deployment)'
-  );
-}
-
-/**
- * Process-wide serialising gate.
- *
- * Each caller chains onto the previous one and waits out the remainder
- * of the minimum interval. A queue rather than a token bucket because
- * the guarantee Nominatim asks for is about SPACING, not average rate --
- * a bucket permits a burst, which is precisely what gets an IP blocked.
- *
- * Never rejects: a failure inside one caller must not poison the chain
- * for the next.
- */
-let gate: Promise<void> = Promise.resolve();
-let lastRequestAt = 0;
-
-function throttle<T>(work: () => Promise<T>): Promise<T> {
-  const scheduled = gate.then(async () => {
-    const wait = Math.max(0, lastRequestAt + MIN_REQUEST_INTERVAL_MS - Date.now());
-    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-    lastRequestAt = Date.now();
-    return work();
-  });
-
-  gate = scheduled.then(
-    () => undefined,
-    () => undefined
-  );
-  return scheduled;
 }
 
 /**
@@ -267,7 +225,7 @@ export class ReverseGeocodeService {
     url.searchParams.set('addressdetails', '1');
 
     try {
-      return await throttle(async () => {
+      return await throttleNominatim(async () => {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -276,7 +234,7 @@ export class ReverseGeocodeService {
             method: 'GET',
             headers: {
               Accept: 'application/json',
-              'User-Agent': userAgent(),
+              'User-Agent': nominatimUserAgent(),
             },
             signal: controller.signal,
           });
