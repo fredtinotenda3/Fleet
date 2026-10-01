@@ -1,4 +1,4 @@
-// app/api/compliance/records/[id]/waive/route.ts
+// app/api/compliance/records/[id]/route.ts
 import { withAuth } from '@/server/middleware/with-auth';
 import { complianceController } from '@/modules/compliance/controllers/compliance.controller';
 import { Permission } from '@/server/permissions/roles';
@@ -7,10 +7,10 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-export const POST = withAuth<RouteParams>(
+export const GET = withAuth<RouteParams>(
   async (req, _ctx, { params }) => {
     const { id } = await params;
-    return complianceController.waiveRecord(req, id);
+    return complianceController.get(req, id);
   },
-  { permission: Permission.COMPLIANCE_MANAGE }
+  { permission: Permission.COMPLIANCE_VIEW }
 );

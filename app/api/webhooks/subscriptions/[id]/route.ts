@@ -1,4 +1,4 @@
-// app/api/webhooks/subscriptions/[id]/test/route.ts
+// app/api/webhooks/subscriptions/[id]/route.ts
 
 import { NextRequest } from 'next/server';
 import { webhookSubscriptionController } from '@/modules/webhooks/controllers/webhook-subscription.controller';
@@ -9,10 +9,26 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-export const POST = withAuth<RouteParams>(
+export const GET = withAuth<RouteParams>(
   async (req: NextRequest, _ctx, { params }) => {
     const { id } = await params;
-    return webhookSubscriptionController.sendTest(req, id);
+    return webhookSubscriptionController.get(req, id);
+  },
+  { permission: Permission.WEBHOOK_VIEW }
+);
+
+export const PUT = withAuth<RouteParams>(
+  async (req: NextRequest, _ctx, { params }) => {
+    const { id } = await params;
+    return webhookSubscriptionController.update(req, id);
+  },
+  { permission: Permission.WEBHOOK_MANAGE }
+);
+
+export const DELETE = withAuth<RouteParams>(
+  async (req: NextRequest, _ctx, { params }) => {
+    const { id } = await params;
+    return webhookSubscriptionController.delete(req, id);
   },
   { permission: Permission.WEBHOOK_MANAGE }
 );

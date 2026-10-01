@@ -1,57 +1,70 @@
-// app/api/reminders/update-status/route.ts
+// app/api/reminders/route.ts
 
-/**
- * GET /api/reminders/update-status
- *
- * Now backed by the same BulkUpdateOverdueCommand as notify-overdue.
- * Also added the CRON_SECRET check — this endpoint previously had NO
- * authentication at all despite recalculating status across every
- * reminder in the system, which is worth closing while touching this file.
- */
-import { NextRequest, NextResponse } from 'next/server';
-import { maintenanceCommandService } from '@/modules/maintenance/services/maintenance-command.service';
-import { denyCronRequest } from '@/server/middleware/cron-auth';
+import { NextRequest } from 'next/server';
+import { maintenanceController } from '@/modules/maintenance/controllers/maintenance.controller';
+import { withAuth } from '@/server/middleware/with-auth';
+import { Permission } from '@/server/permissions/roles';
+import { errorResponse } from '@/server/utils/response.utils';
 
+export const GET = withAuth(
+  async (req: NextRequest) => {
+    const searchParams = req.nextUrl.searchParams;
+    const action = searchParams.get('action');
+    const id = searchParams.get('id');
 
-export async function GET(req: NextRequest) {
-  // PHASE 0, F-1: fail-CLOSED. An absent CRON_SECRET now refuses
-  // the request (500) instead of skipping authentication.
-  const denied = denyCronRequest(req, '/api/reminders/update-status');
-  if (denied) return denied;
+    if (action === 'stats') return await maintenanceController.getMaintenanceStats(req);
+    if (action === 'overdue') return await maintenanceController.getOverdueReminders(req);
+    if (action === 'upcoming') return await maintenanceController.getUpcomingReminders(req);
 
-  try {
-    const result = await maintenanceCommandService.bulkUpdateOverdue('system');
+    // Phase 2 Enterprise Export Framework
+    if (action === 'export') return await maintenanceController.exportReminders(req);
 
-    return NextResponse.json({
-      message: 'Reminder statuses updated successfully.',
-      updatedCount: result.updatedCount,
-    });
-  } catch (error) {
-    console.error('Error updating reminder statuses:', error);
-    return NextResponse.json(
-      { error: 'Failed to update reminder statuses' },
-      { status: 500 }
-    );
-  }
-}
+    // Enterprise analytics additions
+    if (action === 'cost-trend') return await maintenanceController.getCostTrend(req);
+    if (action === 'repair-frequency') return await maintenanceController.getRepairFrequencyByVehicle(req);
+    if (action === 'most-expensive-vehicles') return await maintenanceController.getMostExpensiveVehicles(req);
+    if (action === 'downtime-estimate') return await maintenanceController.getDowntimeEstimate(req);
 
-/**
- * PHASE 0, F-1 -- HTTP METHOD DECISION.
- *
- * This operation mutates state, so POST is the semantically correct
- * method. GET is RETAINED as the primary entry point because Vercel Cron
- * (see vercel.json) issues GET and cannot be configured to issue POST --
- * removing the GET handler would silently stop the schedule.
- *
- * Retaining a mutating GET is safe here specifically because the
- * credential is a Bearer header, which a browser never attaches
- * automatically: there is no ambient-authority (CSRF) path to this
- * route, unlike a cookie-authenticated one. The fail-closed guard above
- * applies identically to both methods.
- *
- * POST is exported so operators running a scheduler that CAN issue it
- * (GitHub Actions, Cloud Scheduler, k8s CronJob, curl) can use the
- * correct method today, and so GET can be retired without a code change
- * once Vercel Cron is no longer the driver.
- */
-export const POST = GET;
+    // Vehicle-Level Analytics: single-vehicle-only derived insights
+    if (action === 'vehicle-insights') return await maintenanceController.getVehicleInsights(req);
+
+    if (id) return await maintenanceController.getReminder(req, id);
+
+    return await maintenanceController.getReminders(req);
+  },
+  { permission: Permission.MAINTENANCE_VIEW }
+);
+
+export const POST = withAuth(
+  async (req: NextRequest) => await maintenanceController.createReminder(req),
+  { permission: Permission.MAINTENANCE_CREATE }
+);
+
+export const PUT = withAuth(
+  async (req: NextRequest) => {
+    const id = req.nextUrl.searchParams.get('id');
+    const action = req.nextUrl.searchParams.get('action');
+
+    if (!id) {
+      return errorResponse('Missing reminder ID', 'VALIDATION_ERROR', 400);
+    }
+
+    if (action === 'complete') {
+      return await maintenanceController.completeReminder(req, id);
+    }
+
+    return await maintenanceController.updateReminder(req, id);
+  },
+  { anyPermission: [Permission.MAINTENANCE_EDIT, Permission.MAINTENANCE_COMPLETE] }
+);
+
+export const DELETE = withAuth(
+  async (req: NextRequest) => {
+    const id = req.nextUrl.searchParams.get('id');
+    if (!id) {
+      return errorResponse('Missing reminder ID', 'VALIDATION_ERROR', 400);
+    }
+    return await maintenanceController.deleteReminder(req, id);
+  },
+  { permission: Permission.MAINTENANCE_DELETE }
+);

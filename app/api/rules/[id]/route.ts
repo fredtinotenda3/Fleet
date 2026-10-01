@@ -1,4 +1,4 @@
-// app/api/rules/[id]/test/route.ts
+// app/api/rules/[id]/route.ts
 
 import { NextRequest } from 'next/server';
 import { ruleController } from '@/modules/rules/controllers/rule.controller';
@@ -9,10 +9,26 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-export const POST = withAuth<RouteParams>(
+export const GET = withAuth<RouteParams>(
   async (req: NextRequest, _ctx, { params }) => {
     const { id } = await params;
-    return ruleController.testRule(req, id);
+    return ruleController.getRule(req, id);
   },
   { permission: Permission.ORG_VIEW }
+);
+
+export const PUT = withAuth<RouteParams>(
+  async (req: NextRequest, _ctx, { params }) => {
+    const { id } = await params;
+    return ruleController.updateRule(req, id);
+  },
+  { permission: Permission.ORG_MANAGE }
+);
+
+export const DELETE = withAuth<RouteParams>(
+  async (req: NextRequest, _ctx, { params }) => {
+    const { id } = await params;
+    return ruleController.deleteRule(req, id);
+  },
+  { permission: Permission.ORG_MANAGE }
 );

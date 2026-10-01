@@ -1,12 +1,7 @@
-// app/(protected)/maintenance/vehicles/[plate]/page.tsx
+// app/(protected)/maintenance/page.tsx
 
-import { VehicleMaintenanceHistoryPage } from '@/frontend/modules/maintenance';
+import { MaintenanceDashboardPage } from '@/frontend/modules/maintenance';
 
-interface PageProps {
-  params: Promise<{ plate: string }>;
-}
-
-export default async function Page({ params }: PageProps) {
-  const { plate } = await params;
-  return <VehicleMaintenanceHistoryPage licensePlate={decodeURIComponent(plate)} />;
+export default function Page() {
+  return <MaintenanceDashboardPage />;
 }

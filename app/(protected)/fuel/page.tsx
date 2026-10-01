@@ -1,8 +1,8 @@
-//app/(protected)/fuel/vehicles/[plate]/page.tsx
+// app/(protected)/fuel/page.tsx
 
-import { VehicleFuelHistoryPage } from '@/frontend/modules/fuel/pages/VehicleFuelHistoryPage';
+import { FuelDashboardPage } from '@/frontend/modules/fuel/pages/FuelDashboardPage';
 
-export default async function Page({ params }: { params: Promise<{ plate: string }> }) {
-  const { plate } = await params;
-  return <VehicleFuelHistoryPage licensePlate={decodeURIComponent(plate)} />;
+export default function Page() {
+  return <FuelDashboardPage />;
 }
+
