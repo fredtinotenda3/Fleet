@@ -32,6 +32,7 @@ jest.mock('../../modules/attention/repositories/attention-item.repository', () =
   attentionItemRepository: {
     findByItemKey: jest.fn(),
     resolveByItemKey: jest.fn(),
+    findManyInScope: jest.fn(),
   },
 }));
 jest.mock('../../modules/attention/repositories/value-ledger.repository', () => ({
@@ -42,6 +43,7 @@ jest.mock('../../modules/attention/repositories/value-ledger.repository', () => 
 
 const mockedFindByItemKey = attentionItemRepository.findByItemKey as jest.Mock;
 const mockedResolveByItemKey = attentionItemRepository.resolveByItemKey as jest.Mock;
+const mockedFindManyInScope = attentionItemRepository.findManyInScope as jest.Mock;
 const mockedAppend = valueLedgerRepository.append as jest.Mock;
 
 const TENANT = 'willsgrove-farm-enterprises-9e80ed';
@@ -385,5 +387,83 @@ describe('AttentionResolutionService.resolve', () => {
 
       expect(mockedAppend).not.toHaveBeenCalled();
     });
+  });
+});
+
+/**
+ * MODULE CONNECTIVITY UPGRADE ("Attention/Actions <-> Outcome
+ * Verification" UI), Round 3: the read side of the resolved-items feed
+ * that VerifyOutcomeDialog/ResolvedAttentionItemCard browse. No new
+ * scoping logic of its own -- see listResolved's own comment -- but the
+ * query shape it hands to the shared `findManyInScope` helper (status
+ * filter, sort, and the limit clamp) is this service's own contract and
+ * deserves its own pin, independent of whatever findManyInScope's own
+ * tests cover.
+ */
+describe('AttentionResolutionService.listResolved', () => {
+  it('queries only resolved items, sorted by resolvedAt descending, scoped by the caller context', async () => {
+    mockedFindManyInScope.mockResolvedValue([]);
+    const context = makeContext([HARARE_BRANCH]);
+
+    await service.listResolved(context, 25);
+
+    expect(mockedFindManyInScope).toHaveBeenCalledWith(
+      { status: 'resolved' },
+      context,
+      { sortBy: 'resolvedAt', sortOrder: 'desc', limit: 25 }
+    );
+  });
+
+  it('defaults to a limit of 50 when none is supplied', async () => {
+    mockedFindManyInScope.mockResolvedValue([]);
+
+    await service.listResolved(makeContext(null));
+
+    expect(mockedFindManyInScope).toHaveBeenCalledWith(
+      { status: 'resolved' },
+      expect.anything(),
+      expect.objectContaining({ limit: 50 })
+    );
+  });
+
+  it('caps the limit at 200 regardless of how large a caller asks for', async () => {
+    mockedFindManyInScope.mockResolvedValue([]);
+
+    await service.listResolved(makeContext(null), 10_000);
+
+    expect(mockedFindManyInScope).toHaveBeenCalledWith(
+      { status: 'resolved' },
+      expect.anything(),
+      expect.objectContaining({ limit: 200 })
+    );
+  });
+
+  it('floors the limit at 1 for a zero or negative request rather than passing it through', async () => {
+    mockedFindManyInScope.mockResolvedValue([]);
+
+    await service.listResolved(makeContext(null), 0);
+    await service.listResolved(makeContext(null), -5);
+
+    expect(mockedFindManyInScope).toHaveBeenNthCalledWith(
+      1,
+      { status: 'resolved' },
+      expect.anything(),
+      expect.objectContaining({ limit: 1 })
+    );
+    expect(mockedFindManyInScope).toHaveBeenNthCalledWith(
+      2,
+      { status: 'resolved' },
+      expect.anything(),
+      expect.objectContaining({ limit: 1 })
+    );
+  });
+
+  it('returns exactly what the scoped repository call resolves to', async () => {
+    const items = [makeAttentionItem({ status: 'resolved' })];
+    mockedFindManyInScope.mockResolvedValue(items);
+
+    const result = await service.listResolved(makeContext(null));
+
+    expect(result).toBe(items);
   });
 });

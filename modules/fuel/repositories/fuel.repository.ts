@@ -358,6 +358,7 @@ export class FuelRepository extends BaseRepository<FuelLog> {
     if (filters.payment_method) query.payment_method = filters.payment_method;
     if (filters.fuel_station_id) query.fuel_station_id = filters.fuel_station_id;
     if (filters.fuel_card_id) query.fuel_card_id = filters.fuel_card_id;
+    if (filters.tripId) query.tripId = filters.tripId;
     if (filters.startDate || filters.endDate) {
       query.date = {};
       if (filters.startDate) (query.date as any).$gte = filters.startDate;

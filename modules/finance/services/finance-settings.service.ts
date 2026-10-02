@@ -20,6 +20,7 @@ import type {
   FxPolicy,
   OrganizationDepreciationDefaults,
 } from '../types/finance-settings.types';
+import type { AllocationCostCategory } from '../types/allocation.types';
 import { resolveOrganization, invalidateOrganizationCache } from '@/server/tenancy/organization-resolver';
 import { organizationRepository } from '@/modules/organizations/repositories/organization.repository';
 import { NotFoundError, ValidationError } from '@/server/errors/app.errors';
@@ -44,6 +45,8 @@ export interface ResolvedFinanceSettings {
   fxPolicy: FxPolicy;
   glToleranceAmount: number;
   depreciationDefaults?: OrganizationDepreciationDefaults;
+  /** Always a concrete object (never undefined) -- an unconfigured tenant resolves to `{}`, not a missing field callers must guard. */
+  costCategoryGlAccountCodes: Partial<Record<AllocationCostCategory, string>>;
   /**
    * True when the tenant has never saved finance settings, so every
    * value above came from a default or from OrganizationSettings.
@@ -92,6 +95,7 @@ export class FinanceSettingsService {
       fxPolicy: saved?.fxPolicy ?? FINANCE_SETTINGS_DEFAULTS.fxPolicy,
       glToleranceAmount: saved?.glToleranceAmount ?? FINANCE_SETTINGS_DEFAULTS.glToleranceAmount,
       depreciationDefaults: saved?.depreciationDefaults,
+      costCategoryGlAccountCodes: saved?.costCategoryGlAccountCodes ?? {},
       usingDefaults: !saved,
     };
   }
@@ -134,9 +138,25 @@ export class FinanceSettingsService {
     }
 
     const before = organization.financeSettings;
+
+    // A blank string in the submitted map means "clear this category's
+    // mapping", not "post with an empty account code" -- drop it rather
+    // than persist noise AllocationPostingService would just treat as
+    // falsy anyway. An entirely-empty resulting map is persisted as
+    // undefined so `saved.costCategoryGlAccountCodes` stays absent
+    // (not `{}`) for a tenant that has never configured this, matching
+    // every other optional field on this settings object.
+    const trimmedCodes = input.costCategoryGlAccountCodes
+      ? Object.fromEntries(
+          Object.entries(input.costCategoryGlAccountCodes).filter(([, code]) => Boolean(code?.trim()))
+        )
+      : undefined;
+
     const normalized: OrganizationFinanceSettings = {
       ...input,
       reportingCurrency: input.reportingCurrency?.toUpperCase(),
+      costCategoryGlAccountCodes:
+        trimmedCodes && Object.keys(trimmedCodes).length > 0 ? (trimmedCodes as OrganizationFinanceSettings['costCategoryGlAccountCodes']) : undefined,
     };
 
     const previousReportingCurrency = (

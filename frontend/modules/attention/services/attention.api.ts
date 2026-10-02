@@ -9,7 +9,7 @@
 
 import { apiClient } from '@/shared/utils/api-client.utils';
 import { toISODate } from '@/shared/utils/date.utils';
-import type { LedgerExportData, LedgerSummaryData } from '../types';
+import type { LedgerExportData, LedgerSummaryData, ResolvedAttentionFeed } from '../types';
 
 /** First calendar day of the month containing `date`, at local midnight. */
 export function startOfMonth(date: Date = new Date()): Date {
@@ -56,5 +56,21 @@ export const attentionApi = {
   /** Convenience wrapper: the ledger summary filtered to the current month so far. */
   async getMonthToDateLedgerSummary(): Promise<LedgerSummaryData> {
     return attentionApi.getLedgerSummary(startOfMonth(), new Date());
+  },
+
+  /**
+   * MODULE CONNECTIVITY UPGRADE -- "Attention/Actions ↔ Outcome
+   * Verification". GET /api/ai/needs-attention/resolved
+   * (Permission.ANALYTICS_VIEW) -- the read path the Command Centre's
+   * "Resolved" tab needs to browse to an item and verify its outcome.
+   * A dedicated route rather than a query param on GET
+   * /api/ai/needs-attention: that route's entire contract is "live
+   * recomputation of the open feed" (see needs-attention.service.ts),
+   * and resolved items are a plain scoped read of already-durable rows,
+   * not a recomputation -- folding them in would make one route do two
+   * structurally different things.
+   */
+  async getResolvedItems(limit = 50): Promise<ResolvedAttentionFeed> {
+    return apiClient.get<ResolvedAttentionFeed>('/api/ai/needs-attention/resolved', { params: { limit } });
   },
 };

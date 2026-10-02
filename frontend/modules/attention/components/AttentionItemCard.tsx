@@ -35,8 +35,12 @@ import type { Tone } from '@/frontend/shared/ui/patterns';
  * modules/ai/types/needs-attention.types.ts — its own comment asks for a case
  * here whenever a source is added. Typed as a full Record so a new source is
  * a compile error rather than a silently missing icon.
+ *
+ * Exported for ResolvedAttentionItemCard, which renders the same sources
+ * from a different (persisted, resolved) item shape and deliberately reuses
+ * this map rather than redeclaring it a second time.
  */
-const SOURCE_ICON: Record<NeedsAttentionSource, ComponentType<{ className?: string }>> = {
+export const SOURCE_ICON: Record<NeedsAttentionSource, ComponentType<{ className?: string }>> = {
   predictive_maintenance: Wrench,
   fleet_health: Sparkles,
   driver_risk: ShieldAlert,
@@ -47,7 +51,7 @@ const SOURCE_ICON: Record<NeedsAttentionSource, ComponentType<{ className?: stri
 };
 
 /** What each source is telling you, in the operator's words rather than the model's. */
-const SOURCE_LABEL: Record<NeedsAttentionSource, string> = {
+export const SOURCE_LABEL: Record<NeedsAttentionSource, string> = {
   predictive_maintenance: 'Predicted failure',
   fleet_health: 'Fleet health',
   driver_risk: 'Driver risk',
@@ -73,7 +77,7 @@ const URGENCY_TONE: Record<NeedsAttentionUrgency, Tone> = {
   monitor: 'neutral',
 };
 
-const SEVERITY_RULE: Record<AISeverity, string> = {
+export const SEVERITY_RULE: Record<AISeverity, string> = {
   critical: 'border-l-danger',
   high: 'border-l-warning',
   medium: 'border-l-info',

@@ -46,12 +46,13 @@ export const fuelKeys = {
   heatmap: (range?: string, scope?: string) => [...fuelKeys.all, 'heatmap', range, scope] as const,
 };
 
-export function useFuelLogsList(params: Partial<FuelListParams>) {
+export function useFuelLogsList(params: Partial<FuelListParams>, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: fuelKeys.list(params),
     queryFn: () => fuelApi.list(params),
     placeholderData: (prev) => prev,
     staleTime: 30_000,
+    enabled: options?.enabled,
   });
 }
 
@@ -62,6 +63,24 @@ export function useFuelLog(id: string | undefined, options?: Partial<UseQueryOpt
     enabled: Boolean(id),
     staleTime: 30_000,
     ...options,
+  });
+}
+
+/**
+ * MODULE CONNECTIVITY UPGRADE (fuel/GL reconciliation gap). Separate
+ * from useFuelLog -- the ledger read is FINANCE_VIEW-gated server-side
+ * (a different, stricter bar than FUEL_VIEW), so `enabled` additionally
+ * takes `hasFinanceView` from the caller rather than firing a request
+ * that will 403 for a role that can see the fuel log but not financial
+ * postings (see fuel.controller.ts#getFuelLogLedgerReconciliation).
+ */
+export function useFuelLedgerReconciliation(id: string | undefined, hasFinanceView: boolean) {
+  return useQuery({
+    queryKey: [...fuelKeys.detail(id ?? ''), 'ledger-reconciliation'] as const,
+    queryFn: () => fuelApi.getLedgerReconciliation(id as string),
+    enabled: Boolean(id) && hasFinanceView,
+    staleTime: 60_000,
+    retry: 1,
   });
 }
 

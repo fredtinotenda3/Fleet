@@ -23,6 +23,7 @@
 
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { AlertTriangle } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/frontend/shared/ui/feedback/alert';
 import {
@@ -34,6 +35,7 @@ import {
 } from '@/frontend/shared/ui/data-display/card';
 import { EmptyState } from '@/shared/ui/feedback/EmptyState';
 import { ChartExportButton, slugifyChartFilename } from '@/frontend/shared/charts/ChartExportButton';
+import { MAINTENANCE_ROUTES } from '@/frontend/modules/maintenance/routes';
 import type {
   LeaderboardValueFormat,
   MostExpensiveVehicleRow,
@@ -42,7 +44,7 @@ import type {
   VehicleAlertLeaderboardRow,
   VehicleLeaderboardMetric,
 } from '../types';
-import { formatLeaderboardValue } from '../utils/leaderboard.utils';
+import { formatLeaderboardValue, formatRankLabel } from '../utils/leaderboard.utils';
 import { RankedBarChart } from './RankedBarChart';
 import { MetricToggle, type MetricToggleOption } from './MetricToggle';
 
@@ -173,6 +175,25 @@ export function VehicleLeaderboardCard({
  * `renderDetails` typed against that branch's source row -- there is no
  * single callback that can read `totalCost` and `totalAlerts` without
  * one of them being `any`.
+ *
+ * MODULE CONNECTIVITY UPGRADE (UX audit): DriverLeaderboardCard's own
+ * header comment says it plainly -- "a leaderboard that names [someone]
+ * without showing the evidence behind their position is the wrong
+ * artefact," and every driver row links to the scorecard that evidence
+ * lives on. This card had RankedRow.id ("stable identity for... click-
+ * through", per its own doc comment) sitting unused and no row was
+ * clickable at all. Wired for the two maintenance metrics below, which
+ * both carry `license_plate` and have a real, data-backed destination
+ * (MAINTENANCE_ROUTES.vehicleHistory -- the exact completed-record list
+ * these totals are computed from). 'open-alerts' is deliberately left
+ * unlinked: VehicleAlertLeaderboardRow carries licensePlate but not the
+ * vehicle's Mongo _id (VEHICLE_ROUTES.detail needs the real _id, not a
+ * plate -- see VEHICLE_ROUTES's only other call site), and no page in
+ * this product shows "predictive-maintenance + fuel-fraud findings for
+ * one vehicle" combined, the way this metric combines them. Linking it
+ * to either module's own vehicle-history page would show only half the
+ * number on screen, which is worse than the plain (unclickable) rows
+ * this already was.
  */
 function VehicleLeaderboardChart({
   data,
@@ -185,37 +206,44 @@ function VehicleLeaderboardChart({
   valueLabel: string;
   format: LeaderboardValueFormat;
 }) {
+  const router = useRouter();
   const emptyTitle = 'No vehicles to rank';
 
   if (data.metric === 'maintenance-cost') {
     return (
-      <RankedBarChart
-        rows={data.rows}
-        format={format}
-        valueLabel={valueLabel}
-        isLoading={isLoading}
-        renderDetails={(row) => [
-          { label: 'Completed records', value: formatLeaderboardValue(row.source.recordCount, 'count') },
-        ]}
-        emptyTitle={emptyTitle}
-        emptyDescription="No completed maintenance records in your scope carry a cost yet."
-      />
+      <>
+        <RankedBarChart
+          rows={data.rows}
+          format={format}
+          valueLabel={valueLabel}
+          isLoading={isLoading}
+          renderDetails={(row) => [
+            { label: 'Completed records', value: formatLeaderboardValue(row.source.recordCount, 'count') },
+          ]}
+          emptyTitle={emptyTitle}
+          emptyDescription="No completed maintenance records in your scope carry a cost yet."
+        />
+        <VehicleDrillThroughList rows={data.rows} router={router} format={format} />
+      </>
     );
   }
 
   if (data.metric === 'repair-count') {
     return (
-      <RankedBarChart
-        rows={data.rows}
-        format={format}
-        valueLabel={valueLabel}
-        isLoading={isLoading}
-        renderDetails={(row) => [
-          { label: 'Estimated cost', value: formatLeaderboardValue(row.source.totalCost, 'currency') },
-        ]}
-        emptyTitle={emptyTitle}
-        emptyDescription="No completed maintenance records in your scope yet."
-      />
+      <>
+        <RankedBarChart
+          rows={data.rows}
+          format={format}
+          valueLabel={valueLabel}
+          isLoading={isLoading}
+          renderDetails={(row) => [
+            { label: 'Estimated cost', value: formatLeaderboardValue(row.source.totalCost, 'currency') },
+          ]}
+          emptyTitle={emptyTitle}
+          emptyDescription="No completed maintenance records in your scope yet."
+        />
+        <VehicleDrillThroughList rows={data.rows} router={router} format={format} />
+      </>
     );
   }
 
@@ -237,6 +265,48 @@ function VehicleLeaderboardChart({
       emptyTitle={emptyTitle}
       emptyDescription="No vehicle in your scope has an open predictive-maintenance or fuel-fraud finding."
     />
+  );
+}
+
+/**
+ * Click-through row list for the two maintenance metrics, mirroring
+ * DriverLeaderboardCard's own `<ul>` beneath its chart exactly (same
+ * markup, same hover/tabular-nums treatment) so the two leaderboards
+ * read as one consistent pattern rather than two different ones.
+ */
+function VehicleDrillThroughList({
+  rows,
+  router,
+  format,
+}: {
+  rows: ReadonlyArray<RankedRow<MostExpensiveVehicleRow> | RankedRow<RepairFrequencyByVehicleRow>>;
+  router: ReturnType<typeof useRouter>;
+  format: LeaderboardValueFormat;
+}) {
+  if (rows.length === 0) return null;
+
+  return (
+    <ul className="divide-y divide-border border-t border-border">
+      {rows.map((row) => (
+        <li key={row.id}>
+          <button
+            type="button"
+            onClick={() => router.push(MAINTENANCE_ROUTES.vehicleHistory(row.source.license_plate))}
+            className="flex w-full items-center justify-between gap-3 py-2 text-left transition-colors hover:bg-muted/50"
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="w-14 shrink-0 text-xs tabular-nums text-muted-foreground">
+                {formatRankLabel(row)}
+              </span>
+              <span className="truncate text-sm font-medium text-foreground">{row.source.license_plate}</span>
+            </span>
+            <span className="text-sm tabular-nums text-muted-foreground">
+              {formatLeaderboardValue(row.value, format)}
+            </span>
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }
 

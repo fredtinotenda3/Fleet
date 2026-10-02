@@ -23,6 +23,7 @@ import type {
   FuelFrequencyByVehicleRow,
   FuelCostDistributionBucket,
   FuelHeatmapCell,
+  FuelLedgerReconciliation,
 } from '../types';
 import type { FuelFormOutput } from '../schemas';
 
@@ -60,6 +61,7 @@ function buildListQuery(params: Partial<FuelListParams>) {
     fuel_card_id: params.fuel_card_id,
     driver_id: params.driver_id,
     unassignedOnly: params.unassignedOnly,
+    tripId: params.tripId,
     start: toIso(params.startDate),
     end: toIso(params.endDate),
     page: params.page,
@@ -91,6 +93,11 @@ export const fuelApi = {
 
   async getById(id: string): Promise<FuelLog> {
     return apiClient.get<FuelLog>(BASE, { params: { id } });
+  },
+
+  /** MODULE CONNECTIVITY UPGRADE (fuel/GL reconciliation gap). FINANCE_VIEW-gated server-side. */
+  async getLedgerReconciliation(id: string): Promise<FuelLedgerReconciliation> {
+    return apiClient.get<FuelLedgerReconciliation>(`${BASE}/${id}/ledger-reconciliation`);
   },
 
   async create(payload: FuelFormOutput): Promise<FuelLog> {

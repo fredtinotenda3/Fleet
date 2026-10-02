@@ -304,6 +304,33 @@ export class AIController {
     }
   }
 
+  /**
+   * MODULE CONNECTIVITY UPGRADE -- "Attention/Actions ↔ Outcome
+   * Verification" UI. GET /api/ai/needs-attention/resolved.
+   *
+   * A separate route rather than a `?status=resolved` branch on
+   * getNeedsAttention() above: that endpoint's whole contract is "the
+   * live feed, recomputed from the five AI services on every call" (see
+   * its own header and needsAttentionService.getFeed()'s doc comment).
+   * Resolved items are never part of that live computation -- they are
+   * a plain scoped read of the persisted tblattentionitems collection
+   * (see attentionResolutionService.listResolved) -- so mixing the two
+   * under one route would make callers guess which code path a given
+   * query parameter takes.
+   */
+  async getResolvedAttentionItems(req: NextRequest) {
+    try {
+      const context = await resolveTenantContext(req);
+      const limitParam = req.nextUrl.searchParams.get('limit');
+      const limit = limitParam ? parseInt(limitParam, 10) || 50 : 50;
+
+      const items = await attentionResolutionService.listResolved(context, limit);
+      return successResponse({ items, total: items.length });
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
   // ─── Needs Attention: Resolve ──────────────────────────────────────────────
 
   /**

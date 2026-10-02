@@ -612,6 +612,34 @@ export class PredictiveMaintenanceService extends BaseAIService {
     return sorted.length > 0 ? sorted[0] : null;
   }
 
+  /**
+   * DATA HONESTY AUDIT -- KNOWN LIMITATION, documented rather than silently
+   * re-labelled or re-architected (that would be a cross-service behaviour
+   * change to BaseAIService, shared by fuel-fraud and expense-anomaly
+   * detection too, and is out of scope for this pass):
+   *
+   * `confidence` here is NOT an estimate of how much evidence backs the
+   * prediction (sample size, data completeness, model agreement, etc.).
+   * It is a weighted blend of the SAME risk inputs -- `healthScore` and
+   * `failureProbability` -- that the prediction is about in the first
+   * place, inverted so "healthier component" reads as "higher confidence".
+   * `severity` is then derived from that confidence AND `healthScore`
+   * again (see the `determineSeverity` call below), so `healthScore`
+   * is double-counted across two fields a reader naturally treats as
+   * independent signals ("how sure are we" vs "how bad is it").
+   *
+   * Net effect: a severely degraded component (low healthScore) is
+   * reported with LOW confidence purely as an artifact of this formula,
+   * not because fewer observations or a weaker model backed that
+   * particular prediction -- the opposite of what "confidence" means
+   * everywhere else evidence/confidence envelopes are used in this AI
+   * module (see ai-evidence.types.ts's AIConfidenceEnvelope, which this
+   * service does not use). Treat `confidence`/`severity` on predictive-
+   * maintenance predictions as a single derived risk-ranking score, not
+   * as two independently meaningful statistics, until this is reworked
+   * to use the shared evidence/confidence envelope the other AI services
+   * are migrating toward.
+   */
   private buildPrediction(
     vehicle: any,
     component: ComponentHealth,

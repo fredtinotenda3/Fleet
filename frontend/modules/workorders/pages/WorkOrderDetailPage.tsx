@@ -30,6 +30,7 @@ import {
   canManageWorkOrders,
 } from '../utils';
 import { WORKORDER_ROUTES } from '../routes';
+import { MAINTENANCE_ROUTES } from '@/frontend/modules/maintenance/routes';
 import type { AssignMechanicPayload } from '../types';
 
 interface WorkOrderDetailPageProps {
@@ -166,6 +167,22 @@ export function WorkOrderDetailPage({ id }: WorkOrderDetailPageProps) {
             <div>
               <p className="text-muted-foreground">Vehicle</p>
               <p className="font-medium">{workOrder.license_plate}</p>
+              {/*
+                MODULE CONNECTIVITY UPGRADE (UX audit): this was plain text
+                with no way to see this vehicle's other maintenance work --
+                unlike MaintenanceDetailPage's own "Vehicle" card, which has
+                linked to the same vehicle-history route since that page was
+                built. Mirrors that exact convention rather than inventing a
+                second one.
+              */}
+              <Button
+                variant="link"
+                size="sm"
+                className="h-auto p-0 text-xs"
+                onClick={() => router.push(MAINTENANCE_ROUTES.vehicleHistory(workOrder.license_plate))}
+              >
+                View maintenance history
+              </Button>
             </div>
             <div>
               <p className="text-muted-foreground">Assigned mechanic</p>
@@ -187,6 +204,29 @@ export function WorkOrderDetailPage({ id }: WorkOrderDetailPageProps) {
               <p className="text-muted-foreground">Labor hours</p>
               <p className="font-medium">{workOrder.laborHours ?? '—'}</p>
             </div>
+            {/*
+              MODULE CONNECTIVITY UPGRADE (UX audit): `reminderId` has
+              recorded which maintenance reminder triggered this work order
+              since workorder.service.ts started persisting it
+              (WorkOrderCreateDTO.reminderId) -- nothing in the frontend
+              ever read the field back. A work order raised from a
+              reminder with no way to see that reminder's own due date,
+              estimated cost or history reads as disconnected CRUD; this
+              closes that for the one direction the type already supports.
+            */}
+            {workOrder.reminderId && (
+              <div className="col-span-2">
+                <p className="text-muted-foreground">Triggered by</p>
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0"
+                  onClick={() => router.push(MAINTENANCE_ROUTES.detail(workOrder.reminderId as string))}
+                >
+                  View the maintenance reminder
+                </Button>
+              </div>
+            )}
             {workOrder.description && (
               <div className="col-span-2">
                 <p className="text-muted-foreground">Description</p>

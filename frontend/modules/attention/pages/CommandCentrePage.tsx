@@ -31,10 +31,13 @@ import { PageHeader, PageHeaderMeta } from '@/frontend/shared/layouts/PageHeader
 import { LoadingState } from '@/shared/ui/feedback/LoadingState';
 import { Button } from '@/frontend/shared/ui/primitives/button';
 import { ErrorState, MetricCard, MetricCardGrid, describeQueryError } from '@/frontend/shared/ui/patterns';
+import { EmptyState } from '@/shared/ui/feedback/EmptyState';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/frontend/shared/ui/navigation/tabs';
 import { formatCurrency } from '@/shared/utils/currency.utils';
 import { cn } from '@/lib/utils';
 import {
   useAttentionQueue,
+  useResolvedAttentionItems,
   useMonthToDateSavings,
   useMonthToDateAllocationTotal,
   useSavingsStripAccess,
@@ -43,15 +46,19 @@ import {
   useAttentionPermissions,
   useDispatchAttentionItem,
   useResolveAttentionItem,
+  useVerifyAttentionOutcome,
   type ResolveAttentionInput,
+  type VerifyAttentionOutcomeInput,
 } from '../hooks/useAttentionActions';
 import { useFleetPresence } from '@/frontend/modules/onboarding/hooks/useFleetPresence';
 import { zeroTone } from '@/frontend/modules/onboarding/utils/empty-state-copy';
 import { SeverityFilterBar } from '../components/SeverityFilterBar';
 import { AttentionQueueList } from '../components/AttentionQueueList';
 import { ResolveAttentionDialog } from '../components/ResolveAttentionDialog';
+import { ResolvedAttentionItemCard } from '../components/ResolvedAttentionItemCard';
+import { VerifyOutcomeDialog } from '../components/VerifyOutcomeDialog';
 import { SavingsStrip } from '../components/SavingsStrip';
-import type { NeedsAttentionItem, SeverityFilterValue, SourceFilterValue } from '../types';
+import type { AttentionItem, NeedsAttentionItem, SeverityFilterValue, SourceFilterValue } from '../types';
 
 interface CommandCentrePageProps {
   /** Drops the breadcrumb when embedded as the Dashboard's primary tab, which has its own page chrome. */
@@ -59,12 +66,21 @@ interface CommandCentrePageProps {
 }
 
 export function CommandCentrePage({ embedded = false }: CommandCentrePageProps) {
+  const [queueTab, setQueueTab] = useState<'open' | 'resolved'>('open');
   const [severity, setSeverity] = useState<SeverityFilterValue>('all');
   const [source, setSource] = useState<SourceFilterValue>('all');
   const [resolveTarget, setResolveTarget] = useState<NeedsAttentionItem | null>(null);
+  const [verifyTarget, setVerifyTarget] = useState<AttentionItem | null>(null);
 
   const { mode: savingsStripMode } = useSavingsStripAccess();
   const { data: feed, isLoading, isError, error, refetch, isFetching } = useAttentionQueue(200);
+  const {
+    data: resolvedFeed,
+    isLoading: isResolvedLoading,
+    isError: isResolvedError,
+    error: resolvedError,
+    refetch: refetchResolved,
+  } = useResolvedAttentionItems(100);
   const {
     data: savings,
     isLoading: isSavingsLoading,
@@ -77,10 +93,11 @@ export function CommandCentrePage({ embedded = false }: CommandCentrePageProps) 
     isError: isAllocationError,
   } = useMonthToDateAllocationTotal();
 
-  const { canResolve, canDispatch } = useAttentionPermissions();
+  const { canResolve, canDispatch, canVerifyOutcome } = useAttentionPermissions();
   const presence = useFleetPresence();
   const resolveMutation = useResolveAttentionItem();
   const dispatchMutation = useDispatchAttentionItem();
+  const verifyOutcomeMutation = useVerifyAttentionOutcome();
 
   const items = useMemo(() => feed?.items ?? [], [feed]);
 
@@ -113,6 +130,19 @@ export function CommandCentrePage({ embedded = false }: CommandCentrePageProps) 
       );
     },
     [resolveMutation, resolveTarget]
+  );
+
+  const resolvedItems = useMemo(() => resolvedFeed?.items ?? [], [resolvedFeed]);
+
+  const handleVerifyConfirm = useCallback(
+    (input: VerifyAttentionOutcomeInput) => {
+      if (!verifyTarget) return;
+      verifyOutcomeMutation.mutate(
+        { itemKey: verifyTarget.itemKey, input },
+        { onSuccess: () => setVerifyTarget(null) }
+      );
+    },
+    [verifyOutcomeMutation, verifyTarget]
   );
 
   const critical = feed?.bySeverity?.critical ?? 0;
@@ -154,98 +184,139 @@ export function CommandCentrePage({ embedded = false }: CommandCentrePageProps) 
         }
       />
 
-      {isLoading ? (
-        <LoadingState type="table" count={8} />
-      ) : isError ? (
-        <ErrorState
-          title="The attention feed didn't load"
-          description="This queue aggregates seven intelligence sources, so a single slow source can time the whole request out. Retrying usually works."
-          detail={describeQueryError(error)}
-          onRetry={() => refetch()}
-          size="page"
-        />
-      ) : (
-        <>
-          {/* How bad is it, right now — answerable without reading the list. */}
-          <MetricCardGrid columns={4}>
-            <MetricCard
-              label="Needs attention"
-              value={total.toLocaleString()}
-              hint={truncated ? `Showing the top ${items.length}` : undefined}
-              icon={<AlertOctagon aria-hidden="true" />}
-            />
-            {/*
-              A green "Critical 0 / Nothing critical" was shown to
-              organisations with no vehicles -- the console asserting a
-              clean bill of health for a fleet that does not exist. The
-              green is earned only once there is something to be clear
-              OF; see empty-state-copy.ts.
-            */}
-            <MetricCard
-              label="Critical"
-              value={critical.toLocaleString()}
-              tone={critical > 0 ? 'critical' : zeroTone(presence)}
-              hint={
-                critical > 0
-                  ? 'Act today'
-                  : presence === 'empty'
-                    ? 'Nothing to monitor yet'
-                    : 'Nothing critical'
-              }
-              icon={<ShieldAlert aria-hidden="true" />}
-            />
-            <MetricCard
-              label="High"
-              value={high.toLocaleString()}
-              tone={high > 0 ? 'attention' : 'neutral'}
-              icon={<TriangleAlert aria-hidden="true" />}
-            />
-            <MetricCard
-              label="Cost at stake"
-              value={costAtStake > 0 ? formatCurrency(costAtStake) : null}
-              emptyValue="None quantified"
-              hint={
-                truncated
-                  ? 'At least this much — the queue is truncated'
-                  : 'Across every item in the queue'
-              }
-            />
-          </MetricCardGrid>
+      <Tabs value={queueTab} onValueChange={(value) => setQueueTab(value as 'open' | 'resolved')}>
+        <TabsList>
+          <TabsTrigger value="open">Open{total > 0 ? ` (${total.toLocaleString()})` : ''}</TabsTrigger>
+          <TabsTrigger value="resolved">
+            Resolved{resolvedFeed ? ` (${resolvedFeed.total.toLocaleString()})` : ''}
+          </TabsTrigger>
+        </TabsList>
 
-          {unavailableSources.length > 0 && (
+        <TabsContent value="open" className="flex flex-col gap-5 pt-4">
+          {isLoading ? (
+            <LoadingState type="table" count={8} />
+          ) : isError ? (
             <ErrorState
-              size="inline"
-              title={`${unavailableSources.length} intelligence ${
-                unavailableSources.length === 1 ? 'source is' : 'sources are'
-              } unavailable`}
-              detail={`Findings from ${unavailableSources
-                .map((name) => name.replace(/_/g, ' '))
-                .join(', ')} are missing from this queue and are counted as zero.`}
+              title="The attention feed didn't load"
+              description="This queue aggregates seven intelligence sources, so a single slow source can time the whole request out. Retrying usually works."
+              detail={describeQueryError(error)}
               onRetry={() => refetch()}
+              size="page"
             />
+          ) : (
+            <>
+              {/* How bad is it, right now — answerable without reading the list. */}
+              <MetricCardGrid columns={4}>
+                <MetricCard
+                  label="Needs attention"
+                  value={total.toLocaleString()}
+                  hint={truncated ? `Showing the top ${items.length}` : undefined}
+                  icon={<AlertOctagon aria-hidden="true" />}
+                />
+                {/*
+                  A green "Critical 0 / Nothing critical" was shown to
+                  organisations with no vehicles -- the console asserting a
+                  clean bill of health for a fleet that does not exist. The
+                  green is earned only once there is something to be clear
+                  OF; see empty-state-copy.ts.
+                */}
+                <MetricCard
+                  label="Critical"
+                  value={critical.toLocaleString()}
+                  tone={critical > 0 ? 'critical' : zeroTone(presence)}
+                  hint={
+                    critical > 0
+                      ? 'Act today'
+                      : presence === 'empty'
+                        ? 'Nothing to monitor yet'
+                        : 'Nothing critical'
+                  }
+                  icon={<ShieldAlert aria-hidden="true" />}
+                />
+                <MetricCard
+                  label="High"
+                  value={high.toLocaleString()}
+                  tone={high > 0 ? 'attention' : 'neutral'}
+                  icon={<TriangleAlert aria-hidden="true" />}
+                />
+                <MetricCard
+                  label="Cost at stake"
+                  value={costAtStake > 0 ? formatCurrency(costAtStake) : null}
+                  emptyValue="None quantified"
+                  hint={
+                    truncated
+                      ? 'At least this much — the queue is truncated'
+                      : 'Across every item in the queue'
+                  }
+                />
+              </MetricCardGrid>
+
+              {unavailableSources.length > 0 && (
+                <ErrorState
+                  size="inline"
+                  title={`${unavailableSources.length} intelligence ${
+                    unavailableSources.length === 1 ? 'source is' : 'sources are'
+                  } unavailable`}
+                  detail={`Findings from ${unavailableSources
+                    .map((name) => name.replace(/_/g, ' '))
+                    .join(', ')} are missing from this queue and are counted as zero.`}
+                  onRetry={() => refetch()}
+                />
+              )}
+
+              <SeverityFilterBar
+                severity={severity}
+                onSeverityChange={setSeverity}
+                source={source}
+                onSourceChange={setSource}
+                feed={feed}
+              />
+
+              <AttentionQueueList
+                items={filteredItems}
+                totalBeforeFilters={items.length}
+                onClearFilters={clearFilters}
+                canResolve={canResolve}
+                canDispatch={canDispatch}
+                onResolve={setResolveTarget}
+                onDispatch={handleDispatch}
+                resolvingId={resolveMutation.isPending ? resolveTarget?.id : null}
+                dispatchingId={dispatchMutation.isPending ? dispatchMutation.variables : null}
+              />
+            </>
           )}
+        </TabsContent>
 
-          <SeverityFilterBar
-            severity={severity}
-            onSeverityChange={setSeverity}
-            source={source}
-            onSourceChange={setSource}
-            feed={feed}
-          />
-
-          <AttentionQueueList
-            items={filteredItems}
-            totalBeforeFilters={items.length}
-            onClearFilters={clearFilters}
-            canResolve={canResolve}
-            canDispatch={canDispatch}
-            onResolve={setResolveTarget}
-            onDispatch={handleDispatch}
-            resolvingId={resolveMutation.isPending ? resolveTarget?.id : null}
-            dispatchingId={dispatchMutation.isPending ? dispatchMutation.variables : null}
-          />
-        </>
-      )}
+        <TabsContent value="resolved" className="flex flex-col gap-4 pt-4">
+          {isResolvedLoading ? (
+            <LoadingState type="table" count={6} />
+          ) : isResolvedError ? (
+            <ErrorState
+              title="The resolved items didn't load"
+              detail={describeQueryError(resolvedError)}
+              onRetry={() => refetchResolved()}
+              size="page"
+            />
+          ) : resolvedItems.length === 0 ? (
+            <EmptyState
+              title="Nothing resolved yet"
+              description="Items you resolve from the Open tab will show up here, ready to have their outcome verified."
+            />
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {resolvedItems.map((item) => (
+                <ResolvedAttentionItemCard
+                  key={item.itemKey}
+                  item={item}
+                  canVerify={canVerifyOutcome}
+                  onVerify={setVerifyTarget}
+                  isVerifying={verifyOutcomeMutation.isPending && verifyTarget?.itemKey === item.itemKey}
+                />
+              ))}
+            </ul>
+          )}
+        </TabsContent>
+      </Tabs>
 
       {savingsStripMode !== 'none' && (
         <SavingsStrip
@@ -267,6 +338,16 @@ export function CommandCentrePage({ embedded = false }: CommandCentrePageProps) 
         }}
         onConfirm={handleResolveConfirm}
         isSubmitting={resolveMutation.isPending}
+      />
+
+      <VerifyOutcomeDialog
+        item={verifyTarget}
+        open={verifyTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setVerifyTarget(null);
+        }}
+        onConfirm={handleVerifyConfirm}
+        isSubmitting={verifyOutcomeMutation.isPending}
       />
     </div>
   );

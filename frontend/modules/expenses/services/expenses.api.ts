@@ -43,6 +43,7 @@ function buildListQuery(params: Partial<ExpenseListParams>) {
     license_plate: params.license_plate,
     type: params.type,
     jobTrip: (params as any).jobTrip,
+    tripId: params.tripId,
     start: toIso(params.startDate),
     end: toIso(params.endDate),
     minAmount: params.minAmount,

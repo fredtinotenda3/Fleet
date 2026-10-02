@@ -16,10 +16,12 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { AlertTriangle, Clock, Loader2, X } from 'lucide-react';
+import Link from 'next/link';
+import { AlertTriangle, ArrowUpRight, Clock, Loader2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
 import { Button } from '@/frontend/shared/ui/primitives/button';
+import { VEHICLE_ROUTES } from '@/frontend/modules/vehicles/routes';
 import type {
   LiveMapVehicle,
   LiveMapVehicleDetail,
@@ -195,7 +197,26 @@ export function VehicleDetailPanel({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-base font-medium truncate text-foreground">{vehicle.licensePlate}</h3>
+            {/*
+              MODULE CONNECTIVITY UPGRADE (UX audit): this panel showed
+              every live telemetry field for the vehicle with no way to
+              reach the vehicle's own record -- a dead end on the most
+              operationally central screen in the product. vehicle.vehicleId
+              is the real Vehicle _id (set server-side via
+              normalizeVehicleId(vehicle._id) in live-map.service.ts), not a
+              provider device id, so this is a direct, safe link rather than
+              a guess.
+            */}
+            <Link
+              href={VEHICLE_ROUTES.detail(vehicle.vehicleId)}
+              className="group flex items-center gap-1 text-base font-medium text-foreground hover:text-primary hover:underline"
+            >
+              <h3 className="truncate">{vehicle.licensePlate}</h3>
+              <ArrowUpRight
+                className="size-3.5 shrink-0 text-muted-foreground group-hover:text-primary"
+                aria-hidden="true"
+              />
+            </Link>
             <Badge className={status.className}>{status.label}</Badge>
             {vehicle.alert && (
               <Badge className="gap-1 bg-danger-bg text-danger">

@@ -71,7 +71,17 @@ function source(over: Partial<AutoPostSource> = {}): AutoPostSource {
 beforeEach(() => {
   jest.clearAllMocks();
   mockLedger.findByIdempotencyKey.mockResolvedValue(null);
-  mockSettings.resolve.mockResolvedValue({ reportingCurrency: 'USD' });
+  // costCategoryGlAccountCodes added (MODULE CONNECTIVITY UPGRADE,
+  // fuel/GL reconciliation gap): ResolvedFinanceSettings's own doc
+  // comment promises this is "always a concrete object (never
+  // undefined)", and allocationPostingService.postSource now reads it
+  // unguarded on that promise -- so the default mock must keep it, or
+  // every test in this file throws on `settings.costCategoryGlAccountCodes[...]`
+  // reading a property off undefined, which is a mock going stale
+  // relative to the real contract, not a production bug (see the
+  // dedicated describe block below for that distinction tested
+  // directly).
+  mockSettings.resolve.mockResolvedValue({ reportingCurrency: 'USD', costCategoryGlAccountCodes: {} });
   mockPostAllocation.mockImplementation(async (_c, _u, input) => ({
     _id: 'posting-1',
     ...input,
@@ -115,6 +125,78 @@ describe('Phase 6: transactions auto-post into the ledger', () => {
     const input = mockPostAllocation.mock.calls[0][2];
     expect(input).not.toHaveProperty('orgUnitId');
     expect(input).not.toHaveProperty('tenantId');
+  });
+});
+
+/**
+ * MODULE CONNECTIVITY UPGRADE (fuel/GL reconciliation gap), Round 3
+ * re-verification pass: OrganizationFinanceSettings.costCategoryGlAccountCodes
+ * exists specifically so an auto-posted fuel/maintenance/expense record
+ * can carry a glAccountCode -- before this, only a manually-entered
+ * posting ever did, so GL Reconciliation was structurally blind to the
+ * three biggest cost categories (see that field's own doc comment).
+ * These tests pin the resolution order AND the "nothing configured"
+ * case, which is the default state for every tenant until they visit
+ * Finance Settings.
+ */
+describe('Phase 6: cost-category GL account code resolution', () => {
+  it('omits glAccountCode entirely when nothing is configured -- never invents a code', async () => {
+    // The default mock (see beforeEach) already resolves to {}; asserted
+    // explicitly here because this is the state every tenant starts in.
+    await allocationPostingService.postSource(context, 'system', source());
+
+    const input = mockPostAllocation.mock.calls[0][2];
+    expect(input).not.toHaveProperty('glAccountCode');
+  });
+
+  it('uses the tenant-configured mapping for this source\'s cost category', async () => {
+    mockSettings.resolve.mockResolvedValue({
+      reportingCurrency: 'USD',
+      costCategoryGlAccountCodes: { fuel: '5100-FUEL', maintenance: '5200-MAINT' },
+    });
+
+    await allocationPostingService.postSource(
+      context,
+      'system',
+      source({ sourceCollection: 'tblfuellogs', sourceId: 'fuel-1', costCategory: 'fuel' })
+    );
+
+    const input = mockPostAllocation.mock.calls[0][2];
+    expect(input.glAccountCode).toBe('5100-FUEL');
+  });
+
+  it("does not apply another cost category's mapping to this source", async () => {
+    mockSettings.resolve.mockResolvedValue({
+      reportingCurrency: 'USD',
+      costCategoryGlAccountCodes: { maintenance: '5200-MAINT' },
+    });
+
+    // costCategory: 'other' (the source() default) has no entry in the
+    // map above -- only 'maintenance' does.
+    await allocationPostingService.postSource(context, 'system', source());
+
+    const input = mockPostAllocation.mock.calls[0][2];
+    expect(input).not.toHaveProperty('glAccountCode');
+  });
+
+  it("prefers the source record's OWN glAccountCode over the tenant mapping", async () => {
+    // Per postSource's own comment: "today none of the four auto-posting
+    // event handlers ever supply one" on the source, but the precedence
+    // is part of the contract regardless of who currently exercises it,
+    // and a future caller (or the historical backfill script) may.
+    mockSettings.resolve.mockResolvedValue({
+      reportingCurrency: 'USD',
+      costCategoryGlAccountCodes: { other: '5900-MAPPED' },
+    });
+
+    await allocationPostingService.postSource(
+      context,
+      'system',
+      source({ glAccountCode: '5900-EXPLICIT' })
+    );
+
+    const input = mockPostAllocation.mock.calls[0][2];
+    expect(input.glAccountCode).toBe('5900-EXPLICIT');
   });
 });
 

@@ -246,6 +246,9 @@ export class FuelController {
         fuel_card_id: searchParams.get('fuel_card_id') || undefined,
         driver_id: searchParams.get('driver_id') || undefined,
         unassignedOnly: searchParams.get('unassignedOnly') === 'true' ? true : undefined,
+        // MODULE CONNECTIVITY UPGRADE (Trip <-> Fuel/Expense gap): backs
+        // Trip Detail's "what was logged against this trip" section.
+        tripId: searchParams.get('tripId') || undefined,
         startDate: searchParams.get('start')
           ? new Date(searchParams.get('start')!)
           : undefined,
@@ -376,6 +379,20 @@ export class FuelController {
     try {
       const { log } = await this.loadInScopeFuelLog(req, id);
       return successResponse(log);
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  /**
+   * MODULE CONNECTIVITY UPGRADE (fuel/GL reconciliation gap).
+   * GET /api/fuellogs/:id/ledger-reconciliation.
+   */
+  async getFuelLogLedgerReconciliation(req: NextRequest, id: string) {
+    try {
+      const { log, tenantContext } = await this.loadInScopeFuelLog(req, id);
+      const reconciliation = await fuelQueryService.getLedgerReconciliation(id, log, tenantContext);
+      return successResponse(reconciliation);
     } catch (error) {
       return this.handleError(error);
     }

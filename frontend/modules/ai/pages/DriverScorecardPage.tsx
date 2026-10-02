@@ -128,6 +128,16 @@ function DriverScorecardPicker() {
           title="High / critical risk"
           value={scored.filter((d) => d.data.riskLevel === 'high' || d.data.riskLevel === 'critical').length}
         />
+        {/*
+          DATA HONESTY AUDIT: see DriverScorecardDetail's `hasNoData` note.
+          Surfaced here too so a manager scanning the picker -- not just
+          someone who already opened one driver -- can tell how many of
+          "Drivers scored" are actually unobserved rather than assessed.
+        */}
+        <StatisticCard
+          title="Scored on no data"
+          value={scored.filter((d) => !d.data.evidence || d.data.evidence.length === 0).length}
+        />
         <StatisticCard title="Scoring failures" value={data?.failed ?? 0} />
       </StatisticCards>
 
@@ -142,6 +152,7 @@ function DriverScorecardPicker() {
               .sort((a, b) => b.data.overallScore - a.data.overallScore)
               .map((item) => {
                 const presentation = riskLevelPresentation(item.data.riskLevel);
+                const noData = !item.data.evidence || item.data.evidence.length === 0;
                 return (
                   <li key={item.entityId}>
                     <button
@@ -156,12 +167,20 @@ function DriverScorecardPicker() {
                         </span>
                       </span>
                       <span className="flex shrink-0 items-center gap-2">
-                        <span className="text-sm text-muted-foreground">
-                          {formatRiskScore(item.data.overallScore)}/100
-                        </span>
-                        <Badge variant={presentation.badgeVariant} className={presentation.badgeClassName}>
-                          {riskLevelLabel(item.data.riskLevel)}
-                        </Badge>
+                        {noData ? (
+                          <Badge variant="outline" className="text-muted-foreground" title="No trips or telemetry in scope for this driver yet">
+                            No data
+                          </Badge>
+                        ) : (
+                          <>
+                            <span className="text-sm text-muted-foreground">
+                              {formatRiskScore(item.data.overallScore)}/100
+                            </span>
+                            <Badge variant={presentation.badgeVariant} className={presentation.badgeClassName}>
+                              {riskLevelLabel(item.data.riskLevel)}
+                            </Badge>
+                          </>
+                        )}
                       </span>
                     </button>
                   </li>
@@ -212,8 +231,30 @@ function DriverScorecardDetail({ driverId }: { driverId: string }) {
     return <EmptyState title="No risk score available" description="This driver has no risk score to display." />;
   }
 
+  // DATA HONESTY AUDIT: driver-risk.service.ts deliberately omits `evidence`
+  // entirely for a driver with no matching trips and no telemetry (see its
+  // own comment: "a default-safe score with nothing behind it... omitted
+  // rather than an empty array, so 'scored on no data' is visible"). That
+  // signal existed on the wire but nothing in this page read it -- the
+  // gauge rendered "0/100, Low risk" exactly as confidently for a driver
+  // never assigned a trip as for one with a hundred clean ones, which is
+  // fabricated confidence: 0/100 here means "nothing observed," not "safe."
+  const hasNoData = !score.evidence || score.evidence.length === 0;
+
   return (
     <div className="space-y-6">
+      {hasNoData && (
+        <Alert>
+          <AlertTriangle className="size-4" aria-hidden="true" />
+          <AlertTitle>No data behind this score yet</AlertTitle>
+          <AlertDescription>
+            This driver has no trips or telemetry readings in scope. The {formatRiskScore(score.overallScore)}/100
+            below is the default for an unobserved driver, not a measured &quot;safe&quot; result -- it will start
+            reflecting real driving once trips or telemetry are recorded for them.
+          </AlertDescription>
+        </Alert>
+      )}
+
       <div className="grid gap-4 lg:grid-cols-[auto_1fr]">
         <Card>
           <CardHeader>

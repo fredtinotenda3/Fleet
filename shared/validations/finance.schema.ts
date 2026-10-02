@@ -36,6 +36,16 @@ const objectIdString = z
   .trim()
   .regex(/^[0-9a-fA-F]{24}$/, 'Must be a 24-character hex id (the vehicle _id, not a license plate).');
 
+/**
+ * Mirrors AllocationCostCategory (modules/finance/types/allocation.types.ts)
+ * exactly -- kept in sync by hand, same as the rest of this file's
+ * shape-only validation. Was missing the three Phase O3 transport
+ * categories ('third-party-transport'/'transport-retainer'/'stock-transfer')
+ * until the costCategoryGlAccountCodes mapping schema below needed the
+ * complete, correct set and exposed the drift: createAllocationSchema's
+ * `costCategory` field below had been silently rejecting those three
+ * valid categories on POST /api/finance/allocations since Phase O3 shipped.
+ */
 export const allocationCostCategoryEnum = z.enum([
   'fuel',
   'maintenance',
@@ -43,6 +53,9 @@ export const allocationCostCategoryEnum = z.enum([
   'depreciation',
   'insurance',
   'other',
+  'third-party-transport',
+  'transport-retainer',
+  'stock-transfer',
 ]);
 
 export const allocationRuleEnum = z.enum([
@@ -149,6 +162,16 @@ export const createGLSubmissionSchema = z.object({
 });
 export type CreateGLSubmissionInput = z.infer<typeof createGLSubmissionSchema>;
 
+/**
+ * Chart-of-accounts code per cost category, applied to every
+ * auto-posted record of that category going forward -- see
+ * OrganizationFinanceSettings.costCategoryGlAccountCodes's own doc
+ * comment for why this exists. A blank string for a category clears
+ * that mapping entry rather than posting an empty code (the service
+ * layer, not this shape-only schema, treats '' as "not configured").
+ */
+const costCategoryGlAccountCodesSchema = z.record(allocationCostCategoryEnum, z.string().trim().max(64)).optional();
+
 export const updateFinanceSettingsSchema = z.object({
   reportingCurrency: currencyCode.optional(),
   fxPolicy: z.enum(['transaction-date', 'period-average']),
@@ -161,5 +184,6 @@ export const updateFinanceSettingsSchema = z.object({
       decliningBalanceRate: z.number().finite().positive().lt(1).optional(),
     })
     .optional(),
+  costCategoryGlAccountCodes: costCategoryGlAccountCodesSchema,
 });
 export type UpdateFinanceSettingsInput = z.infer<typeof updateFinanceSettingsSchema>;

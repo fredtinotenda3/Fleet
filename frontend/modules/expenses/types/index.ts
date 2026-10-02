@@ -13,6 +13,8 @@ export interface ExpenseTableFilters {
   endDate?: Date;
   minAmount?: number;
   maxAmount?: number;
+  /** MODULE CONNECTIVITY UPGRADE (Trip <-> Fuel/Expense gap): see ExpenseFilters.tripId. */
+  tripId?: string;
 }
 
 export interface ExpenseTypeGroup {

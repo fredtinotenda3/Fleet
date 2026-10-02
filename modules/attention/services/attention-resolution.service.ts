@@ -220,6 +220,33 @@ export class AttentionResolutionService {
 
     return { item: updated, ledgerEntryWarning };
   }
+
+  /**
+   * MODULE CONNECTIVITY UPGRADE -- "Attention/Actions ↔ Outcome
+   * Verification" UI. Before this, nothing in the product could list a
+   * RESOLVED item at all: needsAttentionService.getFeed() only ever
+   * recomputes and returns the LIVE (open) feed, and the persisted
+   * `tblattentionitems` collection -- the only place a resolved row's
+   * outcome fields live -- had no read path other than findByItemKey
+   * (which requires already knowing the exact itemKey). An operator
+   * had no way to browse to a resolved item to verify its outcome.
+   *
+   * Deliberately a thin pass-through to findManyInScope rather than a
+   * new aggregation: resolved items are already fully durable rows in
+   * this collection (see upsertFeedItems/resolveByItemKey), so listing
+   * them is a plain scoped read, not a recomputation -- unlike the live
+   * feed, this never re-derives anything from the five AI services.
+   * Org-unit scoping is the same `findManyInScope` every other scoped
+   * repository read in this codebase uses -- no bespoke filter here.
+   */
+  async listResolved(context: TenantContext, limit: number = 50): Promise<AttentionItem[]> {
+    const cappedLimit = Math.min(200, Math.max(1, limit));
+    return attentionItemRepository.findManyInScope(
+      { status: 'resolved' },
+      context,
+      { sortBy: 'resolvedAt', sortOrder: 'desc', limit: cappedLimit }
+    );
+  }
 }
 
 export const attentionResolutionService = new AttentionResolutionService();

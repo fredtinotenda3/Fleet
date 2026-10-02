@@ -10,6 +10,7 @@ import { ApiError } from '@/shared/utils/api-client.utils';
 
 const attentionKeys = {
   queue: (limit: number) => ['attention', 'needs-attention', limit] as const,
+  resolved: (limit: number) => ['attention', 'needs-attention', 'resolved', limit] as const,
   monthToDateLedger: (mode: 'export' | 'summary') => ['attention', 'ledger', 'month-to-date', mode] as const,
   monthToDateAllocationTotal: ['attention', 'allocation-ledger', 'month-to-date'] as const,
 };
@@ -33,6 +34,23 @@ export function useAttentionQueue(limit = 200) {
     queryKey: attentionKeys.queue(limit),
     queryFn: () => dashboardApi.getNeedsAttention(limit),
     staleTime: 2 * 60_000,
+    retry: 1,
+  });
+}
+
+/**
+ * MODULE CONNECTIVITY UPGRADE -- "Attention/Actions ↔ Outcome
+ * Verification". Backs the Command Centre's "Resolved" tab -- the read
+ * path that lets an operator browse to a resolved item and verify its
+ * outcome via useVerifyAttentionOutcome, which has existed since the
+ * backend/dispatch wiring landed but had no list to be called from (see
+ * that hook's own header comment).
+ */
+export function useResolvedAttentionItems(limit = 50) {
+  return useQuery({
+    queryKey: attentionKeys.resolved(limit),
+    queryFn: () => attentionApi.getResolvedItems(limit),
+    staleTime: 60_000,
     retry: 1,
   });
 }

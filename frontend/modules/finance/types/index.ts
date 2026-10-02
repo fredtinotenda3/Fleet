@@ -63,6 +63,8 @@ export interface FinanceSettingsResponse {
       salvageValuePercent?: number;
       decliningBalanceRate?: number;
     };
+    /** Always present (possibly `{}`) -- see OrganizationFinanceSettings.costCategoryGlAccountCodes. */
+    costCategoryGlAccountCodes: Partial<Record<AllocationCostCategory, string>>;
     /** True when nothing has ever been saved, so every resolved value came from a default. */
     usingDefaults: boolean;
   };

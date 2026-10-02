@@ -25,6 +25,7 @@ import { formatDate } from '@/shared/utils/date.utils';
 import { cn } from '@/lib/utils';
 import { useGLReconciliation } from '../hooks/useFinance';
 import { exportReconciliationCsv } from '../utils/reconciliation-export.utils';
+import { AccountMappingPanel } from '../components/AccountMappingPanel';
 import type { GLVarianceLine } from '../types';
 
 /** First day of the month `monthsAgo` months back, and its last moment. */
@@ -129,6 +130,8 @@ export default function GLReconciliationPage() {
         }
       />
 
+      <AccountMappingPanel />
+
       {isLoading ? (
         <LoadingState type="table" count={6} />
       ) : isError ? (
@@ -139,7 +142,7 @@ export default function GLReconciliationPage() {
       ) : !report || report.lines.length === 0 ? (
         <EmptyState
           title="Nothing to reconcile for this period"
-          description="No allocation postings carry a GL account code, and no GL figures have been submitted."
+          description="No allocation postings carry a GL account code, and no GL figures have been submitted. Open Account mapping above to map fuel, maintenance, expense or depreciation costs to your chart of accounts -- new postings will pick it up going forward."
         />
       ) : (
         <>

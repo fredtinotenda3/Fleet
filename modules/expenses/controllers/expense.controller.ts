@@ -88,6 +88,7 @@ export class ExpenseController {
         license_plate: searchParams.get('license_plate') || undefined,
         type: searchParams.get('type') || undefined,
         jobTrip: searchParams.get('jobTrip') || undefined,
+        tripId: searchParams.get('tripId') || undefined,
         startDate: searchParams.get('start') ? new Date(searchParams.get('start')!) : undefined,
         endDate: searchParams.get('end') ? new Date(searchParams.get('end')!) : undefined,
         minAmount: searchParams.get('minAmount') ? Number(searchParams.get('minAmount')) : undefined,

@@ -201,6 +201,11 @@ export class ExpenseRepository extends BaseRepository<Expense> {
           ? { $in: [null, ''] }
           : { $regex: `^${filters.jobTrip}$`, $options: 'i' };
     }
+    // MODULE CONNECTIVITY UPGRADE (Trip <-> Fuel/Expense gap): backs
+    // Trip Detail's "what was spent against this trip" section.
+    if (filters.tripId) {
+      match.tripId = filters.tripId;
+    }
     if (filters.startDate || filters.endDate) {
       match.date = {};
       if (filters.startDate) (match.date as any).$gte = filters.startDate;

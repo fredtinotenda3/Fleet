@@ -85,6 +85,16 @@ export function useAttentionPermissions() {
       Permission.WORKORDER_CREATE,
       Permission.MAINTENANCE_CREATE,
     ]),
+    /**
+     * MODULE CONNECTIVITY UPGRADE -- "Attention/Actions ↔ Outcome
+     * Verification". Mirrors canResolve exactly: the verify-outcome route
+     * is gated on the same Permission.ANALYTICS_VIEW as resolve (see
+     * app/api/ai/needs-attention/[id]/verify-outcome/route.ts) -- a
+     * separate flag rather than reusing canResolve under the Resolved
+     * tab so a future change to either route's permission doesn't have
+     * to remember the two are currently the same.
+     */
+    canVerifyOutcome: permissionService.hasPermission(roles, Permission.ANALYTICS_VIEW),
   };
 }
 

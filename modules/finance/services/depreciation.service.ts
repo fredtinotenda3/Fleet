@@ -393,6 +393,16 @@ export class DepreciationService {
         fxSource: fx.fxSource,
         reportingCurrency: settings.reportingCurrency,
         reportingAmount: fx.reportingAmount,
+        // MODULE CONNECTIVITY UPGRADE (fuel/GL reconciliation gap). This
+        // call bypasses AllocationPostingService.postSource (which
+        // resolves this same mapping for the event-driven sources) --
+        // applied explicitly here so a configured 'depreciation' mapping
+        // isn't silently skipped just because this posting path is
+        // synchronous, not event-driven. See OrganizationFinanceSettings.
+        // costCategoryGlAccountCodes's doc comment.
+        ...(settings.costCategoryGlAccountCodes.depreciation
+          ? { glAccountCode: settings.costCategoryGlAccountCodes.depreciation }
+          : {}),
         postedBy: userId,
         postedAt: new Date(),
       },

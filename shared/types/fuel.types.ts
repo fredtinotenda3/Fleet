@@ -140,6 +140,15 @@ export interface FuelFilters {
   payment_method?: FuelPaymentMethod;
   fuel_station_id?: string;
   fuel_card_id?: string;
+  /**
+   * MODULE CONNECTIVITY UPGRADE (Trip <-> Fuel/Expense gap): filters to
+   * fuel logs linked to one trip via FuelLog.tripId. The field has been
+   * written at create/update time since the "link to trip" selector
+   * shipped, but nothing read it back as a filter until now -- Trip
+   * Detail had no way to show "what fuel was logged on this trip" even
+   * though the data already exists.
+   */
+  tripId?: string;
 }
 
 export interface FuelPaymentBreakdown {
@@ -267,4 +276,44 @@ export interface FuelHeatmapCell {
   dayOfWeek: number;
   hour: number;
   count: number;
+}
+/**
+ * MODULE CONNECTIVITY UPGRADE (fuel/GL reconciliation gap). One fuel
+ * log's reconciliation status against the allocation ledger -- see
+ * AllocationPostingService.postSource and
+ * OrganizationFinanceSettings.costCategoryGlAccountCodes.
+ *
+ * Deliberately a SEPARATE endpoint/type from FuelLog itself, not an
+ * extra field returned by every list/detail read: it costs one scoped
+ * ledger query, which is fine for a single detail view and wasteful for
+ * a paginated list of hundreds of rows.
+ */
+export interface FuelLedgerReconciliation {
+  /** The net (post-reversal) posting for this fuel log, or null if never posted. */
+  posting: {
+    id: string;
+    amount: number;
+    currency: string;
+    postedAt: Date;
+    glAccountCode: string | null;
+  } | null;
+  status: 'matched' | 'stale' | 'not_posted';
+  /**
+   * current fuel-log cost minus the net posted amount. Only meaningful
+   * (non-null) when status is 'stale' -- a posted amount that no longer
+   * agrees with the log's current cost, almost always because the log
+   * was edited (UpdateFuelLogHandler never re-posts; see
+   * AllocationPostingHandler's header on the ledger being append-only).
+   */
+  varianceFromCurrentCost: number | null;
+  /** Populated only when status is 'not_posted'; a real, known refusal cause, never a guess at one. */
+  notPostedReason: string | null;
+  /**
+   * Always 'not_applicable': the allocation ledger has no quantity
+   * field for a 'direct' posting (fuel always posts direct -- see
+   * AllocationPosting.quantity's own doc comment), so fuel VOLUME has
+   * no ledger counterpart to reconcile against, structurally, not as a
+   * missing feature. Only the fuel log's own recorded volume exists.
+   */
+  volumeReconciliation: 'not_applicable';
 }

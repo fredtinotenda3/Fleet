@@ -15,6 +15,7 @@
 
 import '@/shared/types/organization.types';
 import type { DepreciationMethod } from './depreciation.types';
+import type { AllocationCostCategory } from './allocation.types';
 
 /**
  * transaction-date    -- each posting converts at the FX rate on its
@@ -42,6 +43,31 @@ export interface OrganizationFinanceSettings {
   /** Absolute reporting-currency amount within which a GL reconciliation line is considered matched. Defaults to 0 (exact match required) when unset. */
   glToleranceAmount?: number;
   depreciationDefaults?: OrganizationDepreciationDefaults;
+  /**
+   * MODULE CONNECTIVITY UPGRADE (fuel/GL reconciliation gap). Maps an
+   * allocation cost category to the customer's own chart-of-accounts
+   * code, so AllocationPostingService can stamp it onto every
+   * automatically-posted record of that category (fuel, maintenance,
+   * expense -- see AllocationPostingHandler.POSTING_EVENTS).
+   *
+   * WHY THIS WAS NECESSARY, NOT COSMETIC: GLReconciliationService.
+   * buildReport/AllocationLedgerRepository.getNetTotalsByGlAccount only
+   * ever aggregate postings where `glAccountCode` is set
+   * (`{ $exists: true, $ne: null }`). Nothing in AllocationPostingHandler
+   * or AllocationSourceBuilder ever set it for an auto-posted fuel,
+   * maintenance or expense record -- only a MANUALLY entered posting
+   * (AllocationService.postAllocation called with an explicit
+   * glAccountCode, e.g. the historical backfill script) ever carried
+   * one. The GL Reconciliation report was therefore blind to fuel,
+   * maintenance and expense cost entirely: not "reconciled and clean",
+   * genuinely never compared. An org that has not configured this
+   * mapping sees exactly the same (empty-for-these-categories) report
+   * as before -- this is additive, never retroactive (existing
+   * postings are never rewritten; only postings created after the
+   * mapping is saved pick it up), and never guesses an account code
+   * that was not explicitly configured.
+   */
+  costCategoryGlAccountCodes?: Partial<Record<AllocationCostCategory, string>>;
 }
 
 declare module '@/shared/types/organization.types' {

@@ -19,6 +19,7 @@ import {
   FuelFrequencyByVehicleRow,
   FuelCostDistributionBucket,
   FuelHeatmapCell,
+  FuelLedgerReconciliation,
 } from '@/shared/types/fuel.types';
 import { PaginatedResponse, PaginationParams } from '@/shared/types/common.types';
 import { AnalyticsScope, isFleetScope } from '@/shared/types/analytics-scope.types';
@@ -27,6 +28,10 @@ import type { FuelByDriverSort } from '../queries/get-fuel-by-driver.query';
 import type { VehicleFuelTimelineFilters } from '../queries/get-vehicle-fuel-timeline.query';
 import { fuelRepository } from '../repositories/fuel.repository';
 import { tripRepository } from '@/modules/trips/repositories/trip.repository';
+import { allocationLedgerRepository } from '@/modules/finance/repositories/allocation-ledger.repository';
+import { roundCurrency } from '@/modules/finance/utils/fx-conversion.utils';
+import { financeSettingsService } from '@/modules/finance/services/finance-settings.service';
+import { ValidationError } from '@/server/errors/app.errors';
 
 // FIX (Phase B -- repository/analytics scoping completeness): the 13
 // analytics methods below previously routed through queryBus -> a Query
@@ -248,6 +253,126 @@ export class FuelQueryService {
     context?: TenantContext
   ): Promise<FuelHeatmapCell[]> {
     return fuelRepository.getFuelEntryHeatmap(tenantId, dateRange, scope, context);
+  }
+
+  /**
+   * MODULE CONNECTIVITY UPGRADE (fuel/GL reconciliation gap). Whether
+   * this ONE fuel log's financial value actually reached the allocation
+   * ledger, and whether it still agrees with what's posted.
+   *
+   * `log` is the caller's already-loaded, already-scope-checked
+   * FuelLog (see fuel.controller.ts#loadInScopeFuelLog) -- this method
+   * does its own ledger read (scoped via `context`) but trusts that
+   * access to the fuel log itself was already authorized, rather than
+   * re-deriving it from `log.license_plate`.
+   */
+  async getLedgerReconciliation(
+    fuelLogId: string,
+    log: Pick<FuelLog, 'cost' | 'currency'>,
+    context: TenantContext
+  ): Promise<FuelLedgerReconciliation> {
+    const postings = await allocationLedgerRepository.findBySource('tblfuellogs', fuelLogId, 'fuel', context);
+
+    if (postings.length === 0) {
+      return {
+        posting: null,
+        status: 'not_posted',
+        varianceFromCurrentCost: null,
+        notPostedReason: await this.resolveNotPostedReason(log, context),
+        volumeReconciliation: 'not_applicable',
+      };
+    }
+
+    // Net of any reversal, same discipline as every other ledger
+    // aggregation in this codebase (a reversing posting carries the
+    // equal-and-opposite amount, so summing nets it to zero rather than
+    // hiding the original).
+    const netAmount = roundCurrency(postings.reduce((sum, p) => sum + p.amount, 0));
+    const latest = postings[postings.length - 1];
+    const variance = roundCurrency(log.cost - netAmount);
+    // A fraction-of-a-cent difference is rounding, not a real variance.
+    const matched = Math.abs(variance) < 0.01;
+
+    return {
+      posting: {
+        id: String(latest._id),
+        amount: netAmount,
+        currency: latest.currency,
+        postedAt: latest.postedAt,
+        glAccountCode: latest.glAccountCode ?? null,
+      },
+      status: matched ? 'matched' : 'stale',
+      varianceFromCurrentCost: matched ? null : variance,
+      notPostedReason: null,
+      volumeReconciliation: 'not_applicable',
+    };
+  }
+
+  /**
+   * DATA HONESTY AUDIT fix (Round 3, re-verification pass): this used to
+   * return one hedged sentence listing three POSSIBLE causes ("this can
+   * happen when the event is still processing, the organization has no
+   * reporting currency configured, or the log currency had no exchange
+   * rate at the time") for every not-posted log, no matter which one
+   * actually applied -- which is itself a form of the exact problem this
+   * audit exists to catch: a confident-sounding explanation with nothing
+   * behind it, when FuelLedgerReconciliation.notPostedReason's own doc
+   * comment promises "a real, known refusal cause, never a guess at one".
+   *
+   * AllocationPostingHandler only LOGS a refusal's reason (monitoring.
+   * logWarn) -- it is never persisted anywhere this read path can query,
+   * so which of those three causes actually fired for a given historical
+   * log is genuinely not reconstructable after the fact, and this method
+   * must not pretend otherwise.
+   *
+   * One of the three causes IS independently checkable right now, though:
+   * whether the organization currently has a resolvable reporting
+   * currency at all (financeSettingsService.resolve throws a
+   * ValidationError when neither financeSettings.reportingCurrency nor
+   * the organization's operating currency is set -- see that service's
+   * own comment). A freshly onboarded tenant -- the exact "Harare SME,
+   * day one" scenario this round re-verifies -- has not configured
+   * finance settings yet, so every fuel log it logs will refuse to post
+   * for this one, deterministic, currently-true reason. Surfacing that
+   * precisely (instead of folding it into the three-way hedge) is a real
+   * improvement a reader can act on: it names the one setting to change,
+   * rather than three possibilities to guess between.
+   *
+   * The remaining two causes (processing lag; no FX rate for this
+   * currency AT THE TIME it was logged) stay a hedge on purpose -- FX
+   * rates change over time, so today's rate availability for
+   * `log.currency` would not accurately answer what happened at posting
+   * time, and inventing that answer would be exactly the over-confident
+   * guess this method exists to avoid.
+   */
+  private async resolveNotPostedReason(
+    log: Pick<FuelLog, 'cost' | 'currency'>,
+    context: TenantContext
+  ): Promise<string> {
+    if (log.cost === 0) {
+      return 'Zero-cost fuel logs are never posted to the ledger.';
+    }
+
+    try {
+      await financeSettingsService.resolve(context.organizationId);
+    } catch (error) {
+      if (error instanceof ValidationError) {
+        return (
+          'This organization has no reporting currency configured yet, so costs cannot post to the ' +
+          'ledger until finance settings are set (Settings -> Finance -> Reporting currency).'
+        );
+      }
+      // Any other failure resolving settings (e.g. the organization
+      // record itself is missing) is a deeper problem than this one
+      // fuel log's posting status -- fall through to the honest hedge
+      // below rather than asserting a cause this catch block cannot
+      // actually confirm.
+    }
+
+    return (
+      'Not yet posted -- this can happen when the event is still processing, or the log currency had ' +
+      'no exchange rate available at the time it was logged.'
+    );
   }
 }
 

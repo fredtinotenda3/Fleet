@@ -18,6 +18,7 @@ import type {
   FuelFrequencyByVehicleRow,
   FuelCostDistributionBucket,
   FuelHeatmapCell,
+  FuelLedgerReconciliation,
 } from '@/shared/types/fuel.types';
 import type { DriverRef } from '@/shared/types/driver.types';
 import type { PaginationParams, PaginatedResponse } from '@/shared/types/common.types';
@@ -43,6 +44,7 @@ export type {
   FuelFrequencyByVehicleRow,
   FuelCostDistributionBucket,
   FuelHeatmapCell,
+  FuelLedgerReconciliation,
 };
 
 export { FUEL_PAYMENT_METHODS } from '@/shared/types/fuel.types';

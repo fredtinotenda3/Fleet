@@ -34,12 +34,13 @@ export const expenseKeys = {
   outliers: (range?: string, z?: number, scope?: string) => [...expenseKeys.all, 'outliers', range, z, scope] as const,
 };
 
-export function useExpensesList(params: Partial<ExpenseListParams>) {
+export function useExpensesList(params: Partial<ExpenseListParams>, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: expenseKeys.list(params),
     queryFn: () => expensesApi.list(params),
     placeholderData: (prev) => prev,
     staleTime: 30_000,
+    enabled: options?.enabled,
   });
 }
 

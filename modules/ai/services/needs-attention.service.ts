@@ -841,6 +841,16 @@ export class NeedsAttentionService {
           {
             dueDate: record.dueDate,
             entityId: record.entityId,
+            // No `href` here, deliberately -- unlike readMaintenance's
+            // items below, which link into a real Maintenance Detail
+            // page. frontend/modules/compliance is an unbuilt stub
+            // (every file under it is a .gitkeep placeholder; confirmed
+            // by inspection before this change), so there is no page
+            // for a compliance finding to link to yet. AttentionItemCard
+            // already renders a title-only (non-link) item correctly
+            // when `href` is absent -- fabricating a path into a page
+            // that does not exist would be a dead link, which is worse
+            // than no link. Add this once a Compliance frontend ships.
             // The compliance RECORD (not the rule) already carries its
             // own orgUnitId, inherited from the vehicle or driver it
             // is evidence about at write time -- see
@@ -889,6 +899,19 @@ export class NeedsAttentionService {
           // Reminder already carries its own orgUnitId, inherited from
           // its vehicle at write time -- see maintenance.types.ts.
           ownerTarget: { kind: 'org-unit-direct', orgUnitId: reminder.orgUnitId },
+          // MODULE CONNECTIVITY UPGRADE (UX audit): previously absent --
+          // this item's title rendered as inert text in AttentionItemCard
+          // rather than a link, unlike the work-order items below it in
+          // the same queue. useMaintenanceRecord(id) (the hook backing
+          // MAINTENANCE_ROUTES.detail) reads this exact reminder row by
+          // its own _id (maintenanceApi.getById -> GET /api/maintenance?
+          // id=X), so linking straight to it is safe -- not a guess at a
+          // route shape. Literal path, not an imported frontend route
+          // constant: this is a backend service file, and the sibling
+          // work-order href below already established hardcoding the
+          // path as this module's convention rather than reaching into
+          // frontend/.
+          ...(reminder._id ? { href: `/maintenance/${reminder._id}` } : {}),
           // BACKLOG ITEM 7: the reminder row IS the finding.
           ...(reminder._id
             ? {
@@ -921,6 +944,7 @@ export class NeedsAttentionService {
           dueDate: reminder.due_date,
           entityLabel: reminder.license_plate,
           ownerTarget: { kind: 'org-unit-direct', orgUnitId: reminder.orgUnitId },
+          ...(reminder._id ? { href: `/maintenance/${reminder._id}` } : {}),
           ...(reminder._id
             ? {
                 evidence: [

@@ -180,6 +180,26 @@ export class AllocationPostingService {
     const settings = await financeSettingsService.resolve(context.organizationId);
     const currency = source.currency ?? settings.reportingCurrency;
 
+    // MODULE CONNECTIVITY UPGRADE (fuel/GL reconciliation gap). The
+    // source record itself (today: none of the four auto-posting event
+    // handlers ever supply one -- see AllocationPostingHandler) always
+    // wins when present; otherwise fall back to the tenant's configured
+    // category->account mapping. Neither is required: an org that has
+    // not configured this posts exactly as before (glAccountCode
+    // omitted), so GL reconciliation stays correctly "not yet
+    // configured" for this category rather than guessing a code.
+    // `?.` is defence in depth, not an admission this is reachable today:
+    // ResolvedFinanceSettings.costCategoryGlAccountCodes's own doc comment
+    // guarantees financeSettingsService.resolve() always returns a
+    // concrete object here, never undefined. Guarding anyway costs
+    // nothing and stops a future caller that constructs a
+    // ResolvedFinanceSettings-shaped value by hand (a test double, a
+    // script) without that field from turning a missing GL mapping into
+    // a thrown TypeError instead of the honest "not configured" no-op
+    // this line is supposed to be.
+    const resolvedGlAccountCode =
+      source.glAccountCode ?? settings.costCategoryGlAccountCodes?.[source.costCategory] ?? undefined;
+
     /**
      * FAIL CLOSED ON A MISSING RATE.
      *
@@ -219,7 +239,7 @@ export class AllocationPostingService {
         currency,
         amount: source.amount,
         ...(source.fxRate !== undefined ? { fxRate: source.fxRate } : {}),
-        ...(source.glAccountCode ? { glAccountCode: source.glAccountCode } : {}),
+        ...(resolvedGlAccountCode ? { glAccountCode: resolvedGlAccountCode } : {}),
         idempotencyKey,
       });
 

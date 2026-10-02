@@ -69,6 +69,14 @@ export interface ExpenseFilters {
   endDate?: Date;
   minAmount?: number;
   maxAmount?: number;
+  /**
+   * MODULE CONNECTIVITY UPGRADE (Trip <-> Fuel/Expense gap): filters to
+   * expenses linked to one trip via Expense.tripId (the FK that already
+   * replaces the free-text jobTrip for this purpose -- see that field's
+   * own doc comment above). Written since the "link to trip" selector
+   * shipped but never read back as a filter until now.
+   */
+  tripId?: string;
 }
 
 export interface ExpenseStats {

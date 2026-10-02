@@ -284,32 +284,66 @@ export default function AIReports() {
 
     const results = data.results || [];
     const drivers = results.filter((r: any) => r.success && r.data);
-    const chartData = drivers.map((d: any) => ({
+    /**
+     * DATA HONESTY AUDIT: driver-risk.service.ts deliberately omits
+     * `evidence` entirely for a driver with no matching trips and no
+     * telemetry -- a default-safe score with nothing behind it (see that
+     * service's own comment, and the identical signal consumed by
+     * DriverScorecardPage.tsx). This batch view previously folded those
+     * drivers' default scores straight into "Average Risk Score" and the
+     * chart below, right alongside drivers who were actually observed --
+     * so a fleet with several never-assigned drivers looked measurably
+     * safer than the drivers it has real data on, purely because of how
+     * many unobserved rows got averaged in. Split out instead of silently
+     * blended.
+     */
+    const observedDrivers = drivers.filter((d) => d.data?.evidence && d.data.evidence.length > 0);
+    const noDataCount = drivers.length - observedDrivers.length;
+    const chartData = observedDrivers.map((d: any) => ({
       name: d.data?.driverName || d.entityId,
       score: d.data?.overallScore || 0,
     })).sort((a: any, b: any) => b.score - a.score);
 
     return (
       <div className="space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
           <StatsCard title="Drivers Evaluated" value={drivers.length} color="blue" />
           <StatsCard title="High Risk Drivers" value={drivers.filter((d: any) => d.data?.riskLevel === 'critical' || d.data?.riskLevel === 'high').length} color="red" />
-          <StatsCard title="Average Risk Score" value={(drivers.reduce((sum: number, d: any) => sum + d.data?.overallScore, 0) / (drivers.length || 1)).toFixed(0)} color="yellow" />
+          <StatsCard
+            title="Average Risk Score"
+            value={observedDrivers.length > 0 ? (observedDrivers.reduce((sum: number, d: any) => sum + (d.data?.overallScore || 0), 0) / observedDrivers.length).toFixed(0) : null}
+            emptyValue="No observed drivers"
+            description={noDataCount > 0 ? `Excludes ${noDataCount} driver${noDataCount === 1 ? '' : 's'} with no data` : undefined}
+            color="yellow"
+          />
+          <StatsCard
+            title="Scored on no data"
+            value={noDataCount}
+            description="No trips or telemetry in scope yet"
+            color="gray"
+          />
         </div>
-        <ChartContainer title="Driver Risk Scores">
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={chartData} layout="vertical" margin={{ left: 80 }}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis type="number" domain={[0, 100]} />
-              <YAxis type="category" dataKey="name" tick={{ fontSize: 12 }} width={100} />
-              <Tooltip />
-              <Bar dataKey="score" fill="var(--primary)">
-                {chartData.map((entry, idx) => (
-                  <Cell key={idx} fill={entry.score > 65 ? 'var(--destructive)' : entry.score > 45 ? 'var(--warning)' : 'var(--primary)'} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+        <ChartContainer title="Driver Risk Scores (observed drivers only)">
+          {chartData.length === 0 ? (
+            <EmptyState
+              title="No observed drivers yet"
+              description="Every driver returned here has no trips or telemetry in scope, so there are no measured scores to chart."
+            />
+          ) : (
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={chartData} layout="vertical" margin={{ left: 80 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis type="number" domain={[0, 100]} />
+                <YAxis type="category" dataKey="name" tick={{ fontSize: 12 }} width={100} />
+                <Tooltip />
+                <Bar dataKey="score" fill="var(--primary)">
+                  {chartData.map((entry, idx) => (
+                    <Cell key={idx} fill={entry.score > 65 ? 'var(--destructive)' : entry.score > 45 ? 'var(--warning)' : 'var(--primary)'} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </ChartContainer>
       </div>
     );
