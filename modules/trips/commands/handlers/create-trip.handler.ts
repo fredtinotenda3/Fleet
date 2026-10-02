@@ -20,6 +20,7 @@ import {
   buildDistanceMeasurement,
 } from '@/modules/trips/services/distance-source-resolver.service';
 import type { TripDistanceEvidence, TripStop, TripRouteEvidence } from '@/shared/types/evidence.types';
+import { dispatchService } from '@/modules/dispatch/services/dispatch.service';
 
 function calculateDistance(data: {
   mode: string;
@@ -176,6 +177,7 @@ export class CreateTripHandler implements ICommandHandler<CreateTripCommand, Tri
       trip_type: raw.trip_type,
       routeId: raw.routeId,
       stops: raw.stops,
+      dispatchJobId: raw.dispatchJobId,
       trip_distance:
         raw.trip_distance !== undefined && raw.trip_distance !== ''
           ? Number(raw.trip_distance)
@@ -264,6 +266,19 @@ export class CreateTripHandler implements ICommandHandler<CreateTripCommand, Tri
         String(validated.driver_id),
         command.scope
       );
+    }
+
+    /**
+     * ROUND 4 (Dispatch -> Trip): fail BEFORE creating the trip when the
+     * named dispatch job cannot actually accept one -- wrong tenant/org
+     * unit, already linked, or in a status that isn't one of
+     * assignable/en_route/in_progress (see DispatchService.
+     * assertCanLinkTrip). This is a pre-check only; the same method is
+     * re-run inside DispatchService.attachCreatedTrip below to close
+     * the race rather than trusting this result to still hold.
+     */
+    if (validated.dispatchJobId) {
+      await dispatchService.assertCanLinkTrip(String(validated.dispatchJobId), command.scope);
     }
 
     const distanceResolution = await resolveTripDistance({
@@ -374,7 +389,8 @@ export class CreateTripHandler implements ICommandHandler<CreateTripCommand, Tri
       ...(timing.average_speed != null && { average_speed: timing.average_speed }),
       ...(validated.trip_type && { trip_type: validated.trip_type as Trip['trip_type'] }),
       ...(validated.routeId && { routeId: String(validated.routeId) }),
-      created_from: (raw.created_from as Trip['created_from']) || 'manual',
+      ...(validated.dispatchJobId && { dispatchJobId: String(validated.dispatchJobId) }),
+      created_from: (raw.created_from as Trip['created_from']) || (validated.dispatchJobId ? 'dispatch' : 'manual'),
 
       // --- PART 3/5/8: distance source hierarchy + evidence ---
       distance_source: distanceResolution.distance_source,
@@ -394,6 +410,23 @@ export class CreateTripHandler implements ICommandHandler<CreateTripCommand, Tri
       userId: command.userId,
       correlationId: command.commandName,
     }));
+
+    /**
+     * ROUND 4 (Dispatch -> Trip), commit side. The trip now exists and
+     * already carries dispatchJobId (set above); this attaches the
+     * reverse reference (DispatchJob.tripId) and advances the job to
+     * 'in_progress'. Deliberately AFTER the trip write, not before: the
+     * trip is the primary artifact the caller asked to create, and a
+     * failure here (the pre-check above already covers the ordinary
+     * cases, so this is only the narrow race window) must not make an
+     * otherwise-successful trip creation look like it failed. No Mongo
+     * transaction wraps the two writes -- see DispatchService.
+     * linkExistingTrip's doc comment for the established, sequential,
+     * best-effort convention this follows.
+     */
+    if (created.dispatchJobId) {
+      await dispatchService.attachCreatedTrip(created.dispatchJobId, created._id!, command.scope, command.userId);
+    }
 
     return created;
   }

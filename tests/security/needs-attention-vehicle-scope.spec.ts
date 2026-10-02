@@ -38,6 +38,7 @@ import { maintenanceQueryService } from '../../modules/maintenance/services/main
 import { workOrderRepository } from '../../modules/workorders/repositories/workorder.repository';
 import { workOrderService } from '../../modules/workorders/services/workorder.service';
 import { vehicleRepository } from '../../modules/vehicles/repositories/vehicle.repository';
+import { dispatchService } from '../../modules/dispatch/services/dispatch.service';
 import { NotFoundError } from '../../server/errors/app.errors';
 import type { TenantContext } from '../../modules/tenancy/services/tenant-context.service';
 
@@ -62,6 +63,15 @@ jest.mock('../../modules/workorders/services/workorder.service', () => ({
 jest.mock('../../modules/vehicles/repositories/vehicle.repository', () => ({
   vehicleRepository: { findById: jest.fn() },
 }));
+// ROUND 4 (Dispatch <-> Command Centre): getFeedForVehicle now also reads
+// dispatchService as a fifth source (see readDispatchForVehicle). Mocked
+// the same way every other source dependency in this suite is, so these
+// tests keep exercising getFeedForVehicle's own authorization/threading
+// behavior rather than incidentally depending on dispatchService's real
+// (DB-backed) implementation.
+jest.mock('../../modules/dispatch/services/dispatch.service', () => ({
+  dispatchService: { getBoard: jest.fn(), getBoardInScope: jest.fn() },
+}));
 
 const mockedPredictVehicle = predictiveMaintenanceService.predictVehicle as jest.Mock;
 const mockedDetectVehicleFraud = fuelFraudDetectionService.detectVehicleFraud as jest.Mock;
@@ -72,6 +82,8 @@ const mockedGetUpcoming = maintenanceQueryService.getUpcomingReminders as jest.M
 const mockedGetFilteredInScope = workOrderRepository.getFilteredInScope as jest.Mock;
 const mockedWorkOrderServiceList = workOrderService.list as jest.Mock;
 const mockedFindById = vehicleRepository.findById as jest.Mock;
+const mockedGetBoard = dispatchService.getBoard as jest.Mock;
+const mockedGetBoardInScope = dispatchService.getBoardInScope as jest.Mock;
 
 const TENANT = 'willsgrove-farm-enterprises-9e80ed';
 const VEHICLE_ID = 'vehicle-hre123';
@@ -103,6 +115,8 @@ describe('needsAttentionService.getFeedForVehicle', () => {
     mockedGetUpcoming.mockResolvedValue([]);
     mockedGetFilteredInScope.mockResolvedValue(emptyPage);
     mockedWorkOrderServiceList.mockResolvedValue(emptyPage);
+    mockedGetBoard.mockResolvedValue([]);
+    mockedGetBoardInScope.mockResolvedValue([]);
   });
 
   // ─── The core security property ──────────────────────────────────────
@@ -119,6 +133,8 @@ describe('needsAttentionService.getFeedForVehicle', () => {
     expect(mockedListOpenForEntityInScope).not.toHaveBeenCalled();
     expect(mockedGetOverdue).not.toHaveBeenCalled();
     expect(mockedGetFilteredInScope).not.toHaveBeenCalled();
+    expect(mockedGetBoard).not.toHaveBeenCalled();
+    expect(mockedGetBoardInScope).not.toHaveBeenCalled();
   });
 
   it('a vehicle that exists but is OUTSIDE the caller org-unit scope 404s identically -- cannot be reached by changing the id', async () => {

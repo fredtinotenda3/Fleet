@@ -32,7 +32,8 @@
 //      (/dispatch, /workshop, /inventory, /procurement, /vendors, /compliance,
 //      /sla) shipped once and every one was a guaranteed 404. The backend
 //      modules for those still exist; the commented block at the bottom of
-//      this file is where they wait.
+//      this file is where they wait. /dispatch got its page in ROUND 4 and
+//      moved up into the real Operations section above.
 
 import {
   LayoutDashboard,
@@ -172,6 +173,20 @@ export const NAV_SECTIONS: NavSection[] = [
             permissions: [Permission.VEHICLE_VIEW],
           },
         ],
+      },
+      {
+        // ROUND 4: app/(protected)/dispatch/page.tsx and
+        // app/(protected)/dispatch/[id]/page.tsx now exist, so this
+        // moves out of the "backend module but no page" block at the
+        // bottom of this file -- the rule that kept it out (never add an
+        // entry for a route with no page) is exactly why it was
+        // withheld until now.
+        key: 'dispatch',
+        label: 'Dispatch',
+        href: '/dispatch',
+        icon: ClipboardList,
+        hint: 'Planned work waiting for a vehicle and driver',
+        permissions: [Permission.DISPATCH_VIEW],
       },
       {
         key: 'vehicles',
@@ -525,7 +540,6 @@ export const NAV_SECTIONS: NavSection[] = [
  * ROUTES WITH A BACKEND MODULE BUT NO PAGE. Re-enable an entry here only
  * once app/(protected)/<route>/page.tsx exists.
  *
- *   { key: 'dispatch',    label: 'Dispatch',     href: '/dispatch',    icon: ClipboardList, permissions: [Permission.DISPATCH_VIEW] },
  *   { key: 'workshop',    label: 'Workshop',     href: '/workshop',    icon: Warehouse,     permissions: [Permission.WORKSHOP_VIEW] },
  *   { key: 'inventory',   label: 'Inventory',    href: '/inventory',   icon: Boxes,         permissions: [Permission.INVENTORY_VIEW] },
  *   { key: 'procurement', label: 'Procurement',  href: '/procurement', icon: ShoppingCart,  permissions: [Permission.PROCUREMENT_VIEW] },

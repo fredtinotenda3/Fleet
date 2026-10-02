@@ -87,6 +87,24 @@ export interface Trip extends BaseEntity {
    *  selector (Phase 3); left here so the shape is stable across phases. */
   fuel_used?: number;
   estimated_cost?: number;
+
+  /**
+   * ROUND 4 (Dispatch <-> Trip): the dispatch job this trip's work was
+   * raised under, once one exists. The other half of DispatchJob.tripId
+   * -- the two are always written together, by
+   * DispatchService.attachCreatedTrip (DISPATCH -> TRIP, set at trip
+   * creation via CreateTripHandler) or DispatchService.linkExistingTrip
+   * (TRIP -> DISPATCH, set after the fact). `created_from: 'dispatch'`
+   * is this field's own long-standing anticipation -- see that type's
+   * doc comment above -- finally given something to point at.
+   *
+   * Deliberately NOT settable through TripUpdateDTO/UpdateTripHandler:
+   * this is a one-way-gated link with its own duplicate-association and
+   * org-unit checks (see DispatchService.assertCanLinkTrip /
+   * linkExistingTrip), not a plain field a generic trip edit should be
+   * able to silently repoint.
+   */
+  dispatchJobId?: string;
 }
 
 export interface TripCreateDTO {
@@ -114,9 +132,19 @@ export interface TripCreateDTO {
    * distance. See CreateTripHandler.
    */
   stops?: TripStop[];
+  /**
+   * ROUND 4 (Dispatch -> Trip): present when this trip is being started
+   * FROM a dispatch job (e.g. a "Start Trip" action on Dispatch Detail
+   * that deep-links here with the job's assigned vehicle/driver and
+   * pickup/dropoff pre-filled). CreateTripHandler validates this against
+   * DispatchService.assertCanLinkTrip before creating the trip, and
+   * attaches it via DispatchService.attachCreatedTrip after. See
+   * Trip.dispatchJobId's doc comment for why this is create-only.
+   */
+  dispatchJobId?: string;
 }
 
-export interface TripUpdateDTO extends Partial<TripCreateDTO> {
+export interface TripUpdateDTO extends Partial<Omit<TripCreateDTO, 'dispatchJobId'>> {
   _id: string;
 }
 

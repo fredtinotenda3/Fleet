@@ -48,6 +48,8 @@ export const DISPATCH_JOB_ASSIGNED = 'DispatchJobAssigned';
 export const DISPATCH_JOB_STARTED = 'DispatchJobStarted';
 export const DISPATCH_JOB_COMPLETED = 'DispatchJobCompleted';
 export const DISPATCH_JOB_CANCELLED = 'DispatchJobCancelled';
+/** ROUND 4: an existing, independently-created Trip was linked to a dispatch job after the fact (TRIP -> DISPATCH direction). Distinct from DISPATCH_JOB_STARTED, which fires when a trip is created FROM a dispatch job instead. */
+export const DISPATCH_JOB_TRIP_LINKED = 'DispatchJobTripLinked';
 
 export const DRIVER_SHIFT_CREATED = 'DriverShiftCreated';
 export const DRIVER_SHIFT_UPDATED = 'DriverShiftUpdated';

@@ -6,6 +6,7 @@ import {
   DISPATCH_JOB_STARTED,
   DISPATCH_JOB_COMPLETED,
   DISPATCH_JOB_CANCELLED,
+  DISPATCH_JOB_TRIP_LINKED,
 } from '@/server/events/event-names';
 import { DispatchJob } from '../types/dispatch.types';
 
@@ -36,5 +37,12 @@ export class DispatchJobCompletedEvent extends DomainEvent {
 export class DispatchJobCancelledEvent extends DomainEvent {
   constructor(job: DispatchJob, metadata?: Record<string, unknown>) {
     super(DISPATCH_JOB_CANCELLED, { entityId: job._id, entityType: 'dispatch_job', reason: job.cancelledReason, tenantId: job.tenantId }, metadata);
+  }
+}
+
+/** ROUND 4: fired by DispatchService.linkExistingTrip -- see dispatch.events comment above DISPATCH_JOB_TRIP_LINKED. */
+export class DispatchJobTripLinkedEvent extends DomainEvent {
+  constructor(job: DispatchJob, metadata?: Record<string, unknown>) {
+    super(DISPATCH_JOB_TRIP_LINKED, { entityId: job._id, entityType: 'dispatch_job', tripId: job.tripId, tenantId: job.tenantId }, metadata);
   }
 }

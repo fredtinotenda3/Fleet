@@ -40,6 +40,10 @@ const ALLOWED_FIELDS = [
   'routeId',
   // --- PART 3: map-assisted trip log ---
   'stops',
+  // Deliberately NOT here: 'dispatchJobId'. See Trip.dispatchJobId's doc
+  // comment -- that link is create-only, gated by
+  // DispatchService.assertCanLinkTrip/linkExistingTrip, not a plain
+  // field a generic trip edit may silently repoint.
 ] as const;
 
 const NUMERIC_FIELDS = ['trip_distance', 'start_odometer', 'end_odometer'];

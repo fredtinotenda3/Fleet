@@ -15,6 +15,7 @@ import {
   Fuel as FuelIcon,
   Loader2,
   ReceiptText,
+  Send,
   ShieldAlert,
   Sparkles,
   Wrench,
@@ -48,6 +49,7 @@ export const SOURCE_ICON: Record<NeedsAttentionSource, ComponentType<{ className
   expense_anomaly: ReceiptText,
   compliance: FileWarning,
   maintenance: CalendarClock,
+  dispatch: Send,
 };
 
 /** What each source is telling you, in the operator's words rather than the model's. */
@@ -59,6 +61,7 @@ export const SOURCE_LABEL: Record<NeedsAttentionSource, string> = {
   expense_anomaly: 'Expense anomaly',
   compliance: 'Compliance',
   maintenance: 'Service due',
+  dispatch: 'Dispatch',
 };
 
 const URGENCY_LABEL: Record<NeedsAttentionUrgency, string> = {

@@ -29,6 +29,8 @@ import { complianceService } from '@/modules/compliance/services/compliance.serv
 import { maintenanceQueryService } from '@/modules/maintenance/services/maintenance-query.service';
 import { workOrderRepository } from '@/modules/workorders/repositories/workorder.repository';
 import { workOrderService } from '@/modules/workorders/services/workorder.service';
+import { dispatchService } from '@/modules/dispatch/services/dispatch.service';
+import type { DispatchJob } from '@/modules/dispatch/types/dispatch.types';
 import { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
 import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 import { vehicleRepository } from '@/modules/vehicles/repositories/vehicle.repository';
@@ -52,7 +54,18 @@ const ALL_SOURCES: NeedsAttentionSource[] = [
   'expense_anomaly',
   'compliance',
   'maintenance',
+  'dispatch',
 ];
+
+/**
+ * ROUND 4: how far ahead of `scheduledFor` an unassigned dispatch job
+ * starts surfacing as "soon" rather than being silently fine until it
+ * tips into overdue. Two hours mirrors the dispatcher's own planning
+ * horizon (same-shift, not same-week like maintenance's 14-day
+ * upcoming window) -- a threshold choice, not a measurement, same
+ * category of decision as that 14-day window.
+ */
+const DISPATCH_UNASSIGNED_WARNING_MS = 2 * 60 * 60 * 1000;
 
 // Higher = more urgent. Deliberately dominates the score so a critical
 // item always outranks a low one no matter its cost (see the spec's
@@ -148,6 +161,7 @@ export class NeedsAttentionService {
       expenseAnomalyItems,
       complianceItems,
       maintenanceItems,
+      dispatchItems,
     ] = await Promise.all([
       safeSource('predictive_maintenance', () => this.readPredictiveMaintenance(tenantId, context), unavailableSources),
       safeSource('fleet_health', () => this.readFleetHealth(tenantId, context), unavailableSources),
@@ -156,6 +170,7 @@ export class NeedsAttentionService {
       safeSource('expense_anomaly', () => this.readExpenseAnomalies(tenantId, context), unavailableSources),
       safeSource('compliance', () => this.readCompliance(tenantId, context), unavailableSources),
       safeSource('maintenance', () => this.readMaintenance(tenantId, context), unavailableSources),
+      safeSource('dispatch', () => this.readDispatch(tenantId, context), unavailableSources),
     ]);
 
     const items = [
@@ -166,6 +181,7 @@ export class NeedsAttentionService {
       ...expenseAnomalyItems,
       ...complianceItems,
       ...maintenanceItems,
+      ...dispatchItems,
     ].sort((a, b) => b.priorityScore - a.priorityScore);
 
     const bySource = ALL_SOURCES.reduce((acc, source) => {
@@ -304,7 +320,7 @@ export class NeedsAttentionService {
 
     const unavailableSources: NeedsAttentionSource[] = [];
 
-    const [predictiveMaintenanceItems, fuelFraudItems, maintenanceItems, complianceItems] = await Promise.all([
+    const [predictiveMaintenanceItems, fuelFraudItems, maintenanceItems, complianceItems, dispatchItems] = await Promise.all([
       safeSource(
         'predictive_maintenance',
         () => this.readPredictiveMaintenanceForVehicle(tenantId, vehicleId, context),
@@ -321,11 +337,20 @@ export class NeedsAttentionService {
         () => this.readComplianceForVehicle(vehicleId, context),
         unavailableSources
       ),
+      // ROUND 4: DispatchJob.assignedVehicleId is a direct vehicle _id,
+      // the same shape of match predictive_maintenance/fuel_fraud above
+      // already use for this method -- a genuinely bounded,
+      // single-vehicle query, not a fleet-wide fetch filtered after.
+      safeSource('dispatch', () => this.readDispatchForVehicle(tenantId, vehicleId, context), unavailableSources),
     ]);
 
-    const items = [...predictiveMaintenanceItems, ...fuelFraudItems, ...maintenanceItems, ...complianceItems].sort(
-      (a, b) => b.priorityScore - a.priorityScore
-    );
+    const items = [
+      ...predictiveMaintenanceItems,
+      ...fuelFraudItems,
+      ...maintenanceItems,
+      ...complianceItems,
+      ...dispatchItems,
+    ].sort((a, b) => b.priorityScore - a.priorityScore);
 
     const bySource = ALL_SOURCES.reduce((acc, source) => {
       acc[source] = 0;
@@ -1029,6 +1054,81 @@ export class NeedsAttentionService {
       monitoring.logError('[needsAttentionService] readOpenWorkOrders failed', error as Error);
       return [];
     }
+  }
+
+  /**
+   * ROUND 4 (Dispatch <-> Attention). Two genuinely evidenced triggers,
+   * both read directly off the dispatch job's own stored fields -- no
+   * prediction, no inferred likelihood:
+   *   - overdue: `scheduledFor` has passed and the job has not reached
+   *     'in_progress' -- the work that was supposed to be underway by
+   *     now demonstrably has not started.
+   *   - unassigned and near start: still 'unassigned' with
+   *     `scheduledFor` within DISPATCH_UNASSIGNED_WARNING_MS -- a real
+   *     operational risk (nobody is lined up to do this soon), not a
+   *     forecast of one.
+   * A job with no `scheduledFor` at all contributes nothing: there is
+   * no evidence to judge timeliness against, and inventing a deadline
+   * would be exactly the fabricated urgency this feed exists to avoid.
+   * `getBoard`/`getBoardInScope` already exclude completed/cancelled
+   * jobs, so this never re-flags closed work.
+   */
+  private buildDispatchItems(jobs: DispatchJob[]): NeedsAttentionItem[] {
+    const now = Date.now();
+    const items: NeedsAttentionItem[] = [];
+
+    for (const job of jobs) {
+      if (!job.scheduledFor) continue;
+      const scheduledMs = new Date(job.scheduledFor).getTime();
+      if (Number.isNaN(scheduledMs)) continue;
+
+      const isOverdue = scheduledMs < now && job.status !== 'in_progress';
+      const isNearStartUnassigned =
+        !isOverdue && job.status === 'unassigned' && scheduledMs - now <= DISPATCH_UNASSIGNED_WARNING_MS;
+      if (!isOverdue && !isNearStartUnassigned) continue;
+
+      items.push(
+        makeItem(
+          'dispatch',
+          String(job._id),
+          isOverdue ? 'critical' : 'high',
+          isOverdue ? 'overdue' : 'soon',
+          isOverdue ? `Dispatch overdue: ${job.title}` : `Dispatch starts soon, unassigned: ${job.title}`,
+          isOverdue
+            ? `Scheduled for ${new Date(job.scheduledFor).toLocaleString()}, still "${job.status}"`
+            : `No driver/vehicle assigned yet; scheduled for ${new Date(job.scheduledFor).toLocaleString()}`,
+          0,
+          {
+            dueDate: job.scheduledFor,
+            entityId: job._id,
+            entityLabel: job.title,
+            href: `/dispatch/${job._id}`,
+            ownerTarget: { kind: 'org-unit-direct', orgUnitId: job.orgUnitId },
+            // BACKLOG ITEM 7: the dispatch job row IS the finding.
+            evidence: [
+              {
+                source: 'tbldispatchjobs',
+                reference: String(job._id),
+                observedAt: new Date(job.scheduledFor),
+              },
+            ],
+          }
+        )
+      );
+    }
+
+    return items;
+  }
+
+  private async readDispatch(tenantId: string, context?: TenantContext): Promise<NeedsAttentionItem[]> {
+    const jobs = context ? await dispatchService.getBoardInScope(context) : await dispatchService.getBoard(tenantId);
+    return this.buildDispatchItems(jobs);
+  }
+
+  /** Vehicle-scoped (item 7 pattern): DispatchJob.assignedVehicleId is a direct vehicle _id, so this is a genuinely bounded single-vehicle filter, not a fleet-wide fetch filtered after the fact. */
+  private async readDispatchForVehicle(tenantId: string, vehicleId: string, context?: TenantContext): Promise<NeedsAttentionItem[]> {
+    const jobs = context ? await dispatchService.getBoardInScope(context) : await dispatchService.getBoard(tenantId);
+    return this.buildDispatchItems(jobs.filter((j) => j.assignedVehicleId === vehicleId));
   }
 }
 

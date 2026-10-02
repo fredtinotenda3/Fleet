@@ -14,6 +14,7 @@ import {
   ReceiptText,
   FileWarning,
   CalendarClock,
+  Send,
 } from 'lucide-react';
 import { DashboardWidget } from '@/frontend/shared/dashboards/DashboardWidget';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
@@ -50,6 +51,7 @@ const SOURCE_ICON: Record<NeedsAttentionSource, ComponentType<{ className?: stri
   expense_anomaly: ReceiptText,
   compliance: FileWarning,
   maintenance: CalendarClock,
+  dispatch: Send,
 };
 
 export function NeedsAttentionWidget() {

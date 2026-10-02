@@ -23,6 +23,7 @@ const SOURCE_LABEL: Record<NeedsAttentionSource, string> = {
   expense_anomaly: 'Expense anomaly',
   compliance: 'Compliance',
   maintenance: 'Maintenance',
+  dispatch: 'Dispatch',
 };
 
 const SEVERITY_ACTIVE_CLASS: Record<SeverityFilterValue, string> = {

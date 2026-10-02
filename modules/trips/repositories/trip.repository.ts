@@ -1092,6 +1092,80 @@ export class TripRepository extends BaseRepository<Trip> {
   }
 
   /**
+   * ROUND 4 (Dispatch <-> Financial Truth): the same fuel+expense join
+   * as getTripCostAnalytics, narrowed to exactly ONE trip by id instead
+   * of a date range, and -- unlike getTripCostAnalytics -- NOT
+   * filtered to "has at least one linked record". DispatchService.
+   * getCostSummary needs to tell "this trip has genuinely cost
+   * nothing yet" (a real zero) apart from "no trip is linked" (unknown,
+   * handled entirely by the caller before this is ever invoked); a
+   * join that silently returned nothing for a zero-cost trip would
+   * collapse that distinction back into one string of "no cost
+   * available" the caller can no longer honestly report.
+   */
+  async getCostAnalyticsForTrip(tripId: string, tenantId: string): Promise<{ fuelCost: number; expenseCost: number; totalCost: number }> {
+    if (!ObjectId.isValid(tripId)) return { fuelCost: 0, expenseCost: 0, totalCost: 0 };
+    const db = await connectToDatabase();
+    const isSuperAdmin = this.isPlatformScopeTenant(tenantId);
+
+    const pipeline = [
+      {
+        $match: {
+          _id: new ObjectId(tripId),
+          ...(isSuperAdmin ? {} : { tenantId }),
+          isDeleted: { $ne: true },
+        },
+      },
+      {
+        $lookup: {
+          from: 'tblfuellogs',
+          let: { tripId: { $toString: '$_id' } },
+          pipeline: [
+            {
+              $match: {
+                ...(isSuperAdmin ? {} : { tenantId }),
+                $expr: { $and: [{ $eq: ['$tripId', '$$tripId'] }, { $ne: ['$isDeleted', true] }] },
+              },
+            },
+            { $group: { _id: null, cost: { $sum: '$cost' } } },
+          ],
+          as: 'fuelAgg',
+        },
+      },
+      {
+        $lookup: {
+          from: 'tblexpenses',
+          let: { tripId: { $toString: '$_id' } },
+          pipeline: [
+            {
+              $match: {
+                ...(isSuperAdmin ? {} : { tenantId }),
+                $expr: { $and: [{ $eq: ['$tripId', '$$tripId'] }, { $ne: ['$isDeleted', true] }] },
+              },
+            },
+            { $group: { _id: null, amount: { $sum: '$amount' } } },
+          ],
+          as: 'expenseAgg',
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          fuelCost: { $round: [{ $ifNull: [{ $arrayElemAt: ['$fuelAgg.cost', 0] }, 0] }, 2] },
+          expenseCost: { $round: [{ $ifNull: [{ $arrayElemAt: ['$expenseAgg.amount', 0] }, 0] }, 2] },
+        },
+      },
+    ];
+
+    const [result] = await db.collection(this.collectionName).aggregate(pipeline).toArray();
+    if (!result) return { fuelCost: 0, expenseCost: 0, totalCost: 0 };
+
+    const fuelCost = Number(result.fuelCost) || 0;
+    const expenseCost = Number(result.expenseCost) || 0;
+    return { fuelCost, expenseCost, totalCost: Math.round((fuelCost + expenseCost) * 100) / 100 };
+  }
+
+  /**
    * PHASE 3: fleet-wide summary for KPI cards. Reuses the same
    * per-trip join as getTripCostAnalytics but without the row limit,
    * since it only needs aggregate totals, not the row list.

@@ -27,7 +27,8 @@ export type NeedsAttentionSource =
   | 'fuel_fraud'
   | 'expense_anomaly'
   | 'compliance'
-  | 'maintenance';
+  | 'maintenance'
+  | 'dispatch';
 
 /** How soon the item needs action, independent of its severity. */
 export type NeedsAttentionUrgency = 'overdue' | 'immediate' | 'soon' | 'planned' | 'monitor';

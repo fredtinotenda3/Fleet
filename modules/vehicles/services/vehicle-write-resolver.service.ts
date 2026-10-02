@@ -123,6 +123,38 @@ export class VehicleWriteResolver {
   }
 
   /**
+   * Resolve the vehicle a write is being filed against, by canonical id
+   * rather than by plate.
+   *
+   * ROUND 4 (Dispatch): `DispatchJob.assignedVehicleId` -- like every
+   * other cross-vehicle FK added after the plate-based write paths
+   * (Fuel/Expense/Trip/WorkOrder/Maintenance) -- is the vehicle's own
+   * `_id`, not its plate, so `resolveForWrite` above does not apply.
+   * This is the identical write-side policy (tenant + org-unit scope,
+   * indistinguishable not-found-vs-forbidden) applied to
+   * `vehicleIdentityResolver.resolveById` instead of `resolveByPlate` --
+   * see that resolver's class doc for why both lookups live together
+   * there. No new policy is introduced here; this only gives an
+   * id-keyed caller the same guarantee a plate-keyed one already had.
+   *
+   * @throws AppError VEHICLE_NOT_FOUND (400) when the id is malformed,
+   *   matches no active vehicle in this tenant, OR matches one the
+   *   caller is not scoped to.
+   */
+  async resolveByIdForWrite(vehicleId: string | null | undefined, scope: WriteScope): Promise<Vehicle> {
+    const raw = typeof vehicleId === 'string' ? vehicleId.trim() : '';
+    const display = raw || String(vehicleId ?? '');
+
+    const result = await vehicleIdentityResolver.resolveById(raw, tenantIdOf(scope));
+
+    if (result.status !== 'resolved' || !isWritable(result.vehicle, scope)) {
+      throw new AppError(`Vehicle "${display}" not found`, 'VEHICLE_NOT_FOUND', 400);
+    }
+
+    return result.vehicle;
+  }
+
+  /**
    * The org unit a record filed against `vehicle` belongs to.
    *
    * Returns undefined (not null) when the vehicle itself has no unit,

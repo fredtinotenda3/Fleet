@@ -16,7 +16,8 @@ export {
   VehicleModal,
   VehiclesTable,
   VehicleStatsCards,
-  DriverAssignmentPanel
+  DriverAssignmentPanel,
+  VehicleSelect
 } from './components';
 export type { VehicleModalMode } from './components';
 

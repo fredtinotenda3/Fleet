@@ -73,6 +73,9 @@ export const tripBaseSchema = z.object({
 
   // --- PART 3: map-assisted trip log ---
   stops: z.array(tripStopSchema).optional().nullable(),
+
+  // --- ROUND 4: Dispatch -> Trip (create-only; see Trip.dispatchJobId) ---
+  dispatchJobId: z.string().optional().nullable(),
 });
 
 function applySharedRefinements(data: z.infer<typeof tripBaseSchema>, ctx: z.RefinementCtx) {
