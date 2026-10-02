@@ -198,7 +198,7 @@ export function CommandCentrePage({ embedded = false }: CommandCentrePageProps) 
           ) : isError ? (
             <ErrorState
               title="The attention feed didn't load"
-              description="This queue aggregates seven intelligence sources, so a single slow source can time the whole request out. Retrying usually works."
+              description="This queue aggregates eight intelligence sources, so a single slow source can time the whole request out. Retrying usually works."
               detail={describeQueryError(error)}
               onRetry={() => refetch()}
               size="page"

@@ -177,9 +177,24 @@ priority: 'critical' | 'high' | 'medium' | 'low';
   title: string;
   description: string;
   affectedVehicles: string[];
-  estimatedCost: number;
-  estimatedBenefit: number;
-  roi: number;
+  /**
+   * ROUND 5 FIX -- all three were previously REQUIRED and hardcoded to
+   * per-unit constants with no evidentiary basis (e.g. `lowScoring.length
+   * * 500`, a flat `estimatedCost: 1000` for a fuel-efficiency finding
+   * regardless of fleet size or real fuel prices). That is the exact
+   * fabrication pattern this codebase already fixed for
+   * `fuelEfficiencyAverage` (see this file's own history and
+   * tests/security/fabricated-metrics.spec.ts) and for the Maintenance
+   * Forecast widget (frontend/modules/reports/pages/AnalyticsOverview.tsx
+   * -- "this used to print a fabricated $500... No estimate"), just not
+   * yet applied here. Optional now: `generateRecommendations` omits them
+   * rather than inventing a number, and `needs-attention.service.ts`'s
+   * readFleetHealth treats an absent estimate as cost 0 (hidden in the
+   * UI), never as a real "$0 at stake".
+   */
+  estimatedCost?: number;
+  estimatedBenefit?: number;
+  roi?: number;
 }
 
 // ─── Driver Risk Score ──────────────────────────────────────────────────────

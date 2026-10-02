@@ -99,7 +99,11 @@ export function SavingsStrip({
           </div>
         ) : !data || data.summary.totalPostings === 0 ? (
           <p className="text-muted-foreground">
-            No resolved fuel-fraud or expense-anomaly items posted to the ledger this month yet.
+            {/* ROUND 5 FIX -- PHASE 6 widened LEDGER_ELIGIBLE_SOURCES
+                (attention-resolution.service.ts) to also include
+                `maintenance` and `predictive_maintenance`; this copy
+                still named only the original two sources. */}
+            No resolved fuel-fraud, expense-anomaly, or maintenance items posted to the ledger this month yet.
           </p>
         ) : (
           <>

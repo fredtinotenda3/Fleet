@@ -35,20 +35,28 @@ describe('importing the dispatch trigger is enough to make dispatch work', () =>
 
       expect(registry.isRegistered('create_work_order')).toBe(true);
       expect(registry.isRegistered('schedule_maintenance')).toBe(true);
-      // actionForSource maps compliance / fuel_fraud / expense_anomaly
-      // to start_workflow, which is a DEFAULT action -- so the defaults
-      // have to be registered on this path too.
+      // ROUND 5: actionForSource no longer maps ANY attention source to
+      // start_workflow (compliance/fuel_fraud/expense_anomaly used to,
+      // and it always failed -- see actionForSource's own comment: no
+      // workflow definition ever existed for it to start). start_workflow
+      // stays registered as a DEFAULT action regardless, because it is a
+      // legitimate, general-purpose action a hand-configured business
+      // RULE can still use directly (supplying its own params.workflowId)
+      // -- this assertion just confirms the default actions are reachable
+      // from the trigger-only import path, independent of attention
+      // dispatch's own (now narrower) usage of them.
       expect(registry.isRegistered('start_workflow')).toBe(true);
     });
   });
 
-  it('covers every action type actionForSource can return', () => {
+  it('covers every action type actionForSource can return, plus the general-purpose defaults', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     require('@/modules/attention/services/attention-dispatch.trigger');
 
-    // The closed set from AttentionActionType. If a future source maps
-    // to a new type, this fails until an executor exists -- which is the
-    // point: the service would otherwise refuse it silently forever.
+    // create_work_order/schedule_maintenance are what actionForSource
+    // actually returns today. start_workflow is kept in this list
+    // because it is still a registered default action (see the comment
+    // above), even though no attention source maps to it after ROUND 5.
     for (const type of ['create_work_order', 'schedule_maintenance', 'start_workflow']) {
       expect(ruleActionRegistry.isRegistered(type)).toBe(true);
     }

@@ -77,6 +77,20 @@ export enum Permission {
   // Ã¢â€â‚¬Ã¢â€â‚¬ Analytics Ã¢â€â‚¬Ã¢â€â‚¬
   ANALYTICS_VIEW = 'analytics:view',
   ANALYTICS_EXPORT = 'analytics:export',
+  /**
+   * ROUND 5 FIX -- separates "can see the needs-attention/analytics
+   * feed" from "can mutate an attention item's triage state" (resolve,
+   * verify-outcome). Both of those POST routes were gated on
+   * ANALYTICS_VIEW alone, which VIEWER (deliberately read-only) and
+   * AUDITOR (independent oversight over the very items being triaged)
+   * both hold -- so either role could mark a finding resolved or
+   * verify its own outcome, exactly the separation-of-duties violation
+   * the FINANCE_VIEW/FINANCE_MANAGE split elsewhere in this file
+   * exists to prevent. Granted to the same operational manager/
+   * accountant roles that already hold ANALYTICS_VIEW, withheld from
+   * VIEWER and AUDITOR.
+   */
+  ANALYTICS_MANAGE = 'analytics:manage',
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Reports Ã¢â€â‚¬Ã¢â€â‚¬
   REPORT_VIEW = 'report:view',
@@ -454,6 +468,10 @@ export const rolePermissions: Record<Role, Permission[]> = {
     Permission.MAINTENANCE_CREATE,
     Permission.MAINTENANCE_EDIT,
     Permission.ANALYTICS_VIEW,
+    // ROUND 5 FIX -- see ANALYTICS_MANAGE's own doc comment. A branch
+    // manager triaging their branch's attention feed (resolving a
+    // finding, verifying its outcome) is ordinary operational work.
+    Permission.ANALYTICS_MANAGE,
     Permission.REPORT_VIEW,
     Permission.REPORT_CREATE,
     Permission.USER_VIEW,
@@ -535,6 +553,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     Permission.EXPENSE_EDIT,
     Permission.MAINTENANCE_VIEW,
     Permission.ANALYTICS_VIEW,
+    // ROUND 5 FIX -- see ANALYTICS_MANAGE's own doc comment.
+    Permission.ANALYTICS_MANAGE,
     Permission.REPORT_VIEW,
     Permission.USER_VIEW,
     Permission.DISPATCH_VIEW,
@@ -583,6 +603,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     Permission.EXPENSE_VIEW,
     // Analytics & Reports
     Permission.ANALYTICS_VIEW,
+    // ROUND 5 FIX -- see ANALYTICS_MANAGE's own doc comment.
+    Permission.ANALYTICS_MANAGE,
     Permission.REPORT_VIEW,
     Permission.REPORT_CREATE,
     // Drivers
@@ -695,6 +717,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     Permission.SLA_VIEW,
     Permission.COMPLIANCE_VIEW,
     Permission.ANALYTICS_VIEW,
+    // ROUND 5 FIX -- see ANALYTICS_MANAGE's own doc comment.
+    Permission.ANALYTICS_MANAGE,
     Permission.REPORT_VIEW,
     Permission.ORG_UNIT_VIEW,
     Permission.NOTIFICATION_BROADCAST,
@@ -766,6 +790,8 @@ export const rolePermissions: Record<Role, Permission[]> = {
     Permission.FUEL_EDIT,
     Permission.ANALYTICS_VIEW,
     Permission.ANALYTICS_EXPORT,
+    // ROUND 5 FIX -- see ANALYTICS_MANAGE's own doc comment.
+    Permission.ANALYTICS_MANAGE,
     Permission.REPORT_VIEW,
     Permission.REPORT_CREATE,
     // FleetOps Ã¢â‚¬â€œ Procurement (approve only)

@@ -36,8 +36,8 @@ e.g. `create_work_order`").
 |---|---|---|
 | `predictive_maintenance` | `schedule_maintenance` | A predicted service is a task |
 | `maintenance` | `create_work_order` | An overdue service is a job |
-| `compliance` | `start_workflow` | Gates operation; needs a documented approval trail |
-| `fuel_fraud`, `expense_anomaly` | `start_workflow` | Money needs investigation and sign-off first |
+| `compliance` | **none** | See below (ROUND 5) |
+| `fuel_fraud`, `expense_anomaly` | **none** | See below (ROUND 5) |
 | `fleet_health` | **none** | Multi-vehicle recommendation, no single owning entity |
 | `driver_risk` | **none** | See below |
 
@@ -45,6 +45,27 @@ e.g. `create_work_order`").
 is not a maintenance job, and auto-raising anything against an employee
 on a model's say-so is a decision that needs a human at the *front* of
 it, not the end.
+
+**ROUND 5 CORRECTION:** `compliance`/`fuel_fraud`/`expense_anomaly`
+originally mapped to `start_workflow`, on the reasoning that each "needs
+an approval chain, not a silently-created task." That assumed a workflow
+*definition* existed to start. None ever did — `WorkflowEngine.
+startWorkflow` requires an active, tenant-owned `Workflow` document, and
+nothing in this product seeds or configures one for any attention
+source — so every dispatch of these three sources was recorded and then
+always failed. A real-fleet acceptance audit caught this (it breaks the
+one visible "intelligence → money" surface this product has, since
+`fuel_fraud`/`expense_anomaly` are the Value Ledger's two headline
+sources). `actionForSource` now returns `null` for all three, matching
+`fleet_health`/`driver_risk` above, until a real per-tenant
+workflow-definition concept exists. `create_work_order` was considered
+and rejected as a substitute: a work order is a mechanical/maintenance
+job, and for `compliance`/`expense_anomaly` the item's `entityId` is not
+even a vehicle (it's the compliance or expense record's own id), so the
+executor would just fail a different way — and for `fuel_fraud`, where
+`entityId` IS a vehicle, surfacing a fraud allegation in a mechanic's
+work-order queue is exactly the kind of operationally-meaningless
+connection this product avoids elsewhere.
 
 ### It never approves anything
 

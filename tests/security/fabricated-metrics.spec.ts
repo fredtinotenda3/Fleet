@@ -109,6 +109,46 @@ describe('FleetHealthService: fuel efficiency is never fabricated', () => {
     );
     expect(recommendations.map((r) => r.title)).toContain('Improve fleet fuel efficiency');
   });
+
+  /*
+    ─────────────────────────────────────────────────────────────────
+    ROUND 5 FIX -- a recommendation firing legitimately (a REAL
+    finding) must not still carry a FABRICATED dollar figure.
+    ─────────────────────────────────────────────────────────────────
+    This was the deeper half of the same bug the tests above pin: even
+    when `generateRecommendations` was correctly deciding WHETHER to
+    recommend something, it hardcoded per-unit constants for the
+    cost/benefit/ROI of doing it -- `lowScoring.length * 500`, a flat
+    `estimatedCost: 1000` for the fuel-efficiency finding regardless of
+    fleet size, `vehicles.length * 30000` for a replacement cycle -- none
+    computed from any real pricing or savings model. Every one of these
+    numbers then flowed into the Command Centre's "$X at stake" line and
+    the ESG disclosure PDF (see esg-export-scope.spec.ts) as if it were
+    an observed fact.
+  */
+  it('REGRESSION: a real, firing recommendation carries no fabricated estimatedCost/estimatedBenefit/roi', () => {
+    const lowScoringVehicleScores = [
+      { vehicleId: 'v1', licensePlate: 'AFU0078', score: 10, components: {} },
+    ];
+    const metrics = {
+      ...metricsFor([{ distance_calculated: 100 }], [{ fuel_volume: 50 }]), // efficiency 2 km/L -> fires
+      overdueMaintenanceCount: 3, // fires
+      averageVehicleAge: 12, // fires
+    };
+
+    const recommendations = callPrivate<
+      Array<{ title: string; estimatedCost?: number; estimatedBenefit?: number; roi?: number }>
+    >(service, 'generateRecommendations', [vehicle], [], lowScoringVehicleScores, metrics);
+
+    // All four recommendation types fire for this input -- confirms the
+    // assertion below is exercising real findings, not an empty array.
+    expect(recommendations.length).toBe(4);
+    for (const rec of recommendations) {
+      expect(rec.estimatedCost).toBeUndefined();
+      expect(rec.estimatedBenefit).toBeUndefined();
+      expect(rec.roi).toBeUndefined();
+    }
+  });
 });
 
 describe('FleetHealthService.calculateFuelScore: units and missing data', () => {

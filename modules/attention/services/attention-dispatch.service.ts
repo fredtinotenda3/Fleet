@@ -149,6 +149,38 @@ export function buildDispatchIdempotencyKey(params: {
  * is not a maintenance job, and auto-raising anything against an
  * employee on a model's say-so is a decision that needs a human at the
  * front of it, not the end.
+ *
+ * ROUND 5 FIX -- `compliance`, `fuel_fraud` and `expense_anomaly` used to
+ * map here to `start_workflow`, on the reasoning that each "needs an
+ * approval chain, not a silently-created task". That reasoning assumed a
+ * workflow DEFINITION existed to start. None ever did: `WorkflowEngine.
+ * startWorkflow` requires an active, tenant-owned `Workflow` document
+ * (`workflowRepository.getWorkflow(workflowId, tenantId)`), and nothing
+ * in this product seeds or configures one for any attention source --
+ * `StartWorkflowAction` was always called with no `workflowId` and threw
+ * unconditionally. The result: clicking Dispatch on any item from these
+ * three sources was recorded, then always failed
+ * (`AttentionDispatchRecord.failedAt`/`failureReason`), for every tenant,
+ * every time -- the one visible "intelligence -> money" surface this
+ * product has (the Value Ledger's two headline sources are fuel_fraud
+ * and expense_anomaly) had its action step silently broken.
+ *
+ * The honest fix is this, not a disguised one: these three sources
+ * dispatch NOTHING, exactly like fleet_health/driver_risk above, until a
+ * real per-tenant workflow-definition concept exists for "investigate
+ * this compliance/fraud/anomaly finding". Routing them through
+ * `create_work_order` instead was considered and rejected -- a WorkOrder
+ * is a mechanical/maintenance job (parts, labor, bay assignment); for
+ * `expense_anomaly` and `compliance` the item's entityId is not even a
+ * vehicle (it is the expense record's own id, or the compliance record's
+ * own id -- see needs-attention.service.ts's readExpenseAnomalies /
+ * readCompliance), so the executor would just fail a different way. For
+ * `fuel_fraud` the entityId IS a vehicle, but surfacing a fraud
+ * allegation in a mechanic's work-order queue is the kind of
+ * operationally-meaningless connection this audit explicitly says not to
+ * force. Building the real fix (tenant-configurable workflow definitions
+ * per source) is a new domain and is documented, not rushed, per this
+ * round's implementation rule.
  */
 export function actionForSource(item: AttentionItem): AttentionActionType | null {
   switch (item.source) {
@@ -157,15 +189,13 @@ export function actionForSource(item: AttentionItem): AttentionActionType | null
     case 'maintenance':
       return 'create_work_order';
     case 'compliance':
-      // Compliance findings gate operation and need a documented
-      // approval trail, not a silently-created task.
-      return 'start_workflow';
     case 'fuel_fraud':
     case 'expense_anomaly':
-      // A monetary finding needs investigation and sign-off before any
-      // money moves, so it starts an approval chain rather than
-      // creating a job.
-      return 'start_workflow';
+      // See the ROUND 5 FIX comment above: no workflow definition exists
+      // anywhere in this product for `start_workflow` to start, so this
+      // used to dispatch an action that was GUARANTEED to fail. Returning
+      // null here is what actually fixes the bug.
+      return null;
     default:
       return null;
   }

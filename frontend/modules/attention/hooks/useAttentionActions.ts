@@ -5,7 +5,7 @@
 // Two endpoints have shipped, are permission-gated and are covered by
 // backend tests, and until now NOTHING in the frontend called either:
 //
-//   POST /api/ai/needs-attention/{itemKey}/resolve   (ANALYTICS_VIEW)
+//   POST /api/ai/needs-attention/{itemKey}/resolve   (ANALYTICS_MANAGE)
 //   POST /api/ai/needs-attention/{itemKey}/dispatch  (WORKORDER_CREATE
 //                                                     or MAINTENANCE_CREATE)
 //
@@ -21,6 +21,34 @@ import { toast } from 'sonner';
 import { apiClient } from '@/shared/utils/api-client.utils';
 import { Permission, permissionService } from '@/server/permissions/roles';
 import { useSessionStore } from '@/frontend/shared/store/session.store';
+import type { NeedsAttentionSource } from '@/modules/ai/types/needs-attention.types';
+
+/**
+ * ROUND 5 FIX -- a whitelist mirroring `actionForSource` in
+ * modules/attention/services/attention-dispatch.service.ts, which cannot
+ * be imported here (it pulls in `crypto` and server-only registries).
+ *
+ * Before this, the Dispatch button was shown for EVERY source whenever
+ * the caller held the permission, including `fleet_health`/`driver_risk`
+ * (deliberately actionless) and, until this same round's backend fix,
+ * `compliance`/`fuel_fraud`/`expense_anomaly` (which always failed --
+ * see that service's own comment). Clicking it was always safe -- the
+ * backend never crashes or fabricates -- but it round-tripped to learn
+ * "nothing to dispatch" for a button that could have said so up front.
+ *
+ * A WHITELIST, not a blacklist: a newly added source with no executor
+ * yet defaults to hidden, the safe direction, rather than defaulting to
+ * shown and failing until someone notices.
+ */
+const SOURCES_WITH_DISPATCH_ACTION: ReadonlySet<NeedsAttentionSource> = new Set([
+  'predictive_maintenance',
+  'maintenance',
+]);
+
+/** Whether this specific item's source has a real dispatchable action today. */
+export function sourceHasDispatchAction(source: NeedsAttentionSource): boolean {
+  return SOURCES_WITH_DISPATCH_ACTION.has(source);
+}
 
 /**
  * Mirrors `DispatchTriggerOutcome`
@@ -80,7 +108,15 @@ export function useAttentionPermissions() {
   const roles = user?.roles ?? [];
 
   return {
-    canResolve: permissionService.hasPermission(roles, Permission.ANALYTICS_VIEW),
+    /**
+     * ROUND 5 FIX -- was Permission.ANALYTICS_VIEW, which let VIEWER
+     * and AUDITOR see this button even though the backend route no
+     * longer lets either role's request through (see
+     * Permission.ANALYTICS_MANAGE's doc comment in
+     * server/permissions/roles.ts). Without this change those two
+     * roles would see a Resolve button that always 403s.
+     */
+    canResolve: permissionService.hasPermission(roles, Permission.ANALYTICS_MANAGE),
     canDispatch: permissionService.hasAnyPermission(roles, [
       Permission.WORKORDER_CREATE,
       Permission.MAINTENANCE_CREATE,
@@ -88,13 +124,13 @@ export function useAttentionPermissions() {
     /**
      * MODULE CONNECTIVITY UPGRADE -- "Attention/Actions ↔ Outcome
      * Verification". Mirrors canResolve exactly: the verify-outcome route
-     * is gated on the same Permission.ANALYTICS_VIEW as resolve (see
+     * is gated on the same Permission.ANALYTICS_MANAGE as resolve (see
      * app/api/ai/needs-attention/[id]/verify-outcome/route.ts) -- a
      * separate flag rather than reusing canResolve under the Resolved
      * tab so a future change to either route's permission doesn't have
      * to remember the two are currently the same.
      */
-    canVerifyOutcome: permissionService.hasPermission(roles, Permission.ANALYTICS_VIEW),
+    canVerifyOutcome: permissionService.hasPermission(roles, Permission.ANALYTICS_MANAGE),
   };
 }
 
@@ -137,10 +173,10 @@ export function useResolveAttentionItem() {
 /**
  * MODULE CONNECTIVITY UPGRADE -- "Attention/Actions ↔ Outcome
  * Verification". Only callable against an item the caller already
- * knows the itemKey of (today: via the Value Ledger export/summary,
- * which lists resolved items by itemKey -- the live Command Centre
- * queue itself does not yet surface a "resolved" view to browse from,
- * so this hook is ready for that surface without depending on it).
+ * knows the itemKey of -- today, via the Value Ledger export/summary,
+ * or the Command Centre's own "Resolved" tab (CommandCentrePage.tsx),
+ * which lists resolved items by itemKey and wires VerifyOutcomeDialog
+ * directly to this hook.
  */
 export function useVerifyAttentionOutcome() {
   const queryClient = useQueryClient();

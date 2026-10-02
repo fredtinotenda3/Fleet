@@ -78,10 +78,24 @@ export class EsgExportService {
 
     const data = result.data;
     const byCategory: Record<string, number> = {};
-    let estimatedRecommendedSpend = 0;
+    /**
+     * ROUND 5 FIX -- summed only over recommendations that actually carry
+     * a real estimatedCost (now optional; see FleetHealthRecommendation's
+     * own comment). None do today, since every fabricated per-unit
+     * constant was removed rather than replaced with a differently
+     * invented number. `null`, not 0, when no recommendation this period
+     * had a real figure -- see this field's own comment in
+     * esg-export.types.ts for why that distinction matters in a document
+     * filed with regulators.
+     */
+    let recommendedSpendSum = 0;
+    let anyRecommendationHadAnEstimate = false;
     for (const rec of data.recommendations) {
       byCategory[rec.category] = (byCategory[rec.category] ?? 0) + 1;
-      estimatedRecommendedSpend += rec.estimatedCost;
+      if (typeof rec.estimatedCost === 'number') {
+        recommendedSpendSum += rec.estimatedCost;
+        anyRecommendationHadAnEstimate = true;
+      }
     }
 
     return {
@@ -94,7 +108,7 @@ export class EsgExportService {
       pendingMaintenanceCount: data.metrics.pendingMaintenanceCount,
       averageFuelEfficiency: data.metrics.fuelEfficiencyAverage,
       recommendationCount: data.recommendations.length,
-      estimatedRecommendedSpend,
+      estimatedRecommendedSpend: anyRecommendationHadAnEstimate ? recommendedSpendSum : null,
       byCategory,
     };
   }

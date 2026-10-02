@@ -331,9 +331,18 @@ describe('safe refusal', () => {
 
   it('returns no_action for a source with no dispatchable action', async () => {
     // fleet_health spans several vehicles with no single owning entity,
-    // and driver_risk is about a person. Both are deliberately absent
-    // from actionForSource.
-    for (const source of ['fleet_health', 'driver_risk'] as const) {
+    // and driver_risk is about a person. compliance/fuel_fraud/
+    // expense_anomaly joined this list in ROUND 5: they used to map to
+    // 'start_workflow', which always failed (no workflow definition ever
+    // existed for it to start -- see actionForSource's own comment).
+    // All five are deliberately absent from actionForSource.
+    for (const source of [
+      'fleet_health',
+      'driver_risk',
+      'compliance',
+      'fuel_fraud',
+      'expense_anomaly',
+    ] as const) {
       mockItemRepo.findByItemKey.mockResolvedValue(item({ source, itemKey: `${source}:x` }));
       const outcome = await trigger().dispatchByOperator(`${source}:x`, context([HARARE]), 'u');
       expect(outcome.status).toBe('no_action');

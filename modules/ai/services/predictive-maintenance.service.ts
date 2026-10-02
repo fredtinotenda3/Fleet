@@ -639,6 +639,16 @@ export class PredictiveMaintenanceService extends BaseAIService {
    * as two independently meaningful statistics, until this is reworked
    * to use the shared evidence/confidence envelope the other AI services
    * are migrating toward.
+   *
+   * ROUND 5 FIX, narrow and separate from the above: the third weighted
+   * term used to be `component.historicalFailureRate > 0 ? 0.7 : 0.9` --
+   * giving a component with NO recorded failure history a HIGHER
+   * confidence contribution than one with real historical data. Whatever
+   * `confidence` means here (see above, it is not a clean evidence
+   * measure), more historical evidence should never lower it. This one
+   * term is now `0.9 : 0.7` (evidence raises confidence, absence of it
+   * doesn't), without attempting the larger AIConfidenceEnvelope
+   * migration this comment already correctly defers.
    */
   private buildPrediction(
     vehicle: any,
@@ -649,7 +659,7 @@ export class PredictiveMaintenanceService extends BaseAIService {
     const confidence = this.calculateConfidence([
       { weight: 0.4, value: 1 - component.failureProbability },
       { weight: 0.3, value: component.healthScore / 100 },
-      { weight: 0.3, value: component.historicalFailureRate > 0 ? 0.7 : 0.9 },
+      { weight: 0.3, value: component.historicalFailureRate > 0 ? 0.9 : 0.7 },
     ]);
 
     const severity = this.determineSeverity(confidence, 1 - component.healthScore / 100);

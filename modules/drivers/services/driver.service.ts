@@ -13,6 +13,8 @@ import { DriverUpdatedEvent } from '../events/DriverUpdatedEvent';
 import { DriverDeletedEvent } from '../events/DriverDeletedEvent';
 import { WriteScope, tenantIdOf } from '@/server/tenancy/write-scope';
 import { resolveCreationOrgUnitId } from '@/server/utils/tenant-context.utils';
+import type { TenantContext } from '@/modules/tenancy/services/tenant-context.service';
+import { tenantScopeService } from '@/modules/tenancy/services/tenant-scope.service';
 import '@/shared/types/driver.tenancy-addendum';
 
 type DriverCreatePayload = Omit<
@@ -23,6 +25,29 @@ type DriverCreatePayload = Omit<
 export class DriverService {
   constructor(private readonly repo: DriverRepository) {}
 
+  /**
+   * ORG-UNIT SCOPE ON EVERY BY-ID OPERATION.
+   *
+   * `list` was fixed (see getFilteredDriversInScope's own comment) but
+   * getById/update/remove still resolved only a bare tenantId and
+   * stopped there -- the exact bug class WorkOrder and Dispatch each
+   * had before their own fixes. A branch-scoped user could GET/PUT/
+   * DELETE any other branch's driver record by id, exposing and
+   * mutating PII (license number/expiry, phone, email, notes) outside
+   * their org-unit.
+   *
+   * NOT-FOUND, deliberately, rather than FORBIDDEN: a 403 confirms the
+   * record exists, which is itself a disclosure across a boundary the
+   * caller is not supposed to see across. Mirrors `canAccessRecord`'s
+   * use at every other by-id site in the platform (WorkOrder, Dispatch,
+   * Trip, Fuel, Expense).
+   */
+  private assertInScope(driver: Driver, context: TenantContext): void {
+    if (!tenantScopeService.canAccessRecord(context, driver.orgUnitId)) {
+      throw new NotFoundError('Driver not found');
+    }
+  }
+
   async list(
     filters: DriverFilters,
     pagination: PaginationParams,
@@ -31,9 +56,10 @@ export class DriverService {
     return this.repo.getFilteredDrivers(filters, tenantId, pagination);
   }
 
-  async getById(id: string, tenantId: string): Promise<Driver> {
-    const driver = await this.repo.findById(id, tenantId);
+  async getById(id: string, context: TenantContext): Promise<Driver> {
+    const driver = await this.repo.findById(id, context.organizationId);
     if (!driver) throw new NotFoundError('Driver not found');
+    this.assertInScope(driver, context);
     return driver;
   }
 
@@ -108,7 +134,12 @@ export class DriverService {
     return created;
   }
 
-  async update(id: string, rawData: unknown, tenantId: string, userId?: string): Promise<Driver> {
+  async update(id: string, rawData: unknown, context: TenantContext, userId?: string): Promise<Driver> {
+    const tenantId = context.organizationId;
+    const existing = await this.repo.findById(id, tenantId);
+    if (!existing) throw new NotFoundError('Driver not found');
+    this.assertInScope(existing, context);
+
     const result = await validateWithZod(driverUpdateSchema, {
       ...(rawData as Record<string, unknown>),
       _id: id,
@@ -140,9 +171,11 @@ export class DriverService {
     return updated;
   }
 
-  async remove(id: string, tenantId: string, userId?: string, soft: boolean = true): Promise<void> {
+  async remove(id: string, context: TenantContext, userId?: string, soft: boolean = true): Promise<void> {
+    const tenantId = context.organizationId;
     const existing = await this.repo.findById(id, tenantId);
     if (!existing) throw new NotFoundError('Driver not found');
+    this.assertInScope(existing, context);
 
     if (soft) await this.repo.softDelete(id, tenantId, userId);
     else await this.repo.hardDelete(id, tenantId);

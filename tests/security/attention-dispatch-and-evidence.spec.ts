@@ -112,14 +112,34 @@ describe('Phase 6: attention items dispatch operational actions', () => {
   it('maps each source to a deliberate action', () => {
     expect(actionForSource(item({ source: 'predictive_maintenance' }))).toBe('schedule_maintenance');
     expect(actionForSource(item({ source: 'maintenance' }))).toBe('create_work_order');
-    expect(actionForSource(item({ source: 'compliance' }))).toBe('start_workflow');
-    expect(actionForSource(item({ source: 'fuel_fraud' }))).toBe('start_workflow');
   });
 
   it('dispatches NOTHING for a source with no single owning entity', () => {
     // fleet_health produces multi-vehicle recommendations; the Phase 0
     // ownership resolver returns null for the same reason.
     expect(actionForSource(item({ source: 'fleet_health' }))).toBeNull();
+  });
+
+  it('ROUND 5 FIX: dispatches NOTHING for compliance/fuel_fraud/expense_anomaly -- no workflow definition exists for start_workflow to start', () => {
+    // These three used to map to 'start_workflow'. WorkflowEngine.
+    // startWorkflow requires a real, active, tenant-owned Workflow
+    // document to exist for the supplied workflowId, and nothing in this
+    // product ever supplied one -- StartWorkflowAction threw
+    // unconditionally, every time, for every tenant. See this function's
+    // own "ROUND 5 FIX" comment for why create_work_order was considered
+    // and rejected rather than silently substituted.
+    for (const source of ['compliance', 'fuel_fraud', 'expense_anomaly'] as const) {
+      expect(actionForSource(item({ source }))).toBeNull();
+    }
+  });
+
+  it('ROUND 5 FIX: dispatch itself now returns no_action for these sources, never action_failed', async () => {
+    for (const source of ['compliance', 'fuel_fraud', 'expense_anomaly'] as const) {
+      const d = deps();
+      const outcome = await new AttentionDispatchService(d).dispatch(item({ source }), context, 'user-1');
+      expect(outcome.status).toBe('no_action');
+      expect(mockRegistry.execute).not.toHaveBeenCalled();
+    }
   });
 
   it('dispatches NOTHING for a risk score about a person', async () => {

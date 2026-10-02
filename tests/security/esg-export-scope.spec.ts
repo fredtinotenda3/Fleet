@@ -206,6 +206,98 @@ describe('esgExportService.buildExport', () => {
     expect(result.compositeScore.methodology).toContain('40% fleet health score');
     expect(result.compositeScore.methodology).not.toMatch(/renormalised/i);
   });
+
+  /*
+    ─────────────────────────────────────────────────────────────────
+    ROUND 5 FIX -- estimatedRecommendedSpend must never fabricate
+    ─────────────────────────────────────────────────────────────────
+    FleetHealthRecommendation.estimatedCost used to be a hardcoded
+    per-unit constant (e.g. `lowScoring.length * 500`) with no real
+    pricing basis, summed here into a figure printed straight into the
+    ESG disclosure PDF as "est. $X". The fix made the field optional
+    and stopped inventing it. These tests pin that:
+      1. a NaN never reaches the export when recommendations carry no
+         estimate (the regression an unguarded `+= rec.estimatedCost`
+         would reintroduce the moment the field became optional), and
+      2. the aggregate is null, not 0, when nothing was measured.
+  */
+  it('REGRESSION: estimatedRecommendedSpend is null, not NaN or a fabricated 0, when no recommendation carries a real estimate', async () => {
+    const context = makeScopedContext(null);
+    mockedHealthScore.mockResolvedValue({
+      success: true,
+      timestamp: new Date(),
+      data: {
+        overallScore: 40,
+        vehicleScores: [{ vehicleId: 'v1', licensePlate: 'AFU0078', score: 40, components: {} }],
+        metrics: {
+          averageVehicleAge: null,
+          averageMileage: 0,
+          maintenanceCompletionRate: null,
+          overdueMaintenanceCount: 2,
+          pendingMaintenanceCount: 0,
+          fuelEfficiencyAverage: null,
+        },
+        trends: [],
+        // Realistic shape: real recommendations, with NO estimatedCost/
+        // estimatedBenefit/roi -- exactly what generateRecommendations
+        // produces after the fix.
+        recommendations: [
+          {
+            priority: 'high',
+            category: 'Maintenance',
+            title: 'Service 1 low-health vehicles',
+            description: 'Vehicles with health scores below 50% require immediate attention.',
+            affectedVehicles: ['AFU0078'],
+          },
+          {
+            priority: 'critical',
+            category: 'Maintenance',
+            title: '2 overdue maintenance tasks',
+            description: 'Address overdue maintenance to prevent breakdowns and reduce costs.',
+            affectedVehicles: [],
+          },
+        ],
+        timestamp: new Date(),
+      },
+    });
+
+    const result = await esgExportService.buildExport(TENANT, context, { format: 'json' });
+
+    expect(result.fleetHealth.recommendationCount).toBe(2);
+    expect(result.fleetHealth.estimatedRecommendedSpend).not.toBeNaN();
+    expect(result.fleetHealth.estimatedRecommendedSpend).toBeNull();
+  });
+
+  it('still sums a REAL estimate when a recommendation legitimately carries one, rather than discarding it', async () => {
+    const context = makeScopedContext(null);
+    mockedHealthScore.mockResolvedValue({
+      success: true,
+      timestamp: new Date(),
+      data: {
+        overallScore: 60,
+        vehicleScores: [],
+        metrics: {
+          averageVehicleAge: null,
+          averageMileage: 0,
+          maintenanceCompletionRate: null,
+          overdueMaintenanceCount: 0,
+          pendingMaintenanceCount: 0,
+          fuelEfficiencyAverage: null,
+        },
+        trends: [],
+        // A future, honestly-costed recommendation -- the aggregation
+        // must still add real numbers up; this fix must not turn the
+        // field into a permanent null regardless of input.
+        recommendations: [
+          { priority: 'high', category: 'Maintenance', title: 'X', description: 'Y', affectedVehicles: [], estimatedCost: 450 },
+        ],
+        timestamp: new Date(),
+      },
+    });
+
+    const result = await esgExportService.buildExport(TENANT, context, { format: 'json' });
+    expect(result.fleetHealth.estimatedRecommendedSpend).toBe(450);
+  });
 });
 
 describe('esg.controller.ts resolves a full TenantContext before exporting', () => {

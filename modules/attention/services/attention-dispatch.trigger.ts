@@ -79,9 +79,16 @@ import {
  * ai.controller.ts's module-scope `bootstrapCqrs()`, which exists for
  * the identical reason and whose comment documents the same failure.
  *
- * `registerDefaultRuleActions` is needed too: `actionForSource` maps
- * compliance, fuel_fraud and expense_anomaly to `start_workflow`, which
- * is a DEFAULT action, not one of the two added here.
+ * `registerDefaultRuleActions` is called too, kept for safety even
+ * though ROUND 5 removed the only path that needed it here:
+ * `actionForSource` used to map compliance/fuel_fraud/expense_anomaly to
+ * `start_workflow` (a DEFAULT action, not one of the two added below),
+ * but that mapping always failed -- no tenant ever had a workflow
+ * definition for it to start -- and actionForSource now returns null for
+ * all three instead (see its own "ROUND 5 FIX" comment). No attention
+ * source maps to a default action anymore, but this call is left in
+ * place: it is idempotent and costs nothing, and a future source could
+ * legitimately need `publish_event`/`notify`/`audit_log` again.
  */
 registerDefaultRuleActions();
 registerMaintenanceRuleActions();

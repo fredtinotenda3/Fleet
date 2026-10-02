@@ -2,7 +2,7 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Pencil, Trash2, Car, Calendar, Briefcase, FileText } from 'lucide-react';
 import { PageHeader } from '@/frontend/shared/layouts/PageHeader';
@@ -12,6 +12,7 @@ import { Button } from '@/frontend/shared/ui/primitives/button';
 import { Badge } from '@/frontend/shared/ui/data-display/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/frontend/shared/ui/data-display/card';
 import { useSessionStore } from '@/frontend/shared/store/session.store';
+import { Permission, permissionService } from '@/server/permissions/roles';
 import { useExpense } from '../hooks/useExpenses';
 import { useDeleteExpense, useUpdateExpense } from '../hooks/useExpenseMutations';
 import { ExpenseModal, type ExpenseModalMode } from '../components/ExpenseModal';
@@ -19,6 +20,8 @@ import { canManageExpenses, canDeleteExpenses, expenseCategoryLabel, formatExpen
 import { formatDate } from '@/shared/utils/date.utils';
 import { EXPENSE_ROUTES } from '../routes';
 import type { ExpenseFormValues } from '../schemas';
+import { useTrip } from '@/frontend/modules/trips/hooks/useTrips';
+import { TRIP_ROUTES } from '@/frontend/modules/trips/routes';
 
 interface ExpenseDetailPageProps {
   expenseId: string;
@@ -30,7 +33,7 @@ function DetailRow({
   icon: Icon,
 }: {
   label: string;
-  value: string;
+  value: ReactNode;
   icon?: React.ComponentType<{ className?: string }>;
 }) {
   return (
@@ -56,6 +59,17 @@ export function ExpenseDetailPage({ expenseId }: ExpenseDetailPageProps) {
   const updateExpense = useUpdateExpense(expenseId);
   const [modalOpen, setModalOpen] = useState(false);
   const modalMode: ExpenseModalMode = 'edit';
+
+  /**
+   * ROUND 5 FIX -- this page showed the stale free-text `jobTrip` field
+   * ("Not recorded" for any expense linked via the real `tripId` FK
+   * instead), even though ExpenseForm already lets the user set tripId
+   * and the field's own doc comment says it is meant to REPLACE jobTrip
+   * "once trip linking ships in the UI" (shared/types/expense.types.ts).
+   * This is that: prefer the real link when one exists.
+   */
+  const hasTripView = permissionService.hasPermission(roles, Permission.TRIP_VIEW);
+  const { data: linkedTrip } = useTrip(hasTripView ? expense?.tripId : undefined);
 
   if (isLoading) return <PageLoader label="Loading expense" />;
 
@@ -137,7 +151,27 @@ export function ExpenseDetailPage({ expenseId }: ExpenseDetailPageProps) {
             <DetailRow icon={Calendar} label="Date" value={formatDate(expense.date)} />
             <DetailRow label="Amount" value={formatExpenseAmount(expense.amount)} />
             <DetailRow label="Category" value={expenseCategoryLabel(expense)} />
-            <DetailRow icon={Briefcase} label="Job / Trip" value={expense.jobTrip || 'Not recorded'} />
+            <DetailRow
+              icon={Briefcase}
+              label="Job / Trip"
+              value={
+                expense.tripId ? (
+                  <button
+                    type="button"
+                    onClick={() => router.push(TRIP_ROUTES.detail(expense.tripId!))}
+                    className="font-medium text-foreground underline-offset-2 hover:underline"
+                  >
+                    {linkedTrip
+                      ? `Trip · ${formatDate(linkedTrip.date)}`
+                      : hasTripView
+                        ? 'Linked trip'
+                        : 'Linked to a trip'}
+                  </button>
+                ) : (
+                  expense.jobTrip || 'Not recorded'
+                )
+              }
+            />
           </CardContent>
         </Card>
 

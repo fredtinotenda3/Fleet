@@ -30,6 +30,7 @@ import type { NeedsAttentionItem } from '../types';
 import type { NeedsAttentionSource, NeedsAttentionUrgency } from '@/modules/ai/types/needs-attention.types';
 import type { AISeverity } from '@/modules/ai/types/ai.types';
 import type { Tone } from '@/frontend/shared/ui/patterns';
+import { sourceHasDispatchAction } from '../hooks/useAttentionActions';
 
 /**
  * Kept in sync with NeedsAttentionSource in
@@ -233,7 +234,7 @@ export function AttentionItemCard({
             permission its endpoint enforces, so neither can render and then
             403. */}
         <div className="flex shrink-0 flex-col items-stretch gap-1.5">
-          {canDispatch && (
+          {canDispatch && sourceHasDispatchAction(item.source) && (
             <Button
               variant="outline"
               size="xs"

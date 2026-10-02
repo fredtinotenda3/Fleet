@@ -727,7 +727,13 @@ export class NeedsAttentionService {
         urgency,
         rec.title,
         rec.description,
-        rec.estimatedCost,
+        // ROUND 5 FIX: estimatedCost is now optional (see
+        // FleetHealthRecommendation's own comment) because it used to be
+        // a fabricated per-unit constant with no real basis. Absent ->
+        // 0, which the Command Centre card already hides ("item.cost >
+        // 0" in AttentionItemCard.tsx) rather than rendering a fake
+        // "$0 at stake".
+        rec.estimatedCost ?? 0,
         {
           entityLabel: rec.affectedVehicles.slice(0, 3).join(', ') || undefined,
           // A fleet-health recommendation spans zero or more vehicles

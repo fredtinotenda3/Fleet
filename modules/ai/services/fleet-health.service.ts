@@ -229,14 +229,29 @@ export class FleetHealthService extends BaseAIService {
     return scores;
   }
 
+  /**
+   * ROUND 5 FIX -- MISSING DATA SCORED PERFECT, the identical pattern
+   * `calculateFuelScore`'s own comment (below) already documents and
+   * fixes for fuel: zero maintenance records for this component used to
+   * score `baseScore(70) + completionRate(0)*30 - 0 = 70` -- a healthy-
+   * looking 70/100 for a vehicle with NO maintenance history on this
+   * component at all, not because it is healthy but because nothing has
+   * ever been recorded. Now returns the same NEUTRAL_SCORE (50) every
+   * other component on this scale bottoms out at when unmeasured,
+   * matching calculateFuelScore's own stated rationale rather than
+   * inventing a second one.
+   */
   private calculateComponentScore(
     maintenance: MaintenanceEntity[],
     componentType: string
   ): number {
+    const NEUTRAL_SCORE = 50;
     const componentMaintenance = maintenance.filter(
       (m) => m.category?.toLowerCase().includes(componentType) ||
              m.title?.toLowerCase().includes(componentType)
     );
+
+    if (componentMaintenance.length === 0) return NEUTRAL_SCORE;
 
     const completed = componentMaintenance.filter((m) => m.status === 'completed');
     const overdue = componentMaintenance.filter(
@@ -244,24 +259,45 @@ export class FleetHealthService extends BaseAIService {
     );
 
     const baseScore = 70;
-    const completionRate = completed.length / Math.max(1, componentMaintenance.length);
+    const completionRate = completed.length / componentMaintenance.length;
     const overduePenalty = overdue.length * 10;
 
     return Math.max(0, Math.min(100, baseScore + completionRate * 30 - overduePenalty));
   }
 
+  /**
+   * ROUND 5 FIX -- same pattern. Zero maintenance records used to
+   * default `completionRate` to an optimistic 0.8, scoring a vehicle
+   * with no maintenance history at all 90/100 ("50 + 0.8*50"). Now
+   * returns NEUTRAL_SCORE directly rather than assuming a completion
+   * rate that was never observed.
+   */
   private calculateMaintenanceScore(maintenance: MaintenanceEntity[]): number {
-    const completed = maintenance.filter((m) => m.status === 'completed');
+    const NEUTRAL_SCORE = 50;
     const total = maintenance.length;
-    const completionRate = total > 0 ? completed.length / total : 0.8;
-    return Math.round(50 + completionRate * 50);
+    if (total === 0) return NEUTRAL_SCORE;
+
+    const completed = maintenance.filter((m) => m.status === 'completed');
+    const completionRate = completed.length / total;
+    return Math.round(NEUTRAL_SCORE + completionRate * 50);
   }
 
+  /**
+   * ROUND 5 FIX -- same pattern again. Zero expense records used to
+   * default `ratio` to 1 (via `expected / Math.max(1, average)` with
+   * average forced to 0 -> ratio clamped to 1), scoring a vehicle with
+   * NO expense history a PERFECT 100/100. A vehicle nobody has logged
+   * any cost against has not been shown to be cheap to run -- it has
+   * not been measured at all.
+   */
   private calculateExpenseScore(expenses: ExpenseEntity[]): number {
-    const average = expenses.reduce((sum, e) => sum + e.amount, 0) / Math.max(1, expenses.length);
+    const NEUTRAL_SCORE = 50;
+    if (expenses.length === 0) return NEUTRAL_SCORE;
+
+    const average = expenses.reduce((sum, e) => sum + e.amount, 0) / expenses.length;
     const expected = 200; // Benchmark
     const ratio = Math.min(1, expected / Math.max(1, average));
-    return Math.round(50 + ratio * 50);
+    return Math.round(NEUTRAL_SCORE + ratio * 50);
   }
 
   private calculateTripScore(trips: TripEntity[]): number {
@@ -510,6 +546,26 @@ export class FleetHealthService extends BaseAIService {
   ): FleetHealthRecommendation[] {
     const recommendations: FleetHealthRecommendation[] = [];
 
+    /**
+     * ROUND 5 FIX -- estimatedCost/estimatedBenefit/roi used to be
+     * hardcoded per-unit constants below (e.g. `lowScoring.length * 500`,
+     * a flat `estimatedCost: 1000` for the fuel-efficiency finding) with
+     * no evidentiary basis whatsoever -- no real parts/labor pricing, no
+     * real fuel-price-adjusted savings model, just invented numbers that
+     * then flowed into the Command Centre's "$X at stake" line and the
+     * ESG/AI reports as if they were a real financial estimate. This is
+     * the identical fabrication pattern this file already fixes for
+     * `fuelEfficiencyAverage` itself (see the null-guard below and
+     * tests/security/fabricated-metrics.spec.ts), just left in place one
+     * step further down the same function. Each recommendation below is
+     * still built from REAL data (lowScoring.length, metrics.
+     * overdueMaintenanceCount, the measured fuel efficiency, fleet age)
+     * -- only the fabricated dollar figures are removed. See
+     * FleetHealthRecommendation's own comment in ai.types.ts for why
+     * these fields are now optional rather than replaced with a
+     * differently-invented number.
+     */
+
     // Low scoring vehicles
     const lowScoring = vehicleScores.filter((v) => v.score < 50);
     if (lowScoring.length > 0) {
@@ -519,9 +575,6 @@ export class FleetHealthService extends BaseAIService {
         title: `Service ${lowScoring.length} low-health vehicles`,
         description: `Vehicles with health scores below 50% require immediate attention.`,
         affectedVehicles: lowScoring.map((v) => v.licensePlate),
-        estimatedCost: lowScoring.length * 500,
-        estimatedBenefit: lowScoring.length * 2000,
-        roi: 4,
       });
     }
 
@@ -533,9 +586,6 @@ export class FleetHealthService extends BaseAIService {
         title: `${metrics.overdueMaintenanceCount} overdue maintenance tasks`,
         description: `Address overdue maintenance to prevent breakdowns and reduce costs.`,
         affectedVehicles: [],
-        estimatedCost: metrics.overdueMaintenanceCount * 300,
-        estimatedBenefit: metrics.overdueMaintenanceCount * 1200,
-        roi: 4,
       });
     }
 
@@ -546,7 +596,7 @@ export class FleetHealthService extends BaseAIService {
      * this would already stop firing -- but relying on that coincidence
      * is how the next refactor reintroduces the bug. Stated explicitly:
      * a fleet whose efficiency has never been measured has not been
-     * shown to have a fuel problem, and must not be sold a $5,000
+     * shown to have a fuel problem, and must not be sold a fabricated
      * opportunity to fix one.
      */
     if (metrics.fuelEfficiencyAverage !== null && metrics.fuelEfficiencyAverage < 8) {
@@ -556,9 +606,6 @@ export class FleetHealthService extends BaseAIService {
         title: 'Improve fleet fuel efficiency',
         description: `Current fuel efficiency (${metrics.fuelEfficiencyAverage.toFixed(1)} km/L) is below optimal.`,
         affectedVehicles: [],
-        estimatedCost: 1000,
-        estimatedBenefit: 5000,
-        roi: 5,
       });
     }
 
@@ -570,9 +617,6 @@ export class FleetHealthService extends BaseAIService {
         title: 'Consider fleet replacement cycle',
         description: `Average fleet age (${metrics.averageVehicleAge.toFixed(1)} years) suggests replacement planning.`,
         affectedVehicles: [],
-        estimatedCost: vehicles.length * 30000,
-        estimatedBenefit: vehicles.length * 50000,
-        roi: 1.67,
       });
     }
 

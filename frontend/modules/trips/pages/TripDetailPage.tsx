@@ -34,6 +34,10 @@ import { useFuelLogsList } from '@/frontend/modules/fuel/hooks/useFuel';
 import { FUEL_ROUTES } from '@/frontend/modules/fuel/routes';
 import { useExpensesList } from '@/frontend/modules/expenses/hooks/useExpenses';
 import { EXPENSE_ROUTES } from '@/frontend/modules/expenses/routes';
+import { useDriver } from '@/frontend/modules/drivers/hooks/useDrivers';
+import { useDispatchJob } from '@/frontend/modules/dispatch/hooks/useDispatch';
+import { DISPATCH_ROUTES } from '@/frontend/modules/dispatch/routes';
+import { DispatchStatusBadge } from '@/frontend/modules/dispatch/components/DispatchStatusBadge';
 
 interface TripDetailPageProps {
   tripId: string;
@@ -57,6 +61,11 @@ export function TripDetailPage({ tripId }: TripDetailPageProps) {
 
   const hasFuelView = permissionService.hasPermission(roles, Permission.FUEL_VIEW);
   const hasExpenseView = permissionService.hasPermission(roles, Permission.EXPENSE_VIEW);
+  // Driver routes are gated on VEHICLE_VIEW (see app/api/drivers/[id]/route.ts),
+  // not a separate driver permission -- mirrored here so a role that can see
+  // trips but not drivers/vehicles never issues a request that can only 403.
+  const hasDriverView = permissionService.hasPermission(roles, Permission.VEHICLE_VIEW);
+  const hasDispatchView = permissionService.hasPermission(roles, Permission.DISPATCH_VIEW);
 
   const { data: trip, isLoading, isError } = useTrip(tripId);
   const deleteTrip = useDeleteTrip();
@@ -82,6 +91,29 @@ export function TripDetailPage({ tripId }: TripDetailPageProps) {
   const { data: linkedExpenses, isLoading: isExpenseLoading } = useExpensesList(
     { tripId, limit: 50 },
     { enabled: hasExpenseView }
+  );
+
+  /**
+   * ROUND 5 FIX -- "Driver" used to render the raw Mongo ObjectId
+   * (trip.driver_id) to the user instead of a name, the most literal
+   * instance of "shared id, no real UI wiring" the real-fleet audit
+   * found. Mirrors DispatchDetailPage's identical resolution exactly.
+   * `useDriver` no-ops (stays disabled) when the viewer lacks
+   * VEHICLE_VIEW or the trip has no driver assigned, and the id itself
+   * is kept as the fallback if the lookup 404s (e.g. a legacy trip
+   * whose driver was since deleted) rather than showing nothing.
+   */
+  const { data: driver } = useDriver(hasDriverView ? trip?.driver_id : undefined);
+
+  /**
+   * ROUND 5 FIX -- Trip Detail never showed its linked Dispatch job even
+   * though Trip.dispatchJobId / DispatchJob.tripId is a real,
+   * bidirectionally-written field (DispatchService.attachCreatedTrip /
+   * linkExistingTrip). DispatchDetailPage already links the other way
+   * (job -> trip); this is the missing direction.
+   */
+  const { data: linkedDispatchJob } = useDispatchJob(
+    hasDispatchView ? trip?.dispatchJobId : undefined
   );
 
   if (isLoading) return <PageLoader label="Loading trip" />;
@@ -199,7 +231,14 @@ export function TripDetailPage({ tripId }: TripDetailPageProps) {
                 return <span className="text-muted-foreground italic">Not recorded for this trip</span>;
               })()}
             />
-            <DetailRow label="Driver" value={trip.driver_id || 'Unassigned'} />
+            <DetailRow
+              label="Driver"
+              value={
+                trip.driver_id
+                  ? driver?.name ?? (hasDriverView ? trip.driver_id : 'Driver')
+                  : 'Unassigned'
+              }
+            />
           </CardContent>
         </Card>
 
@@ -258,6 +297,35 @@ export function TripDetailPage({ tripId }: TripDetailPageProps) {
             )}
           </CardContent>
         </Card>
+
+        {/*
+          ROUND 5 FIX -- Trip <-> Dispatch is bidirectional in the data
+          model (Trip.dispatchJobId / DispatchJob.tripId, written
+          together by DispatchService) and DispatchDetailPage already
+          links job -> trip, but nothing showed the reverse direction.
+          Only rendered when the trip actually carries a dispatchJobId
+          and the caller holds DISPATCH_VIEW; absent otherwise, same
+          permission-gated-silence convention as "Linked costs" below.
+        */}
+        {trip.dispatchJobId && hasDispatchView && (
+          <Card className="lg:col-span-2">
+            <CardHeader>
+              <CardTitle>Dispatch</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <button
+                type="button"
+                onClick={() => router.push(DISPATCH_ROUTES.detail(trip.dispatchJobId!))}
+                className="flex w-full items-center justify-between gap-3 rounded-md py-1.5 text-left transition-colors hover:bg-muted/50"
+              >
+                <span className="text-body-sm text-foreground">
+                  {linkedDispatchJob?.title ?? 'This trip was logged against a dispatch job'}
+                </span>
+                {linkedDispatchJob && <DispatchStatusBadge status={linkedDispatchJob.status} />}
+              </button>
+            </CardContent>
+          </Card>
+        )}
 
         {/*
           Full width, directly under "Route & readings" -- the card that

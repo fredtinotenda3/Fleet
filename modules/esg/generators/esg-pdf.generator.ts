@@ -82,7 +82,11 @@ export async function buildEsgPdfBuffer(data: EsgExportData): Promise<Buffer> {
           ? 'Not measured (no trip distance recorded for this period)'
           : `${fh.averageFuelEfficiency.toFixed(1)} km/L`
       }`,
-      `Open recommendations: ${fh.recommendationCount} (est. ${formatCurrency(fh.estimatedRecommendedSpend)})`,
+      `Open recommendations: ${fh.recommendationCount}${
+        fh.estimatedRecommendedSpend === null
+          ? ' (no cost estimate available)'
+          : ` (est. ${formatCurrency(fh.estimatedRecommendedSpend)})`
+      }`,
     ];
     doc.fontSize(10).fillColor('#333');
     fleetLines.forEach((line) => doc.text(line));

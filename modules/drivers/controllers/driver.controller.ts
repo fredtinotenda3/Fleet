@@ -11,7 +11,7 @@ import {
   createdResponse,
 } from '@/server/utils/response.utils';
 import { AppError, isAppError, describeError } from '@/server/errors/app.errors';
-import { getTenantFromRequest, getUserIdFromRequest } from '@/server/utils/context.utils';
+import { getUserIdFromRequest } from '@/server/utils/context.utils';
 import { resolveTenantContext } from '@/server/utils/tenant-context.utils';
 import { driverRepository } from '@/modules/drivers/repositories/driver.repository';
 import { userWriteScope } from '@/server/tenancy/write-scope';
@@ -66,8 +66,8 @@ export class DriverController {
 
   async getById(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
-      const driver = await driverService.getById(id, tenantId);
+      const context = await resolveTenantContext(req);
+      const driver = await driverService.getById(id, context);
       return successResponse(driver);
     } catch (error) {
       return this.handleError(error);
@@ -108,10 +108,10 @@ export class DriverController {
 
   async update(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const context = await resolveTenantContext(req);
       const userId = await getUserIdFromRequest(req);
       const body = await req.json();
-      const driver = await driverService.update(id, body, tenantId, userId);
+      const driver = await driverService.update(id, body, context, userId);
       return successResponse(driver);
     } catch (error) {
       return this.handleError(error);
@@ -120,10 +120,10 @@ export class DriverController {
 
   async remove(req: NextRequest, id: string) {
     try {
-      const tenantId = await getTenantFromRequest(req);
+      const context = await resolveTenantContext(req);
       const userId = await getUserIdFromRequest(req);
       const soft = req.nextUrl.searchParams.get('soft') !== 'false';
-      await driverService.remove(id, tenantId, userId, soft);
+      await driverService.remove(id, context, userId, soft);
       return successResponse({ message: 'Driver deleted successfully' });
     } catch (error) {
       return this.handleError(error);

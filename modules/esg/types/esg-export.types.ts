@@ -51,7 +51,19 @@ export interface EsgFleetHealthSection {
    */
   averageFuelEfficiency: number | null;
   recommendationCount: number;
-  estimatedRecommendedSpend: number;
+  /**
+   * ROUND 5 FIX -- was a plain `number`, summed from
+   * FleetHealthRecommendation.estimatedCost. That field used to be a
+   * hardcoded per-unit constant with no real pricing basis (see its own
+   * comment in ai.types.ts) and is now optional because no recommendation
+   * populates it. Nullable for the same reason as averageFuelEfficiency
+   * above: this is printed into an ESG disclosure PDF, and a fabricated
+   * dollar figure in a sustainability report customers file with
+   * regulators is a materially worse defect than one on a dashboard.
+   * `null` means no recommendation this period carried a real cost
+   * estimate -- not "$0 of spend is recommended".
+   */
+  estimatedRecommendedSpend: number | null;
   byCategory: Record<string, number>;
 }
 
